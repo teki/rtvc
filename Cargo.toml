@@ -12,3 +12,11 @@ path = "src/main.rs"
 [[bin]]
 name = "fuse_test"
 path = "src/fuse_test.rs"
+
+[[bin]]
+name = "zex_test"
+path = "src/zex_test.rs"
+
+[[bin]]
+name = "perf_test"
+path = "src/perf_test.rs"

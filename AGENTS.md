@@ -1,50 +1,25 @@
-# AGENTS.md — rtvc
+# AGENTS.md — rtvc Documentation Index
 
-## Project
+This document serves as the entry point for coding agents and developers to find architectural knowledge, project information, and development guides for the Videoton TV Computer (TVC) emulator.
 
-Videoton TV Computer emulator in Rust, ported from `../jstvc`.
+---
 
-- Single Rust binary crate with additional test binary.
-- `src/z80.rs` — complete Z80 CPU emulator (all documented + many undocumented opcodes).
-- `src/mmu.rs` — TVC memory management unit with bank switching.
-- `src/fuse_test.rs` — FUSE test harness ported from `jstvc/tests/test.js`.
+## Directory Map
 
-## Toolchain
+Refer to the following resources for detailed documentation on the system:
 
-- `Cargo.toml` uses `edition = "2024"`, which requires Rust ≥ 1.85.
+- [Project Overview & Architecture](docs/project_overview.md) — High-level description of the project structure, Rust toolchain, and core emulator architecture.
+- [Z80 CPU Documentation](docs/z80.md) — Detailed specifications, instructions, lookup tables, and execution details for the Z80 CPU emulator.
+- [Memory Management Unit (MMU) Documentation](docs/mmu.md) — Architectural reference for TVC bank switching, page layout, and I/O memory mapping.
+- [Development and Testing Skill](.agents/skills/development/SKILL.md) — Essential commands for compiling, running, testing, and benchmarking the emulator.
 
-## Commands
+---
 
-```bash
-# Build main binary
-cargo build
+## Documentation Maintenance Policy
 
-# Run main binary
-cargo run
+To prevent documentation rot and ensure all agents have access to accurate information, adhere to the following rules:
 
-# Build test binary
-cargo build --bin fuse_test
-
-# Run FUSE tests (1334 tests, should all pass)
-cargo run --bin fuse_test
-```
-
-## Architecture
-
-- Z80 emulator closely follows the JavaScript implementation in `../jstvc/src/z80.js`.
-- `FakeMMU` in `mmu.rs` provides flat 64KB memory for CPU tests.
-- Full `MMU` in `mmu.rs` implements TVC bank switching (not yet wired to main binary).
-- Tests are in `tests/` (copied from `../jstvc/tests/`):
-  - `tests.in` / `tests.expected` — FUSE test vectors
-  - `zexdoc.com` / `zexall.com` — ZEXDOC/ZEXALL test programs
-
-## Testing
-
-FUSE tests are the primary validation. The test harness:
-1. Parses each test case from `tests/tests.in`
-2. Loads register state and memory into `FakeMMU` + `Z80`
-3. Executes `z80.step(mmu, runtime)` for the specified t-states
-4. Compares resulting registers/memory against `tests/tests.expected`
-5. Prints `descr ......... OK` for each passed test
-
-All 1334 FUSE tests should pass. If any fail, the harness prints a diff and stops.
+1. **Keep Specs Updated**: When you implement new features, rewrite core functionality (e.g., wiring the MMU to the main loop, adding screen rendering, or input devices), update the corresponding file in `docs/` or create a new topic-specific markdown file.
+2. **Keep Commands and Workflows Updated**: If compilation workflows, test cases, or benchmarks change (e.g., adding a new benchmark tool or migrating test files), immediately update [.agents/skills/development/SKILL.md](.agents/skills/development/SKILL.md).
+3. **Keep Crate / Dependency Specs Updated**: If updating `Cargo.toml` dependencies, required Rust edition, or adding new binary targets, update [docs/project_overview.md](docs/project_overview.md).
+4. **Use Clickable Links**: When referencing codebase files or documentation, always use clickable Markdown links with the relative path (e.g., `[main.rs](src/main.rs)`) to enable easy navigation.
