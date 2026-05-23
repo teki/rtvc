@@ -77,8 +77,8 @@ impl TvcMmu {
             sys: [0; 0x4000],
             cart: [0; 0x4000],
             exth: [0; 0x2000],
-            map_val: 0,
-            map_val_vid: 0,
+            map_val: 0xFF,
+            map_val_vid: 0xFF,
             is_plus,
             map: [None; 4],
         };
@@ -215,19 +215,36 @@ impl TvcMmu {
         }
     }
 
-    pub fn load_sys_rom(&mut self, data: &[u8]) {
-        let len = data.len().min(0x4000);
-        self.sys[..len].copy_from_slice(&data[..len]);
+    pub fn get_vid_mem(&self) -> &[u8] {
+        &self.vid0
+    }
+
+    pub fn add_rom(&mut self, name: &str, data: &[u8]) {
+        match name {
+            "TVC12_D7.64K" | "TVC22_D7.64K" => {
+                let len = data.len().min(self.exth.len());
+                self.exth[..len].copy_from_slice(&data[..len]);
+            }
+            "TVC12_D4.64K" | "TVC22_D6.64K" => {
+                let len = data.len().min(self.sys.len());
+                self.sys[..len].copy_from_slice(&data[..len]);
+            }
+            "TVC12_D3.64K" | "TVC22_D4.64K" => {
+                let offset = 0x2000;
+                let space = self.sys.len() - offset;
+                let len = data.len().min(space);
+                self.sys[offset..offset + len].copy_from_slice(&data[..len]);
+            }
+            _ => {
+                // Unknown ROM name, try loading as cartridge
+                self.load_cart_rom(data);
+            }
+        }
     }
 
     pub fn load_cart_rom(&mut self, data: &[u8]) {
         let len = data.len().min(0x4000);
         self.cart[..len].copy_from_slice(&data[..len]);
-    }
-
-    pub fn load_exth_rom(&mut self, data: &[u8]) {
-        let len = data.len().min(0x2000);
-        self.exth[..len].copy_from_slice(&data[..len]);
     }
 }
 

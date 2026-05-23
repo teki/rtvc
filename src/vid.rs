@@ -241,6 +241,11 @@ impl Vid {
         self.border2 = ((color & 0xAA) >> 1) | (color & 0xAA);
     }
 
+    /// Returns true when the CRTC has been configured (hd < ht).
+    pub fn is_initialized(&self) -> bool {
+        self.hd < self.ht
+    }
+
     /// Set video mode (port 0x06 bits 0-1)
     pub fn set_mode(&mut self, mode: u8) {
         self.mode = mode & 0x03;

@@ -1,0 +1,265 @@
+use std::time::Instant;
+
+use crate::emu::Emu;
+use eframe::egui::{self, ColorImage, TextureHandle};
+
+fn egui_key_to_js_code(key: egui::Key) -> Option<u32> {
+    Some(match key {
+        egui::Key::Backspace => 8,
+        egui::Key::Tab => 9,
+        egui::Key::Enter => 13,
+        egui::Key::Space => 32,
+        egui::Key::Escape => 27,
+        egui::Key::Delete => 46,
+        egui::Key::ArrowLeft => 37,
+        egui::Key::ArrowUp => 38,
+        egui::Key::ArrowRight => 39,
+        egui::Key::ArrowDown => 40,
+        egui::Key::Home => 36,
+        egui::Key::End => 35,
+        egui::Key::PageUp => 33,
+        egui::Key::PageDown => 34,
+        egui::Key::Insert => 45,
+        egui::Key::A => 65,
+        egui::Key::B => 66,
+        egui::Key::C => 67,
+        egui::Key::D => 68,
+        egui::Key::E => 69,
+        egui::Key::F => 70,
+        egui::Key::G => 71,
+        egui::Key::H => 72,
+        egui::Key::I => 73,
+        egui::Key::J => 74,
+        egui::Key::K => 75,
+        egui::Key::L => 76,
+        egui::Key::M => 77,
+        egui::Key::N => 78,
+        egui::Key::O => 79,
+        egui::Key::P => 80,
+        egui::Key::Q => 81,
+        egui::Key::R => 82,
+        egui::Key::S => 83,
+        egui::Key::T => 84,
+        egui::Key::U => 85,
+        egui::Key::V => 86,
+        egui::Key::W => 87,
+        egui::Key::X => 88,
+        egui::Key::Y => 89,
+        egui::Key::Z => 90,
+        egui::Key::Num0 => 48,
+        egui::Key::Num1 => 49,
+        egui::Key::Num2 => 50,
+        egui::Key::Num3 => 51,
+        egui::Key::Num4 => 52,
+        egui::Key::Num5 => 53,
+        egui::Key::Num6 => 54,
+        egui::Key::Num7 => 55,
+        egui::Key::Num8 => 56,
+        egui::Key::Num9 => 57,
+        egui::Key::Minus => 189,
+        egui::Key::Equals => 187,
+        egui::Key::Comma => 188,
+        egui::Key::Period => 190,
+        egui::Key::Semicolon => 186,
+        egui::Key::Quote => 222,
+        egui::Key::Backslash => 220,
+        egui::Key::Slash => 191,
+        egui::Key::OpenBracket => 219,
+        egui::Key::CloseBracket => 221,
+        egui::Key::Backtick => 192,
+        _ => return None,
+    })
+}
+
+pub struct EmuApp {
+    pub emu: Emu,
+    screen_texture: Option<TextureHandle>,
+    last_frame_time: Instant,
+    frame_count: u32,
+    fps: u32,
+    prev_shift: bool,
+    prev_ctrl: bool,
+    prev_alt: bool,
+}
+
+impl EmuApp {
+    pub fn new(emu: Emu) -> Self {
+        EmuApp {
+            emu,
+            screen_texture: None,
+            last_frame_time: Instant::now(),
+            frame_count: 0,
+            fps: 0,
+            prev_shift: false,
+            prev_ctrl: false,
+            prev_alt: false,
+        }
+    }
+
+    fn update_screen_texture(&mut self, ctx: &egui::Context) {
+        if !self.emu.tvc.frame_complete {
+            return;
+        }
+
+        let size = [608usize, 288];
+        let pixels: Vec<u8> = self
+            .emu
+            .tvc
+            .framebuffer
+            .iter()
+            .copied()
+            .flat_map(u32::to_ne_bytes)
+            .collect();
+        let image = ColorImage::from_rgba_unmultiplied(size, &pixels);
+        self.screen_texture = Some(ctx.load_texture("tvc-screen", image, Default::default()));
+        self.emu.tvc.frame_complete = false;
+    }
+
+    fn handle_modifier(&mut self, new_shift: bool, new_ctrl: bool, new_alt: bool) {
+        if new_shift != self.prev_shift {
+            if new_shift {
+                self.emu.tvc.key_down(16);
+            } else {
+                self.emu.tvc.key_up(16);
+            }
+            self.prev_shift = new_shift;
+        }
+        if new_ctrl != self.prev_ctrl {
+            if new_ctrl {
+                self.emu.tvc.key_down(17);
+            } else {
+                self.emu.tvc.key_up(17);
+            }
+            self.prev_ctrl = new_ctrl;
+        }
+        if new_alt != self.prev_alt {
+            if new_alt {
+                self.emu.tvc.key_down(18);
+            } else {
+                self.emu.tvc.key_up(18);
+            }
+            self.prev_alt = new_alt;
+        }
+    }
+}
+
+impl eframe::App for EmuApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        ctx.input(|i| {
+            let modifiers = i.modifiers;
+            self.handle_modifier(modifiers.shift, modifiers.ctrl, modifiers.alt);
+
+            for event in &i.events {
+                match event {
+                    egui::Event::Key {
+                        key,
+                        pressed: true,
+                        ..
+                    } => {
+                        if let Some(code) = egui_key_to_js_code(*key) {
+                            self.emu.tvc.key_down(code);
+                        }
+                    }
+                    egui::Event::Key {
+                        key,
+                        pressed: false,
+                        ..
+                    } => {
+                        if let Some(code) = egui_key_to_js_code(*key) {
+                            self.emu.tvc.key_up(code);
+                        }
+                    }
+                    egui::Event::Text(text) => {
+                        for ch in text.chars() {
+                            self.emu.tvc.key_press(ch);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        self.emu.tick();
+        self.update_screen_texture(ctx);
+
+        self.frame_count += 1;
+        let elapsed = self.last_frame_time.elapsed();
+        if elapsed.as_secs() >= 1 {
+            self.fps = self.frame_count;
+            self.frame_count = 0;
+            self.last_frame_time = Instant::now();
+        }
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.heading("rtvc - Videoton TV Computer Emulator");
+
+            ui.horizontal(|ui| {
+                if ui
+                    .selectable_label(
+                        !self.emu.running,
+                        if self.emu.running {
+                            "Running"
+                        } else {
+                            "Paused"
+                        },
+                    )
+                    .clicked()
+                {
+                    self.emu.toggle_running();
+                }
+                if ui.button("Reset").clicked() {
+                    self.emu.reset();
+                }
+                ui.label(format!("FPS: {}", self.fps));
+                ui.label(format!(
+                    "ROMs: {}",
+                    if self.emu.roms_loaded {
+                        "loaded"
+                    } else {
+                        "not found"
+                    }
+                ));
+            });
+
+            ui.separator();
+
+            let screen_height = ui.available_height() - 160.0;
+            let screen_size = egui::vec2(ui.available_width(), screen_height.max(100.0));
+
+            if let Some(texture) = &self.screen_texture {
+                ui.add(
+                    egui::Image::from_texture(texture)
+                        .max_size(screen_size)
+                        .maintain_aspect_ratio(true),
+                );
+            } else {
+                ui.allocate_space(screen_size);
+                let rect = ui.min_rect();
+                let painter = ui.painter();
+                painter.rect_filled(rect, 0.0, egui::Color32::BLACK);
+            }
+
+            ui.separator();
+
+            ui.horizontal(|ui| {
+                ui.strong("IO Log");
+                if ui.small_button("Clear").clicked() {
+                    self.emu.tvc.clear_log();
+                }
+            });
+
+            let log_height = 140.0;
+            egui::ScrollArea::vertical()
+                .auto_shrink([false; 2])
+                .max_height(log_height)
+                .show(ui, |ui| {
+                    let entries = self.emu.tvc.log_entries();
+                    for entry in entries.iter().rev() {
+                        ui.label(entry);
+                    }
+                });
+        });
+
+        ctx.request_repaint();
+    }
+}
