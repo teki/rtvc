@@ -1,3 +1,4 @@
+mod key;
 mod mmu;
 mod vid;
 mod z80;
