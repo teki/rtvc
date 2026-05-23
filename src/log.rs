@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 const MAX_ENTRIES: usize = 200;
 
 pub trait Logger {

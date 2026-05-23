@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::mmu::Mmu;
 use crate::z80_tables::opcode_to_mnemonic;
 
