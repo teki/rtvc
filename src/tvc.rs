@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use crate::key::Key;
-use crate::log::{Log, Logger};
+use crate::log::Log;
 use crate::mmu::{Mmu, TvcMmu};
 use crate::vid::Vid;
 use crate::z80::Z80;
@@ -42,7 +42,7 @@ impl TvcBus {
     }
 
     fn write_port(&mut self, addr: u8, val: u8) {
-        self.log.log(&format!("OUT {:02X} <- {:02X}", addr, val));
+        // IO log disabled — keyboard logging active
         match addr {
             0x00 => self.vid.set_border(val),
 
@@ -104,7 +104,6 @@ impl TvcBus {
                 }
             }
         };
-        self.log.log(&format!("IN  {:02X} -> {:02X}", addr, val));
         val
     }
 }

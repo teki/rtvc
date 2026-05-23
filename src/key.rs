@@ -15,16 +15,16 @@ pub const KC_ALTGR: u32 = 225;
 
 type Mapping = (u8, u8, u8);
 
-pub struct Key {
-    state: [u8; 11],
-    row: u8,
-    keymap: HashMap<u8, HashMap<u32, Mapping>>,
-    is_mapped: HashSet<u32>,
-    mod_state: u8,
-    last_press: u32,
-    ntable: String,
-    stable: String,
-}
+    pub struct Key {
+        state: [u8; 11],
+        row: u8,
+        keymap: HashMap<u8, HashMap<u32, Mapping>>,
+        is_mapped: HashSet<u32>,
+        mod_state: u8,
+        last_press: u32,
+        ntable: String,
+        stable: String,
+    }
 
 impl Key {
     pub fn new() -> Self {
@@ -36,24 +36,10 @@ impl Key {
             mod_state: 0,
             last_press: 0,
             ntable: String::from(
-                "53206í14\
-                 ^89ü*óö7\
-                 tew;z@qr\
-                 ]ioő[úpu\
-                 gds\\h<af\
-                  klá űéj\
-                 bcx n yv\
-                  ,.   -m",
+                "53206í14^89ü*óö7tew;z@qr]ioő[úpugds\\h<af klá űéjbcx n yv ,.   -m",
             ),
             stable: String::from(
-                "%+\"&/Í'!\
-                 ~()Ü#ÓÖ=\
-                 TEW$Z`QR\
-                 }IOŐ{ÚPU\
-                 GDS|H>AF\
-                  KLÁ ŰÉJ\
-                 BCX N YV\
-                  ?:   _M",
+                "%+\"&/Í'!~()Ü#ÓÖ=TEW$Z`QR}IOŐ{ÚPUGDS|H>AF KLÁ ŰÉJBCX N YV ?:   _M",
             ),
         };
 
@@ -102,6 +88,11 @@ impl Key {
     }
 
     fn add_mapping(&mut self, ch: char) -> Option<Mapping> {
+        // Don't auto-map over modifier key entries
+        if self.last_press == KC_SHIFT || self.last_press == 17 || self.last_press == KC_ALT || self.last_press == KC_ALTGR {
+            return None;
+        }
+
         let mut flags = 0u8;
 
         if let Some(idx) = self.ntable.chars().position(|c| c == ch) {
@@ -154,13 +145,15 @@ impl Key {
             }
         }
 
-        let mut found = false;
-        if let Some(map) = self.keymap.get(&self.mod_state) {
-            if let Some(&m) = map.get(&code) {
-                self.apply_mapping(m, down);
-                found = true;
-            }
+        let entry = if let Some(map) = self.keymap.get(&self.mod_state) {
+            map.get(&code).copied()
+        } else {
+            None
+        };
+        if let Some(m) = entry {
+            self.apply_mapping(m, down);
         }
+        let found = entry.is_some();
 
         if !down {
             let mut to_release: Vec<Mapping> = Vec::new();
