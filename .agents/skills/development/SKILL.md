@@ -48,6 +48,16 @@ This skill provides step-by-step instructions and references for compiling, exec
     cargo run --bin zex_test zexall
     ```
 
+### ASM/DASM Round-Trip Test
+
+Test the assembler and disassembler with a comprehensive set of Z80 instructions:
+
+```bash
+cargo run --bin asm_test
+```
+
+This prints the encoded bytes for each instruction, then disassembles them back to verify round-trip correctness.
+
 ### Performance Benchmarking
 
 - **Run performance benchmark:**

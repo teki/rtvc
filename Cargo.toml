@@ -18,5 +18,9 @@ name = "zex_test"
 path = "src/zex_test.rs"
 
 [[bin]]
+name = "asm_test"
+path = "src/asm_test.rs"
+
+[[bin]]
 name = "perf_test"
 path = "src/perf_test.rs"
