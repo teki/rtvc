@@ -75,6 +75,8 @@ pub struct EmuApp {
     pub emu: Emu,
     screen_texture: Option<TextureHandle>,
     last_frame_time: Instant,
+    last_render_time: Instant,
+    accumulator: f64,
     frame_count: u32,
     fps: u32,
     prev_shift: bool,
@@ -93,6 +95,8 @@ impl EmuApp {
             emu,
             screen_texture: None,
             last_frame_time: Instant::now(),
+            last_render_time: Instant::now(),
+            accumulator: 0.0,
             frame_count: 0,
             fps: 0,
             prev_shift: false,
@@ -187,10 +191,22 @@ impl eframe::App for EmuApp {
             }
         });
 
-        self.emu.tick();
-        self.update_screen_texture(ctx);
+        let dt = self.last_render_time.elapsed().as_secs_f64();
+        self.last_render_time = Instant::now();
+        self.accumulator += dt.min(0.1);
+        let frame_dt = 1.0 / 50.0;
+        let mut ticked = false;
+        while self.accumulator >= frame_dt {
+            self.emu.tick();
+            self.accumulator -= frame_dt;
+            ticked = true;
+        }
 
-        self.frame_count += 1;
+        if ticked {
+            self.update_screen_texture(ctx);
+            self.frame_count += 1;
+        }
+
         let elapsed = self.last_frame_time.elapsed();
         if elapsed.as_secs() >= 1 {
             self.fps = self.frame_count;
@@ -270,6 +286,32 @@ impl eframe::App for EmuApp {
                 }
             });
 
+            ui.horizontal(|ui| {
+                ui.label("Disk:");
+                egui::ComboBox::from_id_salt("disk_list")
+                    .selected_text(
+                        self.emu
+                            .disks
+                            .get(self.emu.selected_disk)
+                            .map(|d| d.name.as_str())
+                            .unwrap_or("(none)"),
+                    )
+                    .show_ui(ui, |ui| {
+                        for (i, disk) in self.emu.disks.iter().enumerate() {
+                            ui.selectable_value(&mut self.emu.selected_disk, i, &disk.name);
+                        }
+                    });
+                if ui
+                    .button("Load")
+                    .clicked()
+                {
+                    self.emu.load_selected_disk();
+                }
+                if let Some(ref name) = self.emu.disk_loaded {
+                    ui.label(format!("Loaded: {}", name));
+                }
+            });
+
             ui.separator();
 
             let avail = ui.available_size();
@@ -291,6 +333,7 @@ impl eframe::App for EmuApp {
             }
         });
 
-        ctx.request_repaint();
+        let remaining = (1.0 / 50.0 - self.accumulator).max(0.0);
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(remaining));
     }
 }

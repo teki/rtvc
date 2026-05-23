@@ -1,3 +1,5 @@
+use std::io::Read;
+
 use crate::tvc::Tvc;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -48,21 +50,35 @@ impl MachineType {
     }
 }
 
+#[derive(Clone)]
+pub struct DiskEntry {
+    pub name: String,
+    pub file_name: String,
+}
+
 pub struct Emu {
     pub tvc: Tvc,
     pub running: bool,
     pub roms_loaded: bool,
     pub machine_type: MachineType,
+    pub disks: Vec<DiskEntry>,
+    pub selected_disk: usize,
+    pub disk_loaded: Option<String>,
 }
 
 impl Emu {
     pub fn new(machine_type: MachineType) -> Self {
-        Emu {
+        let mut emu = Emu {
             tvc: Tvc::new(machine_type.is_plus),
             running: true,
             roms_loaded: false,
             machine_type,
-        }
+            disks: Vec::new(),
+            selected_disk: 0,
+            disk_loaded: None,
+        };
+        emu.scan_disks();
+        emu
     }
 
     pub fn tick(&mut self) {
@@ -84,6 +100,7 @@ impl Emu {
         self.machine_type = machine_type;
         self.tvc = Tvc::new(machine_type.is_plus);
         self.roms_loaded = false;
+        self.disk_loaded = None;
         self.load_roms();
     }
 
@@ -104,6 +121,73 @@ impl Emu {
 
         if any_loaded {
             self.roms_loaded = true;
+        }
+    }
+
+    pub fn scan_disks(&mut self) {
+        self.disks.clear();
+        let dir = std::path::Path::new("disks");
+        if !dir.exists() {
+            return;
+        }
+        let mut entries: Vec<_> = match std::fs::read_dir(dir) {
+            Ok(rd) => rd
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    e.path()
+                        .extension()
+                        .map(|ext| ext == "zip")
+                        .unwrap_or(false)
+                })
+                .collect(),
+            Err(_) => return,
+        };
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            let name = file_name
+                .strip_suffix(".zip")
+                .unwrap_or(&file_name)
+                .to_string();
+            self.disks.push(DiskEntry { name, file_name });
+        }
+        if self.selected_disk >= self.disks.len() {
+            self.selected_disk = 0;
+        }
+    }
+
+    pub fn load_selected_disk(&mut self) {
+        if self.disks.is_empty() || self.selected_disk >= self.disks.len() {
+            return;
+        }
+        let file_name = self.disks[self.selected_disk].file_name.clone();
+        let path = format!("disks/{}", file_name);
+
+        let data = match std::fs::read(&path) {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+
+        let reader = std::io::Cursor::new(data);
+        let mut archive = match zip::ZipArchive::new(reader) {
+            Ok(a) => a,
+            Err(_) => return,
+        };
+
+        for i in 0..archive.len() {
+            let mut file = match archive.by_index(i) {
+                Ok(f) => f,
+                Err(_) => continue,
+            };
+            let entry_name = file.name().to_string();
+            if entry_name.to_lowercase().ends_with(".dsk") {
+                let mut buf = Vec::new();
+                if file.read_to_end(&mut buf).is_ok() {
+                    self.tvc.load_disk(&entry_name, &buf);
+                    self.disk_loaded = Some(self.disks[self.selected_disk].name.clone());
+                }
+                break;
+            }
         }
     }
 }

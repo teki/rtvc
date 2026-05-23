@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 egui = "0.31"
 eframe = "0.31"
+zip = "2"
 
 [[bin]]
 name = "rtvc"
