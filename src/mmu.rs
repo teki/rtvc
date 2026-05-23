@@ -219,6 +219,10 @@ impl TvcMmu {
         &self.vid0
     }
 
+    pub fn get_map_val(&self) -> u8 {
+        self.map_val
+    }
+
     pub fn add_rom(&mut self, name: &str, data: &[u8]) {
         match name {
             "TVC12_D7.64K" | "TVC22_D7.64K" => {

@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 
+use crate::hbf::HBF;
 use crate::key::Key;
 use crate::log::Log;
 use crate::mmu::{Mmu, TvcMmu};
@@ -18,6 +19,7 @@ pub struct TvcBus {
     pend_it: u8,
     ext_types: u8,
     ext_cart_mapping: u8,
+    ext0: Option<HBF>,
 }
 
 impl TvcBus {
@@ -30,6 +32,7 @@ impl TvcBus {
             pend_it: 0x1F,
             ext_types: 0xFF,
             ext_cart_mapping: 0,
+            ext0: None,
         }
     }
 
@@ -38,11 +41,31 @@ impl TvcBus {
         self.vid.reset();
         self.key.reset();
         self.pend_it = 0x1F;
+        self.ext_types = 0xFF;
         self.ext_cart_mapping = 0;
     }
 
+    pub fn extension_attach(&mut self, port: u8, ext: HBF) {
+        if port == 0 {
+            self.ext0 = Some(ext);
+            self.ext_types &= !(3 << (port * 2));
+            self.ext_types |= 2 << (port * 2);
+        }
+    }
+
+    fn active_ext_mut(&mut self) -> Option<&mut HBF> {
+        match self.ext_cart_mapping {
+            0 => self.ext0.as_mut(),
+            _ => None,
+        }
+    }
+
+    fn is_ext_page3_access(&self, addr: u16) -> bool {
+        let page = (addr >> 14) as usize;
+        page == 3 && (self.mmu.get_map_val() & 0xC0) == 0xC0
+    }
+
     fn write_port(&mut self, addr: u8, val: u8) {
-        // IO log disabled — keyboard logging active
         match addr {
             0x00 => self.vid.set_border(val),
 
@@ -53,13 +76,12 @@ impl TvcBus {
                 self.ext_cart_mapping = val >> 6;
             }
 
-            0x04 => { /* aud.setFreqL(val) - stub */ }
+            0x04 => {}
 
-            0x05 => { /* aud.setFreqH(val & 0x0F); aud.setOn((val & 0x10) != 0) - stub */ }
+            0x05 => {}
 
             0x06 => {
                 self.vid.set_mode(val & 0x03);
-                // bits 2-5: sound amplitude (stub)
             }
 
             0x07 => self.pend_it |= 0x10,
@@ -71,49 +93,66 @@ impl TvcBus {
             0x70 => self.vid.set_reg_idx(val),
             0x71 => self.vid.set_reg(val),
 
-            0x58 => { /* ext0 interrupt enable - stub */ }
-            0x59 => { /* ext1 interrupt enable - stub */ }
-            0x5A => { /* ext2 interrupt enable - stub */ }
-            0x5B => { /* ext3 interrupt enable - stub */ }
+            0x58 => {}
+            0x59 => {}
+            0x5A => {}
+            0x5B => {}
 
             _ => {
                 if (0x10..=0x1F).contains(&addr) {
-                    // ext0 write - stub
+                    if let Some(ref mut ext) = self.ext0 {
+                        ext.write_port(addr & 0x0F, val);
+                    }
                 } else if (0x20..=0x2F).contains(&addr) {
-                    // ext1 write - stub
                 }
-                // unhandled port write - silently ignore
             }
         }
     }
 
     fn read_port(&mut self, addr: u8) -> u8 {
-        let val = match addr {
+        match addr {
             0x58 => self.key.read_row(),
             0x59 => 0x40 | self.pend_it,
             0x5A => self.ext_types,
             _ => {
                 if (0x10..=0x1F).contains(&addr) {
-                    // ext0 read - stub
-                    0xFF
-                } else if (0x20..=0x2F).contains(&addr) {
-                    // ext1 read - stub
-                    0xFF
+                    if let Some(ref mut ext) = self.ext0 {
+                        ext.read_port(addr & 0x0F)
+                    } else {
+                        0xFF
+                    }
                 } else {
                     0xFF
                 }
             }
-        };
-        val
+        }
     }
 }
 
 impl Mmu for TvcBus {
     fn r8(&mut self, addr: u16) -> u8 {
+        if self.is_ext_page3_access(addr) {
+            let offset = addr & 0x3FFF;
+            if offset < 0x2000 {
+                if let Some(ext) = self.active_ext_mut() {
+                    return ext.r8(offset);
+                }
+                return 0xFF;
+            }
+        }
         self.mmu.r8(addr)
     }
 
     fn w8(&mut self, addr: u16, val: u8) {
+        if self.is_ext_page3_access(addr) {
+            let offset = addr & 0x3FFF;
+            if offset < 0x2000 {
+                if let Some(ext) = self.active_ext_mut() {
+                    ext.w8(offset, val);
+                }
+                return;
+            }
+        }
         self.mmu.w8(addr, val);
     }
 
@@ -137,14 +176,16 @@ pub struct Tvc {
 
 impl Tvc {
     pub fn new(is_plus: bool) -> Self {
-        Tvc {
+        let mut tvc = Tvc {
             bus: TvcBus::new(is_plus),
             z80: Z80::new(),
             framebuffer: vec![0xFF000000; 608 * 288],
             frame_complete: false,
             clock: 0,
             breakpoints: HashSet::new(),
-        }
+        };
+        tvc.reset();
+        tvc
     }
 
     pub fn reset(&mut self) {
@@ -154,11 +195,22 @@ impl Tvc {
     }
 
     pub fn add_rom(&mut self, name: &str, data: &[u8]) {
-        self.bus.mmu.add_rom(name, data);
+        if name.contains("DOS") {
+            let hbf = HBF::new(data);
+            self.bus.extension_attach(0, hbf);
+        } else {
+            self.bus.mmu.add_rom(name, data);
+        }
     }
 
     pub fn load_cart_rom(&mut self, data: &[u8]) {
         self.bus.mmu.load_cart_rom(data);
+    }
+
+    pub fn load_disk(&mut self, name: &str, data: &[u8]) {
+        if let Some(ref mut ext) = self.bus.ext0 {
+            ext.load_disk(name, data);
+        }
     }
 
     pub fn key_down(&mut self, code: u32) -> bool {
@@ -199,7 +251,6 @@ impl Tvc {
         self.breakpoints.clear();
     }
 
-    /// Returns true if a breakpoint was hit.
     pub fn run_for_a_frame(&mut self) -> bool {
         let mut do_break = false;
         let mut remaining = FRAME_CLOCKS as u32;

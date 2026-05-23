@@ -1,4 +1,6 @@
 mod emu;
+mod fd1793;
+mod hbf;
 mod key;
 mod log;
 mod mmu;
@@ -13,7 +15,8 @@ mod asm;
 use eframe::egui::ViewportBuilder;
 
 fn main() -> eframe::Result<()> {
-    let mut app = ui::EmuApp::new(emu::Emu::new());
+    let machine_type = emu::MachineType::all_types()[0];
+    let mut app = ui::EmuApp::new(emu::Emu::new(machine_type));
     app.emu.load_roms();
 
     let options = eframe::NativeOptions {

@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use crate::emu::Emu;
+use crate::emu::{Emu, MachineType};
 use eframe::egui::{self, ColorImage, TextureHandle};
 
 fn egui_key_to_js_code(key: egui::Key) -> Option<u32> {
@@ -81,10 +81,14 @@ pub struct EmuApp {
     prev_ctrl: bool,
     prev_alt: bool,
     show_log: bool,
+    machine_types: Vec<MachineType>,
+    selected_machine: usize,
 }
 
 impl EmuApp {
     pub fn new(emu: Emu) -> Self {
+        let machine_types = MachineType::all_types();
+        let selected_machine = 0;
         EmuApp {
             emu,
             screen_texture: None,
@@ -95,6 +99,8 @@ impl EmuApp {
             prev_ctrl: false,
             prev_alt: false,
             show_log: false,
+            machine_types,
+            selected_machine,
         }
     }
 
@@ -218,6 +224,22 @@ impl eframe::App for EmuApp {
             ui.heading("rtvc - Videoton TV Computer Emulator");
 
             ui.horizontal(|ui| {
+                ui.label("Type:");
+                let prev_selected = self.selected_machine;
+                egui::ComboBox::from_id_salt("machine_type")
+                    .selected_text(self.machine_types[self.selected_machine].label())
+                    .show_ui(ui, |ui| {
+                        for (i, mt) in self.machine_types.iter().enumerate() {
+                            ui.selectable_value(&mut self.selected_machine, i, mt.label());
+                        }
+                    });
+                if self.selected_machine != prev_selected {
+                    self.emu
+                        .reload(self.machine_types[self.selected_machine]);
+                }
+
+                ui.separator();
+
                 if ui
                     .selectable_label(
                         !self.emu.running,
