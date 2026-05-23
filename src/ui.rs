@@ -80,6 +80,7 @@ pub struct EmuApp {
     prev_shift: bool,
     prev_ctrl: bool,
     prev_alt: bool,
+    show_log: bool,
 }
 
 impl EmuApp {
@@ -93,6 +94,7 @@ impl EmuApp {
             prev_shift: false,
             prev_ctrl: false,
             prev_alt: false,
+            show_log: false,
         }
     }
 
@@ -190,6 +192,28 @@ impl eframe::App for EmuApp {
             self.last_frame_time = Instant::now();
         }
 
+        if self.show_log {
+            egui::TopBottomPanel::bottom("log_panel")
+                .resizable(true)
+                .default_height(140.0)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.strong("IO Log");
+                        if ui.small_button("Clear").clicked() {
+                            self.emu.tvc.clear_log();
+                        }
+                    });
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false; 2])
+                        .show(ui, |ui| {
+                            let entries = self.emu.tvc.log_entries();
+                            for entry in entries.iter().rev() {
+                                ui.label(entry);
+                            }
+                        });
+                });
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("rtvc - Videoton TV Computer Emulator");
 
@@ -219,45 +243,30 @@ impl eframe::App for EmuApp {
                         "not found"
                     }
                 ));
-            });
-
-            ui.separator();
-
-            let screen_height = ui.available_height() - 160.0;
-            let screen_size = egui::vec2(ui.available_width(), screen_height.max(100.0));
-
-            if let Some(texture) = &self.screen_texture {
-                ui.add(
-                    egui::Image::from_texture(texture)
-                        .max_size(screen_size)
-                        .maintain_aspect_ratio(true),
-                );
-            } else {
-                ui.allocate_space(screen_size);
-                let rect = ui.min_rect();
-                let painter = ui.painter();
-                painter.rect_filled(rect, 0.0, egui::Color32::BLACK);
-            }
-
-            ui.separator();
-
-            ui.horizontal(|ui| {
-                ui.strong("IO Log");
-                if ui.small_button("Clear").clicked() {
-                    self.emu.tvc.clear_log();
+                if ui.button("Log").clicked() {
+                    self.show_log = !self.show_log;
                 }
             });
 
-            let log_height = 140.0;
-            egui::ScrollArea::vertical()
-                .auto_shrink([false; 2])
-                .max_height(log_height)
-                .show(ui, |ui| {
-                    let entries = self.emu.tvc.log_entries();
-                    for entry in entries.iter().rev() {
-                        ui.label(entry);
-                    }
-                });
+            ui.separator();
+
+            let avail = ui.available_size();
+            let disp_hw = 3.0 / 4.0;
+            let w = avail.x.min(avail.y / disp_hw);
+            let h = w * disp_hw;
+            let img_size = egui::vec2(w, h);
+
+            let (_, rect) = ui.allocate_space(img_size);
+            if let Some(texture) = &self.screen_texture {
+                ui.painter().image(
+                    texture.id(),
+                    rect,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+            } else {
+                ui.painter().rect_filled(rect, 0.0, egui::Color32::BLACK);
+            }
         });
 
         ctx.request_repaint();
