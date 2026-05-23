@@ -156,4 +156,5 @@ The Z80 is little-endian.
 1. **Bank Pointers:** Instead of copying memory around, keep an array of 4 pointers/references representing the currently visible block for Pages 0, 1, 2, and 3.
 2. **Update Map on Write:** When the CPU writes to the memory map or video map I/O ports, update these 4 pointers based on the logic described above.
 3. **Hot Path:** `r8` and `w8` are called millions of times per second. They should be highly optimized: resolve `page_index = addr >> 14`, look up the pointer array, and access the underlying buffer.
+4. **Initialization:** Initialize `_mapVal` / `_mapValVid` to a sentinel value (e.g., `-1` in JS, `0xFF` in Rust `u8`) that differs from the first real `setMap`/`setVidMap` call to avoid early-return guards blocking initial page configuration.
 4. **EXT Exception:** The only branch in the hot path should be checking if the access is in Page 3 and if that page is mapped to EXT, to route calls to the expansion module or EXTH ROM.

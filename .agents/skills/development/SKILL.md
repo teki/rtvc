@@ -15,10 +15,14 @@ This skill provides step-by-step instructions and references for compiling, exec
   ```bash
   cargo build
   ```
-- **Run the main emulator binary:**
+- **Run the main emulator binary (opens egui window):**
   ```bash
-  cargo run
+  cargo run --bin rtvc
   ```
+  - Place ROM files (`TVC12_D3.64K`, `TVC12_D4.64K`, `TVC12_D7.64K`) in `roms/` for the TVC to boot.
+  - Use the "Log" button to toggle the IO port log panel.
+  - Use the "Reset" button to reset the emulator.
+  - PAL 4:3 display aspect ratio is applied to the framebuffer.
 
 ### Testing
 

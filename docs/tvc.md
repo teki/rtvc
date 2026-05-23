@@ -46,17 +46,14 @@ All components (Video, Sound, Interrupts) are updated in terms of CPU clock cycl
 
 ## Execution Loop and Core Step
 
-The emulation advances frame-by-frame using the [runForAFrame](file:///Users/teki/dev/jstvc/src/tvc.js#L111) loop:
+The emulation advances frame-by-frame using `run_for_a_frame()` (equivalent to the JS `runForAFrame`):
 
-1. **CPU Step**: Executes one CPU instruction via `step(0)` and returns the cycles consumed (`cpuTime`).
-2. **Breakpoint Check**: Checks if the current Program Counter (`PC`) matches a debug breakpoint.
-3. **Video Advancement**: Call [streamSome(cpuTime)](file:///Users/teki/dev/jstvc/src/vid.js#L207) to advance the CRTC beam counters by the same cycle duration.
-4. **Interrupt Handling**:
-   - If the Video Controller signals a cursor interrupt trigger and Z80 interrupts are enabled (`irqEnabled()`), it asserts an IRQ (`_z80.irq()`).
-   - The pending interrupt flag (`_pendIt` bit 4) is cleared.
-   - The video stream is advanced by the interrupt duration.
-5. **Frame Termination**: Check `_vid.renderStream()`. If a full screen frame has successfully been rendered, the framebuffer is refreshed via `_fb.refresh()` and the loop exits.
-6. **Emulation Speed Limit**: The loop limits execution time so it does not exceed 2x the standard frame clocks in a single run (to prevent emulation runaway).
+1. **CPU Run**: Executes CPU instructions via `step(0)` until `FRAME_CLOCKS` (62500) cycles have been consumed, checking breakpoints each step.
+2. **Interrupt Handling**: If the CRTC is initialized and Z80 interrupts are enabled (`iff1 != 0`), fires a single cursor interrupt (IRQ) per frame via `z80.irq()`.
+3. **Frame Render**: Calls `vid.draw_frame(vidmem, framebuffer)` to render the complete 608×288 frame directly from VRAM (bypassing the streaming engine used in the JS reference).
+4. **Frame Complete**: Sets `frame_complete = true` for the UI to consume the framebuffer.
+
+The Rust implementation uses a simplified `draw_frame()` approach instead of the JS streaming engine (`streamSome`/`renderStream`). This renders the full frame once per cycle batch rather than incrementally per scanline.
 
 ---
 
@@ -110,6 +107,29 @@ The TVC handles peripheral interrupts through a custom latch state stored in `_p
 2. The orchestrator checks if the interrupt is enabled. If Z80 interrupts are enabled (`irqEnabled()`), it halts execution and fires a Z80 interrupt service routine via `_z80.irq()`.
 3. The CPU services the interrupt, performing its routine (keyboard scanning, system timers, cassette sound).
 4. The Z80 services write to Port `0x07`, which clears the interrupt flag, restoring bit 4 of `_pendIt` to `1` (idle).
+
+---
+
+## ROM Loading
+
+The system ROM files are loaded at startup from the `roms/` directory:
+
+| File | Target Bank | Description |
+|:---|:---|---|
+| `TVC12_D3.64K` | SYS (upper 8KB, offset 0x2000) | System ROM upper half |
+| `TVC12_D4.64K` | SYS (lower 16KB) | System ROM lower half |
+| `TVC12_D7.64K` | EXTH (8KB) | Extension ROM |
+
+The `TvcMmu::add_rom()` method dispatches by filename matching the JS reference behavior.
+Cartridge ROMs use `load_cart_rom()` which maps into the CART bank.
+
+## IO Logging
+
+`TvcBus` contains a `log: Log` field (ring buffer, 200 entries). Every port write (`OUT`) and port read (`IN`) is logged with the format:
+- `OUT 0xXX <- 0xYY`
+- `IN  0xXX -> 0xYY`
+
+The UI exposes the log via a toggleable bottom panel with a "Clear" button.
 
 ---
 
