@@ -1,4 +1,5 @@
 mod mmu;
+mod vid;
 mod z80;
 mod z80_tables;
 mod dasm;
