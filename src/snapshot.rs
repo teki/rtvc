@@ -118,8 +118,7 @@ impl<'a> Reader<'a> {
     pub fn u64(&mut self) -> Result<u64> {
         let bytes = self.take(8)?;
         Ok(u64::from_le_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3],
-            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
         ]))
     }
 
@@ -148,7 +147,10 @@ impl<'a> Reader<'a> {
     }
 
     fn take(&mut self, len: usize) -> Result<&'a [u8]> {
-        let end = self.pos.checked_add(len).ok_or(SnapshotError::UnexpectedEof)?;
+        let end = self
+            .pos
+            .checked_add(len)
+            .ok_or(SnapshotError::UnexpectedEof)?;
         if end > self.data.len() {
             return Err(SnapshotError::UnexpectedEof);
         }

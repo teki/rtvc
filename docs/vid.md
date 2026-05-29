@@ -11,9 +11,11 @@ This document provides a language-independent architectural guide for building a
 - [Graphics and Color Modes](#graphics-and-color-modes)
 - [Color Palette and RGB Format](#color-palette-and-rgb-format)
 - [Cursor and Vertical Sync Interrupts](#cursor-and-vertical-sync-interrupts)
-- [Rendering Architecture: Two Implementation Modes](#rendering-architecture-two-implementation-modes)
+- [Rendering Architecture: Three Scheduling Modes](#rendering-architecture-three-scheduling-modes)
   - [1. Interleaved/Streaming Mode (High Accuracy)](#1-interleavedstreaming-mode-high-accuracy)
-  - [2. Once-per-Frame Mode (Simple/Basic)](#2-once-per-frame-mode-simplebasic)
+  - [2. Line Mode (Medium Accuracy)](#2-line-mode-medium-accuracy)
+  - [3. Once-per-Frame Mode (Fast Frame)](#3-once-per-frame-mode-fast-frame)
+  - [Lost Sync Presentation](#lost-sync-presentation)
 
 ---
 
@@ -205,9 +207,9 @@ The CPU acknowledges/clears this interrupt by writing to **Port `0x07`**.
 
 ---
 
-## Rendering Architecture: Two Implementation Modes
+## Rendering Architecture: Three Scheduling Modes
 
-Developers can implement the TVC video emulation in two ways, depending on their performance and accuracy requirements.
+Developers can choose among three TVC video scheduling modes, depending on their performance and accuracy requirements.
 
 ### 1. Interleaved/Streaming Mode (High Accuracy)
 
@@ -234,7 +236,23 @@ Used in high-accuracy emulators to support mid-frame effects (e.g. split-screens
 
 ---
 
-### 2. Once-per-Frame Mode (Simple/Basic)
+### 2. Line Mode (Medium Accuracy)
+
+Used when software needs line-level CRTC behavior but per-instruction video scheduling is too expensive.
+
+#### Mechanics
+1. **Line CPU Run**: The Z80 CPU runs for one display line's worth of clocks.
+2. **Line Stream**: The CRTC advances by the same line budget through `stream_some()`.
+3. **Cycle Debt**: If a CPU instruction overruns the line budget, the extra cycles are carried as debt into following lines so line mode does not speed up the CPU by allowing one overrun per line.
+4. **Bounded Rendering**: `render_stream()` consumes whatever synchronized stream data is available without waiting past the host screen-time budget.
+
+#### Advantages
+- Captures many raster splits, palette changes, border changes, and CRTC updates that happen on line boundaries.
+- Costs less CPU than interleaving video after every instruction.
+
+---
+
+### 3. Once-per-Frame Mode (Fast Frame)
 
 Used in basic emulators to simplify the rendering pipeline and decrease CPU overhead.
 
@@ -242,6 +260,8 @@ Used in basic emulators to simplify the rendering pipeline and decrease CPU over
 1. **CPU Run**: The Z80 CPU runs for a full frame's worth of cycles (62,500 clocks) without advancing the screen beam character-by-character.
 2. **Frame Trigger**: At the end of the frame (or when a frame-draw is requested), the video module is called once to draw the entire framebuffer.
 3. **Static Draw**: The function reads the current state of Video RAM, palette registers, and CRTC registers, then draws the screen onto the 608x288 pixel framebuffer.
+
+---
 
 #### Design Pseudo-code
 
@@ -306,6 +326,12 @@ void draw_frame(uint8_t* vram, uint32_t* framebuffer) {
 
 ---
 
+### Lost Sync Presentation
+
+Streaming modes treat the CRTC stream as the source of truth, but presentation is bounded by host screen time. If the stream does not produce recognizable sync inside the current screen-time budget, the emulator keeps presenting the current monitor surface while it tries to relock. After several consecutive host ticks without a synchronized frame, it draws a black lost-sync background with moving white stripes and keeps running. This avoids freezing or spinning forever on misconfigured CRTC values while making the sync failure visible.
+
+---
+
 ## Emulation Divergences and TODOs
 
 The TVC's video subsystem and emulator implementation have several functional differences compared to the standard Motorola MC6845 specification described in the [6845.md datasheet reference](file:///Users/teki/dev/pdfconv/6845/6845.md). These are documented below as emulation TODOs:
@@ -324,4 +350,3 @@ The TVC's video subsystem and emulator implementation have several functional di
    - The parameters configured in register `R8` are read but bypassed during emulation.
 5. **[TODO] Light Pen Support (R16/R17)**:
    - Light pen address latching and strobe registers (`R16` and `R17`) are currently commented out and unimplemented.
-

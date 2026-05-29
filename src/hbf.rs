@@ -71,11 +71,7 @@ impl HBF {
     }
 
     pub fn read_port(&mut self, addr: u8) -> u8 {
-        if addr <= 4 {
-            self.fdc.read(addr)
-        } else {
-            0
-        }
+        if addr <= 4 { self.fdc.read(addr) } else { 0 }
     }
 
     pub fn write_port(&mut self, addr: u8, val: u8) {

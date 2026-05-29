@@ -10,7 +10,9 @@ fn parse_dat(content: &str) -> Vec<(u32, String)> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let Some(space_idx) = line.find(' ') else { continue };
+        let Some(space_idx) = line.find(' ') else {
+            continue;
+        };
         let hex_part = line[..space_idx].trim();
         let mnem_part = line[space_idx + 1..].trim();
         if hex_part.is_empty() || mnem_part.is_empty() {
@@ -53,15 +55,20 @@ fn build_tables() -> (HashMap<u32, String>, HashMap<(String, usize), u32>) {
 
             // Add implicit-A aliases for ALU instructions with explicit A in template
             let first_token = mnem.split_whitespace().next().unwrap_or("");
-            if matches!(first_token, "ADD" | "ADC" | "SUB" | "SBC" | "AND" | "XOR" | "OR" | "CP")
-                && cleaned.contains("A,")
+            if matches!(
+                first_token,
+                "ADD" | "ADC" | "SUB" | "SBC" | "AND" | "XOR" | "OR" | "CP"
+            ) && cleaned.contains("A,")
             {
                 let implicit = cleaned.replace("A,", "");
                 mn_to_op.insert((implicit, op_count.saturating_sub(1)), key);
             }
 
             // Add decimal alias for RST
-            if let Some(v) = cleaned.strip_prefix("RST").and_then(|s| u32::from_str_radix(s, 16).ok()) {
+            if let Some(v) = cleaned
+                .strip_prefix("RST")
+                .and_then(|s| u32::from_str_radix(s, 16).ok())
+            {
                 let dec_key = format!("RST{}", v);
                 mn_to_op.insert((dec_key, op_count), key);
             }
@@ -93,8 +100,10 @@ fn build_tables() -> (HashMap<u32, String>, HashMap<(String, usize), u32>) {
 
             // Implicit-A alias for IX variants
             let first_token = ix_mnem.split_whitespace().next().unwrap_or("");
-            if matches!(first_token, "ADD" | "ADC" | "SUB" | "SBC" | "AND" | "XOR" | "OR" | "CP")
-                && ix_clean.contains("A,")
+            if matches!(
+                first_token,
+                "ADD" | "ADC" | "SUB" | "SBC" | "AND" | "XOR" | "OR" | "CP"
+            ) && ix_clean.contains("A,")
             {
                 let implicit = ix_clean.replace("A,", "");
                 mn_to_op.insert((implicit, ix_count.saturating_sub(1)), ix_key);
@@ -112,8 +121,10 @@ fn build_tables() -> (HashMap<u32, String>, HashMap<(String, usize), u32>) {
 
             // Implicit-A alias for IY variants
             let first_token = iy_mnem.split_whitespace().next().unwrap_or("");
-            if matches!(first_token, "ADD" | "ADC" | "SUB" | "SBC" | "AND" | "XOR" | "OR" | "CP")
-                && iy_clean.contains("A,")
+            if matches!(
+                first_token,
+                "ADD" | "ADC" | "SUB" | "SBC" | "AND" | "XOR" | "OR" | "CP"
+            ) && iy_clean.contains("A,")
             {
                 let implicit = iy_clean.replace("A,", "");
                 mn_to_op.insert((implicit, iy_count.saturating_sub(1)), iy_key);

@@ -11,6 +11,10 @@ use crate::vid::{Vid, VidModel};
 use crate::z80::Z80;
 
 const FRAME_CLOCKS: u64 = 62500;
+const SCREEN_LINES: u32 = 312;
+const LINE_CLOCKS: u32 = (FRAME_CLOCKS as u32) / SCREEN_LINES;
+const LINE_CLOCK_REMAINDER: u32 = (FRAME_CLOCKS as u32) % SCREEN_LINES;
+const SYNC_TIMEOUT_HOST_FRAMES: u32 = 8;
 
 pub struct TvcBus {
     pub mmu: TvcMmu,
@@ -173,12 +177,14 @@ pub struct Tvc {
     pub frame_complete: bool,
     vid_model: VidModel,
     clock: u64,
+    sync_timeout_frames: u32,
+    line_cycle_debt: u32,
     breakpoints: HashSet<u16>,
 }
 
 impl Tvc {
     pub fn new(is_plus: bool) -> Self {
-        Self::new_with_vid_model(is_plus, VidModel::Simple)
+        Self::new_with_vid_model(is_plus, VidModel::FastFrame)
     }
 
     pub fn new_with_vid_model(is_plus: bool, vid_model: VidModel) -> Self {
@@ -189,6 +195,8 @@ impl Tvc {
             frame_complete: false,
             vid_model,
             clock: 0,
+            sync_timeout_frames: 0,
+            line_cycle_debt: 0,
             breakpoints: HashSet::new(),
         };
         tvc.reset();
@@ -209,8 +217,9 @@ impl Tvc {
         let mut meta = Writer::new();
         meta.u8(self.bus.mmu.is_plus() as u8);
         meta.u8(match self.vid_model {
-            VidModel::Simple => 0,
-            VidModel::Realistic => 1,
+            VidModel::FastFrame => 0,
+            VidModel::Interleaved => 1,
+            VidModel::Line => 2,
         });
         meta.u64(self.clock);
         meta.u8(self.frame_complete as u8);
@@ -259,9 +268,14 @@ impl Tvc {
         let mut meta = Reader::new(meta.data);
         let is_plus = meta.u8()? != 0;
         let vid_model = match meta.u8()? {
-            0 => VidModel::Simple,
-            1 => VidModel::Realistic,
-            _ => return Err(SnapshotError::InvalidData("unknown video model".to_string())),
+            0 => VidModel::FastFrame,
+            1 => VidModel::Interleaved,
+            2 => VidModel::Line,
+            _ => {
+                return Err(SnapshotError::InvalidData(
+                    "unknown video model".to_string(),
+                ));
+            }
         };
         let clock = meta.u64()?;
         let frame_complete = meta.u8()? != 0;
@@ -306,6 +320,8 @@ impl Tvc {
         self.z80.reset();
         self.bus.reset();
         self.clock = 0;
+        self.sync_timeout_frames = 0;
+        self.line_cycle_debt = 0;
     }
 
     pub fn add_rom(&mut self, name: &str, data: &[u8]) {
@@ -365,10 +381,28 @@ impl Tvc {
         self.breakpoints.clear();
     }
 
-    pub fn run_for_a_frame(&mut self) -> bool {
+    fn draw_sync_timeout(&mut self) {
+        let phase = (self.sync_timeout_frames as usize * 11) % 96;
+        for (idx, pixel) in self.framebuffer.iter_mut().enumerate() {
+            let x = idx % 608;
+            let y = idx / 608;
+            let stripe = (x + y * 2 + phase) % 96 < 8;
+            *pixel = if stripe { 0xFFFFFFFF } else { 0xFF000000 };
+        }
+    }
+
+    fn finish_frame_irq(&mut self) {
+        if self.bus.vid.is_initialized() && self.z80.state.iff1 != 0 {
+            let irq_duration = self.z80.irq(&mut self.bus);
+            self.bus.pend_it &= !0x10;
+            self.clock += irq_duration as u64;
+        }
+    }
+
+    fn run_cpu_for(&mut self, mut remaining: u32, stream_video: bool) -> (bool, bool, u32) {
         let mut do_break = false;
-        let mut remaining = FRAME_CLOCKS as u32;
         let mut frame_complete = false;
+        let mut elapsed = 0u32;
 
         while !do_break && remaining > 0 {
             let cpu_time = self.z80.step(&mut self.bus, 0) as u64;
@@ -378,9 +412,10 @@ impl Tvc {
             }
 
             self.clock += cpu_time;
+            elapsed = elapsed.saturating_add(cpu_time.try_into().unwrap_or(u32::MAX));
             remaining = remaining.saturating_sub(cpu_time as u32);
 
-            if self.vid_model == VidModel::Realistic {
+            if stream_video {
                 let cursor_it = self.bus.vid.stream_some(
                     self.bus.mmu.get_vid_mem(),
                     cpu_time.try_into().unwrap_or(u32::MAX),
@@ -392,19 +427,70 @@ impl Tvc {
             }
         }
 
-        if self.bus.vid.is_initialized() && self.z80.state.iff1 != 0 {
-            let irq_duration = self.z80.irq(&mut self.bus);
-            self.bus.pend_it &= !0x10;
-            self.clock += irq_duration as u64;
-        }
+        (do_break, frame_complete, elapsed)
+    }
 
-        if self.vid_model == VidModel::Simple {
-            let vidmem = self.bus.mmu.get_vid_mem();
-            self.bus.vid.draw_frame(vidmem, &mut self.framebuffer);
-            frame_complete = true;
-        }
+    pub fn run_for_a_frame(&mut self) -> bool {
+        let (do_break, frame_complete) = match self.vid_model {
+            VidModel::FastFrame => {
+                let (do_break, _, _) = self.run_cpu_for(FRAME_CLOCKS as u32, false);
+                let vidmem = self.bus.mmu.get_vid_mem();
+                self.bus.vid.draw_frame(vidmem, &mut self.framebuffer);
+                (do_break, true)
+            }
+            VidModel::Line => {
+                let mut do_break = false;
+                let mut frame_complete = false;
+                let mut line_error = 0u32;
+                for _ in 0..SCREEN_LINES {
+                    let mut line_clocks = LINE_CLOCKS;
+                    line_error += LINE_CLOCK_REMAINDER;
+                    if line_error >= SCREEN_LINES {
+                        line_clocks += 1;
+                        line_error -= SCREEN_LINES;
+                    }
 
-        self.frame_complete = frame_complete;
+                    let cpu_budget = line_clocks.saturating_sub(self.line_cycle_debt);
+                    let (line_break, line_complete, elapsed) = self.run_cpu_for(cpu_budget, false);
+                    do_break |= line_break;
+                    self.line_cycle_debt = if self.line_cycle_debt > line_clocks {
+                        self.line_cycle_debt - line_clocks
+                    } else {
+                        elapsed.saturating_sub(cpu_budget)
+                    };
+                    let cursor_it = self
+                        .bus
+                        .vid
+                        .stream_some(self.bus.mmu.get_vid_mem(), line_clocks);
+                    if cursor_it {
+                        self.bus.pend_it &= !0x10;
+                    }
+                    frame_complete |= self.bus.vid.render_stream(&mut self.framebuffer, 608);
+                    if do_break {
+                        break;
+                    }
+                    frame_complete |= line_complete;
+                }
+                (do_break, frame_complete)
+            }
+            VidModel::Interleaved => {
+                let (do_break, frame_complete, _) = self.run_cpu_for(FRAME_CLOCKS as u32, true);
+                (do_break, frame_complete)
+            }
+        };
+
+        self.finish_frame_irq();
+
+        if frame_complete {
+            self.sync_timeout_frames = 0;
+            self.frame_complete = true;
+        } else {
+            self.sync_timeout_frames = self.sync_timeout_frames.saturating_add(1);
+            if self.sync_timeout_frames >= SYNC_TIMEOUT_HOST_FRAMES {
+                self.draw_sync_timeout();
+            }
+            self.frame_complete = true;
+        }
 
         do_break
     }
@@ -416,7 +502,7 @@ mod tests {
 
     #[test]
     fn snapshot_round_trips_core_state() {
-        let mut tvc = Tvc::new_with_vid_model(true, VidModel::Realistic);
+        let mut tvc = Tvc::new_with_vid_model(true, VidModel::Interleaved);
         tvc.z80.state.r16[11] = 0x1234;
         tvc.bus.mmu.w8(0x4000, 0xAB);
         tvc.bus.vid.set_border(0x55);
@@ -427,7 +513,7 @@ mod tests {
         restored.load_snapshot(&snapshot).unwrap();
 
         assert!(restored.bus.mmu.is_plus());
-        assert_eq!(restored.vid_model(), VidModel::Realistic);
+        assert_eq!(restored.vid_model(), VidModel::Interleaved);
         assert_eq!(restored.z80.state.r16[11], 0x1234);
         assert_eq!(restored.bus.mmu.r8(0x4000), 0xAB);
         assert_eq!(restored.bus.pend_it, 0x0F);

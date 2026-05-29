@@ -1,4 +1,4 @@
- #![allow(dead_code)]
+#![allow(dead_code)]
 /// Memory Management Unit trait for the Videoton TV Computer emulators
 pub trait Mmu {
     fn r8(&mut self, addr: u16) -> u8;
@@ -244,7 +244,10 @@ impl TvcMmu {
         w.raw_bytes(&self.exth);
     }
 
-    pub fn read_snapshot(&mut self, r: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::Result<()> {
+    pub fn read_snapshot(
+        &mut self,
+        r: &mut crate::snapshot::Reader<'_>,
+    ) -> crate::snapshot::Result<()> {
         let is_plus = r.u8()? != 0;
         if is_plus != self.is_plus {
             *self = TvcMmu::new(is_plus);
@@ -307,7 +310,9 @@ fn write_optional_bank(w: &mut crate::snapshot::Writer, bank: Option<&[u8; 0x400
     }
 }
 
-fn read_optional_bank(r: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::Result<Option<[u8; 0x4000]>> {
+fn read_optional_bank(
+    r: &mut crate::snapshot::Reader<'_>,
+) -> crate::snapshot::Result<Option<[u8; 0x4000]>> {
     if r.u8()? == 0 {
         return Ok(None);
     }

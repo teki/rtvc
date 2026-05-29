@@ -37,10 +37,10 @@ Future build-target and UI direction is tracked in [docs/future_plan.md](future_
 - **MMU**:
   - `FakeMmu` in `mmu.rs` provides a flat, 64 KB memory space specifically for running CPU tests (like FUSE and ZEX).
   - `TvcMmu` in `mmu.rs` implements TVC bank switching (mapping external/internal memory banks into four 16 KB pages), wired to the main binary via `TvcBus`.
-- **Video**: `Vid` struct emulates the MC6845 CRTC and supports both `VidModel::Simple` (`draw_frame()` renders directly from VRAM once per frame) and `VidModel::Realistic` (`stream_some()`/`render_stream()` incrementally follow CRTC timing).
+- **Video**: `Vid` struct emulates the MC6845 CRTC and supports three runtime video schedules: `VidModel::FastFrame` (`draw_frame()` after one screen-time CPU budget), `VidModel::Line` (CPU and CRTC advanced once per display line), and `VidModel::Interleaved` (`stream_some()`/`render_stream()` after each CPU instruction).
 - **Keyboard**: `Key` struct implements a row/column matrix with dynamic auto-mapping from host keyboard codes to TVC layout.
 - **System Bus**: `TvcBus` wraps MMU, Video, Keyboard, and Logger, implementing the `Mmu` trait for Z80 memory and I/O access with port dispatch.
-- **Machine Orchestrator**: `Tvc` owns the bus, Z80 CPU, framebuffer, and runtime `VidModel` setting, providing `run_for_a_frame()` over 62500 CPU cycles.
+- **Machine Orchestrator**: `Tvc` owns the bus, Z80 CPU, framebuffer, and runtime `VidModel` setting, providing `run_for_a_frame()` over 62500 CPU cycles. Streaming modes are bounded by this host screen-time budget and draw a black background with moving white stripes after several consecutive host ticks without a synchronized CRTC frame.
 - **Library Boundary**: [src/lib.rs](../src/lib.rs) exposes the emulator core as an `rlib` for native tooling and as a `cdylib` for WASM packaging.
 - **Native Emulator Wrapper**: `Emu` wraps `Tvc` with run state, ROM loading from `roms/`, and zipped disk discovery from `disks/`. It is compiled only with the `native` feature.
 - **Native GUI**: `EmuApp` (eframe/egui) displays the TVC screen at PAL 4:3 aspect ratio, routes keyboard input to the TVC, exposes the video model as a runtime setting, and shows an optional IO log panel. It is compiled only with the `native` feature.
@@ -53,5 +53,5 @@ Future build-target and UI direction is tracked in [docs/future_plan.md](future_
 - Rust Edition: `2024` (requires Rust ≥ 1.85).
 - Default feature: `native`, which enables `egui` 0.31, `eframe` 0.31, and `zip` 2 for the desktop application.
 - WASM feature: `wasm`, which enables only `wasm-bindgen` for the browser-facing API. Build it with `--no-default-features --features wasm`.
-- Web video defaults: `web-vid-simple` and `web-vid-realistic` select the default `VidModel` for WASM constructors. They are mutually exclusive; omitting both defaults to simple for lightweight web builds.
+- Web video defaults: `web-vid-simple` and `web-vid-realistic` select the default `VidModel` for WASM constructors. They are mutually exclusive; omitting both defaults to `VidModel::FastFrame` for lightweight web builds. The WASM string API accepts `fast-frame`, `line`, and `interleaved` plus the legacy aliases `simple` and `realistic`.
 - Package dependencies and metadata are managed in [Cargo.toml](../Cargo.toml).

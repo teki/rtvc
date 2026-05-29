@@ -28,7 +28,7 @@ This document records intended direction for future changes so implementation wo
 - Must avoid egui, eframe, native filesystem assumptions, and large UI dependencies.
 - Uses [src/wasm.rs](../src/wasm.rs) as the public browser-facing API.
 - JavaScript owns browser UI, canvas presentation, keyboard event wiring, and file picker plumbing.
-- Default video model should be `VidModel::Simple` unless explicitly built otherwise.
+- Default video model should be `VidModel::FastFrame` unless explicitly built otherwise.
 - Snapshot upload bundles are produced with `cargo bundle-web <snapshot>`.
 
 ### Full Web
@@ -40,9 +40,11 @@ This document records intended direction for future changes so implementation wo
 
 ## Video Model Policy
 
-- Keep `VidModel::Simple` and `VidModel::Realistic` in [src/vid.rs](../src/vid.rs) unless the file becomes genuinely hard to maintain.
-- `VidModel::Simple` is the small, direct framebuffer renderer.
-- `VidModel::Realistic` is the streaming CRTC-timing renderer based on `stream_some()` and `render_stream()`.
+- Keep the runtime `VidModel` choices in [src/vid.rs](../src/vid.rs) unless the file becomes genuinely hard to maintain.
+- `VidModel::FastFrame` is the small, direct framebuffer renderer: run one screen-time CPU budget, then render a full screen.
+- `VidModel::Line` is the middle-tier scheduler: alternate CPU execution and CRTC streaming once per display line.
+- `VidModel::Interleaved` is the streaming CRTC-timing renderer based on `stream_some()` and `render_stream()` after each CPU instruction.
+- Streaming modes must remain bounded by host screen time. If the CRTC stream does not produce sync for several consecutive host ticks, present the lost-sync black background with moving white stripes instead of waiting for a completed CRTC frame.
 - Native builds expose video selection as a runtime setting.
 - Web builds may choose constructor defaults through Cargo features:
   - `web-vid-simple`

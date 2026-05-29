@@ -49,12 +49,13 @@ All components (Video, Sound, Interrupts) are updated in terms of CPU clock cycl
 The emulation advances frame-by-frame using `run_for_a_frame()` (equivalent to the JS `runForAFrame`):
 
 1. **CPU Run**: Executes CPU instructions via `step(0)` until `FRAME_CLOCKS` (62500) cycles have been consumed, checking breakpoints each step.
-2. **Realistic Video Streaming**: When `VidModel::Realistic` is active, advances `vid.stream_some()` after each CPU instruction and consumes completed scan data through `vid.render_stream()`.
-3. **Interrupt Handling**: If the CRTC is initialized and Z80 interrupts are enabled (`iff1 != 0`), fires a single cursor interrupt (IRQ) per frame via `z80.irq()`.
-4. **Simple Frame Render**: When `VidModel::Simple` is active, calls `vid.draw_frame(vidmem, framebuffer)` to render the complete 608×288 frame directly from VRAM.
-5. **Frame Complete**: Sets `frame_complete = true` when the selected video model has produced a framebuffer for the UI to consume.
+2. **Fast Frame Video**: When `VidModel::FastFrame` is active, runs the CPU for one screen-time budget and then calls `vid.draw_frame(vidmem, framebuffer)` to render a complete 608×288 frame from the current video state.
+3. **Line Video**: When `VidModel::Line` is active, alternates CPU execution and CRTC streaming once per display line. This captures line-level CRTC effects without per-instruction video scheduling. Instruction overrun is carried forward as cycle debt so the CPU does not drift faster by overrunning every line.
+4. **Interleaved Video**: When `VidModel::Interleaved` is active, advances `vid.stream_some()` after each CPU instruction and consumes completed scan data through `vid.render_stream()`.
+5. **Interrupt Handling**: If the CRTC is initialized and Z80 interrupts are enabled (`iff1 != 0`), fires a single cursor interrupt (IRQ) per host screen tick via `z80.irq()`.
+6. **Presentation**: Sets `frame_complete = true` whenever a presentable framebuffer is ready for the UI. Streaming modes do not wait indefinitely for CRTC sync; they keep presenting the monitor surface while trying to relock, and only replace it with a black lost-sync background with moving white stripes after several consecutive host ticks without a synchronized frame.
 
-Native builds expose the video model as a runtime setting. WASM builds use Cargo features to select the constructor default: `web-vid-simple` for lightweight builds or `web-vid-realistic` for CRTC-timing builds. JavaScript can still call `setVidModel()` at runtime.
+Native builds expose the video model as a runtime setting. WASM builds use Cargo features to select the constructor default: `web-vid-simple` for lightweight builds or `web-vid-realistic` for CRTC-timing builds. JavaScript can call `setVidModel()` with `fast-frame`, `line`, or `interleaved`; legacy `simple` and `realistic` names are still accepted.
 
 ---
 

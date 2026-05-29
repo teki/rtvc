@@ -39,9 +39,14 @@ impl WasmTvc {
     #[wasm_bindgen(js_name = setVidModel)]
     pub fn set_vid_model(&mut self, model: &str) -> Result<(), JsValue> {
         let vid_model = match model {
-            "simple" => VidModel::Simple,
-            "realistic" => VidModel::Realistic,
-            _ => return Err(JsValue::from_str("expected `simple` or `realistic`")),
+            "fast-frame" | "simple" => VidModel::FastFrame,
+            "line" => VidModel::Line,
+            "interleaved" | "realistic" => VidModel::Interleaved,
+            _ => {
+                return Err(JsValue::from_str(
+                    "expected `fast-frame`, `line`, or `interleaved`",
+                ));
+            }
         };
         self.tvc.set_vid_model(vid_model);
         Ok(())
@@ -50,8 +55,9 @@ impl WasmTvc {
     #[wasm_bindgen(js_name = vidModel)]
     pub fn vid_model(&self) -> String {
         match self.tvc.vid_model() {
-            VidModel::Simple => "simple",
-            VidModel::Realistic => "realistic",
+            VidModel::FastFrame => "fast-frame",
+            VidModel::Line => "line",
+            VidModel::Interleaved => "interleaved",
         }
         .to_string()
     }
@@ -129,11 +135,11 @@ impl WasmTvc {
 fn default_web_vid_model() -> VidModel {
     #[cfg(feature = "web-vid-realistic")]
     {
-        VidModel::Realistic
+        VidModel::Interleaved
     }
 
     #[cfg(not(feature = "web-vid-realistic"))]
     {
-        VidModel::Simple
+        VidModel::FastFrame
     }
 }

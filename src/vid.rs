@@ -7,8 +7,9 @@ const STREAM_SIZE: usize = 608 * 288 * 2 * 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum VidModel {
-    Simple,
-    Realistic,
+    FastFrame,
+    Line,
+    Interleaved,
 }
 
 fn to_rgba(val: u8) -> u32 {
@@ -21,9 +22,7 @@ fn to_rgba(val: u8) -> u32 {
 
 fn gen_address(ma: u16, rl: u8) -> u16 {
     let ma = ma & 0xFFF;
-    ((rl as u16 & 0x03) << 6)
-        | (ma & 0x3F)
-        | ((ma & 0x3FC0) << 2)
+    ((rl as u16 & 0x03) << 6) | (ma & 0x3F) | ((ma & 0x3FC0) << 2)
 }
 
 pub struct Color {
@@ -36,7 +35,13 @@ pub struct Color {
 
 impl Color {
     pub fn new() -> Self {
-        Color { color: 0, r: 0, g: 0, b: 0, rgba: 0xFF }
+        Color {
+            color: 0,
+            r: 0,
+            g: 0,
+            b: 0,
+            rgba: 0xFF,
+        }
     }
 
     pub fn set_color(&mut self, val: u8) {
@@ -267,7 +272,10 @@ impl Vid {
         w.u8(self.border);
     }
 
-    pub fn read_snapshot(&mut self, r: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::Result<()> {
+    pub fn read_snapshot(
+        &mut self,
+        r: &mut crate::snapshot::Reader<'_>,
+    ) -> crate::snapshot::Result<()> {
         self.reset();
         self.mode = r.u8()? & 0x03;
         self.reg_idx = r.u8()?.min(17);
@@ -335,7 +343,11 @@ impl Vid {
             } else if self.row <= self.vt as i32 {
                 let vsync;
                 if self.vlines >= 0 {
-                    vsync = if (self.vlines as u8) < self.vsw { VSYNC } else { 0 };
+                    vsync = if (self.vlines as u8) < self.vsw {
+                        VSYNC
+                    } else {
+                        0
+                    };
                 } else if self.row > self.vsp as i32 {
                     vsync = VSYNC;
                     self.vlines = 0;

@@ -39,15 +39,15 @@ This skill provides step-by-step instructions and references for compiling, exec
   cargo check --lib --no-default-features --features wasm,web-vid-simple --target wasm32-unknown-unknown
   ```
   - The `wasm` feature exposes [src/wasm.rs](../../../src/wasm.rs) through `wasm-bindgen`.
-  - `web-vid-simple` selects the lightweight video model as the WASM constructor default.
+  - `web-vid-simple` selects `VidModel::FastFrame` as the WASM constructor default.
   - This build intentionally excludes the native `egui`/`eframe` UI stack and the zipped-disk filesystem helper.
   - JavaScript should render the returned framebuffer bytes to a browser canvas.
 
-- **Check the realistic WASM video build:**
+- **Check the interleaved WASM video build:**
   ```bash
   cargo check --lib --no-default-features --features wasm,web-vid-realistic --target wasm32-unknown-unknown
   ```
-  - `web-vid-realistic` selects the streaming CRTC video model as the WASM constructor default.
+  - `web-vid-realistic` selects `VidModel::Interleaved` as the WASM constructor default.
 
 - **Bundle a lightweight web snapshot upload:**
   ```bash

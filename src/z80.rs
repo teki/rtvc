@@ -1,5 +1,5 @@
- #![allow(dead_code)]
- use crate::mmu::Mmu;
+#![allow(dead_code)]
+use crate::mmu::Mmu;
 
 // Flag constants
 const F_S: u8 = 0x80;

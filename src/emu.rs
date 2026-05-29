@@ -53,11 +53,31 @@ impl MachineType {
 
     pub fn all_types() -> Vec<MachineType> {
         vec![
-            MachineType { is_plus: true, rom_version: RomVersion::V1_2, has_dos: true },
-            MachineType { is_plus: true, rom_version: RomVersion::V2_2, has_dos: true },
-            MachineType { is_plus: false, rom_version: RomVersion::V1_2, has_dos: false },
-            MachineType { is_plus: true, rom_version: RomVersion::V1_2, has_dos: false },
-            MachineType { is_plus: true, rom_version: RomVersion::V2_2, has_dos: false },
+            MachineType {
+                is_plus: true,
+                rom_version: RomVersion::V1_2,
+                has_dos: true,
+            },
+            MachineType {
+                is_plus: true,
+                rom_version: RomVersion::V2_2,
+                has_dos: true,
+            },
+            MachineType {
+                is_plus: false,
+                rom_version: RomVersion::V1_2,
+                has_dos: false,
+            },
+            MachineType {
+                is_plus: true,
+                rom_version: RomVersion::V1_2,
+                has_dos: false,
+            },
+            MachineType {
+                is_plus: true,
+                rom_version: RomVersion::V2_2,
+                has_dos: false,
+            },
         ]
     }
 

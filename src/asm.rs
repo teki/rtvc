@@ -99,10 +99,29 @@ fn user_operand_count(params: &str) -> usize {
 }
 
 fn is_register(s: &str) -> bool {
-    matches!(s,
-        "A" | "B" | "C" | "D" | "E" | "H" | "L" | "I" | "R" | "F" |
-        "IX" | "IY" | "SP" | "BC" | "DE" | "HL" | "AF" |
-        "IXH" | "IXL" | "IYH" | "IYL" | "AF'"
+    matches!(
+        s,
+        "A" | "B"
+            | "C"
+            | "D"
+            | "E"
+            | "H"
+            | "L"
+            | "I"
+            | "R"
+            | "F"
+            | "IX"
+            | "IY"
+            | "SP"
+            | "BC"
+            | "DE"
+            | "HL"
+            | "AF"
+            | "IXH"
+            | "IXL"
+            | "IYH"
+            | "IYL"
+            | "AF'"
     )
 }
 
@@ -117,7 +136,9 @@ fn is_condition(s: &str) -> bool {
 fn extract_indexed(s: &str) -> Option<(String, i8)> {
     let inner = s.strip_prefix('(')?.strip_suffix(')')?;
     for reg in ["IX", "IY"] {
-        let Some(rest) = inner.strip_prefix(reg) else { continue };
+        let Some(rest) = inner.strip_prefix(reg) else {
+            continue;
+        };
         if let Some(num) = rest.strip_prefix('+') {
             if let Some(v) = parse_number(num) {
                 return Some((format!("({}+DD)", reg), v as i8));
@@ -264,7 +285,13 @@ fn build_canonical(mnemonic: &str, params: &str) -> Option<(String, Vec<i8>)> {
                     key.push_str(&format!("{}", v));
                 }
                 "LD" => {
-                    let other_idx = if i == 0 && num_ops > 1 { 1 } else if i == 1 { 0 } else { usize::MAX };
+                    let other_idx = if i == 0 && num_ops > 1 {
+                        1
+                    } else if i == 1 {
+                        0
+                    } else {
+                        usize::MAX
+                    };
                     let is_16bit = if other_idx != usize::MAX {
                         is_16bit_reg(operands[other_idx])
                     } else {

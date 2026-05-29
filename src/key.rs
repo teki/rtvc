@@ -15,16 +15,16 @@ pub const KC_ALTGR: u32 = 225;
 
 type Mapping = (u8, u8, u8);
 
-    pub struct Key {
-        state: [u8; 11],
-        row: u8,
-        keymap: HashMap<u8, HashMap<u32, Mapping>>,
-        is_mapped: HashSet<u32>,
-        mod_state: u8,
-        last_press: u32,
-        ntable: String,
-        stable: String,
-    }
+pub struct Key {
+    state: [u8; 11],
+    row: u8,
+    keymap: HashMap<u8, HashMap<u32, Mapping>>,
+    is_mapped: HashSet<u32>,
+    mod_state: u8,
+    last_press: u32,
+    ntable: String,
+    stable: String,
+}
 
 impl Key {
     pub fn new() -> Self {
@@ -89,7 +89,11 @@ impl Key {
 
     fn add_mapping(&mut self, ch: char) -> Option<Mapping> {
         // Don't auto-map over modifier key entries
-        if self.last_press == KC_SHIFT || self.last_press == 17 || self.last_press == KC_ALT || self.last_press == KC_ALTGR {
+        if self.last_press == KC_SHIFT
+            || self.last_press == 17
+            || self.last_press == KC_ALT
+            || self.last_press == KC_ALTGR
+        {
             return None;
         }
 

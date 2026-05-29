@@ -14,9 +14,5 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
 
-    eframe::run_native(
-        "rtvc",
-        options,
-        Box::new(|_cc| Ok(Box::new(app))),
-    )
+    eframe::run_native("rtvc", options, Box::new(|_cc| Ok(Box::new(app))))
 }

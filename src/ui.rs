@@ -195,9 +195,7 @@ impl eframe::App for EmuApp {
             for event in &i.events {
                 match event {
                     egui::Event::Key {
-                        key,
-                        pressed: true,
-                        ..
+                        key, pressed: true, ..
                     } => {
                         if let Some(code) = egui_key_to_js_code(*key) {
                             self.emu.tvc.key_down(code);
@@ -292,12 +290,14 @@ impl eframe::App for EmuApp {
                 let mut vid_model = self.emu.tvc.vid_model();
                 egui::ComboBox::from_id_salt("vid_model")
                     .selected_text(match vid_model {
-                        VidModel::Simple => "Simple",
-                        VidModel::Realistic => "Realistic",
+                        VidModel::FastFrame => "Fast frame",
+                        VidModel::Line => "Line",
+                        VidModel::Interleaved => "Interleaved",
                     })
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut vid_model, VidModel::Realistic, "Realistic");
-                        ui.selectable_value(&mut vid_model, VidModel::Simple, "Simple");
+                        ui.selectable_value(&mut vid_model, VidModel::FastFrame, "Fast frame");
+                        ui.selectable_value(&mut vid_model, VidModel::Line, "Line");
+                        ui.selectable_value(&mut vid_model, VidModel::Interleaved, "Interleaved");
                     });
                 self.emu.tvc.set_vid_model(vid_model);
 
@@ -405,10 +405,7 @@ impl eframe::App for EmuApp {
                             ui.selectable_value(&mut self.emu.selected_disk, i, &disk.name);
                         }
                     });
-                if ui
-                    .button("Load")
-                    .clicked()
-                {
+                if ui.button("Load").clicked() {
                     self.emu.load_selected_disk();
                 }
                 if let Some(ref name) = self.emu.disk_loaded {

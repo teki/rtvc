@@ -76,8 +76,7 @@ impl FDisk {
     fn seek(&mut self, track: u8, sector: u8, side: u8) {
         if self.dsk.is_some() {
             let offset_sector = if sector != 0 { (sector - 1) as u16 } else { 0 };
-            self.position = (track as u16
-                * (self.sectors_per_track * self.num_heads)
+            self.position = (track as u16 * (self.sectors_per_track * self.num_heads)
                 + (self.sectors_per_track * side as u16)
                 + offset_sector) as usize
                 * self.sector_size as usize;
@@ -149,8 +148,10 @@ impl FDisk {
         let sec_per_trk = dsk[24] as u16 | ((dsk[25] as u16) << 8);
         let num_heads = dsk[26] as u16 | ((dsk[27] as u16) << 8);
 
-        let root_dir_sectors = (root_ent_cnt as u32 * 32 + sector_size as u32 - 1) / sector_size as u32;
-        let data_sec = tot_sec as u32 - (rsvd_sec_cnt as u32 + (num_fat as u32 * fat_size as u32) + root_dir_sectors);
+        let root_dir_sectors =
+            (root_ent_cnt as u32 * 32 + sector_size as u32 - 1) / sector_size as u32;
+        let data_sec = tot_sec as u32
+            - (rsvd_sec_cnt as u32 + (num_fat as u32 * fat_size as u32) + root_dir_sectors);
         let _count_of_clusters = data_sec / sectors_per_cluster as u32;
 
         self.sector_size = sector_size;
@@ -186,7 +187,10 @@ impl FDisk {
         w.raw_bytes(&self.read_buffer);
     }
 
-    fn read_snapshot(&mut self, r: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::Result<()> {
+    fn read_snapshot(
+        &mut self,
+        r: &mut crate::snapshot::Reader<'_>,
+    ) -> crate::snapshot::Result<()> {
         self.log = r.u8()? != 0;
         self.name = r.string()?;
         self.dsk = if r.u8()? != 0 {
@@ -275,7 +279,10 @@ impl FD1793 {
         w.u8(self.status);
     }
 
-    pub fn read_snapshot(&mut self, r: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::Result<()> {
+    pub fn read_snapshot(
+        &mut self,
+        r: &mut crate::snapshot::Reader<'_>,
+    ) -> crate::snapshot::Result<()> {
         self.log = r.u8()? != 0;
         for disk in &mut self.disks {
             disk.read_snapshot(r)?;
@@ -334,7 +341,12 @@ impl FD1793 {
                 if (self.status & ST_BUSY) != 0 {
                     self.exec();
                 }
-                self.intrq | if (self.status & ST_DRQ) != 0 { PRT_DRQ } else { 0 }
+                self.intrq
+                    | if (self.status & ST_DRQ) != 0 {
+                        PRT_DRQ
+                    } else {
+                        0
+                    }
             }
             _ => 0,
         }

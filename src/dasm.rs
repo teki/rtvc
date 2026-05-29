@@ -119,23 +119,19 @@ impl<'a, M: Mmu> Iterator for Dasm<'a, M> {
 
         let text = format!(
             "{} | {}",
-            display_base.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" "),
+            display_base
+                .iter()
+                .map(|b| format!("{:02X}", b))
+                .collect::<Vec<_>>()
+                .join(" "),
             formatted
         );
 
-        Some(Instruction {
-            addr,
-            bytes,
-            text,
-        })
+        Some(Instruction { addr, bytes, text })
     }
 }
 
-fn format_operands(
-    template: &str,
-    mmu: &mut impl Mmu,
-    mut pos: u16,
-) -> (Vec<u8>, String) {
+fn format_operands(template: &str, mmu: &mut impl Mmu, mut pos: u16) -> (Vec<u8>, String) {
     let mut bytes = Vec::new();
     let mut result = String::new();
     let mut chars = template.chars().peekable();
