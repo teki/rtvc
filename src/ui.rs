@@ -1,6 +1,7 @@
 use std::time::Instant;
 
 use crate::emu::{Emu, MachineType};
+use crate::vid::VidModel;
 use eframe::egui::{self, ColorImage, TextureHandle};
 
 fn egui_key_to_js_code(key: egui::Key) -> Option<u32> {
@@ -250,9 +251,25 @@ impl eframe::App for EmuApp {
                         }
                     });
                 if self.selected_machine != prev_selected {
-                    self.emu
-                        .reload(self.machine_types[self.selected_machine]);
+                    let vid_model = self.emu.tvc.vid_model();
+                    self.emu.reload(self.machine_types[self.selected_machine]);
+                    self.emu.tvc.set_vid_model(vid_model);
                 }
+
+                ui.separator();
+
+                ui.label("Video:");
+                let mut vid_model = self.emu.tvc.vid_model();
+                egui::ComboBox::from_id_salt("vid_model")
+                    .selected_text(match vid_model {
+                        VidModel::Simple => "Simple",
+                        VidModel::Realistic => "Realistic",
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut vid_model, VidModel::Realistic, "Realistic");
+                        ui.selectable_value(&mut vid_model, VidModel::Simple, "Simple");
+                    });
+                self.emu.tvc.set_vid_model(vid_model);
 
                 ui.separator();
 

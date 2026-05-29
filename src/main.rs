@@ -1,18 +1,5 @@
-mod emu;
-mod fd1793;
-mod hbf;
-mod key;
-mod log;
-mod mmu;
-mod tvc;
-mod ui;
-mod vid;
-mod z80;
-mod z80_tables;
-mod dasm;
-mod asm;
-
 use eframe::egui::ViewportBuilder;
+use rtvc::{emu, ui};
 
 fn main() -> eframe::Result<()> {
     let machine_type = emu::MachineType::all_types()[0];

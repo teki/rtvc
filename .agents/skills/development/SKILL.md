@@ -11,7 +11,7 @@ This skill provides step-by-step instructions and references for compiling, exec
 
 ### Compilation and Execution
 
-- **Build the main emulator binary:**
+- **Build the native emulator binary:**
   ```bash
   cargo build
   ```
@@ -23,6 +23,29 @@ This skill provides step-by-step instructions and references for compiling, exec
   - Use the "Log" button to toggle the IO port log panel.
   - Use the "Reset" button to reset the emulator.
   - PAL 4:3 display aspect ratio is applied to the framebuffer.
+
+- **Profile the native emulator with samply:**
+  ```bash
+  samply record cargo run --bin rtvc
+  ```
+  - Uses sampling instead of compile-time instrumentation.
+  - Keep ROM files in `roms/` as for normal native runs.
+
+- **Check the lightweight WASM library build:**
+  ```bash
+  rustup target add wasm32-unknown-unknown
+  cargo check --lib --no-default-features --features wasm,web-vid-simple --target wasm32-unknown-unknown
+  ```
+  - The `wasm` feature exposes [src/wasm.rs](../../../src/wasm.rs) through `wasm-bindgen`.
+  - `web-vid-simple` selects the lightweight video model as the WASM constructor default.
+  - This build intentionally excludes the native `egui`/`eframe` UI stack and the zipped-disk filesystem helper.
+  - JavaScript should render the returned framebuffer bytes to a browser canvas.
+
+- **Check the realistic WASM video build:**
+  ```bash
+  cargo check --lib --no-default-features --features wasm,web-vid-realistic --target wasm32-unknown-unknown
+  ```
+  - `web-vid-realistic` selects the streaming CRTC video model as the WASM constructor default.
 
 ### Testing
 

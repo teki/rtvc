@@ -5,6 +5,12 @@ const VSYNC: i16 = 0x0800;
 
 const STREAM_SIZE: usize = 608 * 288 * 2 * 2;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VidModel {
+    Simple,
+    Realistic,
+}
+
 fn to_rgba(val: u8) -> u32 {
     let intens: u32 = 0x7F | ((val as u32 & 0x40) << 1);
     let g = (0x100u32 - ((val as u32 >> 4) & 1)) & intens;

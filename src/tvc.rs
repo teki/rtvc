@@ -6,7 +6,7 @@ use crate::hbf::HBF;
 use crate::key::Key;
 use crate::log::Log;
 use crate::mmu::{Mmu, TvcMmu};
-use crate::vid::Vid;
+use crate::vid::{Vid, VidModel};
 use crate::z80::Z80;
 
 const FRAME_CLOCKS: u64 = 62500;
@@ -170,22 +170,36 @@ pub struct Tvc {
     pub z80: Z80,
     pub framebuffer: Vec<u32>,
     pub frame_complete: bool,
+    vid_model: VidModel,
     clock: u64,
     breakpoints: HashSet<u16>,
 }
 
 impl Tvc {
     pub fn new(is_plus: bool) -> Self {
+        Self::new_with_vid_model(is_plus, VidModel::Simple)
+    }
+
+    pub fn new_with_vid_model(is_plus: bool, vid_model: VidModel) -> Self {
         let mut tvc = Tvc {
             bus: TvcBus::new(is_plus),
             z80: Z80::new(),
             framebuffer: vec![0xFF000000; 608 * 288],
             frame_complete: false,
+            vid_model,
             clock: 0,
             breakpoints: HashSet::new(),
         };
         tvc.reset();
         tvc
+    }
+
+    pub fn vid_model(&self) -> VidModel {
+        self.vid_model
+    }
+
+    pub fn set_vid_model(&mut self, vid_model: VidModel) {
+        self.vid_model = vid_model;
     }
 
     pub fn reset(&mut self) {
@@ -254,6 +268,7 @@ impl Tvc {
     pub fn run_for_a_frame(&mut self) -> bool {
         let mut do_break = false;
         let mut remaining = FRAME_CLOCKS as u32;
+        let mut frame_complete = false;
 
         while !do_break && remaining > 0 {
             let cpu_time = self.z80.step(&mut self.bus, 0) as u64;
@@ -264,6 +279,17 @@ impl Tvc {
 
             self.clock += cpu_time;
             remaining = remaining.saturating_sub(cpu_time as u32);
+
+            if self.vid_model == VidModel::Realistic {
+                let cursor_it = self.bus.vid.stream_some(
+                    self.bus.mmu.get_vid_mem(),
+                    cpu_time.try_into().unwrap_or(u32::MAX),
+                );
+                if cursor_it {
+                    self.bus.pend_it &= !0x10;
+                }
+                frame_complete |= self.bus.vid.render_stream(&mut self.framebuffer, 608);
+            }
         }
 
         if self.bus.vid.is_initialized() && self.z80.state.iff1 != 0 {
@@ -272,9 +298,13 @@ impl Tvc {
             self.clock += irq_duration as u64;
         }
 
-        let vidmem = self.bus.mmu.get_vid_mem();
-        self.bus.vid.draw_frame(vidmem, &mut self.framebuffer);
-        self.frame_complete = true;
+        if self.vid_model == VidModel::Simple {
+            let vidmem = self.bus.mmu.get_vid_mem();
+            self.bus.vid.draw_frame(vidmem, &mut self.framebuffer);
+            frame_complete = true;
+        }
+
+        self.frame_complete = frame_complete;
 
         do_break
     }
