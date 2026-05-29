@@ -391,14 +391,6 @@ impl Tvc {
         }
     }
 
-    fn finish_frame_irq(&mut self) {
-        if self.bus.vid.is_initialized() && self.z80.state.iff1 != 0 {
-            let irq_duration = self.z80.irq(&mut self.bus);
-            self.bus.pend_it &= !0x10;
-            self.clock += irq_duration as u64;
-        }
-    }
-
     fn run_cpu_for(&mut self, mut remaining: u32, stream_video: bool) -> (bool, bool, u32) {
         let mut do_break = false;
         let mut frame_complete = false;
@@ -421,7 +413,7 @@ impl Tvc {
                     cpu_time.try_into().unwrap_or(u32::MAX),
                 );
                 if cursor_it {
-                    self.bus.pend_it &= !0x10;
+                    self.service_cursor_irq();
                 }
                 frame_complete |= self.bus.vid.render_stream(&mut self.framebuffer, 608);
             }
@@ -434,6 +426,11 @@ impl Tvc {
         let (do_break, frame_complete) = match self.vid_model {
             VidModel::FastFrame => {
                 let (do_break, _, _) = self.run_cpu_for(FRAME_CLOCKS as u32, false);
+                if self.bus.vid.is_initialized() {
+                    self.bus.pend_it &= !0x10;
+                    let irq_duration = self.z80.irq(&mut self.bus);
+                    self.clock += irq_duration as u64;
+                }
                 let vidmem = self.bus.mmu.get_vid_mem();
                 self.bus.vid.draw_frame(vidmem, &mut self.framebuffer);
                 (do_break, true)
@@ -463,7 +460,7 @@ impl Tvc {
                         .vid
                         .stream_some(self.bus.mmu.get_vid_mem(), line_clocks);
                     if cursor_it {
-                        self.bus.pend_it &= !0x10;
+                        self.service_cursor_irq();
                     }
                     frame_complete |= self.bus.vid.render_stream(&mut self.framebuffer, 608);
                     if do_break {
@@ -479,8 +476,6 @@ impl Tvc {
             }
         };
 
-        self.finish_frame_irq();
-
         if frame_complete {
             self.sync_timeout_frames = 0;
             self.frame_complete = true;
@@ -493,6 +488,18 @@ impl Tvc {
         }
 
         do_break
+    }
+
+    fn service_cursor_irq(&mut self) {
+        self.bus.pend_it &= !0x10;
+        let irq_duration = self.z80.irq(&mut self.bus);
+        if irq_duration > 0 {
+            self.clock += irq_duration as u64;
+            self.bus
+                .vid
+                .stream_some(self.bus.mmu.get_vid_mem(), irq_duration);
+            self.bus.vid.render_stream(&mut self.framebuffer, 608);
+        }
     }
 }
 

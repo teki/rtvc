@@ -229,6 +229,7 @@ Used in high-accuracy emulators to support mid-frame effects (e.g. split-screens
    - **Phase 2**: Skip 16 character clocks (horizontal back porch margin).
    - **Phase 3**: Draw 76 character clocks (608 pixels) to the current line in the framebuffer.
    - **Phase 4**: Wait for next HSYNC pulse.
+4. **Cursor Interrupt Timing**: If streaming reaches the CRTC cursor position, the orchestrator services the Z80 IRQ immediately and advances the CRTC by the IRQ duration. This preserves the last-pixel timing used by games that offset drawing work from the screen interrupt.
 
 #### Advantages
 - **Cycle-accurate**: Palette changes, border colors, and scroll register offsets changed by the CPU mid-frame are rasterized on the exact line/pixel they occur.
