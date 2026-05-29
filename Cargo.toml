@@ -9,13 +9,14 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 egui = { version = "0.31", optional = true }
 eframe = { version = "0.31", optional = true }
+png = { version = "0.17", optional = true }
 rfd = { version = "0.15", optional = true }
 zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
 
 [features]
 default = ["native"]
-native = ["dep:egui", "dep:eframe", "dep:rfd", "dep:zip"]
+native = ["dep:egui", "dep:eframe", "dep:png", "dep:rfd", "dep:zip"]
 wasm = ["dep:wasm-bindgen"]
 web-vid-simple = []
 web-vid-realistic = []

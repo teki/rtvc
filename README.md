@@ -22,6 +22,7 @@ The native GUI has snapshot buttons:
 
 - `Save Snapshot` writes a compressed `.rtvcsnap.zip` file by default.
 - `Load Snapshot` reads either `.rtvcsnap.zip` or raw `.rtvcsnap` files.
+- `Save Screenshot` writes the current TVC framebuffer as a 4:3 PNG (`768x576`).
 
 Compressed snapshots are ordinary zip files containing one `snapshot.rtvcsnap` entry.
 

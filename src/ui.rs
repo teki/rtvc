@@ -84,7 +84,7 @@ pub struct EmuApp {
     prev_ctrl: bool,
     prev_alt: bool,
     show_log: bool,
-    snapshot_status: Option<String>,
+    file_status: Option<String>,
     machine_types: Vec<MachineType>,
     selected_machine: usize,
 }
@@ -105,7 +105,7 @@ impl EmuApp {
             prev_ctrl: false,
             prev_alt: false,
             show_log: false,
-            snapshot_status: None,
+            file_status: None,
             machine_types,
             selected_machine,
         }
@@ -155,6 +155,34 @@ impl EmuApp {
             }
             self.prev_alt = new_alt;
         }
+    }
+
+    fn save_screenshot(&self, path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+        const SRC_W: usize = 608;
+        const SRC_H: usize = 288;
+        const OUT_W: usize = 768;
+        const OUT_H: usize = 576;
+
+        let file = std::fs::File::create(path)?;
+        let writer = std::io::BufWriter::new(file);
+        let mut encoder = png::Encoder::new(writer, OUT_W as u32, OUT_H as u32);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut png_writer = encoder.write_header()?;
+
+        let mut pixels = vec![0; OUT_W * OUT_H * 4];
+        for y in 0..OUT_H {
+            let src_y = y * SRC_H / OUT_H;
+            for x in 0..OUT_W {
+                let src_x = x * SRC_W / OUT_W;
+                let rgba = self.emu.tvc.framebuffer[src_y * SRC_W + src_x].to_ne_bytes();
+                let offset = (y * OUT_W + x) * 4;
+                pixels[offset..offset + 4].copy_from_slice(&rgba);
+            }
+        }
+
+        png_writer.write_image_data(&pixels)?;
+        Ok(())
     }
 }
 
@@ -315,10 +343,10 @@ impl eframe::App for EmuApp {
                     {
                         match self.emu.save_snapshot_file(&path) {
                             Ok(()) => {
-                                self.snapshot_status = Some(format!("Saved: {}", path.display()));
+                                self.file_status = Some(format!("Saved: {}", path.display()));
                             }
                             Err(err) => {
-                                self.snapshot_status = Some(format!("Save failed: {}", err));
+                                self.file_status = Some(format!("Save failed: {}", err));
                             }
                         }
                     }
@@ -331,16 +359,33 @@ impl eframe::App for EmuApp {
                     {
                         match self.emu.load_snapshot_file(&path) {
                             Ok(()) => {
-                                self.snapshot_status = Some(format!("Loaded: {}", path.display()));
+                                self.file_status = Some(format!("Loaded: {}", path.display()));
                             }
                             Err(err) => {
-                                self.snapshot_status = Some(format!("Load failed: {}", err));
+                                self.file_status = Some(format!("Load failed: {}", err));
                             }
                         }
                     }
                 }
 
-                if let Some(ref status) = self.snapshot_status {
+                if ui.button("Save Screenshot").clicked() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("png image", &["png"])
+                        .set_file_name("rtvc-screen.png")
+                        .save_file()
+                    {
+                        match self.save_screenshot(&path) {
+                            Ok(()) => {
+                                self.file_status = Some(format!("Saved: {}", path.display()));
+                            }
+                            Err(err) => {
+                                self.file_status = Some(format!("Screenshot failed: {}", err));
+                            }
+                        }
+                    }
+                }
+
+                if let Some(ref status) = self.file_status {
                     ui.label(status);
                 }
             });

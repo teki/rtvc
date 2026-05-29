@@ -23,6 +23,7 @@ This skill provides step-by-step instructions and references for compiling, exec
   - Use the "Log" button to toggle the IO port log panel.
   - Use the "Reset" button to reset the emulator.
   - Use the "Save Snapshot" and "Load Snapshot" buttons to write/read `.rtvcsnap.zip` or raw `.rtvcsnap` files.
+  - Use the "Save Screenshot" button to write the current framebuffer as a 4:3 PNG (`768x576`).
   - PAL 4:3 display aspect ratio is applied to the framebuffer.
 
 - **Profile the native emulator with samply:**
