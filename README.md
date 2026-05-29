@@ -14,7 +14,7 @@ Place ROM files in `roms/` before running:
 - `TVC12_D4.64K`
 - `TVC12_D7.64K`
 
-Optional disk zip files can go in `disks/`.
+Optional program zip files can go in `progs/`.
 
 ## Native Snapshots
 

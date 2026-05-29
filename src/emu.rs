@@ -94,7 +94,7 @@ impl MachineType {
 }
 
 #[derive(Clone)]
-pub struct DiskEntry {
+pub struct ProgEntry {
     pub name: String,
     pub file_name: String,
 }
@@ -104,9 +104,9 @@ pub struct Emu {
     pub running: bool,
     pub roms_loaded: bool,
     pub machine_type: MachineType,
-    pub disks: Vec<DiskEntry>,
-    pub selected_disk: usize,
-    pub disk_loaded: Option<String>,
+    pub progs: Vec<ProgEntry>,
+    pub selected_prog: usize,
+    pub prog_loaded: Option<String>,
 }
 
 impl Emu {
@@ -116,11 +116,11 @@ impl Emu {
             running: true,
             roms_loaded: false,
             machine_type,
-            disks: Vec::new(),
-            selected_disk: 0,
-            disk_loaded: None,
+            progs: Vec::new(),
+            selected_prog: 0,
+            prog_loaded: None,
         };
-        emu.scan_disks();
+        emu.scan_progs();
         emu
     }
 
@@ -172,7 +172,7 @@ impl Emu {
         self.machine_type = machine_type;
         self.tvc = Tvc::new(machine_type.is_plus);
         self.roms_loaded = false;
-        self.disk_loaded = None;
+        self.prog_loaded = None;
         self.load_roms();
     }
 
@@ -196,9 +196,9 @@ impl Emu {
         }
     }
 
-    pub fn scan_disks(&mut self) {
-        self.disks.clear();
-        let dir = std::path::Path::new("disks");
+    pub fn scan_progs(&mut self) {
+        self.progs.clear();
+        let dir = std::path::Path::new("progs");
         if !dir.exists() {
             return;
         }
@@ -221,19 +221,19 @@ impl Emu {
                 .strip_suffix(".zip")
                 .unwrap_or(&file_name)
                 .to_string();
-            self.disks.push(DiskEntry { name, file_name });
+            self.progs.push(ProgEntry { name, file_name });
         }
-        if self.selected_disk >= self.disks.len() {
-            self.selected_disk = 0;
+        if self.selected_prog >= self.progs.len() {
+            self.selected_prog = 0;
         }
     }
 
-    pub fn load_selected_disk(&mut self) {
-        if self.disks.is_empty() || self.selected_disk >= self.disks.len() {
+    pub fn load_selected_prog(&mut self) {
+        if self.progs.is_empty() || self.selected_prog >= self.progs.len() {
             return;
         }
-        let file_name = self.disks[self.selected_disk].file_name.clone();
-        let path = format!("disks/{}", file_name);
+        let file_name = self.progs[self.selected_prog].file_name.clone();
+        let path = format!("progs/{}", file_name);
 
         let data = match std::fs::read(&path) {
             Ok(d) => d,
@@ -255,8 +255,8 @@ impl Emu {
             if entry_name.to_lowercase().ends_with(".dsk") {
                 let mut buf = Vec::new();
                 if file.read_to_end(&mut buf).is_ok() {
-                    self.tvc.load_disk(&entry_name, &buf);
-                    self.disk_loaded = Some(self.disks[self.selected_disk].name.clone());
+                      self.tvc.load_disk(&entry_name, &buf);
+                      self.prog_loaded = Some(self.progs[self.selected_prog].name.clone());
                 }
                 break;
             }

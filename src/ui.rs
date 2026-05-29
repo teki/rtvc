@@ -391,24 +391,24 @@ impl eframe::App for EmuApp {
             });
 
             ui.horizontal(|ui| {
-                ui.label("Disk:");
-                egui::ComboBox::from_id_salt("disk_list")
+                ui.label("Program:");
+                egui::ComboBox::from_id_salt("prog_list")
                     .selected_text(
                         self.emu
-                            .disks
-                            .get(self.emu.selected_disk)
-                            .map(|d| d.name.as_str())
+                            .progs
+                            .get(self.emu.selected_prog)
+                            .map(|p| p.name.as_str())
                             .unwrap_or("(none)"),
                     )
                     .show_ui(ui, |ui| {
-                        for (i, disk) in self.emu.disks.iter().enumerate() {
-                            ui.selectable_value(&mut self.emu.selected_disk, i, &disk.name);
+                        for (i, prog) in self.emu.progs.iter().enumerate() {
+                            ui.selectable_value(&mut self.emu.selected_prog, i, &prog.name);
                         }
                     });
                 if ui.button("Load").clicked() {
-                    self.emu.load_selected_disk();
+                    self.emu.load_selected_prog();
                 }
-                if let Some(ref name) = self.emu.disk_loaded {
+                if let Some(ref name) = self.emu.prog_loaded {
                     ui.label(format!("Loaded: {}", name));
                 }
             });
