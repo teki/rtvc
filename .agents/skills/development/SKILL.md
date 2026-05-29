@@ -22,6 +22,7 @@ This skill provides step-by-step instructions and references for compiling, exec
   - Place ROM files (`TVC12_D3.64K`, `TVC12_D4.64K`, `TVC12_D7.64K`) in `roms/` for the TVC to boot.
   - Use the "Log" button to toggle the IO port log panel.
   - Use the "Reset" button to reset the emulator.
+  - Use the "Save Snapshot" and "Load Snapshot" buttons to write/read `.rtvcsnap.zip` or raw `.rtvcsnap` files.
   - PAL 4:3 display aspect ratio is applied to the framebuffer.
 
 - **Profile the native emulator with samply:**
@@ -46,6 +47,17 @@ This skill provides step-by-step instructions and references for compiling, exec
   cargo check --lib --no-default-features --features wasm,web-vid-realistic --target wasm32-unknown-unknown
   ```
   - `web-vid-realistic` selects the streaming CRTC video model as the WASM constructor default.
+
+- **Bundle a lightweight web snapshot upload:**
+  ```bash
+  cargo install wasm-bindgen-cli --version 0.2.122
+  cargo bundle-web path/to/game.rtvcsnap
+  # or:
+  cargo xtask bundle-web path/to/game.rtvcsnap
+  ```
+  - Builds the small `wasm,web-vid-simple` target.
+  - Emits a static bundle under `dist/<snapshot-name>-web/`.
+  - See [docs/snapshot.md](../../../docs/snapshot.md) for snapshot format and bundle details.
 
 ### Testing
 

@@ -8,6 +8,7 @@ This document records intended direction for future changes so implementation wo
 - Keep a very lightweight WebAssembly build that excludes egui/eframe and uses a small `wasm-bindgen` API for a browser canvas UI.
 - Support a future full WebAssembly build that can use egui on the web and browser-local file storage.
 - Keep both video models in [src/vid.rs](../src/vid.rs); choose the default with build features on web and with a runtime setting on native.
+- Use [docs/snapshot.md](snapshot.md) as the source of truth for snapshot state and lightweight web snapshot bundles.
 
 ## Build Tiers
 
@@ -28,6 +29,7 @@ This document records intended direction for future changes so implementation wo
 - Uses [src/wasm.rs](../src/wasm.rs) as the public browser-facing API.
 - JavaScript owns browser UI, canvas presentation, keyboard event wiring, and file picker plumbing.
 - Default video model should be `VidModel::Simple` unless explicitly built otherwise.
+- Snapshot upload bundles are produced with `cargo bundle-web <snapshot>`.
 
 ### Full Web
 
@@ -64,6 +66,7 @@ cargo check
 cargo check --bins
 cargo check --lib --no-default-features --features wasm,web-vid-simple --target wasm32-unknown-unknown
 cargo check --lib --no-default-features --features wasm,web-vid-realistic --target wasm32-unknown-unknown
+cargo check --manifest-path xtask/Cargo.toml
 cargo tree --no-default-features --features wasm,web-vid-simple -e normal --target wasm32-unknown-unknown
 ```
 

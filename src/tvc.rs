@@ -6,6 +6,7 @@ use crate::hbf::HBF;
 use crate::key::Key;
 use crate::log::Log;
 use crate::mmu::{Mmu, TvcMmu};
+use crate::snapshot::{self, Reader, SnapshotError, Writer};
 use crate::vid::{Vid, VidModel};
 use crate::z80::Z80;
 
@@ -202,6 +203,105 @@ impl Tvc {
         self.vid_model = vid_model;
     }
 
+    pub fn save_snapshot(&self) -> Vec<u8> {
+        let mut chunks = Vec::new();
+
+        let mut meta = Writer::new();
+        meta.u8(self.bus.mmu.is_plus() as u8);
+        meta.u8(match self.vid_model {
+            VidModel::Simple => 0,
+            VidModel::Realistic => 1,
+        });
+        meta.u64(self.clock);
+        meta.u8(self.frame_complete as u8);
+        chunks.push((*b"META", meta.into_inner()));
+
+        let mut cpu = Writer::new();
+        cpu.raw_bytes(&self.z80.state.r8);
+        for reg in self.z80.state.r16 {
+            cpu.u16(reg);
+        }
+        cpu.u8(self.z80.state.halted);
+        cpu.u8(self.z80.state.im);
+        cpu.u8(self.z80.state.iff1);
+        cpu.u8(self.z80.state.iff2);
+        chunks.push((*b"CPUZ", cpu.into_inner()));
+
+        let mut mmu = Writer::new();
+        self.bus.mmu.write_snapshot(&mut mmu);
+        chunks.push((*b"MMU ", mmu.into_inner()));
+
+        let mut vid = Writer::new();
+        self.bus.vid.write_snapshot(&mut vid);
+        chunks.push((*b"VID ", vid.into_inner()));
+
+        if let Some(ext) = &self.bus.ext0 {
+            let mut hbf = Writer::new();
+            ext.write_snapshot(&mut hbf);
+            chunks.push((*b"HBF ", hbf.into_inner()));
+        }
+
+        let mut bus = Writer::new();
+        bus.u8(self.bus.pend_it);
+        bus.u8(self.bus.ext_types);
+        bus.u8(self.bus.ext_cart_mapping);
+        chunks.push((*b"BUS ", bus.into_inner()));
+
+        snapshot::write_file(&chunks)
+    }
+
+    pub fn load_snapshot(&mut self, data: &[u8]) -> snapshot::Result<()> {
+        let chunks = snapshot::read_file(data)?;
+        let meta = chunks
+            .iter()
+            .find(|chunk| chunk.id == *b"META")
+            .ok_or(SnapshotError::InvalidChunk("META"))?;
+        let mut meta = Reader::new(meta.data);
+        let is_plus = meta.u8()? != 0;
+        let vid_model = match meta.u8()? {
+            0 => VidModel::Simple,
+            1 => VidModel::Realistic,
+            _ => return Err(SnapshotError::InvalidData("unknown video model".to_string())),
+        };
+        let clock = meta.u64()?;
+        let frame_complete = meta.u8()? != 0;
+
+        *self = Tvc::new_with_vid_model(is_plus, vid_model);
+        self.clock = clock;
+        self.frame_complete = frame_complete;
+
+        for chunk in chunks {
+            let mut reader = Reader::new(chunk.data);
+            match &chunk.id {
+                b"META" => {}
+                b"CPUZ" => {
+                    self.z80.state.r8.copy_from_slice(reader.raw_bytes(22)?);
+                    for reg in &mut self.z80.state.r16 {
+                        *reg = reader.u16()?;
+                    }
+                    self.z80.state.halted = reader.u8()?;
+                    self.z80.state.im = reader.u8()?;
+                    self.z80.state.iff1 = reader.u8()?;
+                    self.z80.state.iff2 = reader.u8()?;
+                }
+                b"MMU " => self.bus.mmu.read_snapshot(&mut reader)?,
+                b"VID " => self.bus.vid.read_snapshot(&mut reader)?,
+                b"HBF " => {
+                    self.bus.ext0 = Some(HBF::read_snapshot(&mut reader)?);
+                }
+                b"BUS " => {
+                    self.bus.pend_it = reader.u8()?;
+                    self.bus.ext_types = reader.u8()?;
+                    self.bus.ext_cart_mapping = reader.u8()?;
+                }
+                _ => {}
+            }
+        }
+        self.bus.key.reset();
+        self.bus.log.clear();
+        Ok(())
+    }
+
     pub fn reset(&mut self) {
         self.z80.reset();
         self.bus.reset();
@@ -307,5 +407,29 @@ impl Tvc {
         self.frame_complete = frame_complete;
 
         do_break
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_round_trips_core_state() {
+        let mut tvc = Tvc::new_with_vid_model(true, VidModel::Realistic);
+        tvc.z80.state.r16[11] = 0x1234;
+        tvc.bus.mmu.w8(0x4000, 0xAB);
+        tvc.bus.vid.set_border(0x55);
+        tvc.bus.pend_it = 0x0F;
+
+        let snapshot = tvc.save_snapshot();
+        let mut restored = Tvc::new(false);
+        restored.load_snapshot(&snapshot).unwrap();
+
+        assert!(restored.bus.mmu.is_plus());
+        assert_eq!(restored.vid_model(), VidModel::Realistic);
+        assert_eq!(restored.z80.state.r16[11], 0x1234);
+        assert_eq!(restored.bus.mmu.r8(0x4000), 0xAB);
+        assert_eq!(restored.bus.pend_it, 0x0F);
     }
 }

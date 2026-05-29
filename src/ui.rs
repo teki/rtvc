@@ -84,6 +84,7 @@ pub struct EmuApp {
     prev_ctrl: bool,
     prev_alt: bool,
     show_log: bool,
+    snapshot_status: Option<String>,
     machine_types: Vec<MachineType>,
     selected_machine: usize,
 }
@@ -104,6 +105,7 @@ impl EmuApp {
             prev_ctrl: false,
             prev_alt: false,
             show_log: false,
+            snapshot_status: None,
             machine_types,
             selected_machine,
         }
@@ -300,6 +302,46 @@ impl eframe::App for EmuApp {
                 ));
                 if ui.button("Log").clicked() {
                     self.show_log = !self.show_log;
+                }
+            });
+
+            ui.horizontal(|ui| {
+                if ui.button("Save Snapshot").clicked() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("compressed rtvc snapshot", &["zip"])
+                        .add_filter("rtvc snapshot", &["rtvcsnap"])
+                        .set_file_name("snapshot.rtvcsnap.zip")
+                        .save_file()
+                    {
+                        match self.emu.save_snapshot_file(&path) {
+                            Ok(()) => {
+                                self.snapshot_status = Some(format!("Saved: {}", path.display()));
+                            }
+                            Err(err) => {
+                                self.snapshot_status = Some(format!("Save failed: {}", err));
+                            }
+                        }
+                    }
+                }
+
+                if ui.button("Load Snapshot").clicked() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("rtvc snapshot", &["rtvcsnap", "zip"])
+                        .pick_file()
+                    {
+                        match self.emu.load_snapshot_file(&path) {
+                            Ok(()) => {
+                                self.snapshot_status = Some(format!("Loaded: {}", path.display()));
+                            }
+                            Err(err) => {
+                                self.snapshot_status = Some(format!("Load failed: {}", err));
+                            }
+                        }
+                    }
+                }
+
+                if let Some(ref status) = self.snapshot_status {
+                    ui.label(status);
                 }
             });
 

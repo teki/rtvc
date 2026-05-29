@@ -8,6 +8,7 @@ pub mod hbf;
 pub mod key;
 pub mod log;
 pub mod mmu;
+pub mod snapshot;
 pub mod tvc;
 pub mod vid;
 pub mod z80;

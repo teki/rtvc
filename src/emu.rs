@@ -1,4 +1,5 @@
 use std::io::Read;
+use std::io::Write;
 
 use crate::tvc::Tvc;
 
@@ -6,6 +7,28 @@ use crate::tvc::Tvc;
 pub enum RomVersion {
     V1_2,
     V2_2,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zipped_snapshot_round_trips() {
+        let mut emu = Emu::new(MachineType {
+            is_plus: true,
+            rom_version: RomVersion::V1_2,
+            has_dos: false,
+        });
+        emu.tvc.z80.state.r16[11] = 0xBEEF;
+        let zipped = zip_snapshot(&emu.save_snapshot()).unwrap();
+        assert!(zipped.len() < emu.save_snapshot().len());
+
+        let raw = unzip_snapshot(&zipped).unwrap();
+        let mut restored = Emu::new(emu.machine_type);
+        restored.load_snapshot(&raw).unwrap();
+        assert_eq!(restored.tvc.z80.state.r16[11], 0xBEEF);
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -90,6 +113,35 @@ impl Emu {
 
     pub fn reset(&mut self) {
         self.tvc.reset();
+    }
+
+    pub fn save_snapshot(&self) -> Vec<u8> {
+        self.tvc.save_snapshot()
+    }
+
+    pub fn load_snapshot(&mut self, data: &[u8]) -> crate::snapshot::Result<()> {
+        self.tvc.load_snapshot(data)
+    }
+
+    pub fn save_snapshot_file(&self, path: &std::path::Path) -> std::io::Result<()> {
+        let snapshot = self.save_snapshot();
+        if is_zip_path(path) {
+            std::fs::write(path, zip_snapshot(&snapshot)?)
+        } else {
+            std::fs::write(path, snapshot)
+        }
+    }
+
+    pub fn load_snapshot_file(
+        &mut self,
+        path: &std::path::Path,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut data = std::fs::read(path)?;
+        if is_zip_data(&data) {
+            data = unzip_snapshot(&data)?;
+        }
+        self.load_snapshot(&data)?;
+        Ok(())
     }
 
     pub fn toggle_running(&mut self) {
@@ -190,4 +242,42 @@ impl Emu {
             }
         }
     }
+}
+
+fn is_zip_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("zip"))
+        .unwrap_or(false)
+}
+
+fn is_zip_data(data: &[u8]) -> bool {
+    data.starts_with(b"PK\x03\x04")
+}
+
+fn zip_snapshot(snapshot: &[u8]) -> std::io::Result<Vec<u8>> {
+    let cursor = std::io::Cursor::new(Vec::new());
+    let mut archive = zip::ZipWriter::new(cursor);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    archive.start_file("snapshot.rtvcsnap", options)?;
+    archive.write_all(snapshot)?;
+    Ok(archive.finish()?.into_inner())
+}
+
+fn unzip_snapshot(data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let reader = std::io::Cursor::new(data);
+    let mut archive = zip::ZipArchive::new(reader)?;
+
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i)?;
+        let name = file.name().to_ascii_lowercase();
+        if name.ends_with(".rtvcsnap") {
+            let mut snapshot = Vec::new();
+            file.read_to_end(&mut snapshot)?;
+            return Ok(snapshot);
+        }
+    }
+
+    Err("zip archive does not contain a .rtvcsnap file".into())
 }

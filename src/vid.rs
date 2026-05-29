@@ -257,6 +257,31 @@ impl Vid {
         self.mode = mode & 0x03;
     }
 
+    pub fn write_snapshot(&self, w: &mut crate::snapshot::Writer) {
+        w.u8(self.mode);
+        w.u8(self.reg_idx);
+        w.raw_bytes(&self.reg);
+        for color in &self.palette {
+            w.u8(color.color);
+        }
+        w.u8(self.border);
+    }
+
+    pub fn read_snapshot(&mut self, r: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::Result<()> {
+        self.reset();
+        self.mode = r.u8()? & 0x03;
+        self.reg_idx = r.u8()?.min(17);
+        self.reg.copy_from_slice(r.raw_bytes(18)?);
+        self.reconfig();
+        for idx in 0..4 {
+            let color = r.u8()?;
+            self.set_palette(idx, color);
+        }
+        let border = r.u8()?;
+        self.set_border(border);
+        Ok(())
+    }
+
     fn stream_init_screen(&mut self) {
         self.mem_start = self.smem;
         self.vlines = -1;

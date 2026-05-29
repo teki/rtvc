@@ -2,6 +2,7 @@ use std::fs;
 use std::io::{self, Write};
 
 mod mmu;
+mod snapshot;
 mod z80;
 
 use mmu::{FakeMmu, Mmu};

@@ -24,6 +24,18 @@ impl WasmTvc {
         self.tvc.reset();
     }
 
+    #[wasm_bindgen(js_name = saveSnapshot)]
+    pub fn save_snapshot(&self) -> Vec<u8> {
+        self.tvc.save_snapshot()
+    }
+
+    #[wasm_bindgen(js_name = loadSnapshot)]
+    pub fn load_snapshot(&mut self, data: &[u8]) -> Result<(), JsValue> {
+        self.tvc
+            .load_snapshot(data)
+            .map_err(|err| JsValue::from_str(&err.to_string()))
+    }
+
     #[wasm_bindgen(js_name = setVidModel)]
     pub fn set_vid_model(&mut self, model: &str) -> Result<(), JsValue> {
         let vid_model = match model {

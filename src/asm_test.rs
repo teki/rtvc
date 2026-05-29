@@ -2,6 +2,7 @@ mod mmu;
 mod dasm;
 mod asm;
 mod z80_tables;
+mod snapshot;
 
 use mmu::FakeMmu;
 use asm::assemble_line;

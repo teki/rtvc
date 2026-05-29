@@ -1,6 +1,7 @@
 use std::time::Instant;
 
 mod mmu;
+mod snapshot;
 mod z80;
 
 use mmu::{FakeMmu, Mmu};

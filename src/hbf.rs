@@ -27,6 +27,20 @@ impl MemBlock {
             data,
         }
     }
+
+    fn write_snapshot(&self, w: &mut crate::snapshot::Writer) {
+        w.string(&self.name);
+        w.u8(self.is_ram as u8);
+        w.bytes(&self.data);
+    }
+
+    fn read_snapshot(r: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::Result<Self> {
+        Ok(MemBlock {
+            name: r.string()?,
+            is_ram: r.u8()? != 0,
+            data: r.bytes()?.to_vec(),
+        })
+    }
 }
 
 pub struct HBF {
@@ -104,5 +118,35 @@ impl HBF {
 
     pub fn get_fdc_mut(&mut self) -> &mut FD1793 {
         &mut self.fdc
+    }
+
+    pub fn write_snapshot(&self, w: &mut crate::snapshot::Writer) {
+        self.rom0.write_snapshot(w);
+        self.rom1.write_snapshot(w);
+        self.rom2.write_snapshot(w);
+        self.rom3.write_snapshot(w);
+        w.usize(self.rom);
+        self.ram.write_snapshot(w);
+        self.fdc.write_snapshot(w);
+    }
+
+    pub fn read_snapshot(r: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::Result<Self> {
+        let rom0 = MemBlock::read_snapshot(r)?;
+        let rom1 = MemBlock::read_snapshot(r)?;
+        let rom2 = MemBlock::read_snapshot(r)?;
+        let rom3 = MemBlock::read_snapshot(r)?;
+        let rom = r.usize()?.min(3);
+        let ram = MemBlock::read_snapshot(r)?;
+        let mut fdc = FD1793::new();
+        fdc.read_snapshot(r)?;
+        Ok(HBF {
+            rom0,
+            rom1,
+            rom2,
+            rom3,
+            rom,
+            ram,
+            fdc,
+        })
     }
 }

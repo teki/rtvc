@@ -21,6 +21,7 @@ Future build-target and UI direction is tracked in [docs/future_plan.md](future_
 - [src/emu.rs](../src/emu.rs) — Native-only high-level emulator wrapper (Emu struct with run state, filesystem ROM loading, and zipped disk loading).
 - [src/ui.rs](../src/ui.rs) — Native-only egui/eframe GUI application (EmuApp) with screen display and IO log panel.
 - [src/wasm.rs](../src/wasm.rs) — Lightweight WASM bindings exposing `Tvc` control, ROM/disk loading, keyboard input, and framebuffer access for a browser canvas UI.
+- [src/snapshot.rs](../src/snapshot.rs) — Chunked snapshot format helpers shared by native and WASM snapshot save/load APIs.
 - [src/log.rs](../src/log.rs) — Logger trait and ring-buffer log implementation.
 - [src/fuse_test.rs](../src/fuse_test.rs) — FUSE test harness executable.
 - [src/zex_test.rs](../src/zex_test.rs) — Z80 Instruction exercise test runner (zexall/zexdoc).
@@ -44,6 +45,7 @@ Future build-target and UI direction is tracked in [docs/future_plan.md](future_
 - **Native Emulator Wrapper**: `Emu` wraps `Tvc` with run state, ROM loading from `roms/`, and zipped disk discovery from `disks/`. It is compiled only with the `native` feature.
 - **Native GUI**: `EmuApp` (eframe/egui) displays the TVC screen at PAL 4:3 aspect ratio, routes keyboard input to the TVC, exposes the video model as a runtime setting, and shows an optional IO log panel. It is compiled only with the `native` feature.
 - **WASM Facade**: `WasmTvc` in [src/wasm.rs](../src/wasm.rs) exposes a small `wasm-bindgen` API around `Tvc`, including `runFrame()`, `setVidModel()`, key events, ROM/disk loading, and direct framebuffer pointer/length access for JavaScript canvas rendering. The WASM build does not include egui, eframe, or zip.
+- **Snapshots**: [docs/snapshot.md](snapshot.md) defines the custom `RTVCSNAP` chunked state format. User-facing snapshot and web bundle commands are in [README.md](../README.md).
 - **Profiling**: Use a sampling profiler such as `samply` against the native binary when profiling CPU performance.
 
 ## Toolchain
