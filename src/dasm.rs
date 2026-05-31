@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::mmu::Mmu;
+use crate::mmu::CpuBus;
 use crate::z80_tables::opcode_to_mnemonic;
 
 #[derive(Debug, Clone)]
@@ -10,18 +10,18 @@ pub struct Instruction {
     pub text: String,
 }
 
-pub struct Dasm<'a, M: Mmu> {
+pub struct Dasm<'a, M: CpuBus> {
     mmu: &'a mut M,
     pos: u16,
 }
 
-impl<'a, M: Mmu> Dasm<'a, M> {
+impl<'a, M: CpuBus> Dasm<'a, M> {
     pub fn new(mmu: &'a mut M, addr: u16) -> Self {
         Dasm { mmu, pos: addr }
     }
 }
 
-impl<'a, M: Mmu> Iterator for Dasm<'a, M> {
+impl<'a, M: CpuBus> Iterator for Dasm<'a, M> {
     type Item = Instruction;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -131,7 +131,7 @@ impl<'a, M: Mmu> Iterator for Dasm<'a, M> {
     }
 }
 
-fn format_operands(template: &str, mmu: &mut impl Mmu, mut pos: u16) -> (Vec<u8>, String) {
+fn format_operands(template: &str, mmu: &mut impl CpuBus, mut pos: u16) -> (Vec<u8>, String) {
     let mut bytes = Vec::new();
     let mut result = String::new();
     let mut chars = template.chars().peekable();
@@ -189,6 +189,6 @@ fn format_operands(template: &str, mmu: &mut impl Mmu, mut pos: u16) -> (Vec<u8>
     (bytes, result)
 }
 
-pub fn disassemble<'a, M: Mmu>(mmu: &'a mut M, addr: u16) -> Dasm<'a, M> {
+pub fn disassemble<'a, M: CpuBus>(mmu: &'a mut M, addr: u16) -> Dasm<'a, M> {
     Dasm::new(mmu, addr)
 }

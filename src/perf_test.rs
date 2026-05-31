@@ -4,7 +4,7 @@ mod mmu;
 mod snapshot;
 mod z80;
 
-use mmu::{FakeMmu, Mmu};
+use mmu::{CpuBus, FakeMmu};
 use z80::Z80;
 
 struct BenchGroup {

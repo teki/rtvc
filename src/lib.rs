@@ -2,6 +2,7 @@
 compile_error!("features `web-vid-simple` and `web-vid-realistic` are mutually exclusive");
 
 pub mod asm;
+pub mod cas;
 pub mod dasm;
 pub mod fd1793;
 pub mod hbf;

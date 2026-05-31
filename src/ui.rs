@@ -1,8 +1,11 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::emu::{Emu, MachineType};
 use crate::vid::VidModel;
 use eframe::egui::{self, ColorImage, TextureHandle};
+
+const TVC_REFRESH_HZ: u32 = 50;
+const TVC_FRAME_DT: f64 = 1.0 / TVC_REFRESH_HZ as f64;
 
 fn egui_key_to_js_code(key: egui::Key) -> Option<u32> {
     Some(match key {
@@ -76,8 +79,8 @@ pub struct EmuApp {
     pub emu: Emu,
     screen_texture: Option<TextureHandle>,
     last_frame_time: Instant,
-    last_render_time: Instant,
-    accumulator: f64,
+    last_repaint_time: Instant,
+    emu_frame_accumulator: f64,
     frame_count: u32,
     fps: u32,
     prev_shift: bool,
@@ -97,8 +100,8 @@ impl EmuApp {
             emu,
             screen_texture: None,
             last_frame_time: Instant::now(),
-            last_render_time: Instant::now(),
-            accumulator: 0.0,
+            last_repaint_time: Instant::now(),
+            emu_frame_accumulator: 0.0,
             frame_count: 0,
             fps: 0,
             prev_shift: false,
@@ -220,19 +223,17 @@ impl eframe::App for EmuApp {
             }
         });
 
-        let dt = self.last_render_time.elapsed().as_secs_f64();
-        self.last_render_time = Instant::now();
-        self.accumulator += dt.min(0.1);
-        let frame_dt = 1.0 / 50.0;
-        let mut ticked = false;
-        while self.accumulator >= frame_dt {
-            self.emu.tick();
-            self.accumulator -= frame_dt;
-            ticked = true;
+        let now = Instant::now();
+        let dt = now.duration_since(self.last_repaint_time).as_secs_f64();
+        self.last_repaint_time = now;
+        if self.emu.running {
+            self.emu_frame_accumulator += dt.min(0.1);
         }
 
-        if ticked {
+        if self.emu.running && self.emu_frame_accumulator >= TVC_FRAME_DT {
+            self.emu.tick();
             self.update_screen_texture(ctx);
+            self.emu_frame_accumulator %= TVC_FRAME_DT;
             self.frame_count += 1;
         }
 
@@ -315,9 +316,12 @@ impl eframe::App for EmuApp {
                     .clicked()
                 {
                     self.emu.toggle_running();
+                    self.last_repaint_time = Instant::now();
+                    self.emu_frame_accumulator = 0.0;
                 }
                 if ui.button("Reset").clicked() {
                     self.emu.reset();
+                    self.emu_frame_accumulator = 0.0;
                 }
                 ui.label(format!("FPS: {}", self.fps));
                 ui.label(format!(
@@ -408,6 +412,40 @@ impl eframe::App for EmuApp {
                 if ui.button("Load").clicked() {
                     self.emu.load_selected_prog();
                 }
+
+                // Play / Stop controls for cassette files
+                let selected_is_cas = self
+                    .emu
+                    .progs
+                    .get(self.emu.selected_prog)
+                    .map(|p| p.is_cas)
+                    .unwrap_or(false);
+
+                if selected_is_cas {
+                    if self.emu.tvc.bus.tape_play_active() {
+                        let level = self.emu.get_current_tape_level();
+                        let btn_color = if level > 0.6 {
+                            egui::Color32::from_rgb(255, 235, 59) // Bright yellow for high phase
+                        } else if level < 0.4 {
+                            egui::Color32::from_rgb(46, 125, 50) // Solid dark green for low phase
+                        } else {
+                            egui::Color32::from_rgb(128, 128, 128) // Neutral gray for silence
+                        };
+
+                        let stop_btn = egui::Button::new(
+                            egui::RichText::new("Stop ⏹").color(egui::Color32::BLACK),
+                        )
+                        .fill(btn_color);
+                        if ui.add(stop_btn).clicked() {
+                            self.emu.stop_tape();
+                        }
+                    } else {
+                        if ui.button("Play ▶").clicked() {
+                            self.emu.play_tape();
+                        }
+                    }
+                }
+
                 if let Some(ref name) = self.emu.prog_loaded {
                     ui.label(format!("Loaded: {}", name));
                 }
@@ -434,7 +472,10 @@ impl eframe::App for EmuApp {
             }
         });
 
-        let remaining = (1.0 / 50.0 - self.accumulator).max(0.0);
-        ctx.request_repaint_after(std::time::Duration::from_secs_f64(remaining));
+        if self.emu.running {
+            ctx.request_repaint();
+        } else {
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
     }
 }

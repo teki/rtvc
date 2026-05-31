@@ -5,7 +5,7 @@ mod mmu;
 mod snapshot;
 mod z80;
 
-use mmu::{FakeMmu, Mmu};
+use mmu::{CpuBus, FakeMmu};
 use z80::Z80;
 
 fn run_zex(file_path: &str, skip_cnt: u16) -> Result<(), Box<dyn std::error::Error>> {

@@ -37,13 +37,14 @@ Future build-target and UI direction is tracked in [docs/future_plan.md](future_
 - **MMU**:
   - `FakeMmu` in `mmu.rs` provides a flat, 64 KB memory space specifically for running CPU tests (like FUSE and ZEX).
   - `TvcMmu` in `mmu.rs` implements TVC bank switching (mapping external/internal memory banks into four 16 KB pages), wired to the main binary via `TvcBus`.
+- **CPU Bus Trait**: `CpuBus` in `mmu.rs` is the Z80-facing memory and I/O interface used by the CPU core. Test memory and the full TVC bus both implement it.
 - **Video**: `Vid` struct emulates the MC6845 CRTC and supports three runtime video schedules: `VidModel::FastFrame` (`draw_frame()` after one screen-time CPU budget), `VidModel::Line` (CPU and CRTC advanced once per display line), and `VidModel::Interleaved` (`stream_some()`/`render_stream()` after each CPU instruction).
 - **Keyboard**: `Key` struct implements a row/column matrix with dynamic auto-mapping from host keyboard codes to TVC layout.
-- **System Bus**: `TvcBus` wraps MMU, Video, Keyboard, and Logger, implementing the `Mmu` trait for Z80 memory and I/O access with port dispatch.
+- **System Bus**: `TvcBus` wraps the MMU, Video, Keyboard, tape interface, sound timer, logger, and expansion slots. It implements `CpuBus`, dispatching CPU memory and I/O accesses to the relevant device.
 - **Machine Orchestrator**: `Tvc` owns the bus, Z80 CPU, framebuffer, and runtime `VidModel` setting, providing `run_for_a_frame()` over 62500 CPU cycles. Streaming modes are bounded by this host screen-time budget and draw a black background with moving white stripes after several consecutive host ticks without a synchronized CRTC frame.
 - **Library Boundary**: [src/lib.rs](../src/lib.rs) exposes the emulator core as an `rlib` for native tooling and as a `cdylib` for WASM packaging.
 - **Native Emulator Wrapper**: `Emu` wraps `Tvc` with run state, ROM loading from `roms/`, and zipped program discovery from `progs/`. It is compiled only with the `native` feature.
-- **Native GUI**: `EmuApp` (eframe/egui) displays the TVC screen at PAL 4:3 aspect ratio, routes keyboard input to the TVC, exposes the video model as a runtime setting, and shows an optional IO log panel. It is compiled only with the `native` feature.
+- **Native GUI**: `EmuApp` (eframe/egui) displays the TVC screen at PAL 4:3 aspect ratio, routes keyboard input to the TVC, exposes the video model as a runtime setting, and shows an optional IO log panel. While running, it requests continuous repaints and generates TVC frames from a 50 Hz real-time gate so display refreshes reuse the latest texture instead of running the emulator once per host repaint. It is compiled only with the `native` feature.
 - **WASM Facade**: `WasmTvc` in [src/wasm.rs](../src/wasm.rs) exposes a small `wasm-bindgen` API around `Tvc`, including `runFrame()`, `setVidModel()`, key events, ROM/disk loading, and direct framebuffer pointer/length access for JavaScript canvas rendering. The WASM build does not include egui, eframe, or zip.
 - **Snapshots**: [docs/snapshot.md](snapshot.md) defines the custom `RTVCSNAP` chunked state format. User-facing snapshot and web bundle commands are in [README.md](../README.md).
 - **Profiling**: Use a sampling profiler such as `samply` against the native binary when profiling CPU performance.

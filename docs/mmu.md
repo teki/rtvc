@@ -90,6 +90,24 @@ Controlled by bits 6 and 7 (`M & 0xC0`):
 - `0x80`: **U3** (RAM)
 - `0xC0`: **EXT** (Expansion space) — *Special handling applies here; see Read and Write Semantics.*
 
+### Complete Map Summary
+
+| Logical page | CPU range | Select bits | Value | 64K+ mapping | 32K/64K mapping |
+|---|---:|---:|---:|---|---|
+| Page 0 | `0x0000-0x3FFF` | `M & 0x18` | `0x00` | SYS ROM | SYS ROM |
+| Page 0 | `0x0000-0x3FFF` | `M & 0x18` | `0x08` | CART ROM | CART ROM |
+| Page 0 | `0x0000-0x3FFF` | `M & 0x18` | `0x10` | U0 RAM | U0 RAM |
+| Page 0 | `0x0000-0x3FFF` | `M & 0x18` | `0x18` | U3 RAM | U0 RAM |
+| Page 1 | `0x4000-0x7FFF` | `M & 0x04` | `0x00` | U1 RAM | U1 RAM |
+| Page 1 | `0x4000-0x7FFF` | `M & 0x04` | `0x04` | Video RAM selected by `V & 0x03` | U1 RAM |
+| Page 2 | `0x8000-0xBFFF` | `M & 0x20` | `0x00` | Video RAM selected by `V & 0x0C` | VID0 RAM |
+| Page 2 | `0x8000-0xBFFF` | `M & 0x20` | `0x20` | U2 RAM | U2 RAM |
+| Page 3 | `0xC000-0xFFFF` | `M & 0xC0` | `0x00` | CART ROM | CART ROM |
+| Page 3 | `0xC000-0xFFFF` | `M & 0xC0` | `0x40` | SYS ROM | SYS ROM |
+| Page 3 | `0xC000-0xFFFF` | `M & 0xC0` | `0x80` | U3 RAM | U3 RAM |
+| Page 3 low half | `0xC000-0xDFFF` | `M & 0xC0` | `0xC0` | EXT card window | EXT card window |
+| Page 3 high half | `0xE000-0xFFFF` | `M & 0xC0` | `0xC0` | EXTH ROM | EXTH ROM |
+
 ---
 
 ## Video Paging Register (TVC 64K+)

@@ -1,6 +1,7 @@
 use std::io::Read;
 use std::io::Write;
 
+use crate::cas::TapeBitstreamGenerator;
 use crate::tvc::Tvc;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -97,6 +98,7 @@ impl MachineType {
 pub struct ProgEntry {
     pub name: String,
     pub file_name: String,
+    pub is_cas: bool,
 }
 
 pub struct Emu {
@@ -206,10 +208,9 @@ impl Emu {
             Ok(rd) => rd
                 .filter_map(|e| e.ok())
                 .filter(|e| {
-                    e.path()
-                        .extension()
-                        .map(|ext| ext == "zip")
-                        .unwrap_or(false)
+                    let path = e.path();
+                    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+                    ext.eq_ignore_ascii_case("zip") || ext.eq_ignore_ascii_case("cas")
                 })
                 .collect(),
             Err(_) => return,
@@ -217,11 +218,44 @@ impl Emu {
         entries.sort_by_key(|e| e.file_name());
         for entry in entries {
             let file_name = entry.file_name().to_string_lossy().to_string();
-            let name = file_name
-                .strip_suffix(".zip")
-                .unwrap_or(&file_name)
-                .to_string();
-            self.progs.push(ProgEntry { name, file_name });
+            let name = if file_name.to_lowercase().ends_with(".zip") {
+                file_name
+                    .strip_suffix(".zip")
+                    .unwrap_or(&file_name)
+                    .to_string()
+            } else {
+                file_name
+                    .strip_suffix(".cas")
+                    .unwrap_or(&file_name)
+                    .to_string()
+            };
+
+            let path = dir.join(&file_name);
+            let mut is_cas = false;
+            if file_name.to_lowercase().ends_with(".cas") {
+                is_cas = true;
+            } else if file_name.to_lowercase().ends_with(".zip") {
+                if let Ok(data) = std::fs::read(&path) {
+                    let reader = std::io::Cursor::new(data);
+                    if let Ok(mut archive) = zip::ZipArchive::new(reader) {
+                        for i in 0..archive.len() {
+                            if let Ok(file) = archive.by_index(i) {
+                                let entry_name = file.name().to_lowercase();
+                                if entry_name.ends_with(".cas") {
+                                    is_cas = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            self.progs.push(ProgEntry {
+                name,
+                file_name,
+                is_cas,
+            });
         }
         if self.selected_prog >= self.progs.len() {
             self.selected_prog = 0;
@@ -232,7 +266,8 @@ impl Emu {
         if self.progs.is_empty() || self.selected_prog >= self.progs.len() {
             return;
         }
-        let file_name = self.progs[self.selected_prog].file_name.clone();
+        let entry = &self.progs[self.selected_prog];
+        let file_name = entry.file_name.clone();
         let path = format!("progs/{}", file_name);
 
         let data = match std::fs::read(&path) {
@@ -240,27 +275,105 @@ impl Emu {
             Err(_) => return,
         };
 
-        let reader = std::io::Cursor::new(data);
-        let mut archive = match zip::ZipArchive::new(reader) {
-            Ok(a) => a,
+        let mut cas_data = None;
+        let mut dsk_data = None;
+
+        if file_name.to_lowercase().ends_with(".cas") {
+            cas_data = Some(data);
+        } else if file_name.to_lowercase().ends_with(".zip") {
+            let reader = std::io::Cursor::new(data);
+            if let Ok(mut archive) = zip::ZipArchive::new(reader) {
+                for i in 0..archive.len() {
+                    let mut file = match archive.by_index(i) {
+                        Ok(f) => f,
+                        Err(_) => continue,
+                    };
+                    let entry_name = file.name().to_string();
+                    if entry_name.to_lowercase().ends_with(".dsk") {
+                        let mut buf = Vec::new();
+                        if file.read_to_end(&mut buf).is_ok() {
+                            dsk_data = Some((entry_name, buf));
+                        }
+                        break;
+                    } else if entry_name.to_lowercase().ends_with(".cas") {
+                        let mut buf = Vec::new();
+                        if file.read_to_end(&mut buf).is_ok() {
+                            cas_data = Some(buf);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        if let Some((dsk_name, buf)) = dsk_data {
+            self.tvc.load_disk(&dsk_name, &buf);
+            self.prog_loaded = Some(entry.name.clone());
+        } else if let Some(buf) = cas_data {
+            if self.tvc.load_cas(&buf) {
+                self.prog_loaded = Some(format!("{} (Injected)", entry.name));
+            }
+        }
+    }
+
+    pub fn play_tape(&mut self) {
+        if self.progs.is_empty() || self.selected_prog >= self.progs.len() {
+            return;
+        }
+        let entry = &self.progs[self.selected_prog];
+        if !entry.is_cas {
+            return;
+        }
+        let file_name = entry.file_name.clone();
+        let path = format!("progs/{}", file_name);
+
+        let data = match std::fs::read(&path) {
+            Ok(d) => d,
             Err(_) => return,
         };
 
-        for i in 0..archive.len() {
-            let mut file = match archive.by_index(i) {
-                Ok(f) => f,
-                Err(_) => continue,
-            };
-            let entry_name = file.name().to_string();
-            if entry_name.to_lowercase().ends_with(".dsk") {
-                let mut buf = Vec::new();
-                if file.read_to_end(&mut buf).is_ok() {
-                      self.tvc.load_disk(&entry_name, &buf);
-                      self.prog_loaded = Some(self.progs[self.selected_prog].name.clone());
+        let mut cas_data = None;
+
+        if file_name.to_lowercase().ends_with(".cas") {
+            cas_data = Some(data);
+        } else if file_name.to_lowercase().ends_with(".zip") {
+            let reader = std::io::Cursor::new(data);
+            if let Ok(mut archive) = zip::ZipArchive::new(reader) {
+                for i in 0..archive.len() {
+                    let mut file = match archive.by_index(i) {
+                        Ok(f) => f,
+                        Err(_) => continue,
+                    };
+                    let entry_name = file.name().to_string();
+                    if entry_name.to_lowercase().ends_with(".cas") {
+                        let mut buf = Vec::new();
+                        if file.read_to_end(&mut buf).is_ok() {
+                            cas_data = Some(buf);
+                        }
+                        break;
+                    }
                 }
-                break;
             }
         }
+
+        if let Some(buf) = cas_data {
+            if let Ok(generator) = TapeBitstreamGenerator::new(&buf, &entry.name) {
+                self.tvc.bus.play_tape(generator);
+                self.prog_loaded = Some(format!("{} (Playing)", entry.name));
+            }
+        }
+    }
+
+    pub fn stop_tape(&mut self) {
+        self.tvc.bus.stop_tape();
+        self.prog_loaded = None;
+    }
+
+    pub fn get_current_tape_level(&self) -> f32 {
+        if self.tvc.bus.tape_play_active() {
+            return self.tvc.bus.current_tape_level();
+        }
+        0.5
     }
 }
 

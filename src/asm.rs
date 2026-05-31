@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::mmu::Mmu;
+use crate::mmu::CpuBus;
 use crate::z80_tables::{mnemonic_to_opcode, opcode_to_mnemonic};
 
 #[derive(Debug, Clone)]
@@ -380,7 +380,7 @@ fn write_operand_bytes(template: &str, values: &[i8], mut idx: usize) -> (Vec<u8
 
 // ── public API ───────────────────────────────────────────────────
 
-pub fn assemble_line<M: Mmu>(mmu: &mut M, addr: u16, line: &str) -> Result<AsmResult, String> {
+pub fn assemble_line<M: CpuBus>(mmu: &mut M, addr: u16, line: &str) -> Result<AsmResult, String> {
     let (mnemonic, params) = normalize_input(line);
 
     if mnemonic.is_empty() {

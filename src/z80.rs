@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use crate::mmu::Mmu;
+use crate::mmu::CpuBus;
 
 // Flag constants
 const F_S: u8 = 0x80;
@@ -197,7 +197,7 @@ impl Z80 {
         self.state.reset();
     }
 
-    pub fn push16<M: Mmu>(&mut self, mmu: &mut M, val: u16) {
+    pub fn push16<M: CpuBus>(&mut self, mmu: &mut M, val: u16) {
         let sp = self.state.r16[R_SP].wrapping_sub(1);
         mmu.w8(sp, ((val >> 8) & 0xFF) as u8);
         let sp = sp.wrapping_sub(1);
@@ -205,7 +205,7 @@ impl Z80 {
         self.state.r16[R_SP] = sp;
     }
 
-    pub fn pop16<M: Mmu>(&mut self, mmu: &mut M) -> u16 {
+    pub fn pop16<M: CpuBus>(&mut self, mmu: &mut M) -> u16 {
         let sp = self.state.r16[R_SP];
         let lo = mmu.r8(sp) as u16;
         let sp = sp.wrapping_add(1);
@@ -365,8 +365,9 @@ impl Z80 {
         }
     }
 
-    pub fn irq<M: Mmu>(&mut self, mmu: &mut M) -> u32 {
+    pub fn irq<M: CpuBus>(&mut self, mmu: &mut M) -> u32 {
         if self.state.iff1 != 0 {
+            self.state.halted = 0;
             self.state.iff1 = 0;
             self.state.iff2 = 0;
             let pc = self.state.r16[R_PC];
@@ -378,7 +379,11 @@ impl Z80 {
         }
     }
 
-    pub fn step<M: Mmu>(&mut self, mmu: &mut M, _run_for: i32) -> u32 {
+    pub fn step<M: CpuBus>(&mut self, mmu: &mut M, _run_for: i32) -> u32 {
+        if self.state.halted != 0 {
+            return 4;
+        }
+
         let mut pc = self.state.r16[R_PC];
         let mut r_add = 0u8;
         let mut t_add = 0u32;
@@ -418,13 +423,13 @@ impl Z80 {
         if t == 0 {
             panic!("Opcode not implemented: 0x{:04X}", opcode);
         }
-        if m > 0 && self.state.halted == 0 {
+        if m > 0 && (self.state.halted == 0 || opcode == 0x76) {
             self.state.r16[R_PC] = pc.wrapping_add(m as u16);
         }
         t + t_add
     }
 
-    pub fn execute<M: Mmu>(
+    pub fn execute<M: CpuBus>(
         &mut self,
         opcode: u32,
         displ: i8,
@@ -469,7 +474,7 @@ impl Z80 {
         (0, 0)
     }
 
-    pub fn execute_base<M: Mmu>(&mut self, opcode: u8, mmu: &mut M) -> (u32, u8) {
+    pub fn execute_base<M: CpuBus>(&mut self, opcode: u8, mmu: &mut M) -> (u32, u8) {
         match opcode {
             0x00 => (4, 1),
             0x01 => {
@@ -2055,7 +2060,7 @@ impl Z80 {
             }
         }
     }
-    pub fn execute_cb<M: Mmu>(&mut self, opcode: u8, mmu: &mut M) -> (u32, u8) {
+    pub fn execute_cb<M: CpuBus>(&mut self, opcode: u8, mmu: &mut M) -> (u32, u8) {
         match opcode {
             0x00 => {
                 let (res, flags) = self.shl8(self.state.r8[2], (self.state.r8[2] & 0x80) != 0);
@@ -3651,7 +3656,7 @@ impl Z80 {
             }
         }
     }
-    pub fn execute_ed<M: Mmu>(&mut self, opcode: u8, mmu: &mut M) -> (u32, u8) {
+    pub fn execute_ed<M: CpuBus>(&mut self, opcode: u8, mmu: &mut M) -> (u32, u8) {
         match opcode {
             0x40 => {
                 self.state.r8[2] = mmu.in8(self.state.r8[R_C], self.state.r8[R_B]);
@@ -4360,7 +4365,7 @@ impl Z80 {
             _ => (0, 0),
         }
     }
-    pub fn execute_dd<M: Mmu>(&mut self, opcode: u8, _displ: i8, mmu: &mut M) -> (u32, u8) {
+    pub fn execute_dd<M: CpuBus>(&mut self, opcode: u8, _displ: i8, mmu: &mut M) -> (u32, u8) {
         match opcode {
             0x09 => {
                 let ix = self.state.get_reg16(4);
@@ -4854,7 +4859,7 @@ impl Z80 {
             _ => (0, 0),
         }
     }
-    pub fn execute_fd<M: Mmu>(&mut self, opcode: u8, _displ: i8, mmu: &mut M) -> (u32, u8) {
+    pub fn execute_fd<M: CpuBus>(&mut self, opcode: u8, _displ: i8, mmu: &mut M) -> (u32, u8) {
         match opcode {
             0x09 => {
                 let ix = self.state.get_reg16(5);
@@ -5348,7 +5353,7 @@ impl Z80 {
             _ => (0, 0),
         }
     }
-    pub fn execute_ddcb<M: Mmu>(&mut self, opcode: u8, displ: i8, mmu: &mut M) -> (u32, u8) {
+    pub fn execute_ddcb<M: CpuBus>(&mut self, opcode: u8, displ: i8, mmu: &mut M) -> (u32, u8) {
         let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
         match opcode {
             0x00 => {
@@ -7249,7 +7254,7 @@ impl Z80 {
             }
         }
     }
-    pub fn execute_fdcb<M: Mmu>(&mut self, opcode: u8, displ: i8, mmu: &mut M) -> (u32, u8) {
+    pub fn execute_fdcb<M: CpuBus>(&mut self, opcode: u8, displ: i8, mmu: &mut M) -> (u32, u8) {
         let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
         match opcode {
             0x00 => {

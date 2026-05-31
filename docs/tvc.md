@@ -55,6 +55,8 @@ The emulation advances frame-by-frame using `run_for_a_frame()` (equivalent to t
 5. **Interrupt Handling**: In streaming modes, a CRTC cursor match immediately latches the active-low cursor interrupt, calls `z80.irq()` if interrupts are enabled, and advances the CRTC by the IRQ service duration. This keeps the CPU and CRTC aligned for software that times drawing from the last-pixel screen interrupt.
 6. **Presentation**: Sets `frame_complete = true` whenever a presentable framebuffer is ready for the UI. Streaming modes do not wait indefinitely for CRTC sync; they keep presenting the monitor surface while trying to relock, and only replace it with a black lost-sync background with moving white stripes after several consecutive host ticks without a synchronized frame.
 
+The native egui UI does not run one TVC frame for every host repaint. While the emulator is running, the UI requests continuous repaints and gates TVC frame generation from real time at 50 Hz. On displays refreshing faster than 50 Hz, host repaints reuse the latest texture until the next TVC frame is due. If generating a TVC frame takes too long, the UI drops the backlog and generates at most one new TVC frame per repaint callback. The FPS readout reports generated TVC frames only.
+
 Native builds expose the video model as a runtime setting. WASM builds use Cargo features to select the constructor default: `web-vid-simple` for lightweight builds or `web-vid-realistic` for CRTC-timing builds. JavaScript can call `setVidModel()` with `fast-frame`, `line`, or `interleaved`; legacy `simple` and `realistic` names are still accepted.
 
 ---
@@ -71,9 +73,9 @@ The orchestrator maps the Z80 CPU I/O space. When the CPU executes an `IN` or `O
 | `0x02` | MMU | Memory mapping register (maps RAM/ROM banks to pages) |
 | `0x03` | Keyboard / Expansion | Bits 0-3: Selects the active keyboard scan row.<br>Bits 6-7: Cartridge expansion mapping (`_extCartMapping`). |
 | `0x04` | Audio | Sound frequency generator (Low byte). |
-| `0x05` | Audio | Bits 0-3: Sound frequency (High byte).<br>Bit 4: Sound Output enable switch.<br>Bit 5: Sound interrupt enable/disable flag. |
+| `0x05` | Audio / Tape | Bits 0-3: Sound frequency (High byte).<br>Bit 4: Sound Output enable switch.<br>Bit 5: Sound interrupt enable/disable flag.<br>Bits 6-7 are preserved by ROM tape routines for motor-control state. |
 | `0x06` | Multi-Port | Bits 0-1: Video display mode (2-color, 4-color, 16-color).<br>Bits 2-5: Sound amplitude level.<br>Bit 7: Printer acknowledgment trigger. |
-| `0x07` | Interrupt Controller | Acknowledges and clears the Cursor / Audio Interrupt. |
+| `0x07` | Interrupt Controller | Acknowledges and clears the shared Cursor / Audio Interrupt. |
 | `0x0C - 0x0F` | MMU | Video page mapping bank selector (for TVC 64K+ expandability). |
 | `0x58` | Expansion card 0 | Write-enable / interrupt-enable configuration for Card Slot 0. |
 | `0x59` | Expansion card 1 | Write-enable / interrupt-enable configuration for Card Slot 1. |
@@ -90,8 +92,9 @@ The orchestrator maps the Z80 CPU I/O space. When the CPU executes an `IN` or `O
 | Port (Hex) | Module | Description |
 |:---:|:---:|---|
 | `0x58` | Keyboard | Reads the column state of the currently selected keyboard scan row. |
-| `0x59` | Interrupt / System | Reads pending interrupts (bits 0-4) and system flags:<br>Bit 7: Printer ACK status.<br>Bit 6: Color / BW monitor selection flag.<br>Bit 5: Tape (cassette) input stream bit. |
+| `0x59` / `0x5D` | Interrupt / System | Reads pending interrupts (bits 0-4) and system flags:<br>Bit 7: Printer ACK status.<br>Bit 6: Color / BW monitor selection flag.<br>Bit 5: Tape (cassette) input stream bit. |
 | `0x5A` | Expansion Slots | Reads slot occupancy / card identifier codes. |
+| `0x5B` / `0x5F` | Audio Timer | Resets/restarts the sound oscillator counter from the programmed divisor. |
 | `0x10 - 0x1F` | Slot 0 Card | Direct pass-through read (offset `addr & 0x0F`) from Card 0 module. |
 | `0x20 - 0x2F` | Slot 1 Card | Direct pass-through read (offset `addr & 0x0F`) from Card 1 module. |
 
@@ -101,14 +104,15 @@ The orchestrator maps the Z80 CPU I/O space. When the CPU executes an `IN` or `O
 
 The TVC handles peripheral interrupts through a custom latch state stored in `_pendIt`. This status byte maps the interrupt request lines:
 
-- **Bit 4**: Cursor/Audio interrupt.
+- **Bit 4**: Shared Cursor/Audio interrupt.
 - **Bits 0-3**: Extension Slots 0 to 3 card interrupts.
 
 ### Interrupt Generation & Lifecycle
 1. When the CRTC beam matches the cursor position, it triggers a Cursor Interrupt (setting bit 4 in `_pendIt` to `0` since it is active-low).
-2. The orchestrator checks if the interrupt is enabled. If Z80 interrupts are enabled (`irqEnabled()`), it halts execution and fires a Z80 interrupt service routine via `_z80.irq()`.
-3. The CPU services the interrupt, performing its routine (keyboard scanning, system timers, cassette sound).
-4. The Z80 services write to Port `0x07`, which clears the interrupt flag, restoring bit 4 of `_pendIt` to `1` (idle).
+2. The sound oscillator can also trigger the same bit when port `0x05` bit 5 enables sound IT. The 12-bit divisor is written through ports `0x04` and `0x05`; reading `0x5B` or `0x5F` restarts the counter.
+3. The orchestrator checks if the interrupt is enabled. If Z80 interrupts are enabled (`irqEnabled()`), it halts execution and fires a Z80 interrupt service routine via `_z80.irq()`.
+4. The CPU services the interrupt, using software state to distinguish cursor and sound timer requests because they share the same status bit.
+5. The Z80 services write to Port `0x07`, which clears the shared interrupt flag, restoring bit 4 of `_pendIt` to `1` (idle).
 
 ---
 

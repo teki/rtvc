@@ -257,6 +257,10 @@ impl Vid {
         self.hd < self.ht
     }
 
+    pub fn cursor_enabled(&self) -> bool {
+        self.curenabled
+    }
+
     /// Set video mode (port 0x06 bits 0-1)
     pub fn set_mode(&mut self, mode: u8) {
         self.mode = mode & 0x03;
@@ -321,7 +325,9 @@ impl Vid {
             if self.row < self.vd as i32 {
                 if self.char_x < self.hd {
                     if self.curenabled {
-                        cursor_it = self.mem == self.curaddr && self.line == self.curstart;
+                        cursor_it = self.curenabled
+                            && self.mem == self.curaddr
+                            && self.line == self.curstart;
                     }
                     let addr = self.addr as usize;
                     self.stream_data(mode_val | (vidmem.get(addr).copied().unwrap_or(0) as i16));

@@ -1,6 +1,6 @@
 #![allow(dead_code)]
-/// Memory Management Unit trait for the Videoton TV Computer emulators
-pub trait Mmu {
+/// CPU-facing memory and I/O bus used by the Z80 core.
+pub trait CpuBus {
     fn r8(&mut self, addr: u16) -> u8;
     fn w8(&mut self, addr: u16, val: u8);
 
@@ -223,6 +223,19 @@ impl TvcMmu {
         self.map_val
     }
 
+    #[inline]
+    pub fn ext_card_offset(&self, addr: u16) -> Option<u16> {
+        if (self.map_val & 0xC0) != 0xC0 {
+            return None;
+        }
+        let is_page3 = (addr & 0xC000) == 0xC000;
+        if !is_page3 {
+            return None;
+        }
+        let offset = addr & 0x3FFF;
+        if offset < 0x2000 { Some(offset) } else { None }
+    }
+
     pub fn is_plus(&self) -> bool {
         self.is_plus
     }
@@ -321,7 +334,7 @@ fn read_optional_bank(
     Ok(Some(bank))
 }
 
-impl Mmu for TvcMmu {
+impl CpuBus for TvcMmu {
     fn r8(&mut self, addr: u16) -> u8 {
         let page = (addr >> 14) as usize;
         let offset = (addr & 0x3FFF) as usize;
@@ -398,7 +411,7 @@ impl FakeMmu {
     }
 }
 
-impl Mmu for FakeMmu {
+impl CpuBus for FakeMmu {
     fn r8(&mut self, addr: u16) -> u8 {
         let val = self.mem[addr as usize];
         if self.logging_enabled {
