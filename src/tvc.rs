@@ -2,12 +2,16 @@
 
 use std::collections::HashSet;
 
+use crate::bus::CpuBus;
 use crate::cas::TapeBitstreamGenerator;
+use crate::expansion::ExpansionSlots;
 use crate::hbf::HBF;
 use crate::key::Key;
 use crate::log::{Log, Logger};
-use crate::mmu::{CpuBus, TvcMmu};
-use crate::snapshot::{self, Reader, SnapshotError, Writer};
+use crate::mmu::TvcMmu;
+use crate::snapshot;
+use crate::sound::SoundTimer;
+use crate::tape::TapeInterface;
 use crate::vid::{Vid, VidModel};
 use crate::z80::Z80;
 
@@ -20,327 +24,14 @@ const LINE_CLOCK_REMAINDER: u32 = (FRAME_CLOCKS as u32) % SCREEN_LINES;
 const SYNC_TIMEOUT_HOST_FRAMES: u32 = 8;
 const SHARED_CURSOR_SOUND_IT: u8 = 0x10;
 
-struct TapeInterface {
-    generator: Option<TapeBitstreamGenerator>,
-    play_active: bool,
-    start_cycle: u64,
-    cycles: u64,
-    motor_on: bool,
-    output_flip_flop: bool,
-}
-
-impl TapeInterface {
-    fn new() -> Self {
-        Self {
-            generator: None,
-            play_active: false,
-            start_cycle: 0,
-            cycles: 0,
-            motor_on: false,
-            output_flip_flop: false,
-        }
-    }
-
-    fn reset(&mut self) {
-        self.play_active = false;
-        self.cycles = 0;
-        self.start_cycle = 0;
-        self.motor_on = false;
-        self.output_flip_flop = false;
-    }
-
-    fn set_cycles(&mut self, cycles: u64) {
-        self.cycles = cycles;
-    }
-
-    fn advance(&mut self, cycles: u64) {
-        self.cycles += cycles;
-    }
-
-    fn set_motor_from_port5(&mut self, val: u8) {
-        self.motor_on = (val & 0xC0) != 0;
-    }
-
-    fn toggle_output(&mut self) {
-        self.output_flip_flop = !self.output_flip_flop;
-    }
-
-    fn play(&mut self, generator: TapeBitstreamGenerator) {
-        self.generator = Some(generator);
-        self.play_active = true;
-        self.start_cycle = self.cycles;
-    }
-
-    fn stop(&mut self) {
-        self.play_active = false;
-    }
-
-    fn is_active(&self) -> bool {
-        self.play_active
-    }
-
-    fn motor_on(&self) -> bool {
-        self.motor_on
-    }
-
-    fn cycles(&self) -> u64 {
-        self.cycles
-    }
-
-    fn state(&self) -> (u64, f32, u8) {
-        let elapsed = self.cycles - self.start_cycle;
-        let level = if self.play_active {
-            self.generator
-                .as_ref()
-                .map(|generator| generator.get_signal_at_cycle(elapsed))
-                .unwrap_or(0.5)
-        } else {
-            0.5
-        };
-        let bit = if self.motor_on && self.play_active && level > 0.5 {
-            1
-        } else {
-            0
-        };
-        (elapsed, level, bit)
-    }
-
-    fn input_bit(&mut self) -> u8 {
-        let (_, _, mut tape_bit) = self.state();
-        if !self.motor_on || !self.play_active {
-            tape_bit = 0;
-        } else if let Some(ref generator) = self.generator {
-            let elapsed = self.cycles - self.start_cycle;
-            if elapsed >= generator.total_cycles {
-                self.play_active = false;
-                tape_bit = 0;
-            }
-        }
-        tape_bit
-    }
-
-    fn current_level(&self) -> f32 {
-        self.state().1
-    }
-}
-
-struct SoundTimer {
-    freq_low: u8,
-    ctrl: u8,
-    period_cycles: Option<u64>,
-    counter: u64,
-    running: bool,
-}
-
-impl SoundTimer {
-    fn new() -> Self {
-        Self {
-            freq_low: 0,
-            ctrl: 0,
-            period_cycles: Some(0x1000 * 16),
-            counter: 0,
-            running: false,
-        }
-    }
-
-    fn reset(&mut self) {
-        self.freq_low = 0;
-        self.ctrl = 0;
-        self.period_cycles = Some(0x1000 * 16);
-        self.counter = 0;
-        self.running = false;
-    }
-
-    fn write_low(&mut self, val: u8) {
-        self.freq_low = val;
-        self.update_period_cycles();
-    }
-
-    fn write_control(&mut self, val: u8) {
-        self.ctrl = val;
-        self.update_period_cycles();
-    }
-
-    fn divisor(&self) -> u16 {
-        ((self.ctrl as u16 & 0x0F) << 8) | self.freq_low as u16
-    }
-
-    fn update_period_cycles(&mut self) {
-        let divisor = self.divisor();
-        self.period_cycles = if divisor == 0x0FFF {
-            None
-        } else {
-            Some((0x1000u64 - divisor as u64) * 16)
-        };
-    }
-
-    fn interrupt_enabled(&self) -> bool {
-        (self.ctrl & 0x20) != 0
-    }
-
-    fn period_cycles(&self) -> Option<u64> {
-        self.period_cycles
-    }
-
-    fn counter(&self) -> u64 {
-        self.counter
-    }
-
-    fn running(&self) -> bool {
-        self.running
-    }
-
-    fn restart(&mut self) {
-        self.counter = self.period_cycles.unwrap_or(0);
-        self.running = self.counter != 0;
-    }
-
-    fn advance(&mut self, cycles: u64) -> bool {
-        if !self.running {
-            return false;
-        }
-
-        let Some(period) = self.period_cycles else {
-            self.running = false;
-            self.counter = 0;
-            return false;
-        };
-
-        let mut remaining = cycles;
-        let mut fired = false;
-        while remaining >= self.counter {
-            remaining -= self.counter;
-            self.counter = period;
-            fired |= self.interrupt_enabled();
-        }
-        self.counter -= remaining;
-        fired
-    }
-}
-
-struct ExpansionSlots {
-    slots: [Option<HBF>; 4],
-    // Two-bit extension type identifiers exposed by the 0x5A/0x5E status port.
-    type_status: u8,
-    // Selected extension memory mapping from port 0x03 bits 6-7.
-    selected_mapping: u8,
-}
-
-impl ExpansionSlots {
-    fn new() -> Self {
-        Self {
-            slots: [None, None, None, None],
-            type_status: 0xFF,
-            selected_mapping: 0,
-        }
-    }
-
-    fn reset(&mut self) {
-        self.selected_mapping = 0;
-        self.recompute_type_status();
-    }
-
-    fn attach_hbf(&mut self, slot: usize, hbf: HBF) {
-        if slot >= self.slots.len() {
-            return;
-        }
-        self.slots[slot] = Some(hbf);
-        self.recompute_type_status();
-    }
-
-    fn recompute_type_status(&mut self) {
-        self.type_status = 0xFF;
-        for (slot, ext) in self.slots.iter().enumerate() {
-            let Some(ext) = ext else {
-                continue;
-            };
-            let hbf_type = ext.get_type();
-            self.type_status &= !(3 << (slot * 2));
-            self.type_status |= hbf_type << (slot * 2);
-        }
-    }
-
-    fn selected_mapping(&self) -> u8 {
-        self.selected_mapping
-    }
-
-    fn set_selected_mapping(&mut self, mapping: u8) {
-        self.selected_mapping = mapping & 0x03;
-    }
-
-    fn type_status(&self) -> u8 {
-        self.type_status
-    }
-
-    fn active_mem_slot_mut(&mut self) -> Option<&mut HBF> {
-        self.slots
-            .get_mut(self.selected_mapping as usize)
-            .and_then(Option::as_mut)
-    }
-
-    fn read_mem(&mut self, offset: u16) -> u8 {
-        self.active_mem_slot_mut()
-            .map(|slot| slot.r8(offset))
-            .unwrap_or(0xFF)
-    }
-
-    fn write_mem(&mut self, offset: u16, val: u8) {
-        if let Some(slot) = self.active_mem_slot_mut() {
-            slot.w8(offset, val);
-        }
-    }
-
-    fn port_slot(port: u8) -> Option<usize> {
-        match port {
-            0x10..=0x1F => Some(0),
-            0x20..=0x2F => Some(1),
-            0x30..=0x3F => Some(2),
-            0x40..=0x4F => Some(3),
-            _ => None,
-        }
-    }
-
-    fn read_port(&mut self, port: u8) -> Option<u8> {
-        let slot = Self::port_slot(port)?;
-        Some(
-            self.slots[slot]
-                .as_mut()
-                .map(|ext| ext.read_port(port & 0x0F))
-                .unwrap_or(0xFF),
-        )
-    }
-
-    fn write_port(&mut self, port: u8, val: u8) -> bool {
-        let Some(slot) = Self::port_slot(port) else {
-            return false;
-        };
-        if let Some(ext) = self.slots[slot].as_mut() {
-            ext.write_port(port & 0x0F, val);
-        }
-        true
-    }
-
-    fn slot0(&self) -> Option<&HBF> {
-        self.slots[0].as_ref()
-    }
-
-    fn slot0_mut(&mut self) -> Option<&mut HBF> {
-        self.slots[0].as_mut()
-    }
-
-    fn replace_slot0(&mut self, hbf: HBF) {
-        self.attach_hbf(0, hbf);
-    }
-}
-
 pub struct TvcBus {
     pub mmu: TvcMmu,
     pub vid: Vid,
     pub key: Key,
     pub log: Log,
     // Active-low interrupt status bits exposed by the 0x59/0x5D status port.
-    pend_it: u8,
-    extensions: ExpansionSlots,
+    pub(crate) pend_it: u8,
+    pub(crate) extensions: ExpansionSlots,
     tape: TapeInterface,
     sound: SoundTimer,
     // Last Z80 PC before an I/O instruction, used only for debug logging.
@@ -451,7 +142,7 @@ impl TvcBus {
         self.tape.advance(cycles);
     }
 
-    fn set_tape_cycles(&mut self, cycles: u64) {
+    pub(crate) fn set_tape_cycles(&mut self, cycles: u64) {
         self.tape.set_cycles(cycles);
     }
 
@@ -584,8 +275,8 @@ pub struct Tvc {
     pub z80: Z80,
     pub framebuffer: Vec<u32>,
     pub frame_complete: bool,
-    vid_model: VidModel,
-    clock: u64,
+    pub(crate) vid_model: VidModel,
+    pub(crate) clock: u64,
     sync_timeout_frames: u32,
     line_cycle_debt: u32,
     last_cursor_it_clock: Option<u64>,
@@ -625,111 +316,11 @@ impl Tvc {
     }
 
     pub fn save_snapshot(&self) -> Vec<u8> {
-        let mut chunks = Vec::new();
-
-        let mut meta = Writer::new();
-        meta.u8(self.bus.mmu.is_plus() as u8);
-        meta.u8(match self.vid_model {
-            VidModel::FastFrame => 0,
-            VidModel::Interleaved => 1,
-            VidModel::Line => 2,
-        });
-        meta.u64(self.clock);
-        meta.u8(self.frame_complete as u8);
-        chunks.push((*b"META", meta.into_inner()));
-
-        let mut cpu = Writer::new();
-        cpu.raw_bytes(&self.z80.state.r8);
-        for reg in self.z80.state.r16 {
-            cpu.u16(reg);
-        }
-        cpu.u8(self.z80.state.halted);
-        cpu.u8(self.z80.state.im);
-        cpu.u8(self.z80.state.iff1);
-        cpu.u8(self.z80.state.iff2);
-        chunks.push((*b"CPUZ", cpu.into_inner()));
-
-        let mut mmu = Writer::new();
-        self.bus.mmu.write_snapshot(&mut mmu);
-        chunks.push((*b"MMU ", mmu.into_inner()));
-
-        let mut vid = Writer::new();
-        self.bus.vid.write_snapshot(&mut vid);
-        chunks.push((*b"VID ", vid.into_inner()));
-
-        if let Some(ext) = self.bus.extensions.slot0() {
-            let mut hbf = Writer::new();
-            ext.write_snapshot(&mut hbf);
-            chunks.push((*b"HBF ", hbf.into_inner()));
-        }
-
-        let mut bus = Writer::new();
-        bus.u8(self.bus.pend_it);
-        bus.u8(self.bus.extensions.type_status());
-        bus.u8(self.bus.extensions.selected_mapping());
-        chunks.push((*b"BUS ", bus.into_inner()));
-
-        snapshot::write_file(&chunks)
+        crate::tvc_snapshot::save(self)
     }
 
     pub fn load_snapshot(&mut self, data: &[u8]) -> snapshot::Result<()> {
-        let chunks = snapshot::read_file(data)?;
-        let meta = chunks
-            .iter()
-            .find(|chunk| chunk.id == *b"META")
-            .ok_or(SnapshotError::InvalidChunk("META"))?;
-        let mut meta = Reader::new(meta.data);
-        let is_plus = meta.u8()? != 0;
-        let vid_model = match meta.u8()? {
-            0 => VidModel::FastFrame,
-            1 => VidModel::Interleaved,
-            2 => VidModel::Line,
-            _ => {
-                return Err(SnapshotError::InvalidData(
-                    "unknown video model".to_string(),
-                ));
-            }
-        };
-        let clock = meta.u64()?;
-        let frame_complete = meta.u8()? != 0;
-
-        *self = Tvc::new_with_vid_model(is_plus, vid_model);
-        self.clock = clock;
-        self.bus.set_tape_cycles(clock);
-        self.frame_complete = frame_complete;
-
-        for chunk in chunks {
-            let mut reader = Reader::new(chunk.data);
-            match &chunk.id {
-                b"META" => {}
-                b"CPUZ" => {
-                    self.z80.state.r8.copy_from_slice(reader.raw_bytes(22)?);
-                    for reg in &mut self.z80.state.r16 {
-                        *reg = reader.u16()?;
-                    }
-                    self.z80.state.halted = reader.u8()?;
-                    self.z80.state.im = reader.u8()?;
-                    self.z80.state.iff1 = reader.u8()?;
-                    self.z80.state.iff2 = reader.u8()?;
-                }
-                b"MMU " => self.bus.mmu.read_snapshot(&mut reader)?,
-                b"VID " => self.bus.vid.read_snapshot(&mut reader)?,
-                b"HBF " => {
-                    self.bus
-                        .extensions
-                        .replace_slot0(HBF::read_snapshot(&mut reader)?);
-                }
-                b"BUS " => {
-                    self.bus.pend_it = reader.u8()?;
-                    self.bus.extensions.type_status = reader.u8()?;
-                    self.bus.extensions.set_selected_mapping(reader.u8()?);
-                }
-                _ => {}
-            }
-        }
-        self.bus.key.reset();
-        self.bus.log.clear();
-        Ok(())
+        crate::tvc_snapshot::load(self, data)
     }
 
     pub fn reset(&mut self) {

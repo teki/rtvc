@@ -1,16 +1,15 @@
 use std::fs;
 use std::io::{self, Write};
 
-mod mmu;
-mod snapshot;
+mod bus;
 mod z80;
 
-use mmu::{CpuBus, FakeMmu};
+use bus::{CpuBus, FakeBus};
 use z80::Z80;
 
 fn run_zex(file_path: &str, skip_cnt: u16) -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Running ZEX test: {} ---", file_path);
-    let mut fakemmu = FakeMmu::new();
+    let mut fakemmu = FakeBus::new();
 
     let test_data = fs::read(file_path)?;
     // 0x0100 = start address

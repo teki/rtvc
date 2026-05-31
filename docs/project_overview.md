@@ -14,14 +14,19 @@ Future build-target and UI direction is tracked in [docs/future_plan.md](future_
 - [src/lib.rs](../src/lib.rs) — Shared library entry point exporting the emulator core modules, native UI modules, and optional WASM bindings.
 - [src/main.rs](../src/main.rs) — Entry point for the native TVC emulator binary (eframe/egui application).
 - [src/z80.rs](../src/z80.rs) — Complete Z80 CPU emulator (supporting all documented and many undocumented opcodes).
-- [src/mmu.rs](../src/mmu.rs) — TVC memory management unit implementing bank switching and flat memory helper.
+- [src/bus.rs](../src/bus.rs) — Z80-facing `CpuBus` trait and flat `FakeBus` test implementation.
+- [src/mmu.rs](../src/mmu.rs) — TVC memory management unit implementing bank switching.
 - [src/vid.rs](../src/vid.rs) — TVC video controller (MC6845 CRTC emulation).
 - [src/key.rs](../src/key.rs) — TVC keyboard matrix with dynamic auto-mapping.
 - [src/tvc.rs](../src/tvc.rs) — System bus and machine orchestrator (TvcBus + Tvc).
+- [src/tape.rs](../src/tape.rs) — Cassette tape playback/input state.
+- [src/sound.rs](../src/sound.rs) — Programmable sound timer and shared interrupt source.
+- [src/expansion.rs](../src/expansion.rs) — Expansion slot/card routing for memory and I/O windows.
 - [src/emu.rs](../src/emu.rs) — Native-only high-level emulator wrapper (Emu struct with run state, filesystem ROM loading, and zipped program loading).
 - [src/ui.rs](../src/ui.rs) — Native-only egui/eframe GUI application (EmuApp) with screen display and IO log panel.
 - [src/wasm.rs](../src/wasm.rs) — Lightweight WASM bindings exposing `Tvc` control, ROM/disk loading, keyboard input, and framebuffer access for a browser canvas UI.
 - [src/snapshot.rs](../src/snapshot.rs) — Chunked snapshot format helpers shared by native and WASM snapshot save/load APIs.
+- [src/tvc_snapshot.rs](../src/tvc_snapshot.rs) — TVC-specific snapshot chunk save/load glue used by `Tvc`.
 - [src/log.rs](../src/log.rs) — Logger trait and ring-buffer log implementation.
 - [src/fuse_test.rs](../src/fuse_test.rs) — FUSE test harness executable.
 - [src/zex_test.rs](../src/zex_test.rs) — Z80 Instruction exercise test runner (zexall/zexdoc).
@@ -35,18 +40,18 @@ Future build-target and UI direction is tracked in [docs/future_plan.md](future_
 
 - **Z80 CPU**: The CPU emulator closely follows the design and behavior of the JavaScript implementation in `../jstvc/src/z80.js`.
 - **MMU**:
-  - `FakeMmu` in `mmu.rs` provides a flat, 64 KB memory space specifically for running CPU tests (like FUSE and ZEX).
+  - `FakeBus` in `bus.rs` provides a flat, 64 KB CPU bus specifically for running CPU tests (like FUSE and ZEX).
   - `TvcMmu` in `mmu.rs` implements TVC bank switching (mapping external/internal memory banks into four 16 KB pages), wired to the main binary via `TvcBus`.
-- **CPU Bus Trait**: `CpuBus` in `mmu.rs` is the Z80-facing memory and I/O interface used by the CPU core. Test memory and the full TVC bus both implement it.
+- **CPU Bus Trait**: `CpuBus` in `bus.rs` is the Z80-facing memory and I/O interface used by the CPU core. Test memory and the full TVC bus both implement it.
 - **Video**: `Vid` struct emulates the MC6845 CRTC and supports three runtime video schedules: `VidModel::FastFrame` (`draw_frame()` after one screen-time CPU budget), `VidModel::Line` (CPU and CRTC advanced once per display line), and `VidModel::Interleaved` (`stream_some()`/`render_stream()` after each CPU instruction).
 - **Keyboard**: `Key` struct implements a row/column matrix with dynamic auto-mapping from host keyboard codes to TVC layout.
-- **System Bus**: `TvcBus` wraps the MMU, Video, Keyboard, tape interface, sound timer, logger, and expansion slots. It implements `CpuBus`, dispatching CPU memory and I/O accesses to the relevant device.
+- **System Bus**: `TvcBus` wraps the MMU, Video, Keyboard, tape interface, sound timer, logger, and expansion slots. It implements `CpuBus`, dispatching CPU memory and I/O accesses to the relevant device. Expansion memory and I/O routing lives here, while `TvcMmu` remains the internal memory mapper.
 - **Machine Orchestrator**: `Tvc` owns the bus, Z80 CPU, framebuffer, and runtime `VidModel` setting, providing `run_for_a_frame()` over 62500 CPU cycles. Streaming modes are bounded by this host screen-time budget and draw a black background with moving white stripes after several consecutive host ticks without a synchronized CRTC frame.
 - **Library Boundary**: [src/lib.rs](../src/lib.rs) exposes the emulator core as an `rlib` for native tooling and as a `cdylib` for WASM packaging.
 - **Native Emulator Wrapper**: `Emu` wraps `Tvc` with run state, ROM loading from `roms/`, and zipped program discovery from `progs/`. It is compiled only with the `native` feature.
 - **Native GUI**: `EmuApp` (eframe/egui) displays the TVC screen at PAL 4:3 aspect ratio, routes keyboard input to the TVC, exposes the video model as a runtime setting, and shows an optional IO log panel. While running, it requests continuous repaints and generates TVC frames from a 50 Hz real-time gate so display refreshes reuse the latest texture instead of running the emulator once per host repaint. It is compiled only with the `native` feature.
 - **WASM Facade**: `WasmTvc` in [src/wasm.rs](../src/wasm.rs) exposes a small `wasm-bindgen` API around `Tvc`, including `runFrame()`, `setVidModel()`, key events, ROM/disk loading, and direct framebuffer pointer/length access for JavaScript canvas rendering. The WASM build does not include egui, eframe, or zip.
-- **Snapshots**: [docs/snapshot.md](snapshot.md) defines the custom `RTVCSNAP` chunked state format. User-facing snapshot and web bundle commands are in [README.md](../README.md).
+- **Snapshots**: [docs/snapshot.md](snapshot.md) defines the custom `RTVCSNAP` chunked state format, while `tvc_snapshot.rs` maps `Tvc` state to those chunks. User-facing snapshot and web bundle commands are in [README.md](../README.md).
 - **Profiling**: Use a sampling profiler such as `samply` against the native binary when profiling CPU performance.
 
 ## Toolchain

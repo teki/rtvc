@@ -1,10 +1,9 @@
 use std::time::Instant;
 
-mod mmu;
-mod snapshot;
+mod bus;
 mod z80;
 
-use mmu::{CpuBus, FakeMmu};
+use bus::{CpuBus, FakeBus};
 use z80::Z80;
 
 struct BenchGroup {
@@ -245,7 +244,7 @@ const GROUPS: &[BenchGroup] = &[
     },
 ];
 
-fn build_program(mmu: &mut FakeMmu, inst_bytes: &[u8]) {
+fn build_program(mmu: &mut FakeBus, inst_bytes: &[u8]) {
     let mut addr = PROG_ADDR;
     for &b in inst_bytes {
         mmu.w8(addr, b);
@@ -267,7 +266,7 @@ fn set_regs(z80: &mut Z80, reset_pc: bool) {
     z80.set_reg_val("SP", 0xFFFE);
 }
 
-fn run_group(z80: &mut Z80, mmu: &mut FakeMmu, group: &BenchGroup) -> (u64, f64) {
+fn run_group(z80: &mut Z80, mmu: &mut FakeBus, group: &BenchGroup) -> (u64, f64) {
     let per_iter = group.t_states as u64 + 10;
     let mut remaining = TARGET_T;
     let mut total = 0u64;
@@ -312,7 +311,7 @@ fn main() {
     println!("{:─<80}", "");
 
     let mut z80 = Z80::new();
-    let mut mmu = FakeMmu::new();
+    let mut mmu = FakeBus::new();
 
     let mut all_tstates = 0u64;
     let mut all_time = 0.0;

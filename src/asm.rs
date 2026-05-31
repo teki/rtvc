@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::mmu::CpuBus;
+use crate::bus::CpuBus;
 use crate::z80_tables::{mnemonic_to_opcode, opcode_to_mnemonic};
 
 #[derive(Debug, Clone)]

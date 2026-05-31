@@ -1,15 +1,14 @@
 mod asm;
+mod bus;
 mod dasm;
-mod mmu;
-mod snapshot;
 mod z80_tables;
 
 use asm::assemble_line;
+use bus::FakeBus;
 use dasm::disassemble;
-use mmu::FakeMmu;
 
 fn main() {
-    let mut mmu = FakeMmu::new();
+    let mut mmu = FakeBus::new();
 
     let tests = vec![
         // No operands

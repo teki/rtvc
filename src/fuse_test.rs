@@ -1,10 +1,9 @@
 use std::fs;
 
-mod mmu;
-mod snapshot;
+mod bus;
 mod z80;
 
-use mmu::{CpuBus, FakeMmu};
+use bus::{CpuBus, FakeBus};
 use z80::Z80;
 
 fn to_hex16(v: u16) -> String {
@@ -124,7 +123,7 @@ fn main() {
     let test_expected =
         fs::read_to_string("tests/tests.expected").expect("Failed to read tests.expected");
 
-    let mut mmu = FakeMmu::new();
+    let mut mmu = FakeBus::new();
     mmu.logging_enabled = true;
     let mut z80 = Z80::new();
 

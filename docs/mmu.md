@@ -141,7 +141,7 @@ Bits 4 and 5 of `V` (`V & 0x30`) dictate which Video RAM bank the CRTC reads to 
 
 ## Read and Write Semantics
 
-The MMU must expose at least 8-bit read/write (`r8`, `w8`) and 16-bit read/write (`r16`, `w16`) functions to the CPU.
+The Rust `TvcMmu` exposes 8-bit read/write (`r8`, `w8`) for internal memory mapping. The Z80-facing `CpuBus` trait lives in `bus.rs` and owns the complete CPU address space, including I/O and expansion-card routing; the full machine implementation is `TvcBus`.
 
 When the CPU accesses an `address` (0x0000 - 0xFFFF):
 1. **Determine the Page:** `page_index = address >> 14` (results in 0, 1, 2, or 3).
@@ -152,13 +152,13 @@ When the CPU accesses an `address` (0x0000 - 0xFFFF):
 - If the target bank is **RAM** (U0-U3 or VID0-VID3), write the value to `bank[offset]`.
 - If the target bank is **ROM** (SYS or CART), ignore the write (ROM is read-only).
 - **Special EXT handling:** If `page_index == 3` and the mapped bank is `EXT` (`M & 0xC0 == 0xC0`):
-  - If `offset < 0x2000` (address `0xC000 - 0xDFFF`): Write to the external expansion module (if one is attached).
+  - If `offset < 0x2000` (address `0xC000 - 0xDFFF`): `TvcBus` routes the write to the active external expansion module.
   - If `offset >= 0x2000` (address `0xE000 - 0xFFFF`): Ignore the write (this is the EXTH ROM).
 
 ### Reads (`r8`)
 - If the target bank is a standard RAM or ROM block, return `bank[offset]`.
 - **Special EXT handling:** If `page_index == 3` and the mapped bank is `EXT`:
-  - If `offset < 0x2000` (address `0xC000 - 0xDFFF`): Return the value from the external expansion module (or `0xFF` if none attached).
+  - If `offset < 0x2000` (address `0xC000 - 0xDFFF`): `TvcBus` returns the value from the active external expansion module, or `0xFF` if none is attached.
   - If `offset >= 0x2000` (address `0xE000 - 0xFFFF`): Return `EXTH_ROM[offset - 0x2000]`.
 
 ### 16-bit Access (`r16`, `w16`)
@@ -175,4 +175,4 @@ The Z80 is little-endian.
 2. **Update Map on Write:** When the CPU writes to the memory map or video map I/O ports, update these 4 pointers based on the logic described above.
 3. **Hot Path:** `r8` and `w8` are called millions of times per second. They should be highly optimized: resolve `page_index = addr >> 14`, look up the pointer array, and access the underlying buffer.
 4. **Initialization:** Initialize `_mapVal` / `_mapValVid` to a sentinel value (e.g., `-1` in JS, `0xFF` in Rust `u8`) that differs from the first real `setMap`/`setVidMap` call to avoid early-return guards blocking initial page configuration.
-4. **EXT Exception:** The only branch in the hot path should be checking if the access is in Page 3 and if that page is mapped to EXT, to route calls to the expansion module or EXTH ROM.
+5. **EXT Exception:** `TvcMmu` should expose a cheap helper for detecting the low external-card half of Page 3. `TvcBus` uses that helper to route expansion memory access; the high half remains `EXTH` ROM inside the MMU.

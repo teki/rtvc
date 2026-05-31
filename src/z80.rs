@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use crate::mmu::CpuBus;
+use crate::bus::CpuBus;
 
 // Flag constants
 const F_S: u8 = 0x80;
