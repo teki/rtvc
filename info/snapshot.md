@@ -68,3 +68,15 @@ cargo run --bin rtvc -- snapshots/load_tape.rtvcsnap.zip
 Zip compression is intentionally kept out of the lightweight WASM build. Web bundles may include a zipped snapshot, but browser JavaScript decompresses it before calling `WasmTvc::loadSnapshot`.
 
 User-facing snapshot and web bundle commands are documented in [../README.md](../README.md).
+
+## Lightweight Web Bundles
+
+`cargo bundle-web path/to/game.rtvcsnap` builds the lightweight WASM target and emits a self-contained static player under `dist/<snapshot-name>-web/` with the supplied snapshot copied in as `snapshot.rtvcsnap` or `snapshot.rtvcsnap.zip`.
+
+`cargo xtask bundle-web-skeleton` builds the same player without embedding a snapshot and writes it to `dist/rtvc-web-skeleton/` by default. An explicit output directory may be supplied, for example:
+
+```bash
+cargo xtask bundle-web-skeleton package/web
+```
+
+Release archives include this skeleton as `web/`. To use it, copy a snapshot named `snapshot.rtvcsnap.zip` or `snapshot.rtvcsnap` beside `web/index.html` and serve the directory with any static web server.

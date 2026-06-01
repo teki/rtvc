@@ -31,7 +31,14 @@ Source: [VIDEOTON TVC historical overview](http://tvc.hu/html/tvc_attekintes.htm
 
 ## Download
 
-Windows release archives include `rtvc.exe`, ROM files, and bundled programs. Extract the zip and run `rtvc.exe`.
+Windows release archives include `rtvc.exe`, ROM files, bundled programs, and a `web/` snapshot player. Extract the zip and run `rtvc.exe` for the native emulator.
+
+To use the web player, copy a compressed snapshot into `web/snapshot.rtvcsnap.zip`, serve the `web/` directory with any static web server, and open it in a browser:
+
+```bash
+cd web
+python -m http.server 8000
+```
 
 ## Run the Native Emulator
 

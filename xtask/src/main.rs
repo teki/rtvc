@@ -24,7 +24,17 @@ fn run() -> Result<(), String> {
             }
             bundle_web(Path::new(&snapshot))
         }
-        _ => Err("usage: cargo bundle-web <snapshot.rtvcsnap>".to_string()),
+        Some("bundle-web-skeleton") => {
+            let out_dir = args.next().map(PathBuf::from);
+            if args.next().is_some() {
+                return Err("usage: cargo xtask bundle-web-skeleton [out-dir]".to_string());
+            }
+            bundle_web_skeleton(out_dir.as_deref())
+        }
+        _ => Err(
+            "usage: cargo bundle-web <snapshot.rtvcsnap>\n       cargo xtask bundle-web-skeleton [out-dir]"
+                .to_string(),
+        ),
     }
 }
 
@@ -39,12 +49,40 @@ fn bundle_web(snapshot: &Path) -> Result<(), String> {
     let stem = snapshot_stem(&snapshot);
     let bundle_dir = workspace.join("dist").join(format!("{stem}-web"));
 
-    fs::create_dir_all(&bundle_dir)
+    write_web_bundle(&workspace, &bundle_dir)?;
+
+    fs::write(bundle_dir.join(&bundled_snapshot.file_name), &bundled_snapshot.data)
+        .map_err(|err| format!("failed to write snapshot: {err}"))?;
+
+    println!("bundle written to {}", bundle_dir.display());
+    Ok(())
+}
+
+fn bundle_web_skeleton(out_dir: Option<&Path>) -> Result<(), String> {
+    let workspace = workspace_dir()?;
+    let bundle_dir = match out_dir {
+        Some(path) if path.is_absolute() => path.to_path_buf(),
+        Some(path) => env::current_dir()
+            .map_err(|err| format!("failed to read current directory: {err}"))?
+            .join(path),
+        None => workspace.join("dist").join("rtvc-web-skeleton"),
+    };
+
+    write_web_bundle(&workspace, &bundle_dir)?;
+    fs::write(bundle_dir.join("README.txt"), WEB_SKELETON_README)
+        .map_err(|err| format!("failed to write README.txt: {err}"))?;
+
+    println!("web skeleton written to {}", bundle_dir.display());
+    Ok(())
+}
+
+fn write_web_bundle(workspace: &Path, bundle_dir: &Path) -> Result<(), String> {
+    fs::create_dir_all(bundle_dir)
         .map_err(|err| format!("failed to create {}: {err}", bundle_dir.display()))?;
 
     run_command(
         Command::new("cargo")
-            .current_dir(&workspace)
+            .current_dir(workspace)
             .arg("build")
             .arg("--release")
             .arg("--lib")
@@ -67,30 +105,23 @@ fn bundle_web(snapshot: &Path) -> Result<(), String> {
 
     run_command(
         Command::new(wasm_bindgen_bin())
-            .current_dir(&workspace)
+            .current_dir(workspace)
             .arg("--target")
             .arg("web")
             .arg("--out-dir")
-            .arg(&bundle_dir)
+            .arg(bundle_dir)
             .arg("--out-name")
             .arg("rtvc")
             .arg(&wasm_in),
         "wasm-bindgen",
     )
-    .map_err(|err| {
-        format!(
-            "{err}\ninstall wasm-bindgen-cli with: cargo install wasm-bindgen-cli"
-        )
-    })?;
+    .map_err(|err| format!("{err}\ninstall wasm-bindgen-cli with: cargo install wasm-bindgen-cli"))?;
 
-    fs::write(bundle_dir.join(&bundled_snapshot.file_name), &bundled_snapshot.data)
-        .map_err(|err| format!("failed to write snapshot: {err}"))?;
     fs::write(bundle_dir.join("index.html"), INDEX_HTML)
         .map_err(|err| format!("failed to write index.html: {err}"))?;
     fs::write(bundle_dir.join("app.js"), APP_JS)
         .map_err(|err| format!("failed to write app.js: {err}"))?;
 
-    println!("bundle written to {}", bundle_dir.display());
     Ok(())
 }
 
@@ -218,6 +249,15 @@ const INDEX_HTML: &str = r#"<!doctype html>
       display: grid;
       place-items: center;
     }
+    #status {
+      position: fixed;
+      inset: auto 1rem 1rem 1rem;
+      text-align: center;
+      color: #ccc;
+    }
+    #status:empty {
+      display: none;
+    }
     canvas {
       width: min(100vw, calc(100vh * 4 / 3));
       height: min(100vh, calc(100vw * 3 / 4));
@@ -229,19 +269,44 @@ const INDEX_HTML: &str = r#"<!doctype html>
 </head>
 <body>
   <canvas id="screen" tabindex="0"></canvas>
+  <div id="status"></div>
   <script type="module" src="./app.js"></script>
 </body>
 </html>
 "#;
 
+const WEB_SKELETON_README: &str = r#"rtvc web snapshot player
+
+Copy a compressed snapshot named snapshot.rtvcsnap.zip into this directory, then
+serve the directory with any static web server.
+
+Example:
+
+  python -m http.server 8000
+
+Then open:
+
+  http://localhost:8000/
+
+Raw snapshots named snapshot.rtvcsnap are also supported.
+"#;
+
 const APP_JS: &str = r#"import init, { WasmTvc } from "./rtvc.js";
+
+const canvas = document.getElementById("screen");
+const status = document.getElementById("status");
 
 const wasm = await init();
 const emu = new WasmTvc(true);
-const snapshot = await loadSnapshot();
+let snapshot;
+try {
+  snapshot = await loadSnapshot();
+} catch (error) {
+  status.textContent = `${error.message}. Copy snapshot.rtvcsnap.zip beside index.html and reload.`;
+  throw error;
+}
 emu.loadSnapshot(snapshot);
 
-const canvas = document.getElementById("screen");
 const width = emu.screenWidth();
 const height = emu.screenHeight();
 canvas.width = width;

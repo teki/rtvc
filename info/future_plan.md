@@ -30,6 +30,7 @@ This document records intended direction for future changes so implementation wo
 - JavaScript owns browser UI, canvas presentation, keyboard event wiring, and file picker plumbing.
 - Default video model is `VidModel::FastFrame` for WASM constructors.
 - Snapshot upload bundles are produced with `cargo bundle-web <snapshot>`.
+- Snapshot player skeletons without an embedded snapshot are produced with `cargo xtask bundle-web-skeleton [out-dir]` and are included in release archives as `web/`.
 
 ### Full Web
 

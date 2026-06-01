@@ -1,11 +1,19 @@
 import init, { WasmTvc } from "./rtvc.js";
 
+const canvas = document.getElementById("screen");
+const status = document.getElementById("status");
+
 const wasm = await init();
 const emu = new WasmTvc(true);
-const snapshot = await loadSnapshot();
+let snapshot;
+try {
+  snapshot = await loadSnapshot();
+} catch (error) {
+  status.textContent = `${error.message}. Copy snapshot.rtvcsnap.zip beside index.html and reload.`;
+  throw error;
+}
 emu.loadSnapshot(snapshot);
 
-const canvas = document.getElementById("screen");
 const width = emu.screenWidth();
 const height = emu.screenHeight();
 canvas.width = width;

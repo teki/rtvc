@@ -19,13 +19,22 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Add WASM target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Install wasm-bindgen
+        run: cargo install wasm-bindgen-cli --version 0.2.122
+
       - name: Build
         run: cargo build --release --bin rtvc
+
+      - name: Build web skeleton
+        run: cargo xtask bundle-web-skeleton package/web
 
       - name: Package
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Path package
+          New-Item -ItemType Directory -Path package -Force
           Copy-Item target/release/rtvc.exe package/
           Copy-Item README.md package/
           Copy-Item LICENSE package/

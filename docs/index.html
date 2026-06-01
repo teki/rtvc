@@ -16,6 +16,15 @@
       display: grid;
       place-items: center;
     }
+    #status {
+      position: fixed;
+      inset: auto 1rem 1rem 1rem;
+      text-align: center;
+      color: #ccc;
+    }
+    #status:empty {
+      display: none;
+    }
     canvas {
       width: min(100vw, calc(100vh * 4 / 3));
       height: min(100vh, calc(100vw * 3 / 4));
@@ -27,6 +36,7 @@
 </head>
 <body>
   <canvas id="screen" tabindex="0"></canvas>
+  <div id="status"></div>
   <script type="module" src="./app.js"></script>
 </body>
 </html>
