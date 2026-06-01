@@ -62,7 +62,7 @@ This skill provides step-by-step instructions and references for compiling, exec
   ```
   - Builds the small `wasm,web-vid-simple` target.
   - Emits a static bundle under `dist/<snapshot-name>-web/`.
-  - See [docs/snapshot.md](../../../docs/snapshot.md) for snapshot format and bundle details.
+  - See [info/snapshot.md](../../../info/snapshot.md) for snapshot format and bundle details.
 
 - **Convert a TVC CAS cassette image to WAV:**
   ```bash

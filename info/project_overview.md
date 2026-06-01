@@ -6,7 +6,7 @@
 
 The project is structured as a Rust library crate with a native desktop binary plus multiple test and utility binaries defined in [Cargo.toml](../Cargo.toml). The emulator core is shared by native and WebAssembly frontends.
 
-Future build-target and UI direction is tracked in [docs/future_plan.md](future_plan.md). Check it before changing Cargo features, video model selection, web UI, native UI, or storage behavior.
+Future build-target and UI direction is tracked in [info/future_plan.md](future_plan.md). Check it before changing Cargo features, video model selection, web UI, native UI, or storage behavior.
 
 ### Crate Files and Directory Structure
 
@@ -52,7 +52,7 @@ Future build-target and UI direction is tracked in [docs/future_plan.md](future_
 - **Native Emulator Wrapper**: `Emu` wraps `Tvc` with run state, ROM loading from `roms/`, and zipped program discovery from `progs/`. It is compiled only with the `native` feature.
 - **Native GUI**: `EmuApp` (eframe/egui) displays the TVC screen at PAL 4:3 aspect ratio, routes keyboard input to the TVC, exposes the video model as a runtime setting, and shows an optional IO log panel. While running, it requests continuous repaints and generates TVC frames from a 50 Hz real-time gate so display refreshes reuse the latest texture instead of running the emulator once per host repaint. It is compiled only with the `native` feature.
 - **WASM Facade**: `WasmTvc` in [src/wasm.rs](../src/wasm.rs) exposes a small `wasm-bindgen` API around `Tvc`, including `runFrame()`, `setVidModel()`, key events, ROM/disk loading, and direct framebuffer pointer/length access for JavaScript canvas rendering. The WASM build does not include egui, eframe, or zip.
-- **Snapshots**: [docs/snapshot.md](snapshot.md) defines the custom `RTVCSNAP` chunked state format, while `tvc_snapshot.rs` maps `Tvc` state to those chunks. User-facing snapshot and web bundle commands are in [README.md](../README.md).
+- **Snapshots**: [info/snapshot.md](snapshot.md) defines the custom `RTVCSNAP` chunked state format, while `tvc_snapshot.rs` maps `Tvc` state to those chunks. User-facing snapshot and web bundle commands are in [README.md](../README.md).
 - **Cassette WAV Utility**: `cargo run --bin cas2wav -- input.cas output.wav [tape-name]` converts CAS images into the same 44.1 kHz unsigned 8-bit PCM waveform as the legacy [tools/cas2wav](../tools/cas2wav) converter.
 - **Profiling**: Use a sampling profiler such as `samply` against the native binary when profiling CPU performance.
 

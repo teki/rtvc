@@ -137,7 +137,7 @@ cargo check --lib --no-default-features --features wasm,web-vid-realistic --targ
 
 Issues and pull requests are welcome. Emulator accuracy reports are most useful when they include a small reproduction: the machine type, media file, snapshot, command typed on the TVC, and any relevant port or interrupt logs.
 
-Please keep emulator behavior changes covered by focused tests where practical, and update the documentation in `docs/` when changing core architecture, snapshot format, media handling, or build workflows.
+Please keep emulator behavior changes covered by focused tests where practical, and update the documentation in `info/` when changing core architecture, snapshot format, media handling, or build workflows.
 
 ## Acknowledgements
 
@@ -151,7 +151,7 @@ ROMs, cassette/disk images, snapshots, screenshots, manuals, and other historica
 
 ## Developer Docs
 
-- [Project overview](docs/project_overview.md)
-- [Future build/UI plan](docs/future_plan.md)
-- [Snapshot format](docs/snapshot.md)
+- [Project overview](info/project_overview.md)
+- [Future build/UI plan](info/future_plan.md)
+- [Snapshot format](info/snapshot.md)
 - [Development workflow](.agents/skills/development/SKILL.md)

@@ -8,7 +8,7 @@ This document records intended direction for future changes so implementation wo
 - Keep a very lightweight WebAssembly build that excludes egui/eframe and uses a small `wasm-bindgen` API for a browser canvas UI.
 - Support a future full WebAssembly build that can use egui on the web and browser-local file storage.
 - Keep both video models in [src/vid.rs](../src/vid.rs); choose the default with build features on web and with a runtime setting on native.
-- Use [docs/snapshot.md](snapshot.md) as the source of truth for snapshot state and lightweight web snapshot bundles.
+- Use [info/snapshot.md](snapshot.md) as the source of truth for snapshot state and lightweight web snapshot bundles.
 
 ## Build Tiers
 
