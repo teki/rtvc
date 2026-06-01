@@ -10,7 +10,7 @@ Future build-target and UI direction is tracked in [docs/future_plan.md](future_
 
 ### Crate Files and Directory Structure
 
-- [Cargo.toml](../Cargo.toml) — Package configuration specifying package edition, features, library crate types, and binaries.
+- [Cargo.toml](../Cargo.toml) — Package configuration specifying package edition, MIT license, features, library crate types, and binaries.
 - [src/lib.rs](../src/lib.rs) — Shared library entry point exporting the emulator core modules, native UI modules, and optional WASM bindings.
 - [src/main.rs](../src/main.rs) — Entry point for the native TVC emulator binary (eframe/egui application).
 - [src/z80.rs](../src/z80.rs) — Complete Z80 CPU emulator (supporting all documented and many undocumented opcodes).
@@ -63,3 +63,4 @@ Future build-target and UI direction is tracked in [docs/future_plan.md](future_
 - WASM feature: `wasm`, which enables only `wasm-bindgen` for the browser-facing API. Build it with `--no-default-features --features wasm`.
 - Native `Tvc::new()` defaults to `VidModel::Interleaved`. WASM constructors default to `VidModel::FastFrame`; browser callers can still switch modes through the WASM string API, which accepts `fast-frame` and `interleaved` plus the legacy aliases `simple` and `realistic`.
 - Package dependencies and metadata are managed in [Cargo.toml](../Cargo.toml).
+- License: MIT for emulator code. Third-party ROMs, media images, manuals, screenshots, and other machine materials are outside the project license unless explicitly stated.

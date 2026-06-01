@@ -71,6 +71,12 @@ cargo check --bins
 cargo check --lib --no-default-features --features wasm,web-vid-simple --target wasm32-unknown-unknown
 ```
 
+## License
+
+The emulator code is licensed under the [MIT License](LICENSE).
+
+ROMs, cassette/disk images, manuals, screenshots, and other third-party machine materials are not covered by this project license unless explicitly stated.
+
 ## Developer Docs
 
 - [Project overview](docs/project_overview.md)
