@@ -40,6 +40,7 @@ Chunk payloads are little-endian. Unknown chunks are ignored, so future versions
 - `HBF ` — optional VT-DOS/HBF extension state, including extension RAM and FDC/disk image state.
 - `BUS ` — pending interrupt and extension mapping state.
 - `EMUT` — optional native UI machine selection (`64K`/`64K+`, ROM version, VT-DOS presence). Core and WASM loaders ignore it as an unknown chunk.
+- `EMUI` — optional native UI media selection, currently the selected `progs/` filename. Core and WASM loaders ignore it as an unknown chunk.
 
 Keyboard and log state are intentionally reset when loading a snapshot.
 
@@ -51,6 +52,8 @@ Keyboard and log state are intentionally reset when loading a snapshot.
 - [WasmTvc::saveSnapshot](../src/wasm.rs) and [WasmTvc::loadSnapshot](../src/wasm.rs) expose the API to JavaScript.
 
 Native snapshots include `EMUT` so loading restores the exact native machine selection among the five UI machine types. Older snapshots without `EMUT` fall back to the restored core machine family (`64K` versus `64K+`, plus VT-DOS/HBF presence) and preserve the current ROM-version selection where the snapshot did not record it.
+
+Native snapshots also include `EMUI` so the program dropdown returns to the selected cassette or disk archive after loading. If the selected disk/archive is still accessible in `progs/`, native loading reattaches it; cassette selections are restored so pressing Play can recreate the tape generator from the original file.
 
 ## Compression
 

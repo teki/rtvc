@@ -36,6 +36,36 @@ mod tests {
         assert_eq!(restored.machine_type, emu.machine_type);
         assert_eq!(restored.tvc.z80.state.r16[11], 0xBEEF);
     }
+
+    #[test]
+    fn snapshot_restores_selected_program() {
+        let mut emu = Emu::new(MachineType {
+            is_plus: true,
+            rom_version: RomVersion::V1_2,
+            has_dos: false,
+        });
+        emu.progs = vec![
+            ProgEntry {
+                name: "First".to_string(),
+                file_name: "first.cas".to_string(),
+                is_cas: true,
+            },
+            ProgEntry {
+                name: "Second".to_string(),
+                file_name: "second.cas".to_string(),
+                is_cas: true,
+            },
+        ];
+        emu.selected_prog = 1;
+
+        let snapshot = emu.save_snapshot();
+        let mut restored = Emu::new(emu.machine_type);
+        restored.progs = emu.progs.clone();
+        restored.selected_prog = 0;
+        restored.load_snapshot(&snapshot).unwrap();
+
+        assert_eq!(restored.selected_prog, 1);
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -158,6 +188,12 @@ impl MachineType {
     }
 }
 
+#[derive(Default)]
+struct EmuSnapshotState {
+    machine_type: Option<MachineType>,
+    selected_prog_file_name: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct ProgEntry {
     pub name: String,
@@ -211,17 +247,18 @@ impl Emu {
             .map(|chunk| (chunk.id, chunk.data.to_vec()))
             .collect();
         chunks.push((*b"EMUT", self.machine_type.write_snapshot_chunk()));
+        if let Some(entry) = self.progs.get(self.selected_prog) {
+            let mut writer = Writer::new();
+            writer.string(&entry.file_name);
+            chunks.push((*b"EMUI", writer.into_inner()));
+        }
         snapshot::write_file(&chunks)
     }
 
     pub fn load_snapshot(&mut self, data: &[u8]) -> crate::snapshot::Result<()> {
-        let machine_type = snapshot::read_file(data)?
-            .into_iter()
-            .find(|chunk| chunk.id == *b"EMUT")
-            .map(|chunk| MachineType::from_snapshot_chunk(chunk.data))
-            .transpose()?;
+        let snapshot_state = Self::read_emu_snapshot_state(data)?;
         self.tvc.load_snapshot(data)?;
-        self.machine_type = machine_type.unwrap_or_else(|| {
+        self.machine_type = snapshot_state.machine_type.unwrap_or_else(|| {
             MachineType::for_snapshot(
                 self.tvc.is_plus(),
                 self.tvc.has_hbf(),
@@ -230,7 +267,27 @@ impl Emu {
         });
         self.roms_loaded = true;
         self.prog_loaded = None;
+        if let Some(file_name) = snapshot_state.selected_prog_file_name {
+            self.select_prog_by_file_name(&file_name);
+            self.restore_accessible_selected_media();
+        }
         Ok(())
+    }
+
+    fn read_emu_snapshot_state(data: &[u8]) -> crate::snapshot::Result<EmuSnapshotState> {
+        let chunks = snapshot::read_file(data)?;
+        let mut state = EmuSnapshotState::default();
+        for chunk in chunks {
+            match &chunk.id {
+                b"EMUT" => state.machine_type = Some(MachineType::from_snapshot_chunk(chunk.data)?),
+                b"EMUI" => {
+                    let mut reader = Reader::new(chunk.data);
+                    state.selected_prog_file_name = Some(reader.string()?);
+                }
+                _ => {}
+            }
+        }
+        Ok(state)
     }
 
     pub fn save_snapshot_file(&self, path: &std::path::Path) -> std::io::Result<()> {
@@ -264,6 +321,28 @@ impl Emu {
         self.roms_loaded = false;
         self.prog_loaded = None;
         self.load_roms();
+    }
+
+    fn select_prog_by_file_name(&mut self, file_name: &str) -> bool {
+        if let Some(index) = self
+            .progs
+            .iter()
+            .position(|entry| entry.file_name == file_name)
+        {
+            self.selected_prog = index;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn restore_accessible_selected_media(&mut self) {
+        if self.progs.is_empty() || self.selected_prog >= self.progs.len() {
+            return;
+        }
+        if !self.progs[self.selected_prog].is_cas {
+            self.load_selected_prog();
+        }
     }
 
     pub fn load_roms(&mut self) {
