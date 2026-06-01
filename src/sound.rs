@@ -52,14 +52,12 @@ impl SoundTimer {
         (self.ctrl & 0x20) != 0
     }
 
-    pub(crate) fn period_cycles(&self) -> Option<u64> {
-        self.period_cycles
-    }
-
+    #[cfg(test)]
     pub(crate) fn counter(&self) -> u64 {
         self.counter
     }
 
+    #[cfg(test)]
     pub(crate) fn running(&self) -> bool {
         self.running
     }

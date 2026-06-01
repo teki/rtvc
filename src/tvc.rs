@@ -66,19 +66,6 @@ impl TvcBus {
     }
 
     fn write_port(&mut self, addr: u8, val: u8) {
-        let (tape_elapsed, tape_level, tape_bit) = self.tape.state();
-        println!(
-            "PW {:02X} <- {:02X} (pc: {:04X}, active: {}, motor: {}, cycles: {}, tape_elapsed: {}, tape_level: {:.1}, tape_bit: {})",
-            addr,
-            val,
-            self.trace_pc,
-            self.tape.is_active(),
-            self.tape.motor_on(),
-            self.tape.cycles(),
-            tape_elapsed,
-            tape_level,
-            tape_bit
-        );
         match addr {
             0x00 => self.vid.set_border(val),
 
@@ -91,13 +78,11 @@ impl TvcBus {
 
             0x04 => {
                 self.sound.write_low(val);
-                self.log_sound_timer_setup("low");
             }
 
             0x05 => {
                 self.sound.write_control(val);
                 self.tape.set_motor_from_port5(val);
-                self.log_sound_timer_setup("ctrl");
             }
 
             0x06 => {
@@ -145,49 +130,12 @@ impl TvcBus {
 
     fn restart_sound_timer(&mut self) {
         self.sound.restart();
-        println!(
-            "SOUND timer restart (pc: {:04X}, cycles: {}, divisor: {:03X}, period: {:?}, counter: {}, it_enabled: {}, running: {})",
-            self.trace_pc,
-            self.tape.cycles(),
-            self.sound.divisor(),
-            self.sound.period_cycles(),
-            self.sound.counter(),
-            self.sound.interrupt_enabled(),
-            self.sound.running()
-        );
     }
 
     fn advance_sound_timer(&mut self, cycles: u64) {
-        let fired = self.sound.advance(cycles);
-        if fired {
-            println!(
-                "SOUND timer fired (pc: {:04X}, cycles: {}, advanced: {}, divisor: {:03X}, period: {:?}, next_counter: {}, it_enabled: {}, pend_it_before: {:02X})",
-                self.trace_pc,
-                self.tape.cycles(),
-                cycles,
-                self.sound.divisor(),
-                self.sound.period_cycles(),
-                self.sound.counter(),
-                self.sound.interrupt_enabled(),
-                self.pend_it
-            );
+        if self.sound.advance(cycles) {
             self.request_shared_irq();
         }
-    }
-
-    fn log_sound_timer_setup(&self, source: &str) {
-        println!(
-            "SOUND timer setup/{source} (pc: {:04X}, cycles: {}, low: {:02X}, ctrl: {:02X}, divisor: {:03X}, period: {:?}, counter: {}, it_enabled: {}, running: {})",
-            self.trace_pc,
-            self.tape.cycles(),
-            self.sound.freq_low,
-            self.sound.ctrl,
-            self.sound.divisor(),
-            self.sound.period_cycles(),
-            self.sound.counter(),
-            self.sound.interrupt_enabled(),
-            self.sound.running()
-        );
     }
 
     fn tape_input_bit(&mut self) -> u8 {
@@ -260,19 +208,6 @@ impl TvcBus {
             0x5A | 0x5E => self.extensions.type_status(),
             _ => self.extensions.read_port(addr).unwrap_or(0xFF),
         };
-        let (tape_elapsed, tape_level, tape_bit) = self.tape.state();
-        println!(
-            "PR {:02X} -> {:02X} (pc: {:04X}, active: {}, motor: {}, cycles: {}, tape_elapsed: {}, tape_level: {:.1}, tape_bit: {})",
-            addr,
-            val,
-            self.trace_pc,
-            self.tape.is_active(),
-            self.tape.motor_on(),
-            self.tape.cycles(),
-            tape_elapsed,
-            tape_level,
-            tape_bit
-        );
         val
     }
 }
@@ -311,7 +246,6 @@ pub struct Tvc {
     pub(crate) clock: u64,
     sync_timeout_frames: u32,
     last_cursor_it_clock: Option<u64>,
-    last_blocked_irq_log_clock: Option<u64>,
     breakpoints: HashSet<u16>,
 }
 
@@ -330,7 +264,6 @@ impl Tvc {
             clock: 0,
             sync_timeout_frames: 0,
             last_cursor_it_clock: None,
-            last_blocked_irq_log_clock: None,
             breakpoints: HashSet::new(),
         };
         tvc.reset();
@@ -367,7 +300,6 @@ impl Tvc {
         self.clock = 0;
         self.sync_timeout_frames = 0;
         self.last_cursor_it_clock = None;
-        self.last_blocked_irq_log_clock = None;
     }
 
     pub fn load_cas(&mut self, data: &[u8]) -> bool {
@@ -545,23 +477,8 @@ impl Tvc {
     }
 
     fn service_shared_irq(&mut self) -> u32 {
-        let pc_before = self.z80.state.r16[11];
-        let iff1_before = self.z80.state.iff1;
-        let iff2_before = self.z80.state.iff2;
-        let pend_before = self.bus.pend_it;
         let irq_duration = self.z80.irq(&mut self.bus);
         if irq_duration > 0 {
-            println!(
-                "IRQ accepted (pc: {:04X}, cycles: {}, duration: {}, pend_it: {:02X}, iff1: {}, iff2: {}, im: {}, new_pc: {:04X})",
-                pc_before,
-                self.clock,
-                irq_duration,
-                pend_before,
-                iff1_before,
-                iff2_before,
-                self.z80.state.im,
-                self.z80.state.r16[11]
-            );
             self.clock += irq_duration as u64;
             let irq_duration = irq_duration as u64;
             self.bus.advance_tape(irq_duration);
@@ -571,24 +488,6 @@ impl Tvc {
                 irq_duration.try_into().unwrap_or(u32::MAX),
             );
             self.bus.vid.render_stream(&mut self.framebuffer, 608);
-        } else {
-            let should_log = self
-                .last_blocked_irq_log_clock
-                .map(|last_clock| self.clock.saturating_sub(last_clock) >= 1024)
-                .unwrap_or(true);
-            if should_log {
-                println!(
-                    "IRQ pending but not accepted (pc: {:04X}, cycles: {}, pend_it: {:02X}, iff1: {}, iff2: {}, im: {}, halted: {})",
-                    pc_before,
-                    self.clock,
-                    pend_before,
-                    iff1_before,
-                    iff2_before,
-                    self.z80.state.im,
-                    self.z80.state.halted
-                );
-                self.last_blocked_irq_log_clock = Some(self.clock);
-            }
         }
         irq_duration
     }

@@ -70,6 +70,7 @@ impl TapeInterface {
         self.motor_on
     }
 
+    #[cfg(test)]
     pub(crate) fn cycles(&self) -> u64 {
         self.cycles
     }
