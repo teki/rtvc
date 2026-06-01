@@ -63,4 +63,4 @@ Future build-target and UI direction is tracked in [docs/future_plan.md](future_
 - WASM feature: `wasm`, which enables only `wasm-bindgen` for the browser-facing API. Build it with `--no-default-features --features wasm`.
 - Native `Tvc::new()` defaults to `VidModel::Interleaved`. WASM constructors default to `VidModel::FastFrame`; browser callers can still switch modes through the WASM string API, which accepts `fast-frame` and `interleaved` plus the legacy aliases `simple` and `realistic`.
 - Package dependencies and metadata are managed in [Cargo.toml](../Cargo.toml).
-- License: MIT for emulator code. Third-party ROMs, media images, manuals, screenshots, and other machine materials are outside the project license unless explicitly stated.
+- License: MIT for emulator code. ROMs, cassette/disk images, snapshots, screenshots, manuals, and other historical or third-party machine materials may be present for preservation, compatibility testing, or convenience, but are outside the project license unless explicitly stated.

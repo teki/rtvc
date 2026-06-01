@@ -75,7 +75,7 @@ cargo check --lib --no-default-features --features wasm,web-vid-simple --target 
 
 The emulator code is licensed under the [MIT License](LICENSE).
 
-ROMs, cassette/disk images, manuals, screenshots, and other third-party machine materials are not covered by this project license unless explicitly stated.
+ROMs, cassette/disk images, snapshots, screenshots, manuals, and other historical or third-party machine materials are included for preservation, compatibility testing, or convenience where present. They are not covered by the MIT license unless explicitly stated.
 
 ## Developer Docs
 
