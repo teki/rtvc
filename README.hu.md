@@ -1,0 +1,120 @@
+# rtvc
+
+Nyelv: [English](README.md) | [Magyar](README.hu.md)
+
+Az `rtvc` egy Rust nyelven írt emulátor a Videoton TV Computerhez (TVC). Jelenleg használható natív asztali emulátort céloz, közös emulátormaggal a könnyű WebAssembly-alapú snapshot-lejátszáshoz.
+
+Webes demó: [teki.one/rtvc](http://teki.one/rtvc/).
+
+A projekt aktív fejlesztés alatt áll. A CPU futtatása, a TVC memóriakezelése, a billentyűzetkezelés, a videokimenet, a kazettabetöltés, a HBF/VT-DOS lemeztámogatás és a natív snapshotok már működnek, de a hardverpontosságon még folyik a munka.
+
+## A TVC-ről
+
+A Videoton TV Computer, röviden TVC, egy magyar 8 bites otthoni és iskolai számítógép volt, amelyet a Videoton gyártott az 1980-as évek második felében. A gép az Enterprise vonalhoz kapcsolódó licencelt terven alapult, és a magyar oktatási felhasználáshoz igazították.
+
+A gép Z80 CPU-t használt 3,125 MHz-es órajellel, és főként három változatban került forgalomba: 32K, 64K és 64K+. A 64K+ modell több videomemóriát és újabb BASIC 2.2 ROM-ot kapott. A beépített TVC OS és BASIC ROM-ban lakott; az alaprendszer kazettás tárolást támogatott, míg az UPM és a VT-DOS fejlettebb lemezorientált környezetet adott.
+
+Sok korabeli otthoni géptől eltérően a TVC-nek nem volt külön, csak szöveges kijelzési módja. A szöveg a grafikus rendszeren keresztül jelent meg, 512x240-es 2 színű, 256x240-es 4 színű és 128x240-es 16 színű módokkal. A videokimenetet egy 6845 CRTC állította elő. A hang egyetlen programozható csatornából állt, amely a rendszerórajelből származott, 16 hangerőszinttel és 4 bites D/A móddal, amikor a frekvenciaosztó ki volt kapcsolva.
+
+A TVC bővíthető gépnek készült. Volt rajta kazetta-, RGB-, TV-, nyomtató-, joystick-, cartridge- és felső bővítőcsatlakozó; gyakori bővítések voltak a memóriakártyák, floppyvezérlők, soros kártyák és EPROM-programozók. Nagyjából 12 000 darab készült, főként iskolák számára, mielőtt a gyártás néhány év után véget ért.
+
+Forrás: [VIDEOTON TVC történeti áttekintés](http://tvc.hu/html/tvc_attekintes.html).
+
+## Funkciók
+
+- Z80 CPU-emuláció FUSE és ZEX tesztkészletekkel.
+- TVC 64K és 64K+ gépváltozatok.
+- ROM 1.2 és ROM 2.2 gépválasztás, opcionális VT-DOS/HBF bővítéssel.
+- MC6845-alapú TVC videokimenet gyors képkockás és interleaved renderelési móddal.
+- TVC billentyűzetmátrix-kezelés a natív egui felületen.
+- CAS kazetta-lejátszás/betöltés és DSK lemezkép-támogatás.
+- Natív snapshot mentés/betöltés `.rtvcsnap` és `.rtvcsnap.zip` formátumban.
+- Statikus webes snapshot-csomagok készítése böngészőben futó demókhoz.
+
+## Letöltés
+
+A Windows release archívumok tartalmazzák az `rtvc.exe` fájlt, a ROM-okat, mellékelt programokat és egy `web/` snapshot-lejátszót. Csomagold ki a zipet, és a natív emulátorhoz indítsd el az `rtvc.exe` fájlt.
+
+A webes lejátszó használatához másolj egy tömörített snapshotot `web/snapshot.rtvcsnap.zip` néven, szolgáld ki a `web/` könyvtárat bármilyen statikus webszerverrel, majd nyisd meg böngészőben:
+
+```bash
+cd web
+python -m http.server 8000
+```
+
+## A natív emulátor futtatása
+
+```bash
+cargo run --bin rtvc
+```
+
+Indítás közvetlenül snapshotból:
+
+```bash
+cargo run --bin rtvc -- snapshots/load_tape.rtvcsnap.zip
+```
+
+Futtatás előtt helyezd a ROM-fájlokat a `roms/` könyvtárba. A natív felület jelenleg ezeket a gépválasztásokat támogatja:
+
+- `64k+ 1.2, VT-DOS`
+- `64k+ 2.2, VT-DOS`
+- `64k  1.2`
+- `64k+ 1.2`
+- `64k+ 2.2`
+
+A projekt által használt gyakori ROM-fájlnevek:
+
+- `TVC12_D3.64K`
+- `TVC12_D4.64K`
+- `TVC12_D7.64K`
+- `TVC22_D4.64K`
+- `TVC22_D6.64K`
+- `TVC22_D7.64K`
+- `C_TVCDOS.128`
+- `D_TVCDOS.128`
+- `C_DOS12.128`
+- `D_DOS12.128`
+
+Az opcionális programarchívumok és médiafájlok a `progs/` könyvtárba kerülhetnek.
+
+## Támogatott fájlok
+
+| Fájltípus | Cél |
+| --- | --- |
+| `.cas` | TVC kazettakép. |
+| `.dsk` | Floppy lemezkép HBF/VT-DOS használathoz. |
+| `.zip` | Programarchívum, amely `.cas` vagy `.dsk` fájlt tartalmaz. |
+| `.rtvcsnap` | Nyers rtvc snapshot. |
+| `.rtvcsnap.zip` | Tömörített rtvc snapshot. |
+
+## Natív snapshotok
+
+A natív GUI snapshot-gombokat tartalmaz:
+
+- A `Save Snapshot` alapértelmezés szerint tömörített `.rtvcsnap.zip` fájlt ír.
+- A `Load Snapshot` `.rtvcsnap.zip` és nyers `.rtvcsnap` fájlokat is be tud olvasni.
+- A natív alkalmazás az első parancssori argumentumként opcionális snapshot-útvonalat is elfogad.
+- A `Save Screenshot` a jelenlegi TVC képkockapuffert 4:3 arányú PNG-ként menti (`768x576`).
+
+A tömörített snapshotok hagyományos zip-fájlok, amelyek egy `snapshot.rtvcsnap` bejegyzést tartalmaznak.
+
+## Közreműködés
+
+Hibajegyeket és pull requesteket szívesen fogadunk. Az emulátorpontossági jelentések akkor a leghasznosabbak, ha tartalmaznak egy kis reprodukciót: géptípust, médiafájlt, snapshotot, a TVC-n beírt parancsot, valamint minden releváns port- vagy interruptnaplót.
+
+Kérjük, az emulátor viselkedését érintő változtatásokat ahol ésszerű, fedd le célzott tesztekkel, és frissítsd az `info/` dokumentációt, ha az alaparchitektúra, a snapshotformátum, a médiakezelés vagy a buildfolyamat változik.
+
+## Köszönetnyilvánítás
+
+Az `rtvc` a korábbi, `../jstvc` könyvtárban található JavaScript implementáció portolásából indult. A CPU-tesztelési folyamat nyilvános Z80 validációs anyagokat használ, például FUSE és ZEX tesztprogramokat. A projekt történeti TVC hardverinformációkra és megőrzési anyagokra is támaszkodik.
+
+## Licenc
+
+Az emulátor kódja az [MIT licenc](LICENSE) alatt érhető el.
+
+A ROM-ok, kazetta- és lemezképek, snapshotok, képernyőmentések, kézikönyvek és más történeti vagy harmadik féltől származó gépanyagok megőrzési, kompatibilitástesztelési vagy kényelmi céllal szerepelhetnek a projektben. Ezekre nem vonatkozik az MIT licenc, hacsak ez nincs külön jelezve.
+
+## Projektinformációk
+
+- [Projektáttekintés](info/project_overview.md)
+- [Snapshotformátum](info/snapshot.md)
