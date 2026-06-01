@@ -70,6 +70,7 @@ This skill provides step-by-step instructions and references for compiling, exec
   git push origin v0.1.0
   ```
   - The release workflow builds `rtvc.exe` on `windows-latest`.
+  - Release builds use LTO, one codegen unit, stripped symbols, and `panic = "abort"` to keep binaries smaller.
   - It uploads `rtvc-windows-x64.zip` with `rtvc.exe`, `README.md`, `LICENSE`, `roms/`, and `progs/`.
   - The native app searches `roms/` and `progs/` in the current working directory first, then beside the executable for extracted release archives.
 

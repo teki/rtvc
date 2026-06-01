@@ -42,3 +42,9 @@ path = "src/perf_test.rs"
 [[bin]]
 name = "cas2wav"
 path = "src/cas2wav.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
