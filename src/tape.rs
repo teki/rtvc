@@ -109,6 +109,27 @@ impl TapeInterface {
     pub(crate) fn current_level(&self) -> f32 {
         self.state().1
     }
+
+    pub(crate) fn write_snapshot(&self, w: &mut crate::snapshot::Writer) {
+        w.u8(self.motor_on as u8);
+        w.u8(self.output_flip_flop as u8);
+        w.u64(self.cycles);
+        w.u64(self.position_cycles);
+    }
+
+    pub(crate) fn read_snapshot(
+        &mut self,
+        r: &mut crate::snapshot::Reader<'_>,
+    ) -> crate::snapshot::Result<()> {
+        self.generator = None;
+        self.play_active = false;
+        self.motor_on = r.u8()? != 0;
+        self.output_flip_flop = r.u8()? != 0;
+        self.cycles = r.u64()?;
+        self.position_cycles = r.u64()?;
+        self.start_cycle = self.cycles.saturating_sub(self.position_cycles);
+        Ok(())
+    }
 }
 
 #[cfg(test)]

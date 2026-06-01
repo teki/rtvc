@@ -95,7 +95,7 @@ pub struct EmuApp {
 impl EmuApp {
     pub fn new(emu: Emu) -> Self {
         let machine_types = MachineType::all_types();
-        let selected_machine = 0;
+        let selected_machine = Self::selected_machine_index(&machine_types, emu.machine_type);
         EmuApp {
             emu,
             screen_texture: None,
@@ -112,6 +112,18 @@ impl EmuApp {
             machine_types,
             selected_machine,
         }
+    }
+
+    fn selected_machine_index(machine_types: &[MachineType], machine_type: MachineType) -> usize {
+        machine_types
+            .iter()
+            .position(|candidate| *candidate == machine_type)
+            .unwrap_or(0)
+    }
+
+    fn sync_selection_from_emu(&mut self) {
+        self.selected_machine =
+            Self::selected_machine_index(&self.machine_types, self.emu.machine_type);
     }
 
     fn update_screen_texture(&mut self, ctx: &egui::Context) {
@@ -361,13 +373,7 @@ impl eframe::App for EmuApp {
                     {
                         match self.emu.load_snapshot_file(&path) {
                             Ok(()) => {
-                                if let Some(index) = self
-                                    .machine_types
-                                    .iter()
-                                    .position(|machine_type| *machine_type == self.emu.machine_type)
-                                {
-                                    self.selected_machine = index;
-                                }
+                                self.sync_selection_from_emu();
                                 self.file_status = Some(format!("Loaded: {}", path.display()));
                             }
                             Err(err) => {

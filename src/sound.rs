@@ -90,4 +90,23 @@ impl SoundTimer {
         self.counter -= remaining;
         fired
     }
+
+    pub(crate) fn write_snapshot(&self, w: &mut crate::snapshot::Writer) {
+        w.u8(self.freq_low);
+        w.u8(self.ctrl);
+        w.u64(self.counter);
+        w.u8(self.running as u8);
+    }
+
+    pub(crate) fn read_snapshot(
+        &mut self,
+        r: &mut crate::snapshot::Reader<'_>,
+    ) -> crate::snapshot::Result<()> {
+        self.freq_low = r.u8()?;
+        self.ctrl = r.u8()?;
+        self.update_period_cycles();
+        self.counter = r.u64()?;
+        self.running = r.u8()? != 0;
+        Ok(())
+    }
 }

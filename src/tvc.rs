@@ -210,6 +210,41 @@ impl TvcBus {
         self.tape.current_level()
     }
 
+    pub(crate) fn tape_motor_on(&self) -> bool {
+        self.tape.motor_on()
+    }
+
+    pub(crate) fn tape_elapsed_cycles(&self) -> u64 {
+        self.tape.state().0
+    }
+
+    pub(crate) fn write_tape_snapshot(&self, w: &mut snapshot::Writer) {
+        self.tape.write_snapshot(w);
+    }
+
+    pub(crate) fn read_tape_snapshot(
+        &mut self,
+        r: &mut snapshot::Reader<'_>,
+    ) -> snapshot::Result<()> {
+        self.tape.read_snapshot(r)
+    }
+
+    pub(crate) fn write_sound_snapshot(&self, w: &mut snapshot::Writer) {
+        self.sound.write_snapshot(w);
+    }
+
+    pub(crate) fn read_sound_snapshot(
+        &mut self,
+        r: &mut snapshot::Reader<'_>,
+    ) -> snapshot::Result<()> {
+        self.sound.read_snapshot(r)
+    }
+
+    pub(crate) fn restore_tape_motor_from_rom_shadow(&mut self) {
+        let port5_shadow = self.mmu.r8(0x0B12);
+        self.tape.set_motor_from_port5(port5_shadow);
+    }
+
     fn read_port(&mut self, addr: u8) -> u8 {
         let val = match addr {
             0x58 => self.key.read_row(),
@@ -570,6 +605,11 @@ mod tests {
         tvc.bus.mmu.w8(0x4000, 0xAB);
         tvc.bus.vid.set_border(0x55);
         tvc.bus.pend_it = 0x0F;
+        tvc.bus.write_port(0x04, 0xDC);
+        tvc.bus.write_port(0x05, 0x6F);
+        tvc.bus.read_port(0x5B);
+        tvc.bus.advance_sound_timer(11);
+        let sound_counter = tvc.bus.sound.counter();
 
         let snapshot = tvc.save_snapshot();
         let mut restored = Tvc::new(false);
@@ -580,6 +620,11 @@ mod tests {
         assert_eq!(restored.z80.state.r16[11], 0x1234);
         assert_eq!(restored.bus.mmu.r8(0x4000), 0xAB);
         assert_eq!(restored.bus.pend_it, 0x0F);
+        assert!(restored.bus.tape_motor_on());
+        assert_eq!(restored.bus.sound.freq_low, 0xDC);
+        assert_eq!(restored.bus.sound.ctrl, 0x6F);
+        assert_eq!(restored.bus.sound.counter(), sound_counter);
+        assert!(restored.bus.sound.running());
     }
 
     #[test]

@@ -8,6 +8,12 @@
 cargo run --bin rtvc
 ```
 
+Start directly from a snapshot:
+
+```bash
+cargo run --bin rtvc -- snapshots/load_tape.rtvcsnap.zip
+```
+
 Place ROM files in `roms/` before running:
 
 - `TVC12_D3.64K`
@@ -22,6 +28,7 @@ The native GUI has snapshot buttons:
 
 - `Save Snapshot` writes a compressed `.rtvcsnap.zip` file by default.
 - `Load Snapshot` reads either `.rtvcsnap.zip` or raw `.rtvcsnap` files.
+- The native app also accepts an optional snapshot path as its first command-line argument.
 - `Save Screenshot` writes the current TVC framebuffer as a 4:3 PNG (`768x576`).
 
 Compressed snapshots are ordinary zip files containing one `snapshot.rtvcsnap` entry.

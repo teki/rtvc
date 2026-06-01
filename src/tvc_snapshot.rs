@@ -45,6 +45,8 @@ pub(crate) fn save(tvc: &Tvc) -> Vec<u8> {
     bus.u8(tvc.bus.pend_it);
     bus.u8(tvc.bus.extensions.type_status());
     bus.u8(tvc.bus.extensions.selected_mapping());
+    tvc.bus.write_tape_snapshot(&mut bus);
+    tvc.bus.write_sound_snapshot(&mut bus);
     chunks.push((*b"BUS ", bus.into_inner()));
 
     snapshot::write_file(&chunks)
@@ -101,6 +103,14 @@ pub(crate) fn load(tvc: &mut Tvc, data: &[u8]) -> snapshot::Result<()> {
                 tvc.bus.pend_it = reader.u8()?;
                 tvc.bus.extensions.set_type_status(reader.u8()?);
                 tvc.bus.extensions.set_selected_mapping(reader.u8()?);
+                if reader.remaining() > 0 {
+                    tvc.bus.read_tape_snapshot(&mut reader)?;
+                } else {
+                    tvc.bus.restore_tape_motor_from_rom_shadow();
+                }
+                if reader.remaining() > 0 {
+                    tvc.bus.read_sound_snapshot(&mut reader)?;
+                }
             }
             _ => {}
         }

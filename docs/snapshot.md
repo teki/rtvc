@@ -38,7 +38,7 @@ Chunk payloads are little-endian. Unknown chunks are ignored, so future versions
 - `MMU ` — TVC RAM, video RAM, ROM/cart banks, paging registers, and plus-model state.
 - `VID ` — selected video mode, CRTC registers, palette, and border color.
 - `HBF ` — optional VT-DOS/HBF extension state, including extension RAM and FDC/disk image state.
-- `BUS ` — pending interrupt and extension mapping state.
+- `BUS ` — pending interrupt, extension mapping, tape transport, and sound timer state.
 - `EMUT` — optional native UI machine selection (`64K`/`64K+`, ROM version, VT-DOS presence). Core and WASM loaders ignore it as an unknown chunk.
 - `EMUI` — optional native UI media selection, currently the selected `progs/` filename. Core and WASM loaders ignore it as an unknown chunk.
 
@@ -58,6 +58,12 @@ Native snapshots also include `EMUI` so the program dropdown returns to the sele
 ## Compression
 
 Native save/load supports raw `.rtvcsnap` files and `.rtvcsnap.zip` files. Compressed snapshots are zip archives containing a `.rtvcsnap` entry.
+
+The native app can also start directly from a snapshot path:
+
+```bash
+cargo run --bin rtvc -- snapshots/load_tape.rtvcsnap.zip
+```
 
 Zip compression is intentionally kept out of the lightweight WASM build. Web bundles may include a zipped snapshot, but browser JavaScript decompresses it before calling `WasmTvc::loadSnapshot`.
 

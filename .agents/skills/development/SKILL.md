@@ -19,6 +19,10 @@ This skill provides step-by-step instructions and references for compiling, exec
   ```bash
   cargo run --bin rtvc
   ```
+  To start directly from a snapshot:
+  ```bash
+  cargo run --bin rtvc -- snapshots/load_tape.rtvcsnap.zip
+  ```
   - Place ROM files (`TVC12_D3.64K`, `TVC12_D4.64K`, `TVC12_D7.64K`) in `roms/` for the TVC to boot.
   - Use the "Log" button to toggle the IO port log panel.
   - Use the "Reset" button to reset the emulator.

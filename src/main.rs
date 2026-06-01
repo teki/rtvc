@@ -3,8 +3,15 @@ use rtvc::{emu, ui};
 
 fn main() -> eframe::Result<()> {
     let machine_type = emu::MachineType::all_types()[0];
-    let mut app = ui::EmuApp::new(emu::Emu::new(machine_type));
-    app.emu.load_roms();
+    let mut emu = emu::Emu::new(machine_type);
+    emu.load_roms();
+    if let Some(snapshot_path) = std::env::args_os().nth(1) {
+        let snapshot_path = std::path::PathBuf::from(snapshot_path);
+        if let Err(err) = emu.load_snapshot_file(&snapshot_path) {
+            eprintln!("failed to load snapshot {}: {err}", snapshot_path.display());
+        }
+    }
+    let app = ui::EmuApp::new(emu);
 
     let options = eframe::NativeOptions {
         viewport: ViewportBuilder::default()

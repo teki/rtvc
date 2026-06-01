@@ -66,6 +66,34 @@ mod tests {
 
         assert_eq!(restored.selected_prog, 1);
     }
+
+    #[test]
+    fn load_tape_snapshot_restores_selection_and_can_play() {
+        let snapshot_path = std::path::Path::new("snapshots/load_tape.rtvcsnap.zip");
+        if !snapshot_path.exists() {
+            return;
+        }
+
+        let mut emu = Emu::new(MachineType {
+            is_plus: true,
+            rom_version: RomVersion::V1_2,
+            has_dos: true,
+        });
+        emu.load_snapshot_file(snapshot_path).unwrap();
+        assert_eq!(
+            emu.progs
+                .get(emu.selected_prog)
+                .map(|entry| entry.file_name.as_str()),
+            Some("TVBALL.CAS")
+        );
+
+        assert!(emu.tvc.bus.tape_motor_on());
+        emu.play_tape();
+        assert!(emu.tvc.bus.tape_play_active());
+        let before = emu.tvc.bus.tape_elapsed_cycles();
+        emu.tvc.run_for_a_frame();
+        assert!(emu.tvc.bus.tape_elapsed_cycles() > before);
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
