@@ -292,12 +292,10 @@ impl eframe::App for EmuApp {
                 egui::ComboBox::from_id_salt("vid_model")
                     .selected_text(match vid_model {
                         VidModel::FastFrame => "Fast frame",
-                        VidModel::Line => "Line",
                         VidModel::Interleaved => "Interleaved",
                     })
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut vid_model, VidModel::FastFrame, "Fast frame");
-                        ui.selectable_value(&mut vid_model, VidModel::Line, "Line");
                         ui.selectable_value(&mut vid_model, VidModel::Interleaved, "Interleaved");
                     });
                 self.emu.tvc.set_vid_model(vid_model);

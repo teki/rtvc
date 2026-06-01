@@ -18,9 +18,6 @@ use crate::z80::Z80;
 const CPU_CLOCK_HZ: u64 = 3_125_000;
 const FRAME_RATE_HZ: u64 = 50;
 const FRAME_CLOCKS: u64 = CPU_CLOCK_HZ / FRAME_RATE_HZ;
-const SCREEN_LINES: u32 = 312;
-const LINE_CLOCKS: u32 = (FRAME_CLOCKS as u32) / SCREEN_LINES;
-const LINE_CLOCK_REMAINDER: u32 = (FRAME_CLOCKS as u32) % SCREEN_LINES;
 const SYNC_TIMEOUT_HOST_FRAMES: u32 = 8;
 const SHARED_CURSOR_SOUND_IT: u8 = 0x10;
 
@@ -278,7 +275,6 @@ pub struct Tvc {
     pub(crate) vid_model: VidModel,
     pub(crate) clock: u64,
     sync_timeout_frames: u32,
-    line_cycle_debt: u32,
     last_cursor_it_clock: Option<u64>,
     last_blocked_irq_log_clock: Option<u64>,
     breakpoints: HashSet<u16>,
@@ -286,7 +282,7 @@ pub struct Tvc {
 
 impl Tvc {
     pub fn new(is_plus: bool) -> Self {
-        Self::new_with_vid_model(is_plus, VidModel::FastFrame)
+        Self::new_with_vid_model(is_plus, VidModel::Interleaved)
     }
 
     pub fn new_with_vid_model(is_plus: bool, vid_model: VidModel) -> Self {
@@ -298,7 +294,6 @@ impl Tvc {
             vid_model,
             clock: 0,
             sync_timeout_frames: 0,
-            line_cycle_debt: 0,
             last_cursor_it_clock: None,
             last_blocked_irq_log_clock: None,
             breakpoints: HashSet::new(),
@@ -328,7 +323,6 @@ impl Tvc {
         self.bus.reset();
         self.clock = 0;
         self.sync_timeout_frames = 0;
-        self.line_cycle_debt = 0;
         self.last_cursor_it_clock = None;
         self.last_blocked_irq_log_clock = None;
     }
@@ -470,42 +464,6 @@ impl Tvc {
                 let vidmem = self.bus.mmu.get_vid_mem();
                 self.bus.vid.draw_frame(vidmem, &mut self.framebuffer);
                 (do_break, true)
-            }
-            VidModel::Line => {
-                let mut do_break = false;
-                let mut frame_complete = false;
-                let mut line_error = 0u32;
-                for _ in 0..SCREEN_LINES {
-                    let mut line_clocks = LINE_CLOCKS;
-                    line_error += LINE_CLOCK_REMAINDER;
-                    if line_error >= SCREEN_LINES {
-                        line_clocks += 1;
-                        line_error -= SCREEN_LINES;
-                    }
-
-                    let cpu_budget = if self.line_cycle_debt > line_clocks {
-                        0
-                    } else {
-                        line_clocks - self.line_cycle_debt
-                    };
-                    let (line_break, line_complete, elapsed) =
-                        self.run_cpu_budget(cpu_budget, false);
-                    let mut elapsed = elapsed;
-                    do_break |= line_break;
-                    frame_complete |= self.advance_video_for(line_clocks);
-                    elapsed += self.service_pending_shared_irq();
-                    let line_cpu_time = self.line_cycle_debt + elapsed;
-                    self.line_cycle_debt = if line_cpu_time > line_clocks {
-                        line_cpu_time - line_clocks
-                    } else {
-                        0
-                    };
-                    if do_break {
-                        break;
-                    }
-                    frame_complete |= line_complete;
-                }
-                (do_break, frame_complete)
             }
             VidModel::Interleaved => {
                 let (do_break, frame_complete, _) = self.run_cpu_budget(FRAME_CLOCKS as u32, true);

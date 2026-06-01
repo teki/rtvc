@@ -8,7 +8,6 @@ const STREAM_SIZE: usize = 608 * 288 * 2 * 2;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum VidModel {
     FastFrame,
-    Line,
     Interleaved,
 }
 

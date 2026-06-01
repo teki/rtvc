@@ -11,7 +11,6 @@ pub(crate) fn save(tvc: &Tvc) -> Vec<u8> {
     meta.u8(match tvc.vid_model {
         VidModel::FastFrame => 0,
         VidModel::Interleaved => 1,
-        VidModel::Line => 2,
     });
     meta.u64(tvc.clock);
     meta.u8(tvc.frame_complete as u8);
@@ -62,7 +61,7 @@ pub(crate) fn load(tvc: &mut Tvc, data: &[u8]) -> snapshot::Result<()> {
     let vid_model = match meta.u8()? {
         0 => VidModel::FastFrame,
         1 => VidModel::Interleaved,
-        2 => VidModel::Line,
+        2 => VidModel::Interleaved,
         _ => {
             return Err(SnapshotError::InvalidData(
                 "unknown video model".to_string(),

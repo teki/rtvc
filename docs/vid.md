@@ -11,10 +11,9 @@ This document provides a language-independent architectural guide for building a
 - [Graphics and Color Modes](#graphics-and-color-modes)
 - [Color Palette and RGB Format](#color-palette-and-rgb-format)
 - [Cursor and Vertical Sync Interrupts](#cursor-and-vertical-sync-interrupts)
-- [Rendering Architecture: Three Scheduling Modes](#rendering-architecture-three-scheduling-modes)
+- [Rendering Architecture: Two Scheduling Modes](#rendering-architecture-two-scheduling-modes)
   - [1. Interleaved/Streaming Mode (High Accuracy)](#1-interleavedstreaming-mode-high-accuracy)
-  - [2. Line Mode (Medium Accuracy)](#2-line-mode-medium-accuracy)
-  - [3. Once-per-Frame Mode (Fast Frame)](#3-once-per-frame-mode-fast-frame)
+  - [2. Once-per-Frame Mode (Fast Frame)](#2-once-per-frame-mode-fast-frame)
   - [Lost Sync Presentation](#lost-sync-presentation)
 
 ---
@@ -207,9 +206,9 @@ The CPU acknowledges/clears this interrupt by writing to **Port `0x07`**.
 
 ---
 
-## Rendering Architecture: Three Scheduling Modes
+## Rendering Architecture: Two Scheduling Modes
 
-Developers can choose among three TVC video scheduling modes, depending on their performance and accuracy requirements.
+Developers can choose between two TVC video scheduling modes, depending on their performance and accuracy requirements.
 
 ### 1. Interleaved/Streaming Mode (High Accuracy)
 
@@ -237,23 +236,7 @@ Used in high-accuracy emulators to support mid-frame effects (e.g. split-screens
 
 ---
 
-### 2. Line Mode (Medium Accuracy)
-
-Used when software needs line-level CRTC behavior but per-instruction video scheduling is too expensive.
-
-#### Mechanics
-1. **Line CPU Run**: The Z80 CPU runs for one display line's worth of clocks.
-2. **Line Stream**: The CRTC advances by the same line budget through `stream_some()`.
-3. **Cycle Debt**: If a CPU instruction overruns the line budget, the extra cycles are carried as debt into following lines so line mode does not speed up the CPU by allowing one overrun per line.
-4. **Bounded Rendering**: `render_stream()` consumes whatever synchronized stream data is available without waiting past the host screen-time budget.
-
-#### Advantages
-- Captures many raster splits, palette changes, border changes, and CRTC updates that happen on line boundaries.
-- Costs less CPU than interleaving video after every instruction.
-
----
-
-### 3. Once-per-Frame Mode (Fast Frame)
+### 2. Once-per-Frame Mode (Fast Frame)
 
 Used in basic emulators to simplify the rendering pipeline and decrease CPU overhead.
 

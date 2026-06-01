@@ -50,14 +50,13 @@ The emulation advances frame-by-frame using `run_for_a_frame()` (equivalent to t
 
 1. **CPU Run**: Executes CPU instructions via `step(0)` until `FRAME_CLOCKS` (62500) cycles have been consumed, checking breakpoints each step.
 2. **Fast Frame Video**: When `VidModel::FastFrame` is active, runs the CPU for one screen-time budget and then calls `vid.draw_frame(vidmem, framebuffer)` to render a complete 608×288 frame from the current video state.
-3. **Line Video**: When `VidModel::Line` is active, alternates CPU execution and CRTC streaming once per display line. This captures line-level CRTC effects without per-instruction video scheduling. Instruction overrun is carried forward as cycle debt so the CPU does not drift faster by overrunning every line.
-4. **Interleaved Video**: When `VidModel::Interleaved` is active, advances `vid.stream_some()` after each CPU instruction and consumes completed scan data through `vid.render_stream()`.
-5. **Interrupt Handling**: In streaming modes, a CRTC cursor match immediately latches the active-low cursor interrupt, calls `z80.irq()` if interrupts are enabled, and advances the CRTC by the IRQ service duration. This keeps the CPU and CRTC aligned for software that times drawing from the last-pixel screen interrupt.
-6. **Presentation**: Sets `frame_complete = true` whenever a presentable framebuffer is ready for the UI. Streaming modes do not wait indefinitely for CRTC sync; they keep presenting the monitor surface while trying to relock, and only replace it with a black lost-sync background with moving white stripes after several consecutive host ticks without a synchronized frame.
+3. **Interleaved Video**: When `VidModel::Interleaved` is active, advances `vid.stream_some()` after each CPU instruction and consumes completed scan data through `vid.render_stream()`.
+4. **Interrupt Handling**: In interleaved mode, a CRTC cursor match immediately latches the active-low cursor interrupt, calls `z80.irq()` if interrupts are enabled, and advances the CRTC by the IRQ service duration. This keeps the CPU and CRTC aligned for software that times drawing from the last-pixel screen interrupt.
+5. **Presentation**: Sets `frame_complete = true` whenever a presentable framebuffer is ready for the UI. Interleaved mode does not wait indefinitely for CRTC sync; it keeps presenting the monitor surface while trying to relock, and only replaces it with a black lost-sync background with moving white stripes after several consecutive host ticks without a synchronized frame.
 
 The native egui UI does not run one TVC frame for every host repaint. While the emulator is running, the UI requests continuous repaints and gates TVC frame generation from real time at 50 Hz. On displays refreshing faster than 50 Hz, host repaints reuse the latest texture until the next TVC frame is due. If generating a TVC frame takes too long, the UI drops the backlog and generates at most one new TVC frame per repaint callback. The FPS readout reports generated TVC frames only.
 
-Native builds expose the video model as a runtime setting. WASM builds use Cargo features to select the constructor default: `web-vid-simple` for lightweight builds or `web-vid-realistic` for CRTC-timing builds. JavaScript can call `setVidModel()` with `fast-frame`, `line`, or `interleaved`; legacy `simple` and `realistic` names are still accepted.
+Native builds default to `VidModel::Interleaved` and expose the video model as a runtime setting. WASM builds default to `VidModel::FastFrame`. JavaScript can call `setVidModel()` with `fast-frame` or `interleaved`; legacy `simple` and `realistic` names are still accepted.
 
 ---
 
