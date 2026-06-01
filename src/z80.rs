@@ -72,18 +72,13 @@ impl Z80State {
             iff1: 0,
             iff2: 0,
         };
-        state.reset();
+        state.initialize();
         state
     }
 
-    pub fn reset(&mut self) {
-        self.halted = 0;
-        self.im = 0;
-        self.iff1 = 0;
-        self.iff2 = 0;
-
-        self.r8[R_I] = 0xFF;
-        self.r8[R_R] = 0x00;
+    pub fn initialize(&mut self) {
+        self.r8 = [0; 22];
+        self.r16 = [0; 13];
 
         self.r16[R_AF] = 0xFFFF;
         self.r16[R_BC] = 0xFFFF;
@@ -92,13 +87,27 @@ impl Z80State {
         self.r16[R_IX] = 0xFFFF;
         self.r16[R_IY] = 0xFFFF;
         self.r16[R_SP] = 0xFFFF;
-        self.r16[R_PC] = 0x0000;
         self.r16[R_AFA] = 0xFFFF;
         self.r16[R_BCA] = 0xFFFF;
         self.r16[R_DEA] = 0xFFFF;
         self.r16[R_HLA] = 0xFFFF;
-
         self.sync_r8_from_r16();
+
+        self.reset();
+    }
+
+    pub fn reset(&mut self) {
+        // Hardware reset only defines PC, interrupt state, I, R, and HALT.
+        // General registers and SP retain their previous contents.
+        self.halted = 0;
+        self.im = 0;
+        self.iff1 = 0;
+        self.iff2 = 0;
+
+        self.r8[R_I] = 0x00;
+        self.r8[R_R] = 0x00;
+
+        self.r16[R_PC] = 0x0000;
     }
 
     // Sync 8-bit registers from 16-bit (high byte first)
@@ -195,6 +204,10 @@ impl Z80 {
 
     pub fn reset(&mut self) {
         self.state.reset();
+    }
+
+    pub fn initialize(&mut self) {
+        self.state.initialize();
     }
 
     pub fn push16<M: CpuBus>(&mut self, mmu: &mut M, val: u16) {
