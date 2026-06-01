@@ -29,11 +29,9 @@ Source: [VIDEOTON TVC historical overview](http://tvc.hu/html/tvc_attekintes.htm
 - Native snapshot save/load using `.rtvcsnap` and `.rtvcsnap.zip`.
 - Static web snapshot bundle generation for browser-hosted demos.
 
-## Requirements
+## Download
 
-- Rust 1.85 or newer.
-- Native builds use `egui`/`eframe`.
-- Web bundle generation requires the matching `wasm-bindgen` CLI.
+Windows release archives include `rtvc.exe`, ROM files, and bundled programs. Extract the zip and run `rtvc.exe`.
 
 ## Run the Native Emulator
 
@@ -91,50 +89,6 @@ The native GUI has snapshot buttons:
 
 Compressed snapshots are ordinary zip files containing one `snapshot.rtvcsnap` entry.
 
-## Build a Web Snapshot Bundle
-
-Install the matching `wasm-bindgen` CLI once:
-
-```bash
-cargo install wasm-bindgen-cli --version 0.2.122
-```
-
-Bundle a snapshot for static web hosting:
-
-```bash
-cargo bundle-web path/to/game.rtvcsnap.zip
-```
-
-Equivalent form:
-
-```bash
-cargo xtask bundle-web path/to/game.rtvcsnap.zip
-```
-
-The command writes a static bundle to:
-
-```text
-dist/<snapshot-name>-web/
-```
-
-If the input snapshot is zipped, the generated bundle keeps it zipped to reduce upload size. The browser loader decompresses it before passing state to the lightweight WASM emulator.
-
-Serve the generated directory with any static web server.
-
-## Development Checks
-
-```bash
-cargo check
-cargo check --bins
-cargo test
-cargo run --bin fuse_test
-cargo run --bin zex_test
-cargo check --lib --no-default-features --features wasm,web-vid-simple --target wasm32-unknown-unknown
-cargo check --lib --no-default-features --features wasm,web-vid-realistic --target wasm32-unknown-unknown
-```
-
-`zex_test` is slower than the normal unit tests, so it is usually run when changing CPU execution behavior.
-
 ## Contributing
 
 Issues and pull requests are welcome. Emulator accuracy reports are most useful when they include a small reproduction: the machine type, media file, snapshot, command typed on the TVC, and any relevant port or interrupt logs.
@@ -151,9 +105,7 @@ The emulator code is licensed under the [MIT License](LICENSE).
 
 ROMs, cassette/disk images, snapshots, screenshots, manuals, and other historical or third-party machine materials are included for preservation, compatibility testing, or convenience where present. They are not covered by the MIT license unless explicitly stated.
 
-## Developer Docs
+## Project Info
 
 - [Project overview](info/project_overview.md)
-- [Future build/UI plan](info/future_plan.md)
 - [Snapshot format](info/snapshot.md)
-- [Development workflow](.agents/skills/development/SKILL.md)

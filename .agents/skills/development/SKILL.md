@@ -64,6 +64,15 @@ This skill provides step-by-step instructions and references for compiling, exec
   - Emits a static bundle under `dist/<snapshot-name>-web/`.
   - See [info/snapshot.md](../../../info/snapshot.md) for snapshot format and bundle details.
 
+- **Build a Windows release package on GitHub Actions:**
+  ```bash
+  git tag v0.1.0
+  git push origin v0.1.0
+  ```
+  - The release workflow builds `rtvc.exe` on `windows-latest`.
+  - It uploads `rtvc-windows-x64.zip` with `rtvc.exe`, `README.md`, `LICENSE`, `roms/`, and `progs/`.
+  - The native app searches `roms/` and `progs/` in the current working directory first, then beside the executable for extracted release archives.
+
 - **Convert a TVC CAS cassette image to WAV:**
   ```bash
   cargo run --bin cas2wav -- progs/TVBALL.CAS /tmp/TVBALL.WAV
@@ -99,16 +108,6 @@ This skill provides step-by-step instructions and references for compiling, exec
     ```bash
     cargo run --bin zex_test zexall
     ```
-
-### ASM/DASM Round-Trip Test
-
-Test the assembler and disassembler with a comprehensive set of Z80 instructions:
-
-```bash
-cargo run --bin asm_test
-```
-
-This prints the encoded bytes for each instruction, then disassembles them back to verify round-trip correctness.
 
 ### Performance Benchmarking
 

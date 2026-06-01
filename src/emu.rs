@@ -1,5 +1,6 @@
 use std::io::Read;
 use std::io::Write;
+use std::path::{Path, PathBuf};
 
 use crate::cas::TapeBitstreamGenerator;
 use crate::snapshot::{self, Reader, SnapshotError, Writer};
@@ -374,12 +375,14 @@ impl Emu {
     }
 
     pub fn load_roms(&mut self) {
-        std::fs::create_dir_all("roms").ok();
+        let roms_dir = data_dir("roms");
+        if !roms_dir.exists() && roms_dir == Path::new("roms") {
+            std::fs::create_dir_all(&roms_dir).ok();
+        }
         let mut any_loaded = false;
 
         for name in self.machine_type.rom_files() {
-            let path = format!("roms/{}", name);
-            match std::fs::read(&path) {
+            match std::fs::read(roms_dir.join(name)) {
                 Ok(data) => {
                     self.tvc.add_rom(name, &data);
                     any_loaded = true;
@@ -395,11 +398,11 @@ impl Emu {
 
     pub fn scan_progs(&mut self) {
         self.progs.clear();
-        let dir = std::path::Path::new("progs");
+        let dir = data_dir("progs");
         if !dir.exists() {
             return;
         }
-        let mut entries: Vec<_> = match std::fs::read_dir(dir) {
+        let mut entries: Vec<_> = match std::fs::read_dir(&dir) {
             Ok(rd) => rd
                 .filter_map(|e| e.ok())
                 .filter(|e| {
@@ -463,7 +466,7 @@ impl Emu {
         }
         let entry = &self.progs[self.selected_prog];
         let file_name = entry.file_name.clone();
-        let path = format!("progs/{}", file_name);
+        let path = data_dir("progs").join(&file_name);
 
         let data = match std::fs::read(&path) {
             Ok(d) => d,
@@ -520,7 +523,7 @@ impl Emu {
             return;
         }
         let file_name = entry.file_name.clone();
-        let path = format!("progs/{}", file_name);
+        let path = data_dir("progs").join(&file_name);
 
         let data = match std::fs::read(&path) {
             Ok(d) => d,
@@ -570,6 +573,19 @@ impl Emu {
         }
         0.5
     }
+}
+
+fn data_dir(name: &str) -> PathBuf {
+    let cwd_dir = PathBuf::from(name);
+    if cwd_dir.exists() {
+        return cwd_dir;
+    }
+
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.join(name)))
+        .filter(|path| path.exists())
+        .unwrap_or(cwd_dir)
 }
 
 fn is_zip_path(path: &std::path::Path) -> bool {
