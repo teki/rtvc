@@ -29,7 +29,9 @@ impl TapeBitstreamGenerator {
     }
 
     fn write_silence(&mut self, seconds: f32) {
-        let cycles_silence = 3_125_000.0 * seconds;
+        // The original cas2wav routine writes two 11,026-byte buffers for
+        // each nominal second of silence.
+        let cycles_silence = (22_052.0 * seconds) * (3_125_000.0 / 44_100.0);
         self.push_interval(0.5, cycles_silence as u32);
     }
 
@@ -123,8 +125,11 @@ impl TapeBitstreamGenerator {
             return Err("Invalid CAS file: Payload size mismatch.".to_string());
         }
 
-        let typecas = data[0x80];
-        let casauto = data[0x83];
+        // Match the historical cas2wav converter's header read positions. Its
+        // Pascal seek loop overshoots by one byte, so these fields start at
+        // 0x81 rather than 0x80.
+        let typecas = data[0x81];
+        let _casauto = data[0x84];
 
         let payload = &data[144..144 + payload_size];
 
@@ -158,7 +163,9 @@ impl TapeBitstreamGenerator {
         self.write_byte(0x00, true); // fill byte
         self.write_byte(typecas, true);
         self.write_word(payload_size as u16, true); // length of file
-        self.write_byte(casauto, true); // autostart
+        // Match the historical cas2wav converter: it reads the CAS autostart
+        // byte but writes zero into the generated tape header.
+        self.write_byte(0x00, true);
 
         for _ in 0..10 {
             self.write_byte(0x00, true);

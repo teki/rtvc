@@ -73,7 +73,7 @@ The tape recorder's motor is controlled by a 2-bit register driving high-current
 
 * **I/O Port**: `05H` (Write only).
 * **Bit Position**: Bits 7 and 6.
-* **Operation**: Determines if the cassette motor is running.
+* **Operation**: Determines if the cassette motor is running. A low bit means the corresponding motor output is off; a high bit means on. The emulated tape transport position advances only while one of these motor bits is on.
 
 ---
 
@@ -95,7 +95,7 @@ Based on the original TVC loader timings (derived from the `cas2wav` utility), t
 
 | Signal Type | Phase Samples (44.1 kHz) | High Phase (Z80 Cycles) | Low Phase (Z80 Cycles) | Total Period (Z80 Cycles) | Description |
 | :--- | :---: | :---: | :---: | :---: | :--- |
-| **Silence** | N/A | N/A | N/A | `3,125,000` / sec | flatline mid-level signal |
+| **Silence** | 22,052 per nominal second | N/A | N/A | `22,052 * 3,125,000 / 44,100` / nominal sec | flatline mid-level signal matching the legacy converter |
 | **Pre-sound** | 9 | `638` | `638` | `1,276` | pilot/preamble tone |
 | **Sync** | 17 | `1205` | `1205` | `2,410` | block synchronization |
 | **Bit 0** | 11 | `779` | `779` | `1,558` | data zero bit |
@@ -145,7 +145,7 @@ function writeByte(b, calculateCrc = true) {
 ```
 
 ### 1. Header Block Structure
-* **Silence**: 2 seconds.
+* **Silence**: 2 nominal seconds (44,104 samples in legacy `cas2wav` output).
 * **Pre-sound Preamble**: 10,240 pulses.
 * **Sync Pulse**: 1 pulse.
 * **Data Bytes**:
@@ -161,7 +161,7 @@ function writeByte(b, calculateCrc = true) {
   10. Write `filenameLength` (max 16).
   11. Write filename characters (padded/up to `filenameLength` bytes).
   12. Write `0x00` (fill byte).
-  13. Write `typecas` (file type byte from CAS offset `128`).
+  13. Write `typecas` (file type byte from CAS offset `0x81`, matching the legacy converter's one-byte-over seek).
   14. Write word `lof` (file payload size: total CAS size minus `144`).
   15. Write `0x00` (not autostarted).
   16. Write 10 bytes of `0x00` (filler).
@@ -171,7 +171,7 @@ function writeByte(b, calculateCrc = true) {
 * **Preamble After**: 5 pre-sound pulses.
 
 ### 2. Data Block Structure
-* **Silence**: 1 second.
+* **Silence**: 1 nominal second (22,052 samples in legacy `cas2wav` output).
 * **Pre-sound Preamble**: 5,120 pulses.
 * **Sync Pulse**: 1 pulse.
 * **Data Block Head**:
@@ -200,7 +200,7 @@ Sectors are written sequentially (from sector number `1` up to `sectorCount`):
 
 After the final sector is written:
 * **Preamble After**: 5 pre-sound pulses.
-* **Silence**: 2 seconds.
+* **Silence**: 2 nominal seconds (44,104 samples in legacy `cas2wav` output).
 
 ---
 
@@ -217,7 +217,7 @@ class TapeBitstreamGenerator {
         this.intervals = []; // Array of { level, duration }
         
         // Timing constants in Z80 cycles
-        this.CYCLES_SILENCE = 3125000;
+        this.CYCLES_SILENCE = 22052 * 3125000 / 44100;
         this.CYCLES_PRE_HIGH = 638;
         this.CYCLES_PRE_LOW = 638;
         this.CYCLES_SYNC_HIGH = 1205;
@@ -299,8 +299,8 @@ class TapeBitstreamGenerator {
         const dfsize = (bsl + bsh * 256) * 128 + (brl + brh * 256);
         const payloadSize = dfsize - 144;
 
-        const typecas = this.data[0x80];
-        const casauto = this.data[0x83];
+        const typecas = this.data[0x81];
+        const casauto = this.data[0x84];
 
         const payload = this.data.slice(144, 144 + payloadSize);
 
@@ -327,7 +327,7 @@ class TapeBitstreamGenerator {
         this.writeByte(0x00); // fill byte
         this.writeByte(typecas);
         this.writeWord(payloadSize); // length of file
-        this.writeByte(casauto);     // autostart
+        this.writeByte(0x00);        // historical cas2wav ignores casauto
 
         for (let i = 0; i < 10; i++) {
             this.writeByte(0x00);
@@ -398,8 +398,7 @@ Return the current high/low phase of the emulated tape wave on Bit 5.
 case 0x59:
     let tapeBit = 0;
     if (this._tapeMotorOn && this._tapePlayActive) {
-        const elapsedCycles = this._clock - this._tapeStartClock;
-        tapeBit = this.getTapeSignalAtCycle(elapsedCycles);
+        tapeBit = this.getTapeSignalAtCycle(this._tapeTransportCycles);
     }
     result = (tapeBit << 5) | 0x40 | this._pendIt;
     break;
@@ -421,5 +420,6 @@ Use Bits 7 and 6 to determine if the virtual cassette motor is running.
 case 0x05:
     // Bits 7 and 6 control tape motor
     this._tapeMotorOn = ((val & 0xc0) !== 0);
+    // Advance _tapeTransportCycles from CPU elapsed time only while this is true.
     break;
 ```

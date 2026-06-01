@@ -5,6 +5,7 @@ pub(crate) struct TapeInterface {
     play_active: bool,
     start_cycle: u64,
     cycles: u64,
+    position_cycles: u64,
     motor_on: bool,
     output_flip_flop: bool,
 }
@@ -16,6 +17,7 @@ impl TapeInterface {
             play_active: false,
             start_cycle: 0,
             cycles: 0,
+            position_cycles: 0,
             motor_on: false,
             output_flip_flop: false,
         }
@@ -25,6 +27,7 @@ impl TapeInterface {
         self.play_active = false;
         self.cycles = 0;
         self.start_cycle = 0;
+        self.position_cycles = 0;
         self.motor_on = false;
         self.output_flip_flop = false;
     }
@@ -35,6 +38,9 @@ impl TapeInterface {
 
     pub(crate) fn advance(&mut self, cycles: u64) {
         self.cycles += cycles;
+        if self.motor_on && self.play_active {
+            self.position_cycles += cycles;
+        }
     }
 
     pub(crate) fn set_motor_from_port5(&mut self, val: u8) {
@@ -49,6 +55,7 @@ impl TapeInterface {
         self.generator = Some(generator);
         self.play_active = true;
         self.start_cycle = self.cycles;
+        self.position_cycles = 0;
     }
 
     pub(crate) fn stop(&mut self) {
@@ -68,7 +75,7 @@ impl TapeInterface {
     }
 
     pub(crate) fn state(&self) -> (u64, f32, u8) {
-        let elapsed = self.cycles - self.start_cycle;
+        let elapsed = self.position_cycles;
         let level = if self.play_active {
             self.generator
                 .as_ref()
@@ -90,7 +97,7 @@ impl TapeInterface {
         if !self.motor_on || !self.play_active {
             tape_bit = 0;
         } else if let Some(ref generator) = self.generator {
-            let elapsed = self.cycles - self.start_cycle;
+            let elapsed = self.position_cycles;
             if elapsed >= generator.total_cycles {
                 self.play_active = false;
                 tape_bit = 0;
@@ -101,5 +108,51 @@ impl TapeInterface {
 
     pub(crate) fn current_level(&self) -> f32 {
         self.state().1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cas_with_payload(payload_size: usize) -> Vec<u8> {
+        let dfsize = 144 + payload_size;
+        let blocks = dfsize / 128;
+        let remainder = dfsize % 128;
+        let mut data = vec![0; dfsize];
+        data[0] = 0x11;
+        data[2] = (blocks & 0xFF) as u8;
+        data[3] = (blocks >> 8) as u8;
+        data[4] = (remainder & 0xFF) as u8;
+        data[5] = (remainder >> 8) as u8;
+        data[0x81] = 0x01;
+        for (i, byte) in data[144..].iter_mut().enumerate() {
+            *byte = i as u8;
+        }
+        data
+    }
+
+    fn generator() -> TapeBitstreamGenerator {
+        TapeBitstreamGenerator::new(&cas_with_payload(1), "TEST").unwrap()
+    }
+
+    #[test]
+    fn tape_position_advances_only_while_motor_is_on() {
+        let mut tape = TapeInterface::new();
+        tape.play(generator());
+
+        tape.advance(100);
+        assert_eq!(tape.cycles(), 100);
+        assert_eq!(tape.state().0, 0);
+
+        tape.set_motor_from_port5(0x40);
+        tape.advance(123);
+        assert_eq!(tape.cycles(), 223);
+        assert_eq!(tape.state().0, 123);
+
+        tape.set_motor_from_port5(0x00);
+        tape.advance(50);
+        assert_eq!(tape.cycles(), 273);
+        assert_eq!(tape.state().0, 123);
     }
 }

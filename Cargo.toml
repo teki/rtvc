@@ -41,3 +41,7 @@ path = "src/asm_test.rs"
 [[bin]]
 name = "perf_test"
 path = "src/perf_test.rs"
+
+[[bin]]
+name = "cas2wav"
+path = "src/cas2wav.rs"

@@ -73,7 +73,7 @@ The orchestrator maps the Z80 CPU I/O space. When the CPU executes an `IN` or `O
 | `0x02` | MMU | Memory mapping register (maps RAM/ROM banks to pages) |
 | `0x03` | Keyboard / Expansion | Bits 0-3: Selects the active keyboard scan row.<br>Bits 6-7: Cartridge expansion mapping (`_extCartMapping`). |
 | `0x04` | Audio | Sound frequency generator (Low byte). |
-| `0x05` | Audio / Tape | Bits 0-3: Sound frequency (High byte).<br>Bit 4: Sound Output enable switch.<br>Bit 5: Sound interrupt enable/disable flag.<br>Bits 6-7 are preserved by ROM tape routines for motor-control state. |
+| `0x05` | Audio / Tape | Bits 0-3: Sound frequency (High byte).<br>Bit 4: Sound Output enable switch.<br>Bit 5: Sound interrupt enable/disable flag.<br>Bits 6-7: Tape motor control outputs (`0` off, `1` on). |
 | `0x06` | Multi-Port | Bits 0-1: Video display mode (2-color, 4-color, 16-color).<br>Bits 2-5: Sound amplitude level.<br>Bit 7: Printer acknowledgment trigger. |
 | `0x07` | Interrupt Controller | Acknowledges and clears the shared Cursor / Audio Interrupt. |
 | `0x0C - 0x0F` | MMU | Video page mapping bank selector (for TVC 64K+ expandability). |
