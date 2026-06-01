@@ -39,6 +39,7 @@ Chunk payloads are little-endian. Unknown chunks are ignored, so future versions
 - `VID ` — selected video mode, CRTC registers, palette, and border color.
 - `HBF ` — optional VT-DOS/HBF extension state, including extension RAM and FDC/disk image state.
 - `BUS ` — pending interrupt and extension mapping state.
+- `EMUT` — optional native UI machine selection (`64K`/`64K+`, ROM version, VT-DOS presence). Core and WASM loaders ignore it as an unknown chunk.
 
 Keyboard and log state are intentionally reset when loading a snapshot.
 
@@ -48,6 +49,8 @@ Keyboard and log state are intentionally reset when loading a snapshot.
 - [Tvc::load_snapshot](../src/tvc.rs) restores snapshot bytes.
 - [Emu::save_snapshot](../src/emu.rs) and [Emu::load_snapshot](../src/emu.rs) wrap the core API for native code.
 - [WasmTvc::saveSnapshot](../src/wasm.rs) and [WasmTvc::loadSnapshot](../src/wasm.rs) expose the API to JavaScript.
+
+Native snapshots include `EMUT` so loading restores the exact native machine selection among the five UI machine types. Older snapshots without `EMUT` fall back to the restored core machine family (`64K` versus `64K+`, plus VT-DOS/HBF presence) and preserve the current ROM-version selection where the snapshot did not record it.
 
 ## Compression
 

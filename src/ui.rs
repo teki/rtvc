@@ -361,6 +361,13 @@ impl eframe::App for EmuApp {
                     {
                         match self.emu.load_snapshot_file(&path) {
                             Ok(()) => {
+                                if let Some(index) = self
+                                    .machine_types
+                                    .iter()
+                                    .position(|machine_type| *machine_type == self.emu.machine_type)
+                                {
+                                    self.selected_machine = index;
+                                }
                                 self.file_status = Some(format!("Loaded: {}", path.display()));
                             }
                             Err(err) => {

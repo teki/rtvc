@@ -2,6 +2,7 @@ use std::io::Read;
 use std::io::Write;
 
 use crate::cas::TapeBitstreamGenerator;
+use crate::snapshot::{self, Reader, SnapshotError, Writer};
 use crate::tvc::Tvc;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -18,16 +19,21 @@ mod tests {
     fn zipped_snapshot_round_trips() {
         let mut emu = Emu::new(MachineType {
             is_plus: true,
-            rom_version: RomVersion::V1_2,
-            has_dos: false,
+            rom_version: RomVersion::V2_2,
+            has_dos: true,
         });
         emu.tvc.z80.state.r16[11] = 0xBEEF;
         let zipped = zip_snapshot(&emu.save_snapshot()).unwrap();
         assert!(zipped.len() < emu.save_snapshot().len());
 
         let raw = unzip_snapshot(&zipped).unwrap();
-        let mut restored = Emu::new(emu.machine_type);
+        let mut restored = Emu::new(MachineType {
+            is_plus: false,
+            rom_version: RomVersion::V1_2,
+            has_dos: false,
+        });
         restored.load_snapshot(&raw).unwrap();
+        assert_eq!(restored.machine_type, emu.machine_type);
         assert_eq!(restored.tvc.z80.state.r16[11], 0xBEEF);
     }
 }
@@ -80,6 +86,64 @@ impl MachineType {
                 has_dos: false,
             },
         ]
+    }
+
+    pub fn for_snapshot(is_plus: bool, has_dos: bool, preferred_rom_version: RomVersion) -> Self {
+        Self::all_types()
+            .into_iter()
+            .find(|machine_type| {
+                machine_type.is_plus == is_plus
+                    && machine_type.has_dos == has_dos
+                    && machine_type.rom_version == preferred_rom_version
+            })
+            .or_else(|| {
+                Self::all_types().into_iter().find(|machine_type| {
+                    machine_type.is_plus == is_plus && machine_type.has_dos == has_dos
+                })
+            })
+            .unwrap_or(MachineType {
+                is_plus,
+                rom_version: RomVersion::V1_2,
+                has_dos,
+            })
+    }
+
+    fn rom_version_id(&self) -> u8 {
+        match self.rom_version {
+            RomVersion::V1_2 => 0,
+            RomVersion::V2_2 => 1,
+        }
+    }
+
+    fn from_snapshot_chunk(data: &[u8]) -> snapshot::Result<Self> {
+        let mut reader = Reader::new(data);
+        let is_plus = reader.u8()? != 0;
+        let rom_version = match reader.u8()? {
+            0 => RomVersion::V1_2,
+            1 => RomVersion::V2_2,
+            value => {
+                return Err(SnapshotError::InvalidData(format!(
+                    "unknown machine ROM version {value}"
+                )));
+            }
+        };
+        let has_dos = reader.u8()? != 0;
+        Self::all_types()
+            .into_iter()
+            .find(|machine_type| {
+                machine_type.is_plus == is_plus
+                    && machine_type.rom_version == rom_version
+                    && machine_type.has_dos == has_dos
+            })
+            .ok_or_else(|| SnapshotError::InvalidData("unknown machine type".to_string()))
+    }
+
+    fn write_snapshot_chunk(&self) -> Vec<u8> {
+        let mut writer = Writer::new();
+        writer.u8(self.is_plus as u8);
+        writer.u8(self.rom_version_id());
+        writer.u8(self.has_dos as u8);
+        writer.into_inner()
     }
 
     fn rom_files(&self) -> Vec<&'static str> {
@@ -138,11 +202,35 @@ impl Emu {
     }
 
     pub fn save_snapshot(&self) -> Vec<u8> {
-        self.tvc.save_snapshot()
+        let core_snapshot = self.tvc.save_snapshot();
+        let Ok(core_chunks) = snapshot::read_file(&core_snapshot) else {
+            return core_snapshot;
+        };
+        let mut chunks: Vec<_> = core_chunks
+            .into_iter()
+            .map(|chunk| (chunk.id, chunk.data.to_vec()))
+            .collect();
+        chunks.push((*b"EMUT", self.machine_type.write_snapshot_chunk()));
+        snapshot::write_file(&chunks)
     }
 
     pub fn load_snapshot(&mut self, data: &[u8]) -> crate::snapshot::Result<()> {
-        self.tvc.load_snapshot(data)
+        let machine_type = snapshot::read_file(data)?
+            .into_iter()
+            .find(|chunk| chunk.id == *b"EMUT")
+            .map(|chunk| MachineType::from_snapshot_chunk(chunk.data))
+            .transpose()?;
+        self.tvc.load_snapshot(data)?;
+        self.machine_type = machine_type.unwrap_or_else(|| {
+            MachineType::for_snapshot(
+                self.tvc.is_plus(),
+                self.tvc.has_hbf(),
+                self.machine_type.rom_version,
+            )
+        });
+        self.roms_loaded = true;
+        self.prog_loaded = None;
+        Ok(())
     }
 
     pub fn save_snapshot_file(&self, path: &std::path::Path) -> std::io::Result<()> {

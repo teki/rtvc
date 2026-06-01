@@ -306,6 +306,14 @@ impl Tvc {
         self.vid_model
     }
 
+    pub fn is_plus(&self) -> bool {
+        self.bus.mmu.is_plus()
+    }
+
+    pub fn has_hbf(&self) -> bool {
+        self.bus.extensions.slot0().is_some()
+    }
+
     pub fn set_vid_model(&mut self, vid_model: VidModel) {
         self.vid_model = vid_model;
     }
