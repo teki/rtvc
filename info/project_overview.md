@@ -2,7 +2,7 @@
 
 ## Project Scope
 
-`rtvc` is a Videoton TV Computer (TVC) emulator written in Rust.
+`rtvc` is a Videoton TV Computer (TVC) emulator written in Rust, derived from the earlier [teki/jstvc](https://github.com/teki/jstvc) emulator.
 
 The project is structured as a Rust library crate with a native desktop binary plus multiple test and utility binaries defined in [Cargo.toml](../Cargo.toml). The emulator core is shared by native and WebAssembly frontends.
 
