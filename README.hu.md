@@ -98,6 +98,18 @@ A natív GUI snapshot-gombokat tartalmaz:
 
 A tömörített snapshotok hagyományos zip-fájlok, amelyek egy `snapshot.rtvcsnap` bejegyzést tartalmaznak.
 
+## Dokumentáció
+
+- [Snapshotformátum](info.hu/snapshot.md)
+- [TVC gépmag](info.hu/tvc.md)
+- [Z80 CPU](info.hu/z80.md)
+- [Z80 opcode referencia](info.hu/z80opcodes.md)
+- [Memóriakezelő egység](info.hu/mmu.md)
+- [Videovezérlő](info.hu/vid.md)
+- [Billentyűzetmátrix](info.hu/key.md)
+- [Kazettatámogatás](info.hu/cas.md)
+- [HBF floppy kártya és FD1793 vezérlő](info.hu/hbf.md)
+
 ## Közreműködés
 
 Hibajegyeket és pull requesteket szívesen fogadunk. Az emulátorpontossági jelentések akkor a leghasznosabbak, ha tartalmaznak egy kis reprodukciót: géptípust, médiafájlt, snapshotot, a TVC-n beírt parancsot, valamint minden releváns port- vagy interruptnaplót.
@@ -106,15 +118,10 @@ Kérjük, az emulátor viselkedését érintő változtatásokat ahol ésszerű,
 
 ## Köszönetnyilvánítás
 
-Az `rtvc` a korábbi, `../jstvc` könyvtárban található JavaScript implementáció portolásából indult. A CPU-tesztelési folyamat nyilvános Z80 validációs anyagokat használ, például FUSE és ZEX tesztprogramokat. A projekt történeti TVC hardverinformációkra és megőrzési anyagokra is támaszkodik.
+Az `rtvc` a korábbi [teki/jstvc](https://github.com/teki/jstvc) JavaScript implementáció portolásából indult. A CPU-tesztelési folyamat nyilvános Z80 validációs anyagokat használ, például FUSE és ZEX tesztprogramokat. A projekt történeti TVC hardverinformációkra és megőrzési anyagokra is támaszkodik.
 
 ## Licenc
 
 Az emulátor kódja az [MIT licenc](LICENSE) alatt érhető el.
 
 A ROM-ok, kazetta- és lemezképek, snapshotok, képernyőmentések, kézikönyvek és más történeti vagy harmadik féltől származó gépanyagok megőrzési, kompatibilitástesztelési vagy kényelmi céllal szerepelhetnek a projektben. Ezekre nem vonatkozik az MIT licenc, hacsak ez nincs külön jelezve.
-
-## Projektinformációk
-
-- [Projektáttekintés](info/project_overview.md)
-- [Snapshotformátum](info/snapshot.md)

@@ -98,6 +98,18 @@ The native GUI has snapshot buttons:
 
 Compressed snapshots are ordinary zip files containing one `snapshot.rtvcsnap` entry.
 
+## Documentation
+
+- [Snapshot format](info/snapshot.md)
+- [TVC machine core](info/tvc.md)
+- [Z80 CPU](info/z80.md)
+- [Z80 opcode reference](info/z80opcodes.md)
+- [Memory management unit](info/mmu.md)
+- [Video controller](info/vid.md)
+- [Keyboard matrix](info/key.md)
+- [Cassette support](info/cas.md)
+- [HBF floppy card and FD1793 controller](info/hbf.md)
+
 ## Contributing
 
 Issues and pull requests are welcome. Emulator accuracy reports are most useful when they include a small reproduction: the machine type, media file, snapshot, command typed on the TVC, and any relevant port or interrupt logs.
@@ -106,15 +118,10 @@ Please keep emulator behavior changes covered by focused tests where practical, 
 
 ## Acknowledgements
 
-`rtvc` was ported from the earlier JavaScript implementation in `../jstvc`. The CPU test flow uses public Z80 validation material such as FUSE and ZEX test programs. The project also relies on historical TVC hardware information and preservation material.
+`rtvc` was ported from the earlier JavaScript implementation [teki/jstvc](https://github.com/teki/jstvc). The CPU test flow uses public Z80 validation material such as FUSE and ZEX test programs. The project also relies on historical TVC hardware information and preservation material.
 
 ## License
 
 The emulator code is licensed under the [MIT License](LICENSE).
 
 ROMs, cassette/disk images, snapshots, screenshots, manuals, and other historical or third-party machine materials are included for preservation, compatibility testing, or convenience where present. They are not covered by the MIT license unless explicitly stated.
-
-## Project Info
-
-- [Project overview](info/project_overview.md)
-- [Snapshot format](info/snapshot.md)
