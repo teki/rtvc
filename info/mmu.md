@@ -1,6 +1,6 @@
 # Memory Management Unit (MMU) Documentation
 
-This document provides a language-independent architectural guide for building the Memory Management Unit (MMU) for a Videoton TV Computer (TVC) emulator. It is based on the logic in `jstvc` but abstracts away the JavaScript-specific details to serve as a reference for any implementation.
+This document provides a language-independent architectural guide for building the Memory Management Unit (MMU) for a Videoton TV Computer (TVC) emulator. It is based on the Rust implementation in [src/mmu.rs](../src/mmu.rs).
 
 ## Table of Contents
 

@@ -2,7 +2,7 @@
 
 This document provides a language-independent architectural guide for building and understanding the Floppy Disk Controller (FDC) expansion card for the Videoton TV Computer (TVC) emulator. It covers the layout of the **HBF Expansion Card** and the emulation of the **Western Digital FD1793 (WD1793) FDC chip**.
 
-This documentation is based on the implementations in [src/hbf.js](file:///Users/teki/dev/jstvc/src/hbf.js) and [src/fd1793.js](file:///Users/teki/dev/jstvc/src/fd1793.js).
+This documentation is based on the implementations in [src/hbf.rs](../src/hbf.rs) and [src/fd1793.rs](../src/fd1793.rs).
 
 ## Table of Contents
 
@@ -52,7 +52,7 @@ The HBF card's local 4 KB RAM buffer is mapped directly to the upper half of the
 
 ## HBF Card I/O Registers
 
-When the CPU accesses expansion card ports mapped to Slot 0 (`0x10 - 0x1F`) or Slot 1 (`0x20 - 0x2F`), the machine orchestrator forwards the accesses to [HBF](file:///Users/teki/dev/jstvc/src/hbf.js#L11). The port number is masked as `port_number & 0x0F` (offsets 0–15) and handled as follows:
+When the CPU accesses expansion card ports mapped to Slot 0 (`0x10 - 0x1F`) or Slot 1 (`0x20 - 0x2F`), the machine orchestrator forwards the accesses to the HBF card implementation in [src/hbf.rs](../src/hbf.rs). The port number is masked as `port_number & 0x0F` (offsets 0–15) and handled as follows:
 
 | Port Offset | Read / Write | Target | Description / Behavior |
 |:---:|:---:|:---:|---|
@@ -81,7 +81,7 @@ Bit: [  7   ]  [  6   ]  [  5   ]  [  4   ]  [  3   ]  [  2   ]  [  1   ]  [  0 
 
 ## FD1793 Floppy Disk Controller Emulation
 
-The [FD1793](file:///Users/teki/dev/jstvc/src/fd1793.js#L240) class emulates the Western Digital FD1793 FDC. It maintains internal register states (`_status`, `_track`, `_sector`, `_data`, `_intrq`) and drives the active disk's state machine.
+The FD1793 implementation in [src/fd1793.rs](../src/fd1793.rs) emulates the Western Digital FD1793 FDC. It maintains internal register states (`status`, `track`, `sector`, `data`, `intrq`) and drives the active disk's state machine.
 
 ### FDC Registers and States
 
@@ -107,7 +107,7 @@ The [FD1793](file:///Users/teki/dev/jstvc/src/fd1793.js#L240) class emulates the
 
 ## Disk Image Structure (FDisk)
 
-The [FDisk](file:///Users/teki/dev/jstvc/src/fd1793.js#L70) class simulates the physical disk medium. It loads raw MS-DOS compatible `.dsk` sector dumps.
+The disk image helper in [src/fd1793.rs](../src/fd1793.rs) simulates the physical disk medium. It loads raw MS-DOS compatible `.dsk` sector dumps.
 
 ### BIOS Parameter Block (BPB) Parsing
 When a disk image is inserted via `loadDsk`, the emulator parses the FAT12 boot sector to determine the physical geometry of the medium:

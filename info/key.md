@@ -1,6 +1,6 @@
 # Keyboard Matrix and Mapping Documentation
 
-This document provides a language-independent architectural guide for building and understanding the keyboard subsystem of the Videoton TV Computer (TVC) emulator. It is based on the implementation in [src/key.js](file:///Users/teki/dev/jstvc/src/key.js).
+This document provides a language-independent architectural guide for building and understanding the keyboard subsystem of the Videoton TV Computer (TVC) emulator. It is based on the implementation in [src/key.rs](../src/key.rs).
 
 ## Table of Contents
 
@@ -69,12 +69,12 @@ Statically pre-mapped keys that are not altered by the dynamic mapper:
 
 ## I/O Ports Interface
 
-The keyboard is integrated into the emulator bus inside [src/tvc.js](file:///Users/teki/dev/jstvc/src/tvc.js):
+The keyboard is integrated into the emulator bus inside [src/tvc.rs](../src/tvc.rs):
 
 1. **Row Selection (Port `0x03`)**:
-   The CPU selects which row (0–10) to read by writing to Port `0x03` (masked as `val & 0x0F`), calling [selectRow(val)](file:///Users/teki/dev/jstvc/src/key.js#L191).
+   The CPU selects which row (0–10) to read by writing to Port `0x03` (masked as `val & 0x0F`), updating the keyboard row selector.
 2. **Column Read (Port `0x58`)**:
-   The CPU reads the column state for the selected row by reading from Port `0x58`, calling [readRow()](file:///Users/teki/dev/jstvc/src/key.js#L195). If no row state is configured, it returns `0xFF` (all keys released).
+   The CPU reads the column state for the selected row by reading from Port `0x58`. If no row state is configured, it returns `0xFF` (all keys released).
 
 ---
 
@@ -83,11 +83,11 @@ The keyboard is integrated into the emulator bus inside [src/tvc.js](file:///Use
 To support layout-independent typing (e.g., typing on a US, German, or Hungarian host keyboard and having it map correctly to the target TVC layout), the emulator dynamically maps raw keystrokes to TVC coordinate pairs. This process is divided into two distinct events supplied by the host operating system or UI toolkit:
 
 1. **Key Down Event (Physical Key ID)**:
-   When a physical key is pressed, the host environment reports a key identifier (such as a hardware scancode or virtual keycode). The emulator remembers this raw keycode as the active physical key (stored in `_lastPress`, via [keyDown](file:///Users/teki/dev/jstvc/src/key.js#L159)).
+   When a physical key is pressed, the host environment reports a key identifier (such as a hardware scancode or virtual keycode). The emulator remembers this raw keycode as the active physical key.
 2. **Text / Character Input Event (Unicode Character)**:
    If the keystroke generates a typable character, the host environment fires a text input event containing the resulting Unicode character (or character code). 
 3. **Matrix Coordinates Lookup**:
-   If the Unicode character is not yet mapped (`_isMapped`), the emulator searches the translation tables to bind it to the physical key recorded in step 1 (via [addMapping](file:///Users/teki/dev/jstvc/src/key.js#L84)):
+   If the Unicode character is not yet mapped, the emulator searches the translation tables to bind it to the physical key recorded in step 1:
    - **Unshifted Table (`_ntable`)**: If found, maps the coordinates (`idx >> 3`, `idx & 7`). If the host Shift modifier was active, the `KSDEL` flag is set (TVC Shift must be suppressed).
    - **Shifted Table (`_stable`)**: If found, maps the coordinates (`idx >> 3`, `idx & 7`). If the host Shift modifier was inactive, the `KSADD` flag is set (TVC Shift must be forced).
 4. **Registration**:
@@ -107,7 +107,7 @@ When porting this logic to a Rust application using `egui` (or `winit`), hook in
 
 ## Shift State Compensation (Modifiers)
 
-Sometimes a character requires Shift on the host layout but is unshifted on the TVC layout (or vice-versa). The dynamic mapper uses flags and [fixState](file:///Users/teki/dev/jstvc/src/key.js#L116) to manipulate the TVC's Shift key (Row 6, Col 3) state automatically:
+Sometimes a character requires Shift on the host layout but is unshifted on the TVC layout (or vice-versa). The dynamic mapper uses flags to manipulate the TVC's Shift key (Row 6, Col 3) state automatically:
 
 - **`KSADD` (Shift Add)**:
   Fires when a key requires the shifted representation on the TVC but the host key is unshifted. It programmatically holds the TVC Shift key down during the keystroke:
@@ -132,7 +132,7 @@ The keyboard driver is driven by three platform-independent hooks:
 ### Key Stick Prevention
 If a user releases the host `Shift` key *before* releasing a character key, the modifier state changes. A naive mapping lookup during `keyup` would check `_keymap[0]` instead of `_keymap[SHIFT_ON]`, causing the release code to miss the active matrix cell and leave the key stuck "pressed" in the TVC matrix.
 
-To prevent this, the [keyUp](file:///Users/teki/dev/jstvc/src/key.js#L173) logic iterates through **all modifier tables** (unshifted, shifted, alt, altgr) for the released key code, clearing the row/column bit in the matrix for every mapping found:
+To prevent this, the key release logic iterates through **all modifier tables** (unshifted, shifted, alt, altgr) for the released key code, clearing the row/column bit in the matrix for every mapping found:
 
 ```javascript
 if (!down) {

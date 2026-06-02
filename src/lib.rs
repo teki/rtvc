@@ -3,6 +3,7 @@ compile_error!("features `web-vid-simple` and `web-vid-realistic` are mutually e
 
 pub mod bus;
 pub mod cas;
+pub mod disasm;
 pub mod expansion;
 pub mod fd1793;
 pub mod hbf;

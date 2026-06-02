@@ -1,12 +1,12 @@
-# Cassette Tape (.cas) Support in jstvc
+# Cassette Tape (.cas) Support
 
-This document describes how Cassette Tape (`.cas`) files are supported in the `jstvc` emulator.
+This document describes how Cassette Tape (`.cas`) files are supported in `rtvc`.
 
 ---
 
 ## High-Speed Direct RAM Injection
 
-By default, `jstvc` uses a **high-speed direct RAM injection** mechanism (HLE loading). This bypasses the slow tape read routines of the original machine, loading programs instantly.
+The emulator can use a **high-speed direct RAM injection** mechanism (HLE loading). This bypasses the slow tape read routines of the original machine, loading programs instantly.
 
 ### .cas File Structure
 A Videoton TV Computer cassette image (`.cas`) is composed of a **144-byte header** followed by the raw program bytes:
@@ -18,25 +18,18 @@ A Videoton TV Computer cassette image (`.cas`) is composed of a **144-byte heade
 3. **Payload (from offset 144)**: The actual program or BASIC data.
 
 ### Loader Implementation Details
-The core loader logic is located in the [loadImg](file:///Users/teki/dev/jstvc/src/tvc.js#L86-L106) function inside [src/tvc.js](file:///Users/teki/dev/jstvc/src/tvc.js):
+The high-speed load path is handled by the media-loading code in [src/tvc.rs](../src/tvc.rs), with native and WASM entry points in [src/emu.rs](../src/emu.rs) and [src/wasm.rs](../src/wasm.rs):
 
-```javascript
-TVC.prototype.loadImg = function(name, data) {
-    var extension = name.slice(-4).toLowerCase();
-    if (extension == ".cas") {
-        var savemap = this._mmu.getMap();
-        this._mmu.setMap(0xb0);
-        for (var i = 144; i < data.length; i++) {
-            this._mmu.w8(6639 + i - 144, data[i]);
-        }
-        this._mmu.setMap(savemap);
-    }
-    // ...
-};
+```text
+if extension == ".cas":
+    save current MMU map
+    switch MMU to all-RAM map 0xB0
+    copy CAS payload bytes after the 144-byte header to RAM at 0x19EF
+    restore previous MMU map
 ```
 
 1. **Save Map**: The emulator queries the MMU for the current memory map configuration using `getMap()`.
-2. **Switch MMU to All-RAM**: The MMU map value is set to `0xB0` via [setMap](file:///Users/teki/dev/jstvc/src/mmu.js#L94-L104) in [src/mmu.js](file:///Users/teki/dev/jstvc/src/mmu.js). This configuration maps RAM Pages 0, 1, 2, and 3 (`_u0`, `_u1`, `_u2`, `_u3`) directly across the entire 64KB Z80 address space.
+2. **Switch MMU to All-RAM**: The MMU map value is set to `0xB0` through [src/mmu.rs](../src/mmu.rs). This configuration maps RAM Pages 0, 1, 2, and 3 directly across the entire 64KB Z80 address space.
 3. **Direct Write**: The emulator skips the first 144 bytes of the `.cas` header. It then writes the remaining bytes byte-by-byte into the TVC's RAM starting at address **`6639` (`0x19EF`)**. Address `6639` is the default start address of the TVC BASIC program area (`TXTTAB`).
 4. **Restore Map**: The emulator restores the MMU map to its original saved state.
 
@@ -107,24 +100,19 @@ Based on the original TVC loader timings (derived from the `cas2wav` utility), t
 
 The TVC ROM uses a custom 16-bit CRC algorithm computed bit-by-bit.
 
-### Bit CRC Update Algorithm (JavaScript)
-```javascript
-let crc = 0;
+### Bit CRC Update Algorithm
+```text
+crc = 0
 
-function updateCrc(bit) {
-    const bh = (crc >>> 8) & 0xff;
-    const al = (bit !== 0) ? 0x80 : 0x00;
-    const xorAl = al ^ bh;
-    const cy = (xorAl & 0x80) !== 0;
-
-    if (cy) {
-        crc ^= 0x0810; // TVC CRC-CCITT variant polynomial
-    }
-    crc = (crc << 1) & 0xffff;
-    if (cy) {
-        crc = (crc | 1) & 0xffff;
-    }
-}
+update_crc(bit):
+  bh = high byte of crc
+  al = 0x80 when bit is 1, otherwise 0x00
+  carry = ((al xor bh) bit 7) != 0
+  if carry:
+    crc = crc xor 0x0810
+  crc = (crc << 1) & 0xffff
+  if carry:
+    crc = (crc | 1) & 0xffff
 ```
 
 ---
@@ -132,16 +120,13 @@ function updateCrc(bit) {
 ## Serialization & Tape Blocks
 
 Bytes are written to the bitstream **Least-Significant Bit first (LSB-first)**:
-```javascript
-function writeByte(b, calculateCrc = true) {
-    for (let i = 0; i < 8; i++) {
-        const bit = (b >>> i) & 1;
-        writeBit(bit);
-        if (calculateCrc) {
-            updateCrc(bit);
-        }
-    }
-}
+```text
+write_byte(byte, calculate_crc):
+  for bit_index in 0..8:
+    bit = (byte >> bit_index) & 1
+    write_bit(bit)
+    if calculate_crc:
+      update_crc(bit)
 ```
 
 ### 1. Header Block Structure
@@ -206,187 +191,16 @@ After the final sector is written:
 
 ## Integrating Into the Emulator
 
-To run this inside the emulator, you can create a Javascript generator that parses the `.cas` file and yields the tape signal level dynamically, then hook it into the emulator's Z80 port-reading.
+The native code currently converts CAS files through [src/cas.rs](../src/cas.rs) and [src/cas2wav.rs](../src/cas2wav.rs). Low-level tape playback can use the same structure in memory: parse the `.cas` header, generate an ordered list of signal intervals in Z80 cycles, and have the TVC bus sample the current level when the ROM reads the tape input port.
 
-### JavaScript Bitstream Generator Class
-```javascript
-class TapeBitstreamGenerator {
-    constructor(casData, filename = "PROGRAM") {
-        this.data = casData;
-        this.filename = filename.toUpperCase().slice(0, 16);
-        this.intervals = []; // Array of { level, duration }
-        
-        // Timing constants in Z80 cycles
-        this.CYCLES_SILENCE = 22052 * 3125000 / 44100;
-        this.CYCLES_PRE_HIGH = 638;
-        this.CYCLES_PRE_LOW = 638;
-        this.CYCLES_SYNC_HIGH = 1205;
-        this.CYCLES_SYNC_LOW = 1205;
-        this.CYCLES_0_HIGH = 779;
-        this.CYCLES_0_LOW = 779;
-        this.CYCLES_1_HIGH = 567;
-        this.CYCLES_1_LOW = 567;
+Condensed interval-generation flow:
 
-        this.crc = 0;
-        this.generate();
-    }
-
-    writeSilence(seconds) {
-        this.intervals.push({ level: 0.5, duration: this.CYCLES_SILENCE * seconds });
-    }
-
-    writePre(count) {
-        for (let i = 0; i < count; i++) {
-            this.intervals.push({ level: 1, duration: this.CYCLES_PRE_HIGH });
-            this.intervals.push({ level: 0, duration: this.CYCLES_PRE_LOW });
-        }
-    }
-
-    writeSync() {
-        this.intervals.push({ level: 1, duration: this.CYCLES_SYNC_HIGH });
-        this.intervals.push({ level: 0, duration: this.CYCLES_SYNC_LOW });
-    }
-
-    writeBit(bit) {
-        if (bit === 0) {
-            this.intervals.push({ level: 1, duration: this.CYCLES_0_HIGH });
-            this.intervals.push({ level: 0, duration: this.CYCLES_0_LOW });
-        } else {
-            this.intervals.push({ level: 1, duration: this.CYCLES_1_HIGH });
-            this.intervals.push({ level: 0, duration: this.CYCLES_1_LOW });
-        }
-    }
-
-    updateCrc(bit) {
-        const bh = (this.crc >>> 8) & 0xff;
-        const al = (bit !== 0) ? 0x80 : 0x00;
-        const xorAl = al ^ bh;
-        const cy = (xorAl & 0x80) !== 0;
-
-        if (cy) {
-            this.crc ^= 0x0810;
-        }
-        this.crc = (this.crc << 1) & 0xffff;
-        if (cy) {
-            this.crc = (this.crc | 1) & 0xffff;
-        }
-    }
-
-    writeByte(b, calculateCrc = true) {
-        for (let i = 0; i < 8; i++) {
-            const bit = (b >>> i) & 1;
-            this.writeBit(bit);
-            if (calculateCrc) {
-                this.updateCrc(bit);
-            }
-        }
-    }
-
-    writeWord(w, calculateCrc = true) {
-        this.writeByte(w & 0xff, calculateCrc);
-        this.writeByte((w >>> 8) & 0xff, calculateCrc);
-    }
-
-    generate() {
-        if (this.data[0] !== 0x11) {
-            throw new Error("Invalid CAS file: Missing standard 0x11 file identifier.");
-        }
-
-        const bsl = this.data[2];
-        const bsh = this.data[3];
-        const brl = this.data[4];
-        const brh = this.data[5];
-        const dfsize = (bsl + bsh * 256) * 128 + (brl + brh * 256);
-        const payloadSize = dfsize - 144;
-
-        const typecas = this.data[0x81];
-        const casauto = this.data[0x84];
-
-        const payload = this.data.slice(144, 144 + payloadSize);
-
-        // --- 1. HEAD BLOCK ---
-        this.writeSilence(2);
-        this.writePre(10240);
-        this.writeSync();
-
-        this.writeByte(0x00, false);
-        this.crc = 0;
-        this.writeByte(0x6A);
-        this.writeByte(0xFF); // head tmb
-        this.writeByte(0x11); // non-buffered
-        this.writeByte(0x00); // non writeprotected
-        this.writeByte(0x01); // 1 sector in head
-        this.writeByte(0x00); // sector number 0
-
-        const bihs = 1 + this.filename.length + 16;
-        this.writeByte(bihs);
-        this.writeByte(this.filename.length);
-        for (let i = 0; i < this.filename.length; i++) {
-            this.writeByte(this.filename.charCodeAt(i));
-        }
-        this.writeByte(0x00); // fill byte
-        this.writeByte(typecas);
-        this.writeWord(payloadSize); // length of file
-        this.writeByte(0x00);        // historical cas2wav ignores casauto
-
-        for (let i = 0; i < 10; i++) {
-            this.writeByte(0x00);
-        }
-        this.writeByte(0x00); // version number
-        this.writeByte(0x00); // not last sector
-
-        // write head CRC
-        this.writeWord(this.crc, false);
-        this.writePre(5);
-
-        // --- 2. DATA BLOCK HEAD ---
-        this.writeSilence(1);
-        this.writePre(5120);
-        this.writeSync();
-
-        this.writeByte(0x00, false);
-        this.crc = 0;
-        this.writeByte(0x6A);
-        this.writeByte(0x00); // data tmb
-        this.writeByte(0x11); // non-buffered
-        this.writeByte(0x00); // non-writeprotected
-
-        const sectorCount = Math.floor(payloadSize / 256) + 1;
-        this.writeByte(sectorCount);
-
-        // --- 3. DATA SECTORS ---
-        let payloadPtr = 0;
-        for (let secnum = 1; secnum <= sectorCount; secnum++) {
-            if (secnum > 1) {
-                this.crc = 0;
-            }
-
-            this.writeByte(secnum);
-
-            const isLast = (secnum === sectorCount);
-            const size = isLast ? (payloadSize % 256) : 0;
-            this.writeByte(size);
-
-            if (size === 0) {
-                for (let i = 0; i < 256; i++) {
-                    this.writeByte(payload[payloadPtr++]);
-                }
-                this.writeByte(0x00); // standard sector end padding
-            } else {
-                for (let i = 0; i < size; i++) {
-                    this.writeByte(payload[payloadPtr++]);
-                }
-                this.writeByte(0xff); // partial sector end padding
-            }
-
-            this.writeWord(this.crc, false);
-        }
-
-        this.writePre(5);
-        this.writeSilence(2);
-    }
-}
-```
+1. Validate byte `0x00` is `0x11`.
+2. Compute `payload_size = ((cas[2] + cas[3] * 256) * 128 + (cas[4] + cas[5] * 256)) - 144`.
+3. Emit the header block: 2 seconds silence, 10,240 pre-sound pulses, one sync pulse, the header bytes, header CRC, and 5 trailing pre-sound pulses.
+4. Emit the data block head: 1 second silence, 5,120 pre-sound pulses, one sync pulse, marker bytes, and sector count.
+5. Emit each sector with its sector number, size byte, payload bytes, filler byte, and CRC.
+6. Finish with 5 pre-sound pulses and 2 seconds silence.
 
 ### Emulator I/O Port Implementation
 
@@ -394,32 +208,24 @@ To support low-level cassette emulation, implement the following actions for the
 
 #### 1. Read Port `0x59` (IT Status / Tape Input)
 Return the current high/low phase of the emulated tape wave on Bit 5.
-```javascript
-case 0x59:
-    let tapeBit = 0;
-    if (this._tapeMotorOn && this._tapePlayActive) {
-        tapeBit = this.getTapeSignalAtCycle(this._tapeTransportCycles);
-    }
-    result = (tapeBit << 5) | 0x40 | this._pendIt;
-    break;
+```text
+if port == 0x59:
+  tape_bit = tape signal level when motor and playback are active, otherwise 0
+  return (tape_bit << 5) | 0x40 | pending_interrupt_bits
 ```
 
 #### 2. Access Ports `0x50` - `0x57` (Tape Output)
 Any read (`IN`) or write (`OUT`) to this port range toggles the audio output wave state.
-```javascript
-// Inside writePort(addr, val) and readPort(addr) handlers:
-if (addr >= 0x50 && addr <= 0x57) {
-    this._tapeOutputFlipFlop = !this._tapeOutputFlipFlop;
-    // Record transition time to generate output file/sound
-}
+```text
+if 0x50 <= port <= 0x57:
+  flip tape output state
+  record transition time for tape output capture
 ```
 
 #### 3. Write Port `0x05` (Motor Control)
 Use Bits 7 and 6 to determine if the virtual cassette motor is running.
-```javascript
-case 0x05:
-    // Bits 7 and 6 control tape motor
-    this._tapeMotorOn = ((val & 0xc0) !== 0);
-    // Advance _tapeTransportCycles from CPU elapsed time only while this is true.
-    break;
+```text
+if port == 0x05:
+  tape_motor_on = (value & 0xc0) != 0
+  advance tape transport cycles only while the motor is on
 ```

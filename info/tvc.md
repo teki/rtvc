@@ -1,6 +1,6 @@
 # TVC Machine Emulator Core Documentation
 
-This document provides a language-independent architectural guide for building and understanding the main machine orchestrator class (`TVC`) of the Videoton TV Computer emulator. It is based on the implementation in [src/tvc.js](file:///Users/teki/dev/jstvc/src/tvc.js).
+This document provides a language-independent architectural guide for building and understanding the main machine orchestrator (`Tvc`) of the Videoton TV Computer emulator. It is based on the implementation in [src/tvc.rs](../src/tvc.rs).
 
 ## Table of Contents
 
@@ -16,11 +16,11 @@ This document provides a language-independent architectural guide for building a
 
 ## Overview
 
-The [TVC](file:///Users/teki/dev/jstvc/src/tvc.js#L13) class acts as the system bus and hardware orchestrator. It instantiates the other primary modules—the CPU, MMU, Video (CRTC), Keyboard, and Audio subsystems—and handles communication between them:
+The `Tvc` type in [src/tvc.rs](../src/tvc.rs) acts as the system bus and hardware orchestrator. It instantiates the other primary modules—the CPU, MMU, Video (CRTC), Keyboard, and Audio subsystems—and handles communication between them:
 
-- **CPU**: Z80 core ([z80.md](file:///Users/teki/dev/jstvc/docs/z80.md))
-- **MMU**: Memory Management Unit ([mmu.md](file:///Users/teki/dev/jstvc/docs/mmu.md))
-- **Video**: Motorola 6845 CRTC ([vid.md](file:///Users/teki/dev/jstvc/docs/vid.md))
+- **CPU**: Z80 core ([z80.md](z80.md))
+- **MMU**: Memory Management Unit ([mmu.md](mmu.md))
+- **Video**: Motorola 6845 CRTC ([vid.md](vid.md))
 - **Sound**: Sound generator / timer
 - **Keyboard**: Row/Column scanner matrix
 - **Extensions**: Expansion cards (such as the Floppy Controller)
@@ -140,7 +140,7 @@ The UI exposes the log via a toggleable bottom panel with a "Clear" button.
 
 ## Media Loader (.CAS and .DSK)
 
-The orchestrator supports loading cassette tape and floppy disk formats at runtime via the [loadImg](file:///Users/teki/dev/jstvc/src/tvc.js#L86) function:
+The orchestrator supports loading cassette tape and floppy disk formats at runtime through the media-loading helpers in [src/tvc.rs](../src/tvc.rs), [src/emu.rs](../src/emu.rs), and [src/wasm.rs](../src/wasm.rs):
 
 ### 1. Cassette Tape (`.cas`)
 - The TVC cassette image contains raw BASIC/binary data.
