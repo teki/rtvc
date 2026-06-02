@@ -81,8 +81,7 @@ The orchestrator maps the Z80 CPU I/O space. When the CPU executes an `IN` or `O
 | `0x5A` | Expansion card 2 | Write-enable / interrupt-enable configuration for Card Slot 2. |
 | `0x5B` | Expansion card 3 | Write-enable / interrupt-enable configuration for Card Slot 3. |
 | `0x60 - 0x63` | Video | Sets Palette registers 0 to 3. |
-| `0x70` | Video (CRTC) | Programs the MC6845 CRTC Address Index pointer. |
-| `0x71` | Video (CRTC) | Programs the selected MC6845 CRTC Register Data. |
+| `0x70 - 0x7F` | Video (CRTC) | Mirrored MC6845 CRTC ports. Even addresses select the CRTC address register; odd addresses write the selected CRTC data register. |
 | `0x10 - 0x1F` | Slot 0 Card | Direct pass-through of writes (Port offset `addr & 0x0F`) to Card 0 module. |
 | `0x20 - 0x2F` | Slot 1 Card | Direct pass-through of writes (Port offset `addr & 0x0F`) to Card 1 module. |
 
@@ -94,6 +93,7 @@ The orchestrator maps the Z80 CPU I/O space. When the CPU executes an `IN` or `O
 | `0x59` / `0x5D` | Interrupt / System | Reads pending interrupts (bits 0-4) and system flags:<br>Bit 7: Printer ACK status.<br>Bit 6: Color / BW monitor selection flag.<br>Bit 5: Tape (cassette) input stream bit. |
 | `0x5A` | Expansion Slots | Reads slot occupancy / card identifier codes. |
 | `0x5B` / `0x5F` | Audio Timer | Resets/restarts the sound oscillator counter from the programmed divisor. |
+| `0x70 - 0x7F` | Video (CRTC) | Mirrored MC6845 CRTC ports. Even address-register reads return `0xFF`; odd data-register reads follow CRTC register access permissions. |
 | `0x10 - 0x1F` | Slot 0 Card | Direct pass-through read (offset `addr & 0x0F`) from Card 0 module. |
 | `0x20 - 0x2F` | Slot 1 Card | Direct pass-through read (offset `addr & 0x0F`) from Card 1 module. |
 

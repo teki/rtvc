@@ -52,7 +52,7 @@ The Z80 CPU programs the MC6845 through the `0x70-0x7F` I/O range. The CRTC only
 - **Ports `0x70`, `0x72`, ..., `0x7E`**: Address Register. Selects which internal data register (R0-R17) to access.
 - **Ports `0x71`, `0x73`, ..., `0x7F`**: Data Register. Reads or writes the register selected by the address register, subject to each register's access permissions.
 
-The emulator currently implements the canonical write ports `0x70` and `0x71`; mirrored addresses and CPU-visible CRTC reads are deferred accuracy work.
+The emulator implements these mirrored ports and CPU-visible CRTC reads using TVC/6845-compatible register access semantics.
 
 ### Register Layout and TVC Defaults
 
@@ -325,12 +325,12 @@ The TVC's video subsystem and emulator implementation have several functional di
    - The TVC hardware manual presents `R3` as a sync-width register with low-nibble HSYNC and high-nibble VSYNC fields, but marks this area as chip-source dependent. This matches the broader 6845-compatible CRTC situation: CPC CRTC types 0, 3, and 4 implement programmable VSYNC width, while types 1 and 2 ignore the high nibble and use fixed 16-line VSYNC.
    - Nonzero values select a 1-15 scanline VSYNC pulse. The emulator implements these programmable widths: [src/vid.rs](../src/vid.rs) decodes `R3` into `vsw` and uses that value when generating the streaming VSYNC signal.
    - On CRTC variants that support programmable VSYNC width, a VSYNC width field of `0` means 16 scanlines. The emulator does not currently special-case `0` to 16.
-2. **[TODO] CRTC Port Mirrors and Data Register Read Semantics**
+2. **Implemented TVC Behavior: CRTC Port Mirrors and Data Register Read Semantics**
    - TVC hardware exposes the CRTC at `0x70-0x7F`; because the CRTC only decodes `A0`, `0x70/0x72/.../0x7E` select the address register and `0x71/0x73/.../0x7F` access the selected data register.
    - The CRTC is readable by the CPU, but only according to register permissions. Both the Motorola datasheet and TVC hardware manual agree that `R0-R11` are write-only, `R14-R15` are readable/writable, and `R16-R17` are read-only light-pen latches.
    - `R12-R13` access appears to be CRTC-variant dependent: the Motorola MC6845 datasheet lists the start-address pair as write-only, while the TVC hardware manual lists it as readable/writable, matching other 6845-compatible parts such as the UMC UM6845. The TVC hardware manual also notes that schematic part markings may reflect the most common supplier and that actual fitted parts may come from another compatible supplier, but it does not name a specific CRTC supplier in the CRTC section found in `tvchardver.md`.
    - On readable high-byte registers, the upper two address bits read as `0`.
-   - The emulator currently handles only writes to the canonical ports `0x70` and `0x71`; CPU reads from CRTC ports fall through to extension/default I/O handling. Internally, `Vid::get_reg()` returns the selected register from the full `R0-R17` array, which is convenient for inspection but does not model CPU-visible access restrictions.
+   - The emulator implements the mirrored CRTC port range, treats `R12-R13` as readable/writable, returns `0xFF` for CPU reads of write-only registers and the write-only address register, ignores CPU writes to read-only `R16-R17`, and treats address-register values above `17` as selecting no data register.
 3. **Implemented TVC Divergence / [TODO] Hardware Cursor Shape and Blink**
    - The TVC does not use the MC6845 as a character generator. Text is drawn in graphics memory by software, and the visible text cursor is also software-rendered.
    - The emulator implements the cursor output as a timing interrupt source: `R10` controls enable state and start scanline, while `R14/R15` select the cursor memory address.

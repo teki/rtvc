@@ -202,31 +202,53 @@ impl Vid {
         self.curmemaddr = gen_address(self.curaddr, self.curstart);
     }
 
-    /// Set the CRTC register address (port 0x70)
+    /// Set the CRTC register address (even CRTC ports in 0x70-0x7F)
     pub fn set_reg_idx(&mut self, idx: u8) {
-        if idx > 17 {
-            return;
-        }
-        self.reg_idx = idx;
+        self.reg_idx = idx & 0x1F;
     }
 
-    /// Get the current CRTC register address (port 0x70 read)
+    /// Get the current CRTC register address.
     pub fn get_reg_idx(&self) -> u8 {
         self.reg_idx
     }
 
-    /// Write to the selected CRTC data register (port 0x71)
+    /// Write to the selected CRTC data register.
     pub fn set_reg(&mut self, val: u8) {
         let idx = self.reg_idx as usize;
+        if idx >= 16 {
+            return;
+        }
         if self.reg[idx] != val {
             self.reg[idx] = val;
             self.reconfig();
         }
     }
 
-    /// Read the selected CRTC data register (port 0x71 read)
+    /// Read the selected CRTC data register using TVC/6845-compatible CPU-visible semantics.
     pub fn get_reg(&self) -> u8 {
-        self.reg[self.reg_idx as usize]
+        match self.reg_idx {
+            12 | 14 | 16 => self.reg[self.reg_idx as usize] & 0x3F,
+            13 | 15 | 17 => self.reg[self.reg_idx as usize],
+            _ => 0xFF,
+        }
+    }
+
+    /// Write a CPU I/O access to one of the mirrored CRTC ports (0x70-0x7F).
+    pub fn write_crtc_port(&mut self, port: u8, val: u8) {
+        if port & 1 == 0 {
+            self.set_reg_idx(val);
+        } else {
+            self.set_reg(val);
+        }
+    }
+
+    /// Read a CPU I/O access from one of the mirrored CRTC ports (0x70-0x7F).
+    pub fn read_crtc_port(&self, port: u8) -> u8 {
+        if port & 1 == 0 {
+            0xFF
+        } else {
+            self.get_reg()
+        }
     }
 
     /// Set palette entry (port 0x60-0x63)
@@ -281,7 +303,7 @@ impl Vid {
     ) -> crate::snapshot::Result<()> {
         self.reset();
         self.mode = r.u8()? & 0x03;
-        self.reg_idx = r.u8()?.min(17);
+        self.reg_idx = r.u8()? & 0x1F;
         self.reg.copy_from_slice(r.raw_bytes(18)?);
         self.reconfig();
         for idx in 0..4 {

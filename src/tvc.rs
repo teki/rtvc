@@ -95,8 +95,7 @@ impl TvcBus {
 
             0x60..=0x63 => self.vid.set_palette(addr - 0x60, val),
 
-            0x70 => self.vid.set_reg_idx(val),
-            0x71 => self.vid.set_reg(val),
+            0x70..=0x7F => self.vid.write_crtc_port(addr, val),
 
             0x58 => {}
             0x59 => {}
@@ -206,6 +205,7 @@ impl TvcBus {
                 0xFF
             }
             0x5A | 0x5E => self.extensions.type_status(),
+            0x70..=0x7F => self.vid.read_crtc_port(addr),
             _ => self.extensions.read_port(addr).unwrap_or(0xFF),
         };
         val
@@ -555,5 +555,65 @@ mod tests {
         bus.advance_sound_timer(32);
 
         assert_eq!(bus.pend_it & SHARED_CURSOR_SOUND_IT, SHARED_CURSOR_SOUND_IT);
+    }
+
+    #[test]
+    fn crtc_ports_are_mirrored_across_0x70_to_0x7f() {
+        let mut bus = TvcBus::new(true);
+
+        bus.write_port(0x72, 12);
+        bus.write_port(0x73, 0x12);
+        bus.write_port(0x7E, 13);
+        bus.write_port(0x7F, 0x34);
+
+        bus.write_port(0x70, 12);
+        assert_eq!(bus.read_port(0x71), 0x12);
+        bus.write_port(0x78, 13);
+        assert_eq!(bus.read_port(0x79), 0x34);
+    }
+
+    #[test]
+    fn crtc_reads_follow_register_access_permissions() {
+        let mut bus = TvcBus::new(true);
+
+        bus.write_port(0x70, 0);
+        bus.write_port(0x71, 0x63);
+        assert_eq!(bus.read_port(0x71), 0xFF);
+
+        bus.write_port(0x70, 12);
+        bus.write_port(0x71, 0xC1);
+        assert_eq!(bus.read_port(0x71), 0x01);
+
+        bus.write_port(0x70, 14);
+        bus.write_port(0x71, 0xFE);
+        assert_eq!(bus.read_port(0x71), 0x3E);
+
+        bus.write_port(0x70, 16);
+        bus.write_port(0x71, 0x5A);
+        assert_eq!(bus.read_port(0x71), 0x00);
+    }
+
+    #[test]
+    fn crtc_address_register_reads_as_unavailable() {
+        let mut bus = TvcBus::new(true);
+
+        bus.write_port(0x70, 12);
+
+        assert_eq!(bus.read_port(0x70), 0xFF);
+        assert_eq!(bus.read_port(0x72), 0xFF);
+    }
+
+    #[test]
+    fn invalid_crtc_register_index_selects_no_data_register() {
+        let mut bus = TvcBus::new(true);
+
+        bus.write_port(0x70, 12);
+        bus.write_port(0x71, 0x12);
+        bus.write_port(0x70, 18);
+        bus.write_port(0x71, 0x34);
+        assert_eq!(bus.read_port(0x71), 0xFF);
+
+        bus.write_port(0x70, 12);
+        assert_eq!(bus.read_port(0x71), 0x12);
     }
 }
