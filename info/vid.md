@@ -344,3 +344,10 @@ The TVC's video subsystem and emulator implementation have several functional di
    - `R16` and `R17` exist in the internal CRTC register array, but the emulator does not implement light-pen trigger/strobe behavior or address latching.
    - TVC hardware routes the CRTC light-pen strobe input to the expansion connector. Its pulse latches the current refresh-memory address into `R16/R17`, with software expected to compensate for display and light-pen delays.
    - These registers should be treated as read-only latched light-pen address registers if light-pen support or strict MC6845 register semantics are added.
+
+---
+
+## References
+
+- [CPCWiki CRTC](https://www.cpcwiki.eu/index.php/CRTC) - 6845-compatible CRTC type differences, including register behavior variants.
+- [The 6845 CRTC](https://www.theoddys.com/acorn/the_6845_crtc/the_6845_crtc.html) - Practical 6845 behavior notes and timing explanations.
