@@ -48,9 +48,11 @@ A TVC emulator must synchronize the Z80 CPU clocks with the CRTC clocking:
 
 ## MC6845 Registers
 
-The Z80 CPU programs the MC6845 via two I/O ports:
-- **Port `0x70` (Write-Only)**: Address Register. Selects which internal data register (R0-R17) to access.
-- **Port `0x71` (Write-Only)**: Data Register. Writes a byte to the currently selected register.
+The Z80 CPU programs the MC6845 through the `0x70-0x7F` I/O range. The CRTC only receives address bit `A0`, so its two internal ports are mirrored throughout the range:
+- **Ports `0x70`, `0x72`, ..., `0x7E`**: Address Register. Selects which internal data register (R0-R17) to access.
+- **Ports `0x71`, `0x73`, ..., `0x7F`**: Data Register. Reads or writes the register selected by the address register, subject to each register's access permissions.
+
+The emulator currently implements the canonical write ports `0x70` and `0x71`; mirrored addresses and CPU-visible CRTC reads are deferred accuracy work.
 
 ### Register Layout and TVC Defaults
 
@@ -59,12 +61,12 @@ The Z80 CPU programs the MC6845 via two I/O ports:
 | **R0** | Horizontal Total | Write | Characters | Total characters in a line minus 1. <br> *TVC Default: 99 (100 char clocks/line = 64 µs PAL)* |
 | **R1** | Horizontal Displayed | Write | Characters | Active characters per scanline. <br> *TVC Default: 64 (512 pixels wide)* |
 | **R2** | Horizontal Sync Position | Write | Characters | Start of HSYNC. <br> *TVC Default: 75* |
-| **R3** | Sync Widths | Write | Combined | Lower 4 bits: HSYNC width in characters. <br> Upper 4 bits: VSYNC width in scanlines. <br> *TVC Default: `0x32` (HSYNC = 2 chars, VSYNC = 3 lines)* |
+| **R3** | Sync Widths | Write | Combined | Lower 4 bits: HSYNC width in characters (`0` is forbidden on variants with programmable HSYNC width). <br> Upper 4 bits: VSYNC width in scanlines on CRTC variants that implement it; `0` means 16 scanlines. <br> *TVC Default: `0x32` (HSYNC = 2 chars, VSYNC = 3 lines)* |
 | **R4** | Vertical Total | Write | Char Rows | Total character rows per frame minus 1. <br> *TVC Default: 77* |
 | **R5** | Vertical Total Adjust | Write | Scanlines | Fractional scanlines to add to the end of the frame. <br> *TVC Default: 2* |
 | **R6** | Vertical Displayed | Write | Char Rows | Active character rows displayed per frame. <br> *TVC Default: 60 (240 lines active)* |
 | **R7** | Vertical Sync Position | Write | Char Rows | Start of VSYNC. <br> *TVC Default: 66* |
-| **R8** | Interlace & Skew | Write | Flags | Bits 0-1: Interlace Mode (0 = Progressive). <br> Bits 4-5: DE Skew. <br> Bits 6-7: Cursor Skew. <br> *TVC Default: 0* |
+| **R8** | Interlace & Skew | Write | Flags | Bits 0-1: Interlace mode (`00`/`10` = non-interlaced, `01` = interlace sync, `11` = interlace sync/video). <br> Bits 4-5: DE skew. <br> Bits 6-7: Cursor skew. <br> *TVC Default: 0* |
 | **R9** | Max Scan Line Address | Write | Scanlines | Scanlines per character row minus 1. <br> *TVC Default: 3 (4 scanlines per row)* |
 | **R10** | Cursor Start Line | Write | Scanlines | Start line of cursor inside row, and blink bits. <br> *TVC Default: 3 (No blink, start scanline 3)* |
 | **R11** | Cursor End Line | Write | Scanlines | End line of cursor inside row. <br> *TVC Default: 3* |
@@ -314,21 +316,31 @@ Streaming modes treat the CRTC stream as the source of truth, but presentation i
 
 ---
 
-## Emulation Divergences and TODOs
+## Emulation Divergences and Deferred Accuracy Work
 
-The TVC's video subsystem and emulator implementation have several functional differences compared to a standard Motorola MC6845. These are documented below as emulation TODOs:
+The TVC's video subsystem and emulator implementation have several functional differences compared to a standard Motorola MC6845. Some differences are intentional TVC behavior, while others are deferred hardware-accuracy work.
 
-1. **[TODO] Programmable vs Fixed Vertical Sync Width (R3)**: 
-   - Standard MC6845 specifies a fixed VSYNC width of 16 scanlines.
-   - The TVC hardware allows the VSYNC width to be programmed in the upper 4 bits of `R3` (`vvvv`).
-2. **[TODO] Register Read/Write Access Violations**: 
-   - Standard MC6845 specifies that data registers `R0-R11` and `R12-R13` are write-only.
-   - The emulator currently permits internal reads for `R12-R13`, which is technically a datasheet violation, though the Z80 CPU cannot execute reads on these registers due to TVC port mapping constraints.
-3. **[TODO] Hardware Cursor Blinking (R10/R11)**:
-   - The TVC does not use the MC6845 in character mode (it operates exclusively in graphics mode). The text cursor is drawn entirely in software by the OS or application. 
-   - Consequently, the MC6845's hardware cursor blinking (controlled by `R10` and `R11` scanline ranges and blink rates) is unused and ignored in the renderer.
-4. **[TODO] Interlace and Skew Modes (R8)**:
-   - Only progressive scan mode (no interlace) and zero-skew display enable/cursor are supported. 
-   - The parameters configured in register `R8` are read but bypassed during emulation.
-5. **[TODO] Light Pen Support (R16/R17)**:
-   - Light pen address latching and strobe registers (`R16` and `R17`) are currently commented out and unimplemented.
+1. **Implemented TVC Divergence / [TODO] Vertical Sync Width (R3)**
+   - `R3` behavior is CRTC-chip dependent. The Motorola MC6845 datasheet documents `R3` as HSYNC width only and describes the VSYNC pulse width as fixed at 16 scanlines, while several 6845-compatible CRTC types use bits `7-4` as programmable VSYNC width.
+   - The TVC hardware manual presents `R3` as a sync-width register with low-nibble HSYNC and high-nibble VSYNC fields, but marks this area as chip-source dependent. This matches the broader 6845-compatible CRTC situation: CPC CRTC types 0, 3, and 4 implement programmable VSYNC width, while types 1 and 2 ignore the high nibble and use fixed 16-line VSYNC.
+   - Nonzero values select a 1-15 scanline VSYNC pulse. The emulator implements these programmable widths: [src/vid.rs](../src/vid.rs) decodes `R3` into `vsw` and uses that value when generating the streaming VSYNC signal.
+   - On CRTC variants that support programmable VSYNC width, a VSYNC width field of `0` means 16 scanlines. The emulator does not currently special-case `0` to 16.
+2. **[TODO] CRTC Port Mirrors and Data Register Read Semantics**
+   - TVC hardware exposes the CRTC at `0x70-0x7F`; because the CRTC only decodes `A0`, `0x70/0x72/.../0x7E` select the address register and `0x71/0x73/.../0x7F` access the selected data register.
+   - The CRTC is readable by the CPU, but only according to register permissions. Both the Motorola datasheet and TVC hardware manual agree that `R0-R11` are write-only, `R14-R15` are readable/writable, and `R16-R17` are read-only light-pen latches.
+   - `R12-R13` access appears to be CRTC-variant dependent: the Motorola MC6845 datasheet lists the start-address pair as write-only, while the TVC hardware manual lists it as readable/writable, matching other 6845-compatible parts such as the UMC UM6845. The TVC hardware manual also notes that schematic part markings may reflect the most common supplier and that actual fitted parts may come from another compatible supplier, but it does not name a specific CRTC supplier in the CRTC section found in `tvchardver.md`.
+   - On readable high-byte registers, the upper two address bits read as `0`.
+   - The emulator currently handles only writes to the canonical ports `0x70` and `0x71`; CPU reads from CRTC ports fall through to extension/default I/O handling. Internally, `Vid::get_reg()` returns the selected register from the full `R0-R17` array, which is convenient for inspection but does not model CPU-visible access restrictions.
+3. **Implemented TVC Divergence / [TODO] Hardware Cursor Shape and Blink**
+   - The TVC does not use the MC6845 as a character generator. Text is drawn in graphics memory by software, and the visible text cursor is also software-rendered.
+   - The emulator implements the cursor output as a timing interrupt source: `R10` controls enable state and start scanline, while `R14/R15` select the cursor memory address.
+   - The renderer intentionally does not draw the MC6845 hardware cursor shape or blink. `R11`/cursor end and the `R10` blink-rate bits are decoded or stored only as far as current interrupt timing needs require.
+4. **Implemented TVC Policy / Skew Modes (R8)**
+   - Interlace is intentionally not supported. The TVC hardware documentation states that the machine's normal video output uses non-interlaced scanning, and its composite video signal therefore does not contain the equalizing pulses or serrated vertical-sync pulses needed for odd/even field identification.
+   - The UHF modulator only AM-modulates the PAL encoder's composite video onto UHF channel 36; it does not add interlace field-identification timing. Interlace-capable CRTC modes are therefore outside the intended TVC video model.
+   - The emulator treats the display as non-interlaced even if `R8` selects an interlace mode.
+   - Skew timing remains deferred accuracy work: `R8` cursor skew bits (`6-7`) are decoded but bypassed, and display-enable skew bits (`4-5`) are not currently decoded.
+5. **[TODO] Light Pen Support (R16/R17)**
+   - `R16` and `R17` exist in the internal CRTC register array, but the emulator does not implement light-pen trigger/strobe behavior or address latching.
+   - TVC hardware routes the CRTC light-pen strobe input to the expansion connector. Its pulse latches the current refresh-memory address into `R16/R17`, with software expected to compensate for display and light-pen delays.
+   - These registers should be treated as read-only latched light-pen address registers if light-pen support or strict MC6845 register semantics are added.
