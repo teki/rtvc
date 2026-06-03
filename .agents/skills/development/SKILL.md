@@ -32,9 +32,11 @@ This skill provides step-by-step instructions and references for compiling, exec
 
 - **Profile the native emulator with samply:**
   ```bash
-  samply record cargo run --bin rtvc
+  cargo build --profile profiling --bin rtvc
+  samply record ./target/profiling/rtvc
   ```
   - Uses sampling instead of compile-time instrumentation.
+  - The `profiling` profile inherits release optimizations, keeps debug info, and disables release symbol stripping so samply can resolve Rust symbols.
   - Keep ROM files in `roms/` as for normal native runs.
 
 - **Check the lightweight WASM library build:**

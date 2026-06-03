@@ -1,3 +1,8 @@
 [alias]
 bundle-web = "run --manifest-path xtask/Cargo.toml -- bundle-web"
 xtask = "run --manifest-path xtask/Cargo.toml --"
+
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false
