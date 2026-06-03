@@ -2,9 +2,15 @@
 
 Nyelv: [English](README.md) | [Magyar](README.hu.md)
 
-Az `rtvc` egy Rust nyelven írt emulátor a Videoton TV Computerhez (TVC). Jelenleg használható natív asztali emulátort céloz, közös emulátormaggal a könnyű WebAssembly-alapú snapshot-lejátszáshoz.
+Az `rtvc` egy nyílt forráskódú, több platformon futó, Rust-alapú emulátor a Videoton TV Computerhez (TVC).
 
 A projekt aktív fejlesztés alatt áll. A CPU futtatása, a TVC memóriakezelése, a billentyűzetkezelés, a videokimenet, a kazettabetöltés, a HBF/VT-DOS lemeztámogatás és a natív snapshotok már működnek, de a hardverpontosságon még folyik a munka.
+
+## Miért?
+
+Főként azért, hogy tanuljak a Rust ökoszisztémáról és egy nyílt forráskódú alkalmazás publikálásáról.
+
+Másodlagos cél egy olyan eszköz készítése, amely segíti a TVC-s programok létrehozását és portolását.
 
 ## A TVC-ről
 
@@ -31,6 +37,8 @@ Forrás: [VIDEOTON TVC történeti áttekintés](http://tvc.hu/html/tvc_attekint
 
 ## Letöltés
 
+Töltsd le a legfrissebb kiadást a [GitHub Releases oldalon](https://github.com/teki/rtvc/releases).
+
 Release archívumok Windows x64, macOS x64 és macOS Apple Silicon rendszerekhez érhetők el. Tartalmazzák a natív emulátort, a ROM-okat, mellékelt programokat és egy `web/` snapshot-lejátszót. Csomagold ki a zipet, majd Windows alatt indítsd el az `rtvc.exe`, macOS alatt pedig az `RTVC.app` alkalmazást. A macOS alkalmazás ad hoc aláírást kap, ezért az első indításhoz szükség lehet a Control-kattintásra vagy jobb kattintásra, majd az Open megnyomására.
 
 A webes lejátszó használatához másolj egy tömörített snapshotot `web/snapshot.rtvcsnap.zip` néven, szolgáld ki a `web/` könyvtárat bármilyen statikus webszerverrel, majd nyisd meg böngészőben:
@@ -40,7 +48,7 @@ cd web
 python -m http.server 8000
 ```
 
-Próbáld ki a webes demót: [teki.one/rtvc](http://teki.one/rtvc/).
+Próbáld ki a webes demót: [teki.one/rtvc](http://teki.one/rtvc/)
 
 ## A natív emulátor futtatása
 

@@ -27,6 +27,7 @@ Use this skill only when the user asks to prepare, cut, publish, tag, or push an
    - Keep entries concise and user-facing.
    - Do not backfill older release history.
    - Replace `## Unreleased` with `## v<version> - <YYYY-MM-DD>` for the release being prepared, and create a new empty `## Unreleased` section above it.
+   - The GitHub release workflow extracts the matching `## v<version>` section from `CHANGES.md` and uses it as the release page body, so the heading must match the tag exactly.
 
 4. Stop for manual review.
    - Show the user the proposed `CHANGES.md` content or a concise diff.
