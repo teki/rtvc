@@ -1,0 +1,4 @@
+interface:
+  display_name: "rtvc Release"
+  short_description: "Prepare and publish rtvc releases"
+  default_prompt: "Use $release to prepare the next rtvc release."
