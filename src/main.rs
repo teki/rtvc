@@ -39,7 +39,10 @@ fn main() -> eframe::Result<()> {
         viewport: ViewportBuilder::default()
             .with_inner_size([800.0, 600.0])
             .with_resizable(true)
-            .with_title("rtvc - Videoton TV Computer Emulator"),
+            .with_title(format!(
+                "rtvc v{} - Videoton TV Computer Emulator",
+                env!("CARGO_PKG_VERSION")
+            )),
         ..Default::default()
     };
 
