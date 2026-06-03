@@ -4,8 +4,6 @@ Language: [English](README.md) | [Magyar](README.hu.md)
 
 `rtvc` is a Rust emulator for the Videoton TV Computer (TVC). It targets a usable native desktop emulator today, with shared core code for lightweight WebAssembly snapshot playback.
 
-Try the web demo: [teki.one/rtvc](http://teki.one/rtvc/).
-
 The project is still in active development. CPU execution, TVC memory mapping, keyboard input, video output, cassette loading, HBF/VT-DOS disk support, and native snapshots are implemented, but hardware accuracy work is ongoing.
 
 ## About the TVC
@@ -41,6 +39,8 @@ To use the web player, copy a compressed snapshot into `web/snapshot.rtvcsnap.zi
 cd web
 python -m http.server 8000
 ```
+
+Try the web demo: [teki.one/rtvc](http://teki.one/rtvc/).
 
 ## Run the Native Emulator
 

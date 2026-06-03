@@ -4,8 +4,6 @@ Nyelv: [English](README.md) | [Magyar](README.hu.md)
 
 Az `rtvc` egy Rust nyelven írt emulátor a Videoton TV Computerhez (TVC). Jelenleg használható natív asztali emulátort céloz, közös emulátormaggal a könnyű WebAssembly-alapú snapshot-lejátszáshoz.
 
-Webes demó: [teki.one/rtvc](http://teki.one/rtvc/).
-
 A projekt aktív fejlesztés alatt áll. A CPU futtatása, a TVC memóriakezelése, a billentyűzetkezelés, a videokimenet, a kazettabetöltés, a HBF/VT-DOS lemeztámogatás és a natív snapshotok már működnek, de a hardverpontosságon még folyik a munka.
 
 ## A TVC-ről
@@ -41,6 +39,8 @@ A webes lejátszó használatához másolj egy tömörített snapshotot `web/sna
 cd web
 python -m http.server 8000
 ```
+
+Próbáld ki a webes demót: [teki.one/rtvc](http://teki.one/rtvc/).
 
 ## A natív emulátor futtatása
 
