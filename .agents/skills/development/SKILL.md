@@ -30,6 +30,7 @@ This skill provides step-by-step instructions and references for compiling, exec
   - Use the File menu to write/read `.rtvcsnap.zip` or raw `.rtvcsnap` files and to save the current framebuffer as a 4:3 PNG (`768x576`).
   - Use the Tape and Disk menus to select cassette and floppy media separately.
   - The bottom status bar shows tape activity, loaded tape/disk media, run state, FPS, ROM state, audio status, and recent file status.
+  - Native app preferences are stored in `rtvc.toml`, checked in the current working directory first and then beside the executable.
   - PAL 4:3 display aspect ratio is applied to the framebuffer.
 
 - **Profile the native emulator with samply:**

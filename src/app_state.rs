@@ -1,0 +1,294 @@
+use std::io::Write;
+use std::path::PathBuf;
+
+use crate::emu::{MachineType, RomVersion};
+use crate::vid::VidModel;
+
+const CONFIG_FILE_NAME: &str = "rtvc.toml";
+
+#[derive(Default)]
+pub struct AppState {
+    pub machine_type: Option<MachineType>,
+    pub vid_model: Option<VidModel>,
+    pub tape_file_name: Option<String>,
+    pub tape_loaded: bool,
+    pub disk_file_name: Option<String>,
+    pub disk_loaded: bool,
+}
+
+pub struct AppStateFile {
+    pub path: PathBuf,
+    pub state: AppState,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Section {
+    Root,
+    Tape,
+    Disk,
+}
+
+impl AppStateFile {
+    pub fn load() -> Self {
+        let cwd_path = PathBuf::from(CONFIG_FILE_NAME);
+        if cwd_path.exists() {
+            return Self {
+                state: read_state_file(&cwd_path),
+                path: cwd_path,
+            };
+        }
+
+        if let Some(exe_path) = executable_config_path().filter(|path| path.exists()) {
+            return Self {
+                state: read_state_file(&exe_path),
+                path: exe_path,
+            };
+        }
+
+        Self {
+            path: cwd_path,
+            state: AppState::default(),
+        }
+    }
+
+    pub fn save(&mut self, state: &AppState) -> std::io::Result<()> {
+        match write_state_file(&self.path, state) {
+            Ok(()) => Ok(()),
+            Err(first_err) => {
+                if self.path == PathBuf::from(CONFIG_FILE_NAME) {
+                    if let Some(exe_path) = executable_config_path() {
+                        if write_state_file(&exe_path, state).is_ok() {
+                            self.path = exe_path;
+                            return Ok(());
+                        }
+                    }
+                }
+                Err(first_err)
+            }
+        }
+    }
+}
+
+fn executable_config_path() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.join(CONFIG_FILE_NAME)))
+}
+
+fn read_state_file(path: &std::path::Path) -> AppState {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return AppState::default();
+    };
+    parse_state(&text)
+}
+
+fn write_state_file(path: &std::path::Path, state: &AppState) -> std::io::Result<()> {
+    let mut file = std::fs::File::create(path)?;
+    writeln!(
+        file,
+        "machine_type = \"{}\"",
+        machine_type_id(state.machine_type)
+    )?;
+    writeln!(file, "video_model = \"{}\"", vid_model_id(state.vid_model))?;
+    writeln!(file)?;
+    writeln!(file, "[tape]")?;
+    if let Some(file_name) = &state.tape_file_name {
+        writeln!(file, "selected = \"{}\"", escape_string(file_name))?;
+    }
+    writeln!(file, "loaded = {}", state.tape_loaded)?;
+    writeln!(file)?;
+    writeln!(file, "[disk]")?;
+    if let Some(file_name) = &state.disk_file_name {
+        writeln!(file, "selected = \"{}\"", escape_string(file_name))?;
+    }
+    writeln!(file, "loaded = {}", state.disk_loaded)?;
+    Ok(())
+}
+
+fn parse_state(text: &str) -> AppState {
+    let mut state = AppState::default();
+    let mut section = Section::Root;
+
+    for raw_line in text.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        if let Some(name) = line
+            .strip_prefix('[')
+            .and_then(|line| line.strip_suffix(']'))
+        {
+            section = match name.trim() {
+                "tape" => Section::Tape,
+                "disk" => Section::Disk,
+                _ => Section::Root,
+            };
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim();
+
+        match section {
+            Section::Root => match key {
+                "machine_type" => {
+                    if let Some(value) =
+                        parse_string(value).and_then(|id| machine_type_from_id(&id))
+                    {
+                        state.machine_type = Some(value);
+                    }
+                }
+                "video_model" => {
+                    if let Some(value) = parse_string(value).and_then(|id| vid_model_from_id(&id)) {
+                        state.vid_model = Some(value);
+                    }
+                }
+                _ => {}
+            },
+            Section::Tape => match key {
+                "selected" => state.tape_file_name = parse_string(value),
+                "loaded" => state.tape_loaded = parse_bool(value).unwrap_or(state.tape_loaded),
+                _ => {}
+            },
+            Section::Disk => match key {
+                "selected" => state.disk_file_name = parse_string(value),
+                "loaded" => state.disk_loaded = parse_bool(value).unwrap_or(state.disk_loaded),
+                _ => {}
+            },
+        }
+    }
+
+    state
+}
+
+fn parse_string(value: &str) -> Option<String> {
+    let mut chars = value.strip_prefix('"')?.strip_suffix('"')?.chars();
+    let mut out = String::new();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            match chars.next()? {
+                '\\' => out.push('\\'),
+                '"' => out.push('"'),
+                other => {
+                    out.push('\\');
+                    out.push(other);
+                }
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    Some(out)
+}
+
+fn parse_bool(value: &str) -> Option<bool> {
+    match value {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
+fn escape_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn machine_type_id(machine_type: Option<MachineType>) -> &'static str {
+    match machine_type.unwrap_or(MachineType {
+        is_plus: true,
+        rom_version: RomVersion::V1_2,
+        has_dos: true,
+    }) {
+        MachineType {
+            is_plus: true,
+            rom_version: RomVersion::V1_2,
+            has_dos: true,
+        } => "64k-plus-1.2-vtdos",
+        MachineType {
+            is_plus: true,
+            rom_version: RomVersion::V2_2,
+            has_dos: true,
+        } => "64k-plus-2.2-vtdos",
+        MachineType {
+            is_plus: false,
+            rom_version: RomVersion::V1_2,
+            has_dos: false,
+        } => "64k-1.2",
+        MachineType {
+            is_plus: true,
+            rom_version: RomVersion::V1_2,
+            has_dos: false,
+        } => "64k-plus-1.2",
+        MachineType {
+            is_plus: true,
+            rom_version: RomVersion::V2_2,
+            has_dos: false,
+        } => "64k-plus-2.2",
+        _ => "64k-plus-1.2-vtdos",
+    }
+}
+
+fn machine_type_from_id(id: &str) -> Option<MachineType> {
+    MachineType::all_types()
+        .into_iter()
+        .find(|machine_type| machine_type_id(Some(*machine_type)) == id)
+}
+
+fn vid_model_id(vid_model: Option<VidModel>) -> &'static str {
+    match vid_model.unwrap_or(VidModel::Interleaved) {
+        VidModel::FastFrame => "fast-frame",
+        VidModel::Interleaved => "interleaved",
+    }
+}
+
+fn vid_model_from_id(id: &str) -> Option<VidModel> {
+    match id {
+        "fast-frame" | "simple" => Some(VidModel::FastFrame),
+        "interleaved" | "realistic" => Some(VidModel::Interleaved),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_minimal_app_state() {
+        let state = parse_state(
+            r#"
+machine_type = "64k-plus-2.2-vtdos"
+video_model = "fast-frame"
+
+[tape]
+selected = "TVBALL.CAS"
+loaded = true
+
+[disk]
+selected = "VT-DOS \"Games\".dsk"
+loaded = false
+"#,
+        );
+
+        assert_eq!(
+            state.machine_type,
+            Some(MachineType {
+                is_plus: true,
+                rom_version: RomVersion::V2_2,
+                has_dos: true,
+            })
+        );
+        assert_eq!(state.vid_model, Some(VidModel::FastFrame));
+        assert_eq!(state.tape_file_name.as_deref(), Some("TVBALL.CAS"));
+        assert!(state.tape_loaded);
+        assert_eq!(
+            state.disk_file_name.as_deref(),
+            Some("VT-DOS \"Games\".dsk")
+        );
+        assert!(!state.disk_loaded);
+    }
+}

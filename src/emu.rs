@@ -242,6 +242,8 @@ pub struct Emu {
     pub selected_prog: usize,
     pub loaded_tape: Option<String>,
     pub loaded_disk: Option<String>,
+    pub loaded_tape_file_name: Option<String>,
+    pub loaded_disk_file_name: Option<String>,
 }
 
 impl Emu {
@@ -255,6 +257,8 @@ impl Emu {
             selected_prog: 0,
             loaded_tape: None,
             loaded_disk: None,
+            loaded_tape_file_name: None,
+            loaded_disk_file_name: None,
         };
         emu.scan_progs();
         emu
@@ -302,6 +306,8 @@ impl Emu {
         self.roms_loaded = true;
         self.loaded_tape = None;
         self.loaded_disk = None;
+        self.loaded_tape_file_name = None;
+        self.loaded_disk_file_name = None;
         if let Some(file_name) = snapshot_state.selected_prog_file_name {
             self.select_prog_by_file_name(&file_name);
             self.restore_accessible_selected_media();
@@ -356,10 +362,12 @@ impl Emu {
         self.roms_loaded = false;
         self.loaded_tape = None;
         self.loaded_disk = None;
+        self.loaded_tape_file_name = None;
+        self.loaded_disk_file_name = None;
         self.load_roms();
     }
 
-    fn select_prog_by_file_name(&mut self, file_name: &str) -> bool {
+    pub fn select_prog_by_file_name(&mut self, file_name: &str) -> bool {
         if let Some(index) = self
             .progs
             .iter()
@@ -377,7 +385,7 @@ impl Emu {
             return;
         }
         if self.progs[self.selected_prog].is_disk {
-            self.load_selected_prog();
+            self.insert_selected_disk();
         }
     }
 
@@ -479,10 +487,26 @@ impl Emu {
     }
 
     pub fn load_selected_prog(&mut self) {
+        if self
+            .progs
+            .get(self.selected_prog)
+            .map(|entry| entry.is_disk)
+            .unwrap_or(false)
+        {
+            self.insert_selected_disk();
+        } else {
+            self.inject_selected_tape();
+        }
+    }
+
+    pub fn inject_selected_tape(&mut self) {
         if self.progs.is_empty() || self.selected_prog >= self.progs.len() {
             return;
         }
         let entry = &self.progs[self.selected_prog];
+        if !entry.is_cas {
+            return;
+        }
         let file_name = entry.file_name.clone();
         let path = data_dir("progs").join(&file_name);
 
@@ -492,11 +516,56 @@ impl Emu {
         };
 
         let mut cas_data = None;
-        let mut dsk_data = None;
 
         if file_name.to_lowercase().ends_with(".cas") {
             cas_data = Some(data);
-        } else if file_name.to_lowercase().ends_with(".dsk") {
+        } else if file_name.to_lowercase().ends_with(".zip") {
+            let reader = std::io::Cursor::new(data);
+            if let Ok(mut archive) = zip::ZipArchive::new(reader) {
+                for i in 0..archive.len() {
+                    let mut file = match archive.by_index(i) {
+                        Ok(f) => f,
+                        Err(_) => continue,
+                    };
+                    let entry_name = file.name().to_string();
+                    if entry_name.to_lowercase().ends_with(".cas") {
+                        let mut buf = Vec::new();
+                        if file.read_to_end(&mut buf).is_ok() {
+                            cas_data = Some(buf);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        if let Some(buf) = cas_data {
+            if self.tvc.load_cas(&buf) {
+                self.loaded_tape = Some(format!("{} (Injected)", entry.name));
+                self.loaded_tape_file_name = Some(entry.file_name.clone());
+            }
+        }
+    }
+
+    pub fn insert_selected_disk(&mut self) {
+        if self.progs.is_empty() || self.selected_prog >= self.progs.len() {
+            return;
+        }
+        let entry = &self.progs[self.selected_prog];
+        if !entry.is_disk {
+            return;
+        }
+        let file_name = entry.file_name.clone();
+        let path = data_dir("progs").join(&file_name);
+
+        let data = match std::fs::read(&path) {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+
+        let mut dsk_data = None;
+
+        if file_name.to_lowercase().ends_with(".dsk") {
             dsk_data = Some((file_name.clone(), data));
         } else if file_name.to_lowercase().ends_with(".zip") {
             let reader = std::io::Cursor::new(data);
@@ -513,12 +582,6 @@ impl Emu {
                             dsk_data = Some((entry_name, buf));
                         }
                         break;
-                    } else if entry_name.to_lowercase().ends_with(".cas") {
-                        let mut buf = Vec::new();
-                        if file.read_to_end(&mut buf).is_ok() {
-                            cas_data = Some(buf);
-                        }
-                        break;
                     }
                 }
             }
@@ -527,10 +590,25 @@ impl Emu {
         if let Some((dsk_name, buf)) = dsk_data {
             self.tvc.load_disk(&dsk_name, &buf);
             self.loaded_disk = Some(entry.name.clone());
-        } else if let Some(buf) = cas_data {
-            if self.tvc.load_cas(&buf) {
-                self.loaded_tape = Some(format!("{} (Injected)", entry.name));
-            }
+            self.loaded_disk_file_name = Some(entry.file_name.clone());
+        }
+    }
+
+    pub fn inject_tape_by_file_name(&mut self, file_name: &str) -> bool {
+        if self.select_prog_by_file_name(file_name) {
+            self.inject_selected_tape();
+            self.loaded_tape_file_name.as_deref() == Some(file_name)
+        } else {
+            false
+        }
+    }
+
+    pub fn insert_disk_by_file_name(&mut self, file_name: &str) -> bool {
+        if self.select_prog_by_file_name(file_name) {
+            self.insert_selected_disk();
+            self.loaded_disk_file_name.as_deref() == Some(file_name)
+        } else {
+            false
         }
     }
 
@@ -578,6 +656,7 @@ impl Emu {
             if let Ok(generator) = TapeBitstreamGenerator::new(&buf, &entry.name) {
                 self.tvc.bus.play_tape(generator);
                 self.loaded_tape = Some(entry.name.clone());
+                self.loaded_tape_file_name = Some(entry.file_name.clone());
             }
         }
     }

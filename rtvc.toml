@@ -1,0 +1,9 @@
+machine_type = "64k-1.2"
+video_model = "interleaved"
+
+[tape]
+selected = "TVBALL.CAS"
+loaded = true
+
+[disk]
+loaded = false

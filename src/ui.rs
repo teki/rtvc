@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+use crate::app_state::{AppState, AppStateFile};
 use crate::audio::NativeAudioSink;
 use crate::emu::{Emu, MachineType, ProgEntry};
 use crate::vid::VidModel;
@@ -115,10 +116,11 @@ pub struct EmuApp {
     selected_machine: usize,
     audio: Option<NativeAudioSink>,
     audio_status: Option<String>,
+    app_state_file: AppStateFile,
 }
 
 impl EmuApp {
-    pub fn new(emu: Emu) -> Self {
+    pub fn new(emu: Emu, app_state_file: AppStateFile) -> Self {
         let machine_types = MachineType::all_types();
         let selected_machine = Self::selected_machine_index(&machine_types, emu.machine_type);
         let (audio, audio_status) = match NativeAudioSink::new(emu.tvc.sound_sample_rate()) {
@@ -142,6 +144,7 @@ impl EmuApp {
             selected_machine,
             audio,
             audio_status,
+            app_state_file,
         }
     }
 
@@ -321,18 +324,21 @@ impl EmuApp {
                 self.emu.toggle_running();
                 self.last_repaint_time = Instant::now();
                 self.emu_frame_accumulator = 0.0;
+                self.save_app_state();
                 ui.close_menu();
             }
 
             if ui.button("Reset").clicked() {
                 self.emu.reset();
                 self.emu_frame_accumulator = 0.0;
+                self.save_app_state();
                 ui.close_menu();
             }
 
             ui.separator();
             ui.label("Type");
-            for (index, machine_type) in self.machine_types.iter().copied().enumerate() {
+            let machine_types = self.machine_types.clone();
+            for (index, machine_type) in machine_types.into_iter().enumerate() {
                 if ui
                     .selectable_label(self.selected_machine == index, machine_type.label())
                     .clicked()
@@ -341,6 +347,7 @@ impl EmuApp {
                     let vid_model = self.emu.tvc.vid_model();
                     self.emu.reload(machine_type);
                     self.emu.tvc.set_vid_model(vid_model);
+                    self.save_app_state();
                     ui.close_menu();
                 }
             }
@@ -353,6 +360,7 @@ impl EmuApp {
                 .clicked()
             {
                 self.emu.tvc.set_vid_model(VidModel::FastFrame);
+                self.save_app_state();
                 ui.close_menu();
             }
             if ui
@@ -360,6 +368,7 @@ impl EmuApp {
                 .clicked()
             {
                 self.emu.tvc.set_vid_model(VidModel::Interleaved);
+                self.save_app_state();
                 ui.close_menu();
             }
         });
@@ -388,13 +397,15 @@ impl EmuApp {
                 .add_enabled(tape_selected, egui::Button::new("Inject"))
                 .clicked()
             {
-                self.emu.load_selected_prog();
+                self.emu.inject_selected_tape();
+                self.save_app_state();
                 ui.close_menu();
             }
 
             if self.emu.tvc.bus.tape_play_active() {
                 if ui.button("Stop").clicked() {
                     self.emu.stop_tape();
+                    self.save_app_state();
                     ui.close_menu();
                 }
             } else if ui
@@ -402,6 +413,7 @@ impl EmuApp {
                 .clicked()
             {
                 self.emu.play_tape();
+                self.save_app_state();
                 ui.close_menu();
             }
         });
@@ -430,7 +442,8 @@ impl EmuApp {
                 .add_enabled(disk_selected, egui::Button::new("Insert"))
                 .clicked()
             {
-                self.emu.load_selected_prog();
+                self.emu.insert_selected_disk();
+                self.save_app_state();
                 ui.close_menu();
             }
         });
@@ -495,6 +508,24 @@ impl EmuApp {
                     }
                 });
             });
+    }
+
+    fn current_app_state(&self) -> AppState {
+        AppState {
+            machine_type: Some(self.emu.machine_type),
+            vid_model: Some(self.emu.tvc.vid_model()),
+            tape_file_name: self.emu.loaded_tape_file_name.clone(),
+            tape_loaded: self.emu.loaded_tape_file_name.is_some(),
+            disk_file_name: self.emu.loaded_disk_file_name.clone(),
+            disk_loaded: self.emu.loaded_disk_file_name.is_some(),
+        }
+    }
+
+    fn save_app_state(&mut self) {
+        let state = self.current_app_state();
+        if let Err(err) = self.app_state_file.save(&state) {
+            self.file_status = Some(format!("Config save failed: {err}"));
+        }
     }
 }
 
@@ -623,6 +654,10 @@ impl eframe::App for EmuApp {
         } else {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.save_app_state();
     }
 }
 
