@@ -79,14 +79,14 @@ This skill provides step-by-step instructions and references for compiling, exec
   - Emits a static snapshot player under `dist/rtvc-web-skeleton/` by default.
   - Users can copy `snapshot.rtvcsnap.zip` or `snapshot.rtvcsnap` beside `index.html` and serve the directory with any static web server.
 
-- **Build a Windows release package on GitHub Actions:**
+- **Build release packages on GitHub Actions:**
   ```bash
   git tag v0.1.0
   git push origin v0.1.0
   ```
-  - The release workflow builds `rtvc.exe` on `windows-latest`.
+  - The release workflow builds `rtvc.exe` on `windows-latest`, a macOS x64 binary on `macos-15-intel`, and a macOS Apple Silicon binary on `macos-15`.
   - Release builds use LTO, one codegen unit, stripped symbols, and `panic = "abort"` to keep binaries smaller.
-  - It uploads `rtvc-windows-x64.zip` with `rtvc.exe`, `README.md`, `LICENSE`, `roms/`, `progs/`, and `web/`.
+  - It uploads `rtvc-windows-x64.zip`, `rtvc-macos-x64.zip`, and `rtvc-macos-arm64.zip` with the native binary, `README.md`, `LICENSE`, `roms/`, `progs/`, and `web/`.
   - The native app searches `roms/` and `progs/` in the current working directory first, then beside the executable for extracted release archives.
   - The bundled `web/` directory is a static WASM snapshot player. Copy `snapshot.rtvcsnap.zip` into it and serve the directory to run the snapshot in a browser.
 

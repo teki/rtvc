@@ -31,7 +31,7 @@ Source: [VIDEOTON TVC historical overview](http://tvc.hu/html/tvc_attekintes.htm
 
 ## Download
 
-Windows release archives include `rtvc.exe`, ROM files, bundled programs, and a `web/` snapshot player. Extract the zip and run `rtvc.exe` for the native emulator.
+Release archives are available for Windows x64, macOS x64, and macOS Apple Silicon. They include the native emulator binary, ROM files, bundled programs, and a `web/` snapshot player. Extract the zip and run `rtvc.exe` on Windows or `rtvc` on macOS for the native emulator.
 
 To use the web player, copy a compressed snapshot into `web/snapshot.rtvcsnap.zip`, serve the `web/` directory with any static web server, and open it in a browser:
 

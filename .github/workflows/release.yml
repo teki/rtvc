@@ -42,7 +42,75 @@ jobs:
           Copy-Item progs package/progs -Recurse
           Compress-Archive -Path package/* -DestinationPath rtvc-windows-x64.zip
 
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: rtvc-windows-x64
+          path: rtvc-windows-x64.zip
+
+  macos:
+    name: macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+            package: rtvc-macos-x64.zip
+          - arch: arm64
+            os: macos-15
+            target: aarch64-apple-darwin
+            package: rtvc-macos-arm64.zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }},wasm32-unknown-unknown
+
+      - name: Install wasm-bindgen
+        run: cargo install wasm-bindgen-cli --version 0.2.122
+
+      - name: Build
+        run: cargo build --release --bin rtvc --target ${{ matrix.target }}
+
+      - name: Build web skeleton
+        run: cargo xtask bundle-web-skeleton package/web
+
+      - name: Package
+        run: |
+          mkdir -p package
+          cp target/${{ matrix.target }}/release/rtvc package/
+          cp README.md package/
+          cp LICENSE package/
+          cp -R roms package/roms
+          cp -R progs package/progs
+          (cd package && zip -r ../${{ matrix.package }} .)
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: rtvc-macos-${{ matrix.arch }}
+          path: ${{ matrix.package }}
+
+  release:
+    name: GitHub release
+    needs:
+      - windows
+      - macos
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: rtvc-windows-x64.zip
+          files: packages/*.zip
