@@ -21,7 +21,7 @@ The `Tvc` type in [src/tvc.rs](../src/tvc.rs) acts as the system bus and hardwar
 - **CPU**: Z80 core ([z80.md](z80.md))
 - **MMU**: Memory Management Unit ([mmu.md](mmu.md))
 - **Video**: Motorola 6845 CRTC ([vid.md](vid.md))
-- **Sound**: Sound generator / timer
+- **Sound**: Sound generator / timer ([sound.md](sound.md))
 - **Keyboard**: Row/Column scanner matrix
 - **Extensions**: Expansion cards (such as the Floppy Controller)
 
@@ -51,8 +51,9 @@ The emulation advances frame-by-frame using `run_for_a_frame()` (equivalent to t
 1. **CPU Run**: Executes CPU instructions via `step(0)` until `FRAME_CLOCKS` (62500) cycles have been consumed, checking breakpoints each step.
 2. **Fast Frame Video**: When `VidModel::FastFrame` is active, runs the CPU for one screen-time budget and then calls `vid.draw_frame(vidmem, framebuffer)` to render a complete 608×288 frame from the current video state.
 3. **Interleaved Video**: When `VidModel::Interleaved` is active, advances `vid.stream_some()` after each CPU instruction and consumes completed scan data through `vid.render_stream()`.
-4. **Interrupt Handling**: In interleaved mode, a CRTC cursor match immediately latches the active-low cursor interrupt, calls `z80.irq()` if interrupts are enabled, and advances the CRTC by the IRQ service duration. This keeps the CPU and CRTC aligned for software that times drawing from the last-pixel screen interrupt.
-5. **Presentation**: Sets `frame_complete = true` whenever a presentable framebuffer is ready for the UI. Interleaved mode does not wait indefinitely for CRTC sync; it keeps presenting the monitor surface while trying to relock, and only replaces it with a black lost-sync background with moving white stripes after several consecutive host ticks without a synchronized frame.
+4. **Sound and Tape**: Advances cassette playback and the sound generator by the elapsed instruction cycles. Sound samples are generated as mono 44.1 kHz `f32` PCM and can be drained through `Tvc::take_audio_samples()`.
+5. **Interrupt Handling**: In interleaved mode, a CRTC cursor match immediately latches the active-low cursor interrupt, calls `z80.irq()` if interrupts are enabled, and advances the CRTC by the IRQ service duration. This keeps the CPU and CRTC aligned for software that times drawing from the last-pixel screen interrupt.
+6. **Presentation**: Sets `frame_complete = true` whenever a presentable framebuffer is ready for the UI. Interleaved mode does not wait indefinitely for CRTC sync; it keeps presenting the monitor surface while trying to relock, and only replaces it with a black lost-sync background with moving white stripes after several consecutive host ticks without a synchronized frame.
 
 The native egui UI does not run one TVC frame for every host repaint. While the emulator is running, the UI requests continuous repaints and gates TVC frame generation from real time at 50 Hz. On displays refreshing faster than 50 Hz, host repaints reuse the latest texture until the next TVC frame is due. If generating a TVC frame takes too long, the UI drops the backlog and generates at most one new TVC frame per repaint callback. The FPS readout reports generated TVC frames only.
 
@@ -71,9 +72,9 @@ The orchestrator maps the Z80 CPU I/O space. When the CPU executes an `IN` or `O
 | `0x00` | Video | Border color register (IGRB format) |
 | `0x02` | MMU | Memory mapping register (maps RAM/ROM banks to pages) |
 | `0x03` | Keyboard / Expansion | Bits 0-3: Selects the active keyboard scan row.<br>Bits 6-7: Cartridge expansion mapping (`_extCartMapping`). |
-| `0x04` | Audio | Sound frequency generator (Low byte). |
-| `0x05` | Audio / Tape | Bits 0-3: Sound frequency (High byte).<br>Bit 4: Sound Output enable switch.<br>Bit 5: Sound interrupt enable/disable flag.<br>Bits 6-7: Tape motor control outputs (`0` off, `1` on). |
-| `0x06` | Multi-Port | Bits 0-1: Video display mode (2-color, 4-color, 16-color).<br>Bits 2-5: Sound amplitude level.<br>Bit 7: Printer acknowledgment trigger. |
+| `0x04` | Audio | Sound frequency generator low byte. |
+| `0x05` | Audio / Tape | Bits 0-3: sound frequency high nibble.<br>Bit 4: routes the oscillator through the amplitude control.<br>Bit 5: sound interrupt enable flag.<br>Bits 6-7: Tape motor control outputs (`0` off, `1` on). |
+| `0x06` | Multi-Port | Bits 0-1: Video display mode (2-color, 4-color, 16-color).<br>Bits 2-5: Sound amplitude / 4-bit DAC level.<br>Bit 7: Printer acknowledgment trigger. |
 | `0x07` | Interrupt Controller | Acknowledges and clears the shared Cursor / Audio Interrupt. |
 | `0x0C - 0x0F` | MMU | Video page mapping bank selector (for TVC 64K+ expandability). |
 | `0x58` | Expansion card 0 | Write-enable / interrupt-enable configuration for Card Slot 0. |
@@ -108,7 +109,7 @@ The TVC handles peripheral interrupts through a custom latch state stored in `_p
 
 ### Interrupt Generation & Lifecycle
 1. When the CRTC beam matches the cursor position, it triggers a Cursor Interrupt (setting bit 4 in `_pendIt` to `0` since it is active-low).
-2. The sound oscillator can also trigger the same bit when port `0x05` bit 5 enables sound IT. The 12-bit divisor is written through ports `0x04` and `0x05`; reading `0x5B` or `0x5F` restarts the counter.
+2. The sound oscillator can also trigger the same bit when port `0x05` bit 5 enables sound IT. The 12-bit divisor is written through ports `0x04` and `0x05`; reading `0x5B` or `0x5F` restarts the counter. The audible oscillator path uses `195312.5 / (4096 - n)` Hz for divisor `n`, with `0xFFF` stopping the oscillator.
 3. The orchestrator checks if the interrupt is enabled. If Z80 interrupts are enabled (`irqEnabled()`), it halts execution and fires a Z80 interrupt service routine via `_z80.irq()`.
 4. The CPU services the interrupt, using software state to distinguish cursor and sound timer requests because they share the same status bit.
 5. The Z80 services write to Port `0x07`, which clears the shared interrupt flag, restoring bit 4 of `_pendIt` to `1` (idle).

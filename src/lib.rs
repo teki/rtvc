@@ -19,6 +19,9 @@ pub mod vid;
 pub mod z80;
 
 #[cfg(feature = "native")]
+pub mod audio;
+
+#[cfg(feature = "native")]
 pub mod emu;
 
 #[cfg(feature = "native")]

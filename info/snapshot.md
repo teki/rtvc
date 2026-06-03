@@ -38,11 +38,13 @@ Chunk payloads are little-endian. Unknown chunks are ignored, so future versions
 - `MMU ` — TVC RAM, video RAM, ROM/cart banks, paging registers, and plus-model state.
 - `VID ` — selected video mode, CRTC registers, palette, and border color.
 - `HBF ` — optional VT-DOS/HBF extension state, including extension RAM and FDC/disk image state.
-- `BUS ` — pending interrupt, extension mapping, tape transport, and sound timer state.
+- `BUS ` — pending interrupt, extension mapping, tape transport, and sound generator/timer state.
 - `EMUT` — optional native UI machine selection (`64K`/`64K+`, ROM version, VT-DOS presence). Core and WASM loaders ignore it as an unknown chunk.
 - `EMUI` — optional native UI media selection, currently the selected `progs/` filename. Core and WASM loaders ignore it as an unknown chunk.
 
 Keyboard and log state are intentionally reset when loading a snapshot.
+
+The sound portion of `BUS ` stores the frequency/control registers, timer counter, running flag, amplitude register, oscillator phase, and fractional PCM sample scheduler state. Pending frontend audio samples are intentionally not serialized.
 
 ## Runtime APIs
 

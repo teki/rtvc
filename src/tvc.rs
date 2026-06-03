@@ -77,16 +77,25 @@ impl TvcBus {
             }
 
             0x04 => {
+                let was_on = self.sound.audible_oscillator_enabled();
+                let old_divisor = self.sound.divisor();
                 self.sound.write_low(val);
+                self.log_sound_change(was_on, old_divisor, addr);
             }
 
             0x05 => {
+                let was_on = self.sound.audible_oscillator_enabled();
+                let old_divisor = self.sound.divisor();
                 self.sound.write_control(val);
+                self.log_sound_change(was_on, old_divisor, addr);
                 self.tape.set_motor_from_port5(val);
             }
 
             0x06 => {
                 self.vid.set_mode(val & 0x03);
+                let old_amplitude = self.sound.amplitude();
+                self.sound.write_amplitude(val);
+                self.log_sound_volume_change(old_amplitude);
             }
 
             0x07 => self.pend_it |= SHARED_CURSOR_SOUND_IT,
@@ -108,6 +117,46 @@ impl TvcBus {
             _ => {
                 self.extensions.write_port(addr, val);
             }
+        }
+    }
+
+    fn log_sound_change(&mut self, was_on: bool, old_divisor: u16, port: u8) {
+        let is_on = self.sound.audible_oscillator_enabled();
+        let divisor = self.sound.divisor();
+        if was_on != is_on {
+            if is_on {
+                self.log.log(&format!(
+                    "sound on: {} (divisor 0x{divisor:03X}, port 0x{port:02X}, pc 0x{:04X})",
+                    self.sound_frequency_label(),
+                    self.trace_pc
+                ));
+            } else {
+                self.log
+                    .log(&format!("sound off (pc 0x{:04X})", self.trace_pc));
+            }
+        } else if is_on && old_divisor != divisor {
+            self.log.log(&format!(
+                "sound freq: {} (divisor 0x{divisor:03X}, port 0x{port:02X}, pc 0x{:04X})",
+                self.sound_frequency_label(),
+                self.trace_pc
+            ));
+        }
+    }
+
+    fn log_sound_volume_change(&mut self, old_amplitude: u8) {
+        let amplitude = self.sound.amplitude();
+        if old_amplitude != amplitude {
+            self.log.log(&format!(
+                "sound volume: {amplitude}/15 (pc 0x{:04X})",
+                self.trace_pc
+            ));
+        }
+    }
+
+    fn sound_frequency_label(&self) -> String {
+        match self.sound.frequency_hz() {
+            Some(freq) => format!("{freq:.2} Hz"),
+            None => "stopped".to_string(),
         }
     }
 
@@ -187,6 +236,14 @@ impl TvcBus {
         self.sound.read_snapshot(r)
     }
 
+    pub fn sound_sample_rate(&self) -> u32 {
+        self.sound.sample_rate()
+    }
+
+    pub fn take_audio_samples(&mut self) -> Vec<f32> {
+        self.sound.take_samples()
+    }
+
     pub(crate) fn restore_tape_motor_from_rom_shadow(&mut self) {
         let port5_shadow = self.mmu.r8(0x0B12);
         self.tape.set_motor_from_port5(port5_shadow);
@@ -245,7 +302,6 @@ pub struct Tvc {
     pub(crate) vid_model: VidModel,
     pub(crate) clock: u64,
     sync_timeout_frames: u32,
-    last_cursor_it_clock: Option<u64>,
     breakpoints: HashSet<u16>,
 }
 
@@ -263,7 +319,6 @@ impl Tvc {
             vid_model,
             clock: 0,
             sync_timeout_frames: 0,
-            last_cursor_it_clock: None,
             breakpoints: HashSet::new(),
         };
         tvc.reset();
@@ -294,12 +349,19 @@ impl Tvc {
         crate::tvc_snapshot::load(self, data)
     }
 
+    pub fn sound_sample_rate(&self) -> u32 {
+        self.bus.sound_sample_rate()
+    }
+
+    pub fn take_audio_samples(&mut self) -> Vec<f32> {
+        self.bus.take_audio_samples()
+    }
+
     pub fn reset(&mut self) {
         self.z80.reset();
         self.bus.reset();
         self.clock = 0;
         self.sync_timeout_frames = 0;
-        self.last_cursor_it_clock = None;
     }
 
     pub fn load_cas(&mut self, data: &[u8]) -> bool {
@@ -461,18 +523,6 @@ impl Tvc {
     }
 
     fn request_cursor_irq(&mut self) {
-        if let Some(last_clock) = self.last_cursor_it_clock {
-            self.bus.log.log(&format!(
-                "cursor_it at {} (+{} cycles)",
-                self.clock,
-                self.clock - last_clock
-            ));
-        } else {
-            self.bus
-                .log
-                .log(&format!("cursor_it at {} (first)", self.clock));
-        }
-        self.last_cursor_it_clock = Some(self.clock);
         self.bus.request_shared_irq();
     }
 
@@ -506,6 +556,7 @@ mod tests {
         tvc.bus.pend_it = 0x0F;
         tvc.bus.write_port(0x04, 0xDC);
         tvc.bus.write_port(0x05, 0x6F);
+        tvc.bus.write_port(0x06, 0x3C);
         tvc.bus.read_port(0x5B);
         tvc.bus.advance_sound_timer(11);
         let sound_counter = tvc.bus.sound.counter();
@@ -522,8 +573,13 @@ mod tests {
         assert!(restored.bus.tape_motor_on());
         assert_eq!(restored.bus.sound.freq_low, 0xDC);
         assert_eq!(restored.bus.sound.ctrl, 0x6F);
+        assert_eq!(restored.bus.sound.amplitude(), 0x0F);
         assert_eq!(restored.bus.sound.counter(), sound_counter);
         assert!(restored.bus.sound.running());
+        assert_eq!(
+            restored.bus.sound.filter_state_bits(),
+            tvc.bus.sound.filter_state_bits()
+        );
     }
 
     #[test]
@@ -555,6 +611,170 @@ mod tests {
         bus.advance_sound_timer(32);
 
         assert_eq!(bus.pend_it & SHARED_CURSOR_SOUND_IT, SHARED_CURSOR_SOUND_IT);
+    }
+
+    #[test]
+    fn sound_amplitude_is_taken_from_port_0x06_bits_2_to_5() {
+        let mut bus = TvcBus::new(true);
+
+        bus.write_port(0x06, 0b0011_1101);
+
+        assert_eq!(bus.sound.amplitude(), 0x0F);
+    }
+
+    #[test]
+    fn sound_dac_mode_emits_amplitude_samples_without_oscillator_enable() {
+        let mut tvc = Tvc::new(true);
+        let sample_cycles = CPU_CLOCK_HZ / tvc.sound_sample_rate() as u64 + 1;
+        tvc.bus.write_port(0x06, 0x00);
+        tvc.bus.advance_sound_timer(sample_cycles);
+        let low = tvc.take_audio_samples();
+
+        tvc.bus.write_port(0x06, 0x3C);
+        tvc.bus.advance_sound_timer(sample_cycles);
+        let high = tvc.take_audio_samples();
+
+        assert!(!low.is_empty());
+        assert!(!high.is_empty());
+        assert_eq!(low[0], 0.0);
+        assert!(low[0] < high[0]);
+    }
+
+    #[test]
+    fn sound_dac_constant_level_is_ac_coupled() {
+        let mut tvc = Tvc::new(true);
+        let sample_cycles = CPU_CLOCK_HZ / tvc.sound_sample_rate() as u64 + 1;
+
+        tvc.bus.write_port(0x06, 0x3C);
+        tvc.bus
+            .advance_sound_timer(sample_cycles * tvc.sound_sample_rate() as u64);
+        let samples = tvc.take_audio_samples();
+
+        assert!(!samples.is_empty());
+        assert!(samples[0] > 0.0);
+        assert!(samples.last().copied().unwrap().abs() < 0.001);
+    }
+
+    #[test]
+    fn sound_reset_state_emits_silence() {
+        let mut tvc = Tvc::new(true);
+        let sample_cycles = CPU_CLOCK_HZ / tvc.sound_sample_rate() as u64 + 1;
+
+        tvc.bus.advance_sound_timer(sample_cycles * 4);
+        let samples = tvc.take_audio_samples();
+
+        assert!(!samples.is_empty());
+        assert!(samples.iter().all(|sample| *sample == 0.0));
+    }
+
+    #[test]
+    fn sound_oscillator_outputs_square_wave_when_enabled() {
+        let mut tvc = Tvc::new(true);
+        tvc.bus.write_port(0x04, 0xFE);
+        tvc.bus.write_port(0x05, 0x1F);
+        tvc.bus.write_port(0x06, 0x3C);
+        tvc.bus.read_port(0x5B);
+
+        let sample_cycles = CPU_CLOCK_HZ / tvc.sound_sample_rate() as u64 + 1;
+        tvc.bus.advance_sound_timer(10 * sample_cycles);
+        let samples = tvc.take_audio_samples();
+
+        assert!(samples.iter().any(|sample| *sample > 0.0));
+        assert!(samples.iter().any(|sample| *sample < 0.0));
+    }
+
+    #[test]
+    fn sound_oscillator_starts_after_programming_without_instart() {
+        let mut tvc = Tvc::new(true);
+        tvc.bus.write_port(0x04, 0xFE);
+        tvc.bus.write_port(0x05, 0x1F);
+        tvc.bus.write_port(0x06, 0x3C);
+
+        let sample_cycles = CPU_CLOCK_HZ / tvc.sound_sample_rate() as u64 + 1;
+        tvc.bus.advance_sound_timer(10 * sample_cycles);
+        let samples = tvc.take_audio_samples();
+
+        assert!(samples.iter().any(|sample| *sample > 0.0));
+        assert!(samples.iter().any(|sample| *sample < 0.0));
+    }
+
+    #[test]
+    fn sound_oscillator_starts_low_after_restart() {
+        let mut tvc = Tvc::new(true);
+        let sample_cycles = CPU_CLOCK_HZ / tvc.sound_sample_rate() as u64 + 1;
+        tvc.bus.write_port(0x04, 0x00);
+        tvc.bus.write_port(0x05, 0x10);
+        tvc.bus.write_port(0x06, 0x3C);
+        tvc.bus.read_port(0x5B);
+
+        tvc.bus.advance_sound_timer(sample_cycles);
+        let first_samples = tvc.take_audio_samples();
+        assert!(!first_samples.is_empty());
+        assert!(first_samples.iter().all(|sample| *sample == 0.0));
+
+        tvc.bus.advance_sound_timer(32_768);
+        let high_samples = tvc.take_audio_samples();
+        assert!(high_samples.iter().any(|sample| *sample > 0.0));
+    }
+
+    #[test]
+    fn cursor_interrupt_does_not_log() {
+        let mut tvc = Tvc::new_with_vid_model(false, VidModel::FastFrame);
+
+        tvc.request_cursor_irq();
+
+        assert!(tvc.bus.log.entries.is_empty());
+        assert!(tvc.bus.shared_it_pending());
+    }
+
+    #[test]
+    fn sound_port_writes_log_on_off_and_frequency_changes() {
+        let mut bus = TvcBus::new(false);
+        bus.trace_pc = 0x1234;
+
+        bus.write_port(0x04, 0xFE);
+        assert!(bus.log.entries.is_empty());
+
+        bus.write_port(0x05, 0x1F);
+        assert_eq!(bus.log.entries.len(), 1);
+        assert!(bus.log.entries[0].starts_with("sound on: "));
+        assert!(bus.log.entries[0].contains("divisor 0xFFE"));
+        assert!(bus.log.entries[0].contains("port 0x05"));
+        assert!(bus.log.entries[0].contains("pc 0x1234"));
+
+        bus.trace_pc = 0x2345;
+        bus.write_port(0x04, 0xFD);
+        assert_eq!(bus.log.entries.len(), 2);
+        assert!(bus.log.entries[1].starts_with("sound freq: "));
+        assert!(bus.log.entries[1].contains("divisor 0xFFD"));
+        assert!(bus.log.entries[1].contains("port 0x04"));
+        assert!(bus.log.entries[1].contains("pc 0x2345"));
+
+        bus.trace_pc = 0x3456;
+        bus.write_port(0x05, 0x0F);
+        assert_eq!(bus.log.entries.len(), 3);
+        assert_eq!(bus.log.entries[2], "sound off (pc 0x3456)");
+    }
+
+    #[test]
+    fn sound_volume_writes_log_only_when_amplitude_changes() {
+        let mut bus = TvcBus::new(false);
+        bus.trace_pc = 0x4567;
+
+        bus.write_port(0x06, 0x00);
+        assert!(bus.log.entries.is_empty());
+
+        bus.write_port(0x06, 0x14);
+        assert_eq!(bus.log.entries.len(), 1);
+        assert_eq!(bus.log.entries[0], "sound volume: 5/15 (pc 0x4567)");
+
+        bus.write_port(0x06, 0x15);
+        assert_eq!(bus.log.entries.len(), 1);
+
+        bus.trace_pc = 0x5678;
+        bus.write_port(0x06, 0x3C);
+        assert_eq!(bus.log.entries.len(), 2);
+        assert_eq!(bus.log.entries[1], "sound volume: 15/15 (pc 0x5678)");
     }
 
     #[test]

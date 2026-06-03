@@ -244,11 +244,7 @@ impl Vid {
 
     /// Read a CPU I/O access from one of the mirrored CRTC ports (0x70-0x7F).
     pub fn read_crtc_port(&self, port: u8) -> u8 {
-        if port & 1 == 0 {
-            0xFF
-        } else {
-            self.get_reg()
-        }
+        if port & 1 == 0 { 0xFF } else { self.get_reg() }
     }
 
     /// Set palette entry (port 0x60-0x63)

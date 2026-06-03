@@ -63,6 +63,16 @@ impl WasmTvc {
         self.tvc.run_for_a_frame()
     }
 
+    #[wasm_bindgen(js_name = audioSampleRate)]
+    pub fn audio_sample_rate(&self) -> u32 {
+        self.tvc.sound_sample_rate()
+    }
+
+    #[wasm_bindgen(js_name = takeAudioSamples)]
+    pub fn take_audio_samples(&mut self) -> Vec<f32> {
+        self.tvc.take_audio_samples()
+    }
+
     #[wasm_bindgen(js_name = addRom)]
     pub fn add_rom(&mut self, name: &str, data: &[u8]) {
         self.tvc.add_rom(name, data);

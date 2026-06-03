@@ -121,6 +121,8 @@ fn write_web_bundle(workspace: &Path, bundle_dir: &Path) -> Result<(), String> {
         .map_err(|err| format!("failed to write index.html: {err}"))?;
     fs::write(bundle_dir.join("app.js"), APP_JS)
         .map_err(|err| format!("failed to write app.js: {err}"))?;
+    fs::write(bundle_dir.join("audio-worklet.js"), AUDIO_WORKLET_JS)
+        .map_err(|err| format!("failed to write audio-worklet.js: {err}"))?;
 
     Ok(())
 }
@@ -315,6 +317,7 @@ canvas.focus();
 
 const ctx = canvas.getContext("2d", { alpha: false });
 const image = ctx.createImageData(width, height);
+const audio = await createAudioSink(emu.audioSampleRate());
 
 async function loadSnapshot() {
   let response = await fetch("./snapshot.rtvcsnap.zip");
@@ -390,6 +393,59 @@ function draw() {
   ctx.putImageData(image, 0, 0);
 }
 
+async function createAudioSink(sampleRate) {
+  const AudioContext = globalThis.AudioContext || globalThis.webkitAudioContext;
+  if (!AudioContext || !("AudioWorkletNode" in globalThis)) {
+    return { push() {}, resume() {} };
+  }
+
+  try {
+    let context;
+    try {
+      context = new AudioContext({ sampleRate });
+    } catch {
+      context = new AudioContext();
+    }
+    await context.audioWorklet.addModule("./audio-worklet.js");
+    const node = new AudioWorkletNode(context, "rtvc-audio", {
+      numberOfInputs: 0,
+      numberOfOutputs: 1,
+      outputChannelCount: [1],
+    });
+    node.connect(context.destination);
+    const ratio = context.sampleRate / sampleRate;
+    let resamplePhase = 0;
+    return {
+      push(samples) {
+        if (samples.length > 0) {
+          const output = ratio === 1 ? samples : resample(samples, ratio);
+          node.port.postMessage(output, [output.buffer]);
+        }
+      },
+      resume() {
+        if (context.state !== "running") {
+          context.resume();
+        }
+      },
+    };
+  } catch (error) {
+    console.warn("Audio unavailable", error);
+    return { push() {}, resume() {} };
+  }
+
+  function resample(samples, ratio) {
+    const converted = [];
+    for (const sample of samples) {
+      resamplePhase += ratio;
+      while (resamplePhase >= 1) {
+        converted.push(sample);
+        resamplePhase -= 1;
+      }
+    }
+    return new Float32Array(converted);
+  }
+}
+
 function keyCode(event) {
   if (event.key && event.key.length === 1) {
     return event.key.toUpperCase().charCodeAt(0);
@@ -415,8 +471,14 @@ canvas.addEventListener("keydown", (event) => {
   const code = keyCode(event);
   if (code !== 0) {
     event.preventDefault();
+    audio.resume();
     emu.keyDown(code);
   }
+});
+
+canvas.addEventListener("pointerdown", () => {
+  audio.resume();
+  canvas.focus();
 });
 
 canvas.addEventListener("keyup", (event) => {
@@ -435,6 +497,7 @@ canvas.addEventListener("input", (event) => {
 
 function frame() {
   emu.runFrame();
+  audio.push(emu.takeAudioSamples());
   if (emu.takeFrameComplete()) {
     draw();
   }
@@ -443,4 +506,53 @@ function frame() {
 
 draw();
 requestAnimationFrame(frame);
+"#;
+
+const AUDIO_WORKLET_JS: &str = r#"class RtvcAudioProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.queue = [];
+    this.queueOffset = 0;
+    this.buffered = 0;
+    this.maxBuffered = sampleRate;
+    this.port.onmessage = (event) => this.enqueue(event.data);
+  }
+
+  enqueue(samples) {
+    if (!(samples instanceof Float32Array) || samples.length === 0) {
+      return;
+    }
+    this.queue.push(samples);
+    this.buffered += samples.length;
+    while (this.buffered > this.maxBuffered && this.queue.length > 0) {
+      const head = this.queue.shift();
+      this.buffered -= head.length - this.queueOffset;
+      this.queueOffset = 0;
+    }
+  }
+
+  nextSample() {
+    while (this.queue.length > 0) {
+      const head = this.queue[0];
+      if (this.queueOffset < head.length) {
+        const sample = head[this.queueOffset++];
+        this.buffered--;
+        return sample;
+      }
+      this.queue.shift();
+      this.queueOffset = 0;
+    }
+    return 0;
+  }
+
+  process(_inputs, outputs) {
+    const output = outputs[0][0];
+    for (let i = 0; i < output.length; i++) {
+      output[i] = this.nextSample();
+    }
+    return true;
+  }
+}
+
+registerProcessor("rtvc-audio", RtvcAudioProcessor);
 "#;

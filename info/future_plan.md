@@ -16,7 +16,7 @@ This document records intended direction for future changes so implementation wo
 
 - Default build path: `cargo run --bin rtvc`.
 - Uses the `native` Cargo feature by default.
-- Enables egui/eframe and filesystem helpers such as zipped disk loading.
+- Enables egui/eframe, native audio through `cpal`, and filesystem helpers such as zipped disk loading.
 - Video model must remain a runtime setting in the UI, not a native build feature.
 
 ### Lightweight Web
@@ -27,7 +27,7 @@ This document records intended direction for future changes so implementation wo
   ```
 - Must avoid egui, eframe, native filesystem assumptions, and large UI dependencies.
 - Uses [src/wasm.rs](../src/wasm.rs) as the public browser-facing API.
-- JavaScript owns browser UI, canvas presentation, keyboard event wiring, and file picker plumbing.
+- JavaScript owns browser UI, canvas presentation, Web Audio playback, keyboard event wiring, and file picker plumbing.
 - Default video model is `VidModel::FastFrame` for WASM constructors.
 - Snapshot upload bundles are produced with `cargo bundle-web <snapshot>`.
 - Snapshot player skeletons without an embedded snapshot are produced with `cargo xtask bundle-web-skeleton [out-dir]` and are included in release archives as `web/`.
@@ -57,7 +57,7 @@ This document records intended direction for future changes so implementation wo
 - Require `--no-default-features` for web builds so accidental native dependencies are visible.
 - Add browser-only dependencies behind explicit web/full-web features.
 - Do not put native filesystem dependencies into the lightweight web tier.
-- When adding dependencies, verify the lightweight web dependency tree still excludes egui, eframe, and zip unless the build tier intentionally changes.
+- When adding dependencies, verify the lightweight web dependency tree still excludes cpal, egui, eframe, and zip unless the build tier intentionally changes.
 
 ## Validation Checklist
 
@@ -72,4 +72,4 @@ cargo check --manifest-path xtask/Cargo.toml
 cargo tree --no-default-features --features wasm,web-vid-simple -e normal --target wasm32-unknown-unknown
 ```
 
-The lightweight web tree should contain `wasm-bindgen` but not egui, eframe, or zip.
+The lightweight web tree should contain `wasm-bindgen` but not cpal, egui, eframe, or zip.

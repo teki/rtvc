@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+use crate::audio::NativeAudioSink;
 use crate::emu::{Emu, MachineType};
 use crate::vid::VidModel;
 use eframe::egui::{self, ColorImage, TextureHandle};
@@ -90,12 +91,18 @@ pub struct EmuApp {
     file_status: Option<String>,
     machine_types: Vec<MachineType>,
     selected_machine: usize,
+    audio: Option<NativeAudioSink>,
+    audio_status: Option<String>,
 }
 
 impl EmuApp {
     pub fn new(emu: Emu) -> Self {
         let machine_types = MachineType::all_types();
         let selected_machine = Self::selected_machine_index(&machine_types, emu.machine_type);
+        let (audio, audio_status) = match NativeAudioSink::new(emu.tvc.sound_sample_rate()) {
+            Ok(sink) => (Some(sink), None),
+            Err(err) => (None, Some(format!("Audio unavailable: {err}"))),
+        };
         EmuApp {
             emu,
             screen_texture: None,
@@ -111,6 +118,8 @@ impl EmuApp {
             file_status: None,
             machine_types,
             selected_machine,
+            audio,
+            audio_status,
         }
     }
 
@@ -244,6 +253,7 @@ impl eframe::App for EmuApp {
 
         if self.emu.running && self.emu_frame_accumulator >= TVC_FRAME_DT {
             self.emu.tick();
+            self.push_audio_samples();
             self.update_screen_texture(ctx);
             self.emu_frame_accumulator %= TVC_FRAME_DT;
             self.frame_count += 1;
@@ -344,6 +354,9 @@ impl eframe::App for EmuApp {
                 ));
                 if ui.button("Log").clicked() {
                     self.show_log = !self.show_log;
+                }
+                if let Some(status) = &self.audio_status {
+                    ui.label(status);
                 }
             });
 
@@ -487,6 +500,15 @@ impl eframe::App for EmuApp {
             ctx.request_repaint();
         } else {
             ctx.request_repaint_after(Duration::from_millis(100));
+        }
+    }
+}
+
+impl EmuApp {
+    fn push_audio_samples(&mut self) {
+        let samples = self.emu.tvc.take_audio_samples();
+        if let Some(audio) = &mut self.audio {
+            audio.push_samples(&samples);
         }
     }
 }

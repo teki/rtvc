@@ -15,6 +15,7 @@ This skill provides step-by-step instructions and references for compiling, exec
   ```bash
   cargo build
   ```
+  - On Linux, the native audio backend uses `cpal` and may require ALSA development files such as `libasound2-dev` on Debian/Ubuntu or `alsa-lib-devel` on Fedora.
 - **Run the main emulator binary (opens egui window):**
   ```bash
   cargo run --bin rtvc
