@@ -89,7 +89,7 @@ This skill provides step-by-step instructions and references for compiling, exec
   - It uploads `rtvc-windows-x64.zip`, `rtvc-macos-x64.zip`, and `rtvc-macos-arm64.zip`.
   - The GitHub release body is extracted from the matching `## v<version>` section in `CHANGES.md`.
   - The Windows archive contains the native binary, `README.md`, `LICENSE`, `roms/`, `progs/`, and `web/`.
-  - The macOS archives contain an ad hoc signed `RTVC.app` bundle, `README.md`, and `LICENSE`. The release workflow does not use paid Developer ID signing or notarization, so users may need to Control-click or right-click `RTVC.app` and choose Open on first launch.
+  - The macOS archives contain an ad hoc signed `RTVC.app` bundle, `README.md`, and `LICENSE`. The release workflow does not use paid Developer ID signing or notarization, so users may need to remove the browser quarantine flag with `xattr -dr com.apple.quarantine RTVC.app` before first launch.
   - The app bundle includes `roms/`, `progs/`, and `web/` beside `Contents/MacOS/rtvc` so Finder launches can find runtime assets.
   - The native app searches `roms/` and `progs/` in the current working directory first, then beside the executable for extracted release archives and app bundles.
   - The bundled `web/` directory is a static WASM snapshot player. Copy `snapshot.rtvcsnap.zip` into it and serve the directory to run the snapshot in a browser.

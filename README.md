@@ -39,7 +39,13 @@ Source: [VIDEOTON TVC historical overview](http://tvc.hu/html/tvc_attekintes.htm
 
 Download the latest release from the [GitHub Releases page](https://github.com/teki/rtvc/releases).
 
-Release archives are available for Windows x64, macOS x64, and macOS Apple Silicon. They include the native emulator, ROM files, bundled programs, and a `web/` snapshot player. Extract the zip and run `rtvc.exe` on Windows or `RTVC.app` on macOS for the native emulator. The macOS app is ad hoc signed, so first launch may require Control-clicking or right-clicking `RTVC.app` and choosing Open.
+Release archives are available for Windows x64, macOS x64, and macOS Apple Silicon. They include the native emulator, ROM files, bundled programs, and a `web/` snapshot player. Extract the zip and run `rtvc.exe` on Windows or `RTVC.app` on macOS for the native emulator.
+
+The macOS app is ad hoc signed because the project does not use paid Developer ID signing or notarization. If macOS blocks the downloaded app, remove the browser quarantine flag from the extracted app and then open it:
+
+```bash
+xattr -dr com.apple.quarantine RTVC.app
+```
 
 To use the web player, copy a compressed snapshot into `web/snapshot.rtvcsnap.zip`, serve the `web/` directory with any static web server, and open it in a browser:
 
