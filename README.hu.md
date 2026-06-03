@@ -31,7 +31,7 @@ Forrás: [VIDEOTON TVC történeti áttekintés](http://tvc.hu/html/tvc_attekint
 
 ## Letöltés
 
-Release archívumok Windows x64, macOS x64 és macOS Apple Silicon rendszerekhez érhetők el. Tartalmazzák a natív emulátor binárisát, a ROM-okat, mellékelt programokat és egy `web/` snapshot-lejátszót. Csomagold ki a zipet, majd Windows alatt indítsd el az `rtvc.exe`, macOS alatt pedig az `rtvc` fájlt.
+Release archívumok Windows x64, macOS x64 és macOS Apple Silicon rendszerekhez érhetők el. Tartalmazzák a natív emulátort, a ROM-okat, mellékelt programokat és egy `web/` snapshot-lejátszót. Csomagold ki a zipet, majd Windows alatt indítsd el az `rtvc.exe`, macOS alatt pedig az `RTVC.app` alkalmazást. A macOS alkalmazás ad hoc aláírást kap, ezért az első indításhoz szükség lehet a Control-kattintásra vagy jobb kattintásra, majd az Open megnyomására.
 
 A webes lejátszó használatához másolj egy tömörített snapshotot `web/snapshot.rtvcsnap.zip` néven, szolgáld ki a `web/` könyvtárat bármilyen statikus webszerverrel, majd nyisd meg böngészőben:
 

@@ -82,13 +82,14 @@ jobs:
 
       - name: Package
         run: |
-          mkdir -p package
-          cp target/${{ matrix.target }}/release/rtvc package/
-          cp README.md package/
-          cp LICENSE package/
-          cp -R roms package/roms
-          cp -R progs package/progs
-          (cd package && zip -r ../${{ matrix.package }} .)
+          scripts/package-macos-app.sh \
+            ${{ matrix.target }} \
+            target/${{ matrix.target }}/release/rtvc \
+            package
+
+      - name: Zip package
+        run: |
+          (cd package && zip -r --symlinks ../${{ matrix.package }} RTVC.app README.md LICENSE)
 
       - name: Upload package
         uses: actions/upload-artifact@v4
