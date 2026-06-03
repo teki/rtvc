@@ -25,10 +25,11 @@ This skill provides step-by-step instructions and references for compiling, exec
   cargo run --bin rtvc -- snapshots/load_tape.rtvcsnap.zip
   ```
   - Place ROM files (`TVC12_D3.64K`, `TVC12_D4.64K`, `TVC12_D7.64K`) in `roms/` for the TVC to boot.
-  - Use the "Log" button to toggle the IO port log panel.
-  - Use the "Reset" button to reset the emulator.
-  - Use the "Save Snapshot" and "Load Snapshot" buttons to write/read `.rtvcsnap.zip` or raw `.rtvcsnap` files.
-  - Use the "Save Screenshot" button to write the current framebuffer as a 4:3 PNG (`768x576`).
+  - Use the Machine menu to run/pause, reset, select machine type, and select video model.
+  - Use the View > IO Log menu item to toggle the IO port log panel.
+  - Use the File menu to write/read `.rtvcsnap.zip` or raw `.rtvcsnap` files and to save the current framebuffer as a 4:3 PNG (`768x576`).
+  - Use the Tape and Disk menus to select cassette and floppy media separately.
+  - The bottom status bar shows tape activity, loaded tape/disk media, run state, FPS, ROM state, audio status, and recent file status.
   - PAL 4:3 display aspect ratio is applied to the framebuffer.
 
 - **Profile the native emulator with samply:**

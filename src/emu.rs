@@ -50,11 +50,13 @@ mod tests {
                 name: "First".to_string(),
                 file_name: "first.cas".to_string(),
                 is_cas: true,
+                is_disk: false,
             },
             ProgEntry {
                 name: "Second".to_string(),
                 file_name: "second.cas".to_string(),
                 is_cas: true,
+                is_disk: false,
             },
         ];
         emu.selected_prog = 1;
@@ -228,6 +230,7 @@ pub struct ProgEntry {
     pub name: String,
     pub file_name: String,
     pub is_cas: bool,
+    pub is_disk: bool,
 }
 
 pub struct Emu {
@@ -237,7 +240,8 @@ pub struct Emu {
     pub machine_type: MachineType,
     pub progs: Vec<ProgEntry>,
     pub selected_prog: usize,
-    pub prog_loaded: Option<String>,
+    pub loaded_tape: Option<String>,
+    pub loaded_disk: Option<String>,
 }
 
 impl Emu {
@@ -249,7 +253,8 @@ impl Emu {
             machine_type,
             progs: Vec::new(),
             selected_prog: 0,
-            prog_loaded: None,
+            loaded_tape: None,
+            loaded_disk: None,
         };
         emu.scan_progs();
         emu
@@ -295,7 +300,8 @@ impl Emu {
             )
         });
         self.roms_loaded = true;
-        self.prog_loaded = None;
+        self.loaded_tape = None;
+        self.loaded_disk = None;
         if let Some(file_name) = snapshot_state.selected_prog_file_name {
             self.select_prog_by_file_name(&file_name);
             self.restore_accessible_selected_media();
@@ -348,7 +354,8 @@ impl Emu {
         self.machine_type = machine_type;
         self.tvc = Tvc::new(machine_type.is_plus);
         self.roms_loaded = false;
-        self.prog_loaded = None;
+        self.loaded_tape = None;
+        self.loaded_disk = None;
         self.load_roms();
     }
 
@@ -369,7 +376,7 @@ impl Emu {
         if self.progs.is_empty() || self.selected_prog >= self.progs.len() {
             return;
         }
-        if !self.progs[self.selected_prog].is_cas {
+        if self.progs[self.selected_prog].is_disk {
             self.load_selected_prog();
         }
     }
@@ -408,7 +415,9 @@ impl Emu {
                 .filter(|e| {
                     let path = e.path();
                     let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-                    ext.eq_ignore_ascii_case("zip") || ext.eq_ignore_ascii_case("cas")
+                    ext.eq_ignore_ascii_case("zip")
+                        || ext.eq_ignore_ascii_case("cas")
+                        || ext.eq_ignore_ascii_case("dsk")
                 })
                 .collect(),
             Err(_) => return,
@@ -424,14 +433,18 @@ impl Emu {
             } else {
                 file_name
                     .strip_suffix(".cas")
+                    .or_else(|| file_name.strip_suffix(".dsk"))
                     .unwrap_or(&file_name)
                     .to_string()
             };
 
             let path = dir.join(&file_name);
             let mut is_cas = false;
+            let mut is_disk = false;
             if file_name.to_lowercase().ends_with(".cas") {
                 is_cas = true;
+            } else if file_name.to_lowercase().ends_with(".dsk") {
+                is_disk = true;
             } else if file_name.to_lowercase().ends_with(".zip") {
                 if let Ok(data) = std::fs::read(&path) {
                     let reader = std::io::Cursor::new(data);
@@ -441,6 +454,10 @@ impl Emu {
                                 let entry_name = file.name().to_lowercase();
                                 if entry_name.ends_with(".cas") {
                                     is_cas = true;
+                                } else if entry_name.ends_with(".dsk") {
+                                    is_disk = true;
+                                }
+                                if is_cas && is_disk {
                                     break;
                                 }
                             }
@@ -453,6 +470,7 @@ impl Emu {
                 name,
                 file_name,
                 is_cas,
+                is_disk,
             });
         }
         if self.selected_prog >= self.progs.len() {
@@ -478,6 +496,8 @@ impl Emu {
 
         if file_name.to_lowercase().ends_with(".cas") {
             cas_data = Some(data);
+        } else if file_name.to_lowercase().ends_with(".dsk") {
+            dsk_data = Some((file_name.clone(), data));
         } else if file_name.to_lowercase().ends_with(".zip") {
             let reader = std::io::Cursor::new(data);
             if let Ok(mut archive) = zip::ZipArchive::new(reader) {
@@ -506,10 +526,10 @@ impl Emu {
 
         if let Some((dsk_name, buf)) = dsk_data {
             self.tvc.load_disk(&dsk_name, &buf);
-            self.prog_loaded = Some(entry.name.clone());
+            self.loaded_disk = Some(entry.name.clone());
         } else if let Some(buf) = cas_data {
             if self.tvc.load_cas(&buf) {
-                self.prog_loaded = Some(format!("{} (Injected)", entry.name));
+                self.loaded_tape = Some(format!("{} (Injected)", entry.name));
             }
         }
     }
@@ -557,14 +577,13 @@ impl Emu {
         if let Some(buf) = cas_data {
             if let Ok(generator) = TapeBitstreamGenerator::new(&buf, &entry.name) {
                 self.tvc.bus.play_tape(generator);
-                self.prog_loaded = Some(format!("{} (Playing)", entry.name));
+                self.loaded_tape = Some(entry.name.clone());
             }
         }
     }
 
     pub fn stop_tape(&mut self) {
         self.tvc.bus.stop_tape();
-        self.prog_loaded = None;
     }
 
     pub fn get_current_tape_level(&self) -> f32 {

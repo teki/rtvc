@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use crate::audio::NativeAudioSink;
-use crate::emu::{Emu, MachineType};
+use crate::emu::{Emu, MachineType, ProgEntry};
 use crate::vid::VidModel;
 use eframe::egui::{self, ColorImage, TextureHandle};
 
@@ -74,6 +74,28 @@ fn egui_key_to_js_code(key: egui::Key) -> Option<u32> {
         egui::Key::Backtick => 192,
         _ => return None,
     })
+}
+
+fn selected_media_matches<F>(emu: &Emu, filter: F) -> bool
+where
+    F: Fn(&ProgEntry) -> bool,
+{
+    emu.progs
+        .get(emu.selected_prog)
+        .map(|entry| filter(entry))
+        .unwrap_or(false)
+}
+
+fn media_entries<F>(progs: &[ProgEntry], filter: F) -> Vec<(usize, String)>
+where
+    F: Fn(&ProgEntry) -> bool,
+{
+    progs
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| filter(entry))
+        .map(|(index, entry)| (index, entry.name.clone()))
+        .collect()
 }
 
 pub struct EmuApp {
@@ -208,6 +230,291 @@ impl EmuApp {
         png_writer.write_image_data(&pixels)?;
         Ok(())
     }
+
+    fn save_snapshot_dialog(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("compressed rtvc snapshot", &["zip"])
+            .add_filter("rtvc snapshot", &["rtvcsnap"])
+            .set_file_name("snapshot.rtvcsnap.zip")
+            .save_file()
+        {
+            match self.emu.save_snapshot_file(&path) {
+                Ok(()) => {
+                    self.file_status = Some(format!("Saved: {}", path.display()));
+                }
+                Err(err) => {
+                    self.file_status = Some(format!("Save failed: {}", err));
+                }
+            }
+        }
+    }
+
+    fn load_snapshot_dialog(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("rtvc snapshot", &["rtvcsnap", "zip"])
+            .pick_file()
+        {
+            match self.emu.load_snapshot_file(&path) {
+                Ok(()) => {
+                    self.sync_selection_from_emu();
+                    self.file_status = Some(format!("Loaded: {}", path.display()));
+                }
+                Err(err) => {
+                    self.file_status = Some(format!("Load failed: {}", err));
+                }
+            }
+        }
+    }
+
+    fn save_screenshot_dialog(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("png image", &["png"])
+            .set_file_name("rtvc-screen.png")
+            .save_file()
+        {
+            match self.save_screenshot(&path) {
+                Ok(()) => {
+                    self.file_status = Some(format!("Saved: {}", path.display()));
+                }
+                Err(err) => {
+                    self.file_status = Some(format!("Screenshot failed: {}", err));
+                }
+            }
+        }
+    }
+
+    fn draw_menu_bar(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+            egui::menu::bar(ui, |ui| {
+                self.draw_file_menu(ui);
+                self.draw_machine_menu(ui);
+                self.draw_tape_menu(ui);
+                self.draw_disk_menu(ui);
+                self.draw_view_menu(ui);
+            });
+        });
+    }
+
+    fn draw_file_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("File", |ui| {
+            if ui.button("Load Snapshot...").clicked() {
+                self.load_snapshot_dialog();
+                ui.close_menu();
+            }
+            if ui.button("Save Snapshot...").clicked() {
+                self.save_snapshot_dialog();
+                ui.close_menu();
+            }
+            if ui.button("Save Screenshot...").clicked() {
+                self.save_screenshot_dialog();
+                ui.close_menu();
+            }
+        });
+    }
+
+    fn draw_machine_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("Machine", |ui| {
+            if ui
+                .button(if self.emu.running { "Pause" } else { "Run" })
+                .clicked()
+            {
+                self.emu.toggle_running();
+                self.last_repaint_time = Instant::now();
+                self.emu_frame_accumulator = 0.0;
+                ui.close_menu();
+            }
+
+            if ui.button("Reset").clicked() {
+                self.emu.reset();
+                self.emu_frame_accumulator = 0.0;
+                ui.close_menu();
+            }
+
+            ui.separator();
+            ui.label("Type");
+            for (index, machine_type) in self.machine_types.iter().copied().enumerate() {
+                if ui
+                    .selectable_label(self.selected_machine == index, machine_type.label())
+                    .clicked()
+                {
+                    self.selected_machine = index;
+                    let vid_model = self.emu.tvc.vid_model();
+                    self.emu.reload(machine_type);
+                    self.emu.tvc.set_vid_model(vid_model);
+                    ui.close_menu();
+                }
+            }
+
+            ui.separator();
+            ui.label("Video");
+            let vid_model = self.emu.tvc.vid_model();
+            if ui
+                .selectable_label(vid_model == VidModel::FastFrame, "Fast frame")
+                .clicked()
+            {
+                self.emu.tvc.set_vid_model(VidModel::FastFrame);
+                ui.close_menu();
+            }
+            if ui
+                .selectable_label(vid_model == VidModel::Interleaved, "Interleaved")
+                .clicked()
+            {
+                self.emu.tvc.set_vid_model(VidModel::Interleaved);
+                ui.close_menu();
+            }
+        });
+    }
+
+    fn draw_tape_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("Tape", |ui| {
+            let entries = media_entries(&self.emu.progs, |entry| entry.is_cas);
+            if entries.is_empty() {
+                ui.add_enabled(false, egui::Label::new("No tape images"));
+            } else {
+                for (index, name) in entries {
+                    if ui
+                        .selectable_label(self.emu.selected_prog == index, name)
+                        .clicked()
+                    {
+                        self.emu.selected_prog = index;
+                        ui.close_menu();
+                    }
+                }
+            }
+
+            ui.separator();
+            let tape_selected = selected_media_matches(&self.emu, |entry| entry.is_cas);
+            if ui
+                .add_enabled(tape_selected, egui::Button::new("Inject"))
+                .clicked()
+            {
+                self.emu.load_selected_prog();
+                ui.close_menu();
+            }
+
+            if self.emu.tvc.bus.tape_play_active() {
+                if ui.button("Stop").clicked() {
+                    self.emu.stop_tape();
+                    ui.close_menu();
+                }
+            } else if ui
+                .add_enabled(tape_selected, egui::Button::new("Play"))
+                .clicked()
+            {
+                self.emu.play_tape();
+                ui.close_menu();
+            }
+        });
+    }
+
+    fn draw_disk_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("Disk", |ui| {
+            let entries = media_entries(&self.emu.progs, |entry| entry.is_disk);
+            if entries.is_empty() {
+                ui.add_enabled(false, egui::Label::new("No disk images"));
+            } else {
+                for (index, name) in entries {
+                    if ui
+                        .selectable_label(self.emu.selected_prog == index, name)
+                        .clicked()
+                    {
+                        self.emu.selected_prog = index;
+                        ui.close_menu();
+                    }
+                }
+            }
+
+            ui.separator();
+            let disk_selected = selected_media_matches(&self.emu, |entry| entry.is_disk);
+            if ui
+                .add_enabled(disk_selected, egui::Button::new("Insert"))
+                .clicked()
+            {
+                self.emu.load_selected_prog();
+                ui.close_menu();
+            }
+        });
+    }
+
+    fn draw_view_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("View", |ui| {
+            ui.checkbox(&mut self.show_log, "IO Log");
+        });
+    }
+
+    fn draw_status_bar(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::bottom("status_bar")
+            .resizable(false)
+            .exact_height(24.0)
+            .show(ctx, |ui| {
+                ui.horizontal_centered(|ui| {
+                    draw_tape_led(
+                        ui,
+                        self.emu.tvc.bus.tape_play_active(),
+                        self.emu.get_current_tape_level(),
+                    );
+                    ui.label(if self.emu.tvc.bus.tape_play_active() {
+                        "Tape active"
+                    } else {
+                        "Tape idle"
+                    });
+                    ui.separator();
+                    ui.label(format!(
+                        "Tape: {}",
+                        self.emu.loaded_tape.as_deref().unwrap_or("(none)")
+                    ));
+                    ui.separator();
+                    ui.label(format!(
+                        "Disk: {}",
+                        self.emu.loaded_disk.as_deref().unwrap_or("(none)")
+                    ));
+                    ui.separator();
+                    ui.label(if self.emu.running {
+                        "Running"
+                    } else {
+                        "Paused"
+                    });
+                    ui.separator();
+                    ui.label(format!("FPS: {}", self.fps));
+                    ui.separator();
+                    ui.label(format!(
+                        "ROMs: {}",
+                        if self.emu.roms_loaded {
+                            "loaded"
+                        } else {
+                            "not found"
+                        }
+                    ));
+                    if let Some(status) = &self.audio_status {
+                        ui.separator();
+                        ui.label(status);
+                    }
+                    if let Some(status) = &self.file_status {
+                        ui.separator();
+                        ui.label(status);
+                    }
+                });
+            });
+    }
+}
+
+fn draw_tape_led(ui: &mut egui::Ui, active: bool, level: f32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+    let color = if active {
+        if level > 0.5 {
+            egui::Color32::from_rgb(255, 218, 80)
+        } else {
+            egui::Color32::from_rgb(48, 180, 90)
+        }
+    } else {
+        egui::Color32::from_rgb(55, 60, 58)
+    };
+    ui.painter().circle_filled(rect.center(), 4.5, color);
+    ui.painter().circle_stroke(
+        rect.center(),
+        4.5,
+        egui::Stroke::new(1.0, egui::Color32::from_gray(120)),
+    );
 }
 
 impl eframe::App for EmuApp {
@@ -266,6 +573,9 @@ impl eframe::App for EmuApp {
             self.last_frame_time = Instant::now();
         }
 
+        self.draw_menu_bar(ctx);
+        self.draw_status_bar(ctx);
+
         if self.show_log {
             egui::TopBottomPanel::bottom("log_panel")
                 .resizable(true)
@@ -289,194 +599,6 @@ impl eframe::App for EmuApp {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("rtvc - Videoton TV Computer Emulator");
-
-            ui.horizontal(|ui| {
-                ui.label("Type:");
-                let prev_selected = self.selected_machine;
-                egui::ComboBox::from_id_salt("machine_type")
-                    .selected_text(self.machine_types[self.selected_machine].label())
-                    .show_ui(ui, |ui| {
-                        for (i, mt) in self.machine_types.iter().enumerate() {
-                            ui.selectable_value(&mut self.selected_machine, i, mt.label());
-                        }
-                    });
-                if self.selected_machine != prev_selected {
-                    let vid_model = self.emu.tvc.vid_model();
-                    self.emu.reload(self.machine_types[self.selected_machine]);
-                    self.emu.tvc.set_vid_model(vid_model);
-                }
-
-                ui.separator();
-
-                ui.label("Video:");
-                let mut vid_model = self.emu.tvc.vid_model();
-                egui::ComboBox::from_id_salt("vid_model")
-                    .selected_text(match vid_model {
-                        VidModel::FastFrame => "Fast frame",
-                        VidModel::Interleaved => "Interleaved",
-                    })
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut vid_model, VidModel::FastFrame, "Fast frame");
-                        ui.selectable_value(&mut vid_model, VidModel::Interleaved, "Interleaved");
-                    });
-                self.emu.tvc.set_vid_model(vid_model);
-
-                ui.separator();
-
-                if ui
-                    .selectable_label(
-                        !self.emu.running,
-                        if self.emu.running {
-                            "Running"
-                        } else {
-                            "Paused"
-                        },
-                    )
-                    .clicked()
-                {
-                    self.emu.toggle_running();
-                    self.last_repaint_time = Instant::now();
-                    self.emu_frame_accumulator = 0.0;
-                }
-                if ui.button("Reset").clicked() {
-                    self.emu.reset();
-                    self.emu_frame_accumulator = 0.0;
-                }
-                ui.label(format!("FPS: {}", self.fps));
-                ui.label(format!(
-                    "ROMs: {}",
-                    if self.emu.roms_loaded {
-                        "loaded"
-                    } else {
-                        "not found"
-                    }
-                ));
-                if ui.button("Log").clicked() {
-                    self.show_log = !self.show_log;
-                }
-                if let Some(status) = &self.audio_status {
-                    ui.label(status);
-                }
-            });
-
-            ui.horizontal(|ui| {
-                if ui.button("Save Snapshot").clicked() {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("compressed rtvc snapshot", &["zip"])
-                        .add_filter("rtvc snapshot", &["rtvcsnap"])
-                        .set_file_name("snapshot.rtvcsnap.zip")
-                        .save_file()
-                    {
-                        match self.emu.save_snapshot_file(&path) {
-                            Ok(()) => {
-                                self.file_status = Some(format!("Saved: {}", path.display()));
-                            }
-                            Err(err) => {
-                                self.file_status = Some(format!("Save failed: {}", err));
-                            }
-                        }
-                    }
-                }
-
-                if ui.button("Load Snapshot").clicked() {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("rtvc snapshot", &["rtvcsnap", "zip"])
-                        .pick_file()
-                    {
-                        match self.emu.load_snapshot_file(&path) {
-                            Ok(()) => {
-                                self.sync_selection_from_emu();
-                                self.file_status = Some(format!("Loaded: {}", path.display()));
-                            }
-                            Err(err) => {
-                                self.file_status = Some(format!("Load failed: {}", err));
-                            }
-                        }
-                    }
-                }
-
-                if ui.button("Save Screenshot").clicked() {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("png image", &["png"])
-                        .set_file_name("rtvc-screen.png")
-                        .save_file()
-                    {
-                        match self.save_screenshot(&path) {
-                            Ok(()) => {
-                                self.file_status = Some(format!("Saved: {}", path.display()));
-                            }
-                            Err(err) => {
-                                self.file_status = Some(format!("Screenshot failed: {}", err));
-                            }
-                        }
-                    }
-                }
-
-                if let Some(ref status) = self.file_status {
-                    ui.label(status);
-                }
-            });
-
-            ui.horizontal(|ui| {
-                ui.label("Program:");
-                egui::ComboBox::from_id_salt("prog_list")
-                    .selected_text(
-                        self.emu
-                            .progs
-                            .get(self.emu.selected_prog)
-                            .map(|p| p.name.as_str())
-                            .unwrap_or("(none)"),
-                    )
-                    .show_ui(ui, |ui| {
-                        for (i, prog) in self.emu.progs.iter().enumerate() {
-                            ui.selectable_value(&mut self.emu.selected_prog, i, &prog.name);
-                        }
-                    });
-                if ui.button("Load").clicked() {
-                    self.emu.load_selected_prog();
-                }
-
-                // Play / Stop controls for cassette files
-                let selected_is_cas = self
-                    .emu
-                    .progs
-                    .get(self.emu.selected_prog)
-                    .map(|p| p.is_cas)
-                    .unwrap_or(false);
-
-                if selected_is_cas {
-                    if self.emu.tvc.bus.tape_play_active() {
-                        let level = self.emu.get_current_tape_level();
-                        let btn_color = if level > 0.6 {
-                            egui::Color32::from_rgb(255, 235, 59) // Bright yellow for high phase
-                        } else if level < 0.4 {
-                            egui::Color32::from_rgb(46, 125, 50) // Solid dark green for low phase
-                        } else {
-                            egui::Color32::from_rgb(128, 128, 128) // Neutral gray for silence
-                        };
-
-                        let stop_btn = egui::Button::new(
-                            egui::RichText::new("Stop ⏹").color(egui::Color32::BLACK),
-                        )
-                        .fill(btn_color);
-                        if ui.add(stop_btn).clicked() {
-                            self.emu.stop_tape();
-                        }
-                    } else {
-                        if ui.button("Play ▶").clicked() {
-                            self.emu.play_tape();
-                        }
-                    }
-                }
-
-                if let Some(ref name) = self.emu.prog_loaded {
-                    ui.label(format!("Loaded: {}", name));
-                }
-            });
-
-            ui.separator();
-
             let avail = ui.available_size();
             let disp_hw = 3.0 / 4.0;
             let w = avail.x.min(avail.y / disp_hw);
