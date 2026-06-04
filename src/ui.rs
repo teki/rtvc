@@ -117,10 +117,11 @@ pub struct EmuApp {
     audio: Option<NativeAudioSink>,
     audio_status: Option<String>,
     app_state_file: AppStateFile,
+    pub debugger: Option<crate::debugger::DebuggerInterface>,
 }
 
 impl EmuApp {
-    pub fn new(mut emu: Emu, app_state_file: AppStateFile) -> Self {
+    pub fn new(mut emu: Emu, app_state_file: AppStateFile, debugger: Option<crate::debugger::DebuggerInterface>) -> Self {
         let machine_types = MachineType::all_types();
         let selected_machine = Self::selected_machine_index(&machine_types, emu.machine_type);
         let (audio, audio_status) = match NativeAudioSink::new(emu.tvc.sound_sample_rate()) {
@@ -147,6 +148,7 @@ impl EmuApp {
             audio,
             audio_status,
             app_state_file,
+            debugger,
         }
     }
 
@@ -209,31 +211,7 @@ impl EmuApp {
     }
 
     fn save_screenshot(&self, path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-        const SRC_W: usize = 608;
-        const SRC_H: usize = 288;
-        const OUT_W: usize = 768;
-        const OUT_H: usize = 576;
-
-        let file = std::fs::File::create(path)?;
-        let writer = std::io::BufWriter::new(file);
-        let mut encoder = png::Encoder::new(writer, OUT_W as u32, OUT_H as u32);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut png_writer = encoder.write_header()?;
-
-        let mut pixels = vec![0; OUT_W * OUT_H * 4];
-        for y in 0..OUT_H {
-            let src_y = y * SRC_H / OUT_H;
-            for x in 0..OUT_W {
-                let src_x = x * SRC_W / OUT_W;
-                let rgba = self.emu.tvc.framebuffer[src_y * SRC_W + src_x].to_ne_bytes();
-                let offset = (y * OUT_W + x) * 4;
-                pixels[offset..offset + 4].copy_from_slice(&rgba);
-            }
-        }
-
-        png_writer.write_image_data(&pixels)?;
-        Ok(())
+        self.emu.save_screenshot(path)
     }
 
     fn save_snapshot_dialog(&mut self) {
@@ -664,6 +642,14 @@ fn draw_tape_led(ui: &mut egui::Ui, active: bool, level: f32) {
 
 impl eframe::App for EmuApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Some(ref dbg) = self.debugger {
+            dbg.set_context(ctx.clone());
+            while let Ok(msg) = dbg.cmd_rx.try_recv() {
+                let response = crate::debugger::handle_command(&mut self.emu, &msg.cmd_line);
+                let _ = msg.reply_tx.send(response);
+            }
+        }
+
         ctx.input(|i| {
             let modifiers = i.modifiers;
             self.handle_modifier(modifiers.shift, modifiers.ctrl, modifiers.alt);
@@ -704,7 +690,14 @@ impl eframe::App for EmuApp {
         }
 
         if self.emu.running && self.emu_frame_accumulator >= TVC_FRAME_DT {
-            self.emu.tick();
+            let hit_breakpoint = self.emu.tick();
+            if hit_breakpoint {
+                self.emu.running = false;
+                if let Some(ref dbg) = self.debugger {
+                    let pc = self.emu.tvc.z80.state.r16[11];
+                    let _ = dbg.event_tx.send(crate::debugger::DebuggerEvent::BreakpointHit { pc });
+                }
+            }
             self.push_audio_samples();
             self.update_screen_texture(ctx);
             self.emu_frame_accumulator %= TVC_FRAME_DT;

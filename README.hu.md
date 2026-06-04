@@ -34,6 +34,7 @@ Forrás: [VIDEOTON TVC történeti áttekintés](http://tvc.hu/html/tvc_attekint
 - CAS kazetta-lejátszás/betöltés és DSK lemezkép-támogatás.
 - Natív snapshot mentés/betöltés `.rtvcsnap` és `.rtvcsnap.zip` formátumban.
 - Statikus webes snapshot-csomagok készítése böngészőben futó demókhoz.
+- Interaktív TCP socket hibakereső (debugger) felület Python REPL klienssel, natív GUI és headless mód támogatással.
 
 ## Letöltés
 
@@ -85,6 +86,12 @@ cargo run --bin rtvc -- -t utvonal/kazetta.cas
 
 # Kazetta közvetlen memóriába írása (azonnal betöltődik)
 cargo run --bin rtvc -- -i utvonal/kazetta.cas
+
+# A socket hibakereső (debugger) indítása egy egyedi porton (alapértelmezett: 8080)
+cargo run --bin rtvc -- -p 8089
+
+# Headless emulátor indítása a háttérben futó hibakeresővel a 8080-as porton
+cargo run --bin rtvc -- -H -p 8080
 ```
 
 Futtatás előtt helyezd a ROM-fájlokat a `roms/` könyvtárba. A natív felület jelenleg ezeket a gépválasztásokat támogatja:
@@ -142,6 +149,7 @@ A tömörített snapshotok hagyományos zip-fájlok, amelyek egy `snapshot.rtvcs
 - [Billentyűzetmátrix](info.hu/key.md)
 - [Kazettatámogatás](info.hu/cas.md)
 - [HBF floppy kártya és FD1793 vezérlő](info.hu/hbf.md)
+- [Socket hibakereső](info.hu/dbg.md)
 
 ## Közreműködés
 

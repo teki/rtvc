@@ -18,6 +18,8 @@ fn main() -> eframe::Result<()> {
     let mut tape_to_mount: Option<String> = None;
     let mut tape_to_inject: Option<String> = None;
     let mut snapshot_to_load: Option<String> = None;
+    let mut headless = false;
+    let mut port = 8080u16;
 
     let mut i = 1;
     while i < args.len() {
@@ -49,6 +51,24 @@ fn main() -> eframe::Result<()> {
                     std::process::exit(1);
                 }
             }
+            "-H" | "--headless" => {
+                headless = true;
+                i += 1;
+            }
+            "-p" | "--port" => {
+                if i + 1 < args.len() {
+                    if let Ok(p) = args[i + 1].parse::<u16>() {
+                        port = p;
+                    } else {
+                        eprintln!("Error: invalid port value: {}", args[i + 1]);
+                        std::process::exit(1);
+                    }
+                    i += 2;
+                } else {
+                    eprintln!("Error: missing value for {}", args[i]);
+                    std::process::exit(1);
+                }
+            }
             "-h" | "--help" => {
                 println!(
                     "rtvc v{} - Videoton TV Computer Emulator",
@@ -61,6 +81,8 @@ fn main() -> eframe::Result<()> {
                 println!("  -d, --disk <path>      Mount a disk");
                 println!("  -t, --tape <path>      Mount a CAS tape for loading");
                 println!("  -i, --inject <path>    Inject a CAS tape directly into memory");
+                println!("  -H, --headless         Enable headless execution mode");
+                println!("  -p, --port <port>      TCP port for the debugger socket (default: 8080)");
                 println!("  -h, --help             Display this help message");
                 std::process::exit(0);
             }
@@ -120,7 +142,13 @@ fn main() -> eframe::Result<()> {
             }
         }
     }
-    let app = ui::EmuApp::new(emu, app_state_file);
+    if headless {
+        rtvc::debugger::run_headless(emu, port);
+        return Ok(());
+    }
+
+    let debugger = Some(rtvc::debugger::start_debugger_server(port));
+    let app = ui::EmuApp::new(emu, app_state_file, debugger);
 
     let options = eframe::NativeOptions {
         viewport: ViewportBuilder::default()

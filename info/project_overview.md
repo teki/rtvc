@@ -29,6 +29,7 @@ Future build-target and UI direction is tracked in [info/future_plan.md](future_
 - [src/expansion.rs](../src/expansion.rs) — Expansion slot/card routing for memory and I/O windows.
 - [src/emu.rs](../src/emu.rs) — Native-only high-level emulator wrapper (Emu struct with run state, filesystem ROM loading, and zipped program loading).
 - [src/ui.rs](../src/ui.rs) — Native-only egui/eframe GUI application (EmuApp) with screen display and IO log panel.
+- [src/debugger.rs](../src/debugger.rs) — Native-only TCP socket debugger command handler, supporting both native GUI and headless execution modes.
 - [src/wasm.rs](../src/wasm.rs) — Lightweight WASM bindings exposing `Tvc` control, ROM/disk loading, keyboard input, and framebuffer access for a browser canvas UI.
 - [src/snapshot.rs](../src/snapshot.rs) — Chunked snapshot format helpers shared by native and WASM snapshot save/load APIs.
 - [src/tvc_snapshot.rs](../src/tvc_snapshot.rs) — TVC-specific snapshot chunk save/load glue used by `Tvc`.
@@ -58,6 +59,7 @@ Future build-target and UI direction is tracked in [info/future_plan.md](future_
 - **Native App State**: `rtvc.toml` stores native UI preferences and restorable media state, including machine type, video model, and loaded tape/disk filenames. It is loaded from the current working directory first, then beside the executable; saving uses the loaded path and can fall back to the executable directory.
 - **Native GUI**: `EmuApp` (eframe/egui) displays the TVC screen at PAL 4:3 aspect ratio, routes keyboard input to the TVC, exposes native menus for machine/media/view/file actions, drains generated audio samples into the native `cpal` sink, and shows an optional IO log panel. While running, it requests continuous repaints and generates TVC frames from a 50 Hz real-time gate so display refreshes reuse the latest texture instead of running the emulator once per host repaint. It is compiled only with the `native` feature.
 - **WASM Facade**: `WasmTvc` in [src/wasm.rs](../src/wasm.rs) exposes a small `wasm-bindgen` API around `Tvc`, including `runFrame()`, `setVidModel()`, audio sample draining, key events, ROM/disk loading, and direct framebuffer pointer/length access for JavaScript canvas rendering. The generated lightweight web bundle feeds drained audio samples to a browser `AudioWorklet`. The WASM build does not include cpal, egui, eframe, or zip.
+- **Socket Debugger**: The TCP socket server in [src/debugger.rs](../src/debugger.rs) runs a non-blocking TCP interface, accepting debugger client connections in both headless and native GUI modes. It accepts JSON commands to inspect state, single-step execution, continue/pause execution, save screenshots/snapshots, read raw memory banks, and inject inputs. A python client REPL script is provided in [scripts/rtvc_debug.py](../scripts/rtvc_debug.py) for interactive command-line debugging.
 - **Snapshots**: [info/snapshot.md](snapshot.md) defines the custom `RTVCSNAP` chunked state format, while `tvc_snapshot.rs` maps `Tvc` state to those chunks. User-facing snapshot and web bundle commands are in [README.md](../README.md).
 - **Cassette WAV Utility**: `cargo run --bin cas2wav -- input.cas output.wav [tape-name]` converts CAS images into the same 44.1 kHz unsigned 8-bit PCM waveform as the legacy [tools/cas2wav](../tools/cas2wav) converter.
 - **Profiling**: Use a sampling profiler such as `samply` against the native binary when profiling CPU performance.
@@ -65,8 +67,8 @@ Future build-target and UI direction is tracked in [info/future_plan.md](future_
 ## Toolchain
 
 - Rust Edition: `2024` (requires Rust ≥ 1.85).
-- Default feature: `native`, which enables `cpal` 0.17, `egui` 0.31, `eframe` 0.31, and `zip` 2 for the desktop application.
+- Default feature: `native`, which enables `cpal` 0.17, `egui` 0.31, `eframe` 0.31, `zip` 2, and `png` 0.17 for the desktop application.
 - WASM feature: `wasm`, which enables only `wasm-bindgen` for the browser-facing API. Build it with `--no-default-features --features wasm`.
 - Native `Tvc::new()` defaults to `VidModel::Interleaved`. WASM constructors default to `VidModel::FastFrame`; browser callers can still switch modes through the WASM string API, which accepts `fast-frame` and `interleaved` plus the legacy aliases `simple` and `realistic`.
-- Package dependencies and metadata are managed in [Cargo.toml](../Cargo.toml).
+- Package dependencies and metadata are managed in [Cargo.toml](../Cargo.toml). Direct dependencies also include `serde` and `serde_json` for debugger JSON-RPC.
 - License: MIT for emulator code. ROMs, cassette/disk images, snapshots, screenshots, manuals, and other historical or third-party machine materials may be present for preservation, compatibility testing, or convenience, but are outside the project license unless explicitly stated.

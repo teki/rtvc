@@ -30,5 +30,8 @@ pub mod emu;
 #[cfg(feature = "native")]
 pub mod ui;
 
+#[cfg(feature = "native")]
+pub mod debugger;
+
 #[cfg(feature = "wasm")]
 pub mod wasm;

@@ -2845,6 +2845,8 @@ dependencies = [
  "egui",
  "png 0.17.16",
  "rfd",
+ "serde",
+ "serde_json",
  "wasm-bindgen",
  "zip",
 ]

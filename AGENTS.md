@@ -15,6 +15,7 @@ Refer to the following resources for detailed documentation on the system:
 - [Snapshot Format and Web Bundles](info/snapshot.md) — Custom TVC snapshot format and `cargo bundle-web` upload workflow.
 - [Z80 CPU Documentation](info/z80.md) — Detailed specifications, instructions, lookup tables, and execution details for the Z80 CPU emulator.
 - [Memory Management Unit (MMU) Documentation](info/mmu.md) — Architectural reference for TVC bank switching, page layout, and I/O memory mapping.
+- [Socket Debugger Documentation](info/dbg.md) — Protocol specification for the TCP socket debugger and Python REPL client.
 - [Development and Testing Skill](.agents/skills/development/SKILL.md) — Essential commands for compiling, running, testing, and benchmarking the emulator.
 - [Release Skill](.agents/skills/release/SKILL.md) — Release workflow for version bumps, concise `CHANGES.md` updates, manual review, commits, tags, and pushes.
 

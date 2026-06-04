@@ -168,7 +168,7 @@ impl TvcBus {
         self.pend_it &= !SHARED_CURSOR_SOUND_IT;
     }
 
-    fn advance_tape(&mut self, cycles: u64) {
+    pub(crate) fn advance_tape(&mut self, cycles: u64) {
         self.tape.advance(cycles);
     }
 
@@ -180,7 +180,7 @@ impl TvcBus {
         self.sound.restart();
     }
 
-    fn advance_sound_timer(&mut self, cycles: u64) {
+    pub(crate) fn advance_sound_timer(&mut self, cycles: u64) {
         if self.sound.advance(cycles) {
             self.request_shared_irq();
         }
@@ -433,6 +433,12 @@ impl Tvc {
 
     pub fn clear_all_breakpoints(&mut self) {
         self.breakpoints.clear();
+    }
+
+    pub fn get_breakpoints(&self) -> Vec<u16> {
+        let mut list: Vec<u16> = self.breakpoints.iter().copied().collect();
+        list.sort();
+        list
     }
 
     fn draw_sync_timeout(&mut self) {

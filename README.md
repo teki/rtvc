@@ -34,6 +34,7 @@ Source: [VIDEOTON TVC historical overview](http://tvc.hu/html/tvc_attekintes.htm
 - CAS cassette playback/loading and DSK disk image support.
 - Native snapshot save/load using `.rtvcsnap` and `.rtvcsnap.zip`.
 - Static web snapshot bundle generation for browser-hosted demos.
+- Interactive TCP socket debugger interface with a Python REPL client, supporting both native GUI and headless execution modes.
 
 ## Download
 
@@ -85,6 +86,12 @@ cargo run --bin rtvc -- -t path/to/tape.cas
 
 # Inject a cassette tape directly into memory (instantly loaded)
 cargo run --bin rtvc -- -i path/to/tape.cas
+
+# Start the socket debugger server on a custom port (default is 8080)
+cargo run --bin rtvc -- -p 8089
+
+# Start a headless emulator with the socket debugger listening on port 8080
+cargo run --bin rtvc -- -H -p 8080
 ```
 
 Place ROM files in `roms/` before running. The native UI currently supports these machine selections:
@@ -142,6 +149,7 @@ Compressed snapshots are ordinary zip files containing one `snapshot.rtvcsnap` e
 - [Keyboard matrix](info/key.md)
 - [Cassette support](info/cas.md)
 - [HBF floppy card and FD1793 controller](info/hbf.md)
+- [Socket debugger](info/dbg.md)
 
 ## Contributing
 

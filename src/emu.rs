@@ -268,11 +268,11 @@ impl Emu {
         emu
     }
 
-    pub fn tick(&mut self) {
+    pub fn tick(&mut self) -> bool {
         if !self.running {
-            return;
+            return false;
         }
-        self.tvc.run_for_a_frame();
+        self.tvc.run_for_a_frame()
     }
 
     pub fn reset(&mut self) {
@@ -647,6 +647,38 @@ impl Emu {
         self.recent_disks.retain(|x| x != &path_str);
         self.recent_disks.insert(0, path_str);
         self.recent_disks.truncate(5);
+    }
+
+    pub fn save_screenshot(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        const SRC_W: usize = 608;
+        const SRC_H: usize = 288;
+        const OUT_W: usize = 768;
+        const OUT_H: usize = 576;
+
+        let file = std::fs::File::create(path)?;
+        let writer = std::io::BufWriter::new(file);
+        let mut encoder = png::Encoder::new(writer, OUT_W as u32, OUT_H as u32);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut png_writer = encoder.write_header()?;
+
+        let mut pixels = vec![0; OUT_W * OUT_H * 4];
+        for y in 0..OUT_H {
+            let src_y = y * SRC_H / OUT_H;
+            for x in 0..OUT_W {
+                let src_x = x * SRC_W / OUT_W;
+                let rgba = self.tvc.framebuffer[src_y * SRC_W + src_x].to_ne_bytes();
+                let offset = (y * OUT_W + x) * 4;
+                pixels[offset..offset + 4].copy_from_slice(&rgba);
+            }
+        }
+
+        png_writer.write_image_data(&pixels)?;
+        Ok(())
+    }
+
+    pub fn read_raw_bank(&self, bank: &str, addr: usize, len: usize) -> Option<Vec<u8>> {
+        self.tvc.bus.mmu.read_raw_bank(bank, addr, len)
     }
 }
 

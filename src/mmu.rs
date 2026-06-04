@@ -277,6 +277,29 @@ impl TvcMmu {
         let len = data.len().min(0x4000);
         self.cart[..len].copy_from_slice(&data[..len]);
     }
+
+    pub fn read_raw_bank(&self, bank: &str, addr: usize, len: usize) -> Option<Vec<u8>> {
+        let bank_data: &[u8] = match bank.to_lowercase().as_str() {
+            "u0" => &self.u0,
+            "u1" => &self.u1,
+            "u2" => &self.u2,
+            "u3" => &self.u3,
+            "vid0" => &self.vid0,
+            "vid1" => self.vid1.as_ref()?,
+            "vid2" => self.vid2.as_ref()?,
+            "vid3" => self.vid3.as_ref()?,
+            "sys" => &self.sys,
+            "cart" => &self.cart,
+            "exth" => &self.exth,
+            _ => return None,
+        };
+
+        if addr >= bank_data.len() {
+            return Some(Vec::new());
+        }
+        let end = (addr + len).min(bank_data.len());
+        Some(bank_data[addr..end].to_vec())
+    }
 }
 
 fn write_optional_bank(w: &mut crate::snapshot::Writer, bank: Option<&[u8; 0x4000]>) {
