@@ -30,3 +30,12 @@ To prevent documentation rot and ensure all agents have access to accurate infor
 4. **Keep Build-Tier Plans Updated**: If changing native/web feature flags, video model selection, web UI strategy, egui usage, browser storage, or lightweight WASM dependency boundaries, update [info/future_plan.md](info/future_plan.md).
 5. **Keep Snapshot Specs Updated**: If changing snapshot chunks, save/load coverage, or web bundle behavior, update [info/snapshot.md](info/snapshot.md).
 6. **Use Clickable Links**: When referencing codebase files or documentation, always use clickable Markdown links with the relative path (e.g., `[main.rs](src/main.rs)`) to enable easy navigation.
+
+---
+
+## Git and Command Execution Policy
+
+To maintain control over repository history and remote operations, all agents must adhere to the following rules:
+
+1. **No Automatic Pushing**: Never execute `git push` or perform any remote branch publishing/deletion commands without explicit, written confirmation and approval from the user.
+2. **Local Commits**: You may stage (`git add`) and commit (`git commit`) files locally to save progress, but always present the diff and ask the user before committing or pushing.
