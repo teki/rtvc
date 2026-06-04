@@ -119,6 +119,8 @@ fn write_web_bundle(workspace: &Path, bundle_dir: &Path) -> Result<(), String> {
 
     fs::write(bundle_dir.join("index.html"), INDEX_HTML)
         .map_err(|err| format!("failed to write index.html: {err}"))?;
+    fs::write(bundle_dir.join("favicon.ico"), FAVICON_ICO)
+        .map_err(|err| format!("failed to write favicon.ico: {err}"))?;
     fs::write(bundle_dir.join("app.js"), APP_JS)
         .map_err(|err| format!("failed to write app.js: {err}"))?;
     fs::write(bundle_dir.join("audio-worklet.js"), AUDIO_WORKLET_JS)
@@ -239,6 +241,7 @@ const INDEX_HTML: &str = r#"<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>rtvc snapshot</title>
+  <link rel="icon" href="./favicon.ico" sizes="any">
   <style>
     html, body {
       margin: 0;
@@ -276,6 +279,8 @@ const INDEX_HTML: &str = r#"<!doctype html>
 </body>
 </html>
 "#;
+
+const FAVICON_ICO: &[u8] = include_bytes!("../../assets/rtvc-app-icon.ico");
 
 const WEB_SKELETON_README: &str = r#"rtvc web snapshot player
 
