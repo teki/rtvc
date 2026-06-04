@@ -111,6 +111,9 @@ async function createAudioSink(sampleRate) {
     } catch {
       context = new AudioContext();
     }
+    if (!context.audioWorklet) {
+      throw new Error("audioWorklet is undefined");
+    }
     await context.audioWorklet.addModule("./audio-worklet.js");
     const node = new AudioWorkletNode(context, "rtvc-audio", {
       numberOfInputs: 0,
