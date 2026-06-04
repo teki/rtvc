@@ -14,6 +14,8 @@ pub struct AppState {
     pub tape_loaded: bool,
     pub disk_file_name: Option<String>,
     pub disk_loaded: bool,
+    pub recent_tapes: Vec<String>,
+    pub recent_disks: Vec<String>,
 }
 
 pub struct AppStateFile {
@@ -96,12 +98,32 @@ fn write_state_file(path: &std::path::Path, state: &AppState) -> std::io::Result
         writeln!(file, "selected = \"{}\"", escape_string(file_name))?;
     }
     writeln!(file, "loaded = {}", state.tape_loaded)?;
+    if !state.recent_tapes.is_empty() {
+        write!(file, "recent = [")?;
+        for (i, val) in state.recent_tapes.iter().enumerate() {
+            if i > 0 {
+                write!(file, ", ")?;
+            }
+            write!(file, "\"{}\"", escape_string(val))?;
+        }
+        writeln!(file, "]")?;
+    }
     writeln!(file)?;
     writeln!(file, "[disk]")?;
     if let Some(file_name) = &state.disk_file_name {
         writeln!(file, "selected = \"{}\"", escape_string(file_name))?;
     }
     writeln!(file, "loaded = {}", state.disk_loaded)?;
+    if !state.recent_disks.is_empty() {
+        write!(file, "recent = [")?;
+        for (i, val) in state.recent_disks.iter().enumerate() {
+            if i > 0 {
+                write!(file, ", ")?;
+            }
+            write!(file, "\"{}\"", escape_string(val))?;
+        }
+        writeln!(file, "]")?;
+    }
     Ok(())
 }
 
@@ -152,11 +174,13 @@ fn parse_state(text: &str) -> AppState {
             Section::Tape => match key {
                 "selected" => state.tape_file_name = parse_string(value),
                 "loaded" => state.tape_loaded = parse_bool(value).unwrap_or(state.tape_loaded),
+                "recent" => state.recent_tapes = parse_array_string(value),
                 _ => {}
             },
             Section::Disk => match key {
                 "selected" => state.disk_file_name = parse_string(value),
                 "loaded" => state.disk_loaded = parse_bool(value).unwrap_or(state.disk_loaded),
+                "recent" => state.recent_disks = parse_array_string(value),
                 _ => {}
             },
         }
@@ -253,6 +277,24 @@ fn vid_model_from_id(id: &str) -> Option<VidModel> {
     }
 }
 
+fn parse_array_string(value: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let trimmed_val = value.trim();
+    let Some(content) = trimmed_val.strip_prefix('[').and_then(|v| v.strip_suffix(']')) else {
+        return out;
+    };
+    for part in content.split(',') {
+        let trimmed_part = part.trim();
+        if trimmed_part.is_empty() {
+            continue;
+        }
+        if let Some(s) = parse_string(trimmed_part) {
+            out.push(s);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,10 +309,12 @@ video_model = "fast-frame"
 [tape]
 selected = "TVBALL.CAS"
 loaded = true
+recent = ["TVBALL.CAS", "TVBALL2.CAS"]
 
 [disk]
 selected = "VT-DOS \"Games\".dsk"
 loaded = false
+recent = ["Games.dsk"]
 "#,
         );
 
@@ -285,10 +329,12 @@ loaded = false
         assert_eq!(state.vid_model, Some(VidModel::FastFrame));
         assert_eq!(state.tape_file_name.as_deref(), Some("TVBALL.CAS"));
         assert!(state.tape_loaded);
+        assert_eq!(state.recent_tapes, vec!["TVBALL.CAS".to_string(), "TVBALL2.CAS".to_string()]);
         assert_eq!(
             state.disk_file_name.as_deref(),
             Some("VT-DOS \"Games\".dsk")
         );
         assert!(!state.disk_loaded);
+        assert_eq!(state.recent_disks, vec!["Games.dsk".to_string()]);
     }
 }

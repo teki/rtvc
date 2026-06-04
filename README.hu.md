@@ -74,6 +74,19 @@ Indítás közvetlenül snapshotból:
 cargo run --bin rtvc -- snapshots/load_tape.rtvcsnap.zip
 ```
 
+Lemez csatlakoztatása, kazetta behelyezése vagy közvetlen memóriába fecskendezése indításkor:
+
+```bash
+# Floppy lemezkép csatlakoztatása
+cargo run --bin rtvc -- -d utvonal/lemez.dsk
+
+# Kazetta betöltésre való felkészítése (a TVC-ben a LOAD paranccsal kell indítani)
+cargo run --bin rtvc -- -t utvonal/kazetta.cas
+
+# Kazetta közvetlen memóriába írása (azonnal betöltődik)
+cargo run --bin rtvc -- -i utvonal/kazetta.cas
+```
+
 Futtatás előtt helyezd a ROM-fájlokat a `roms/` könyvtárba. A natív felület jelenleg ezeket a gépválasztásokat támogatja:
 
 - `64k+ 1.2, VT-DOS`

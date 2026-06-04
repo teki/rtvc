@@ -74,6 +74,19 @@ Start directly from a snapshot:
 cargo run --bin rtvc -- snapshots/load_tape.rtvcsnap.zip
 ```
 
+Mount a disk, mount a cassette tape, or inject a cassette tape directly on startup:
+
+```bash
+# Mount a floppy disk image
+cargo run --bin rtvc -- -d path/to/disk.dsk
+
+# Mount a cassette tape for standard loading (requires typing LOAD in TVC)
+cargo run --bin rtvc -- -t path/to/tape.cas
+
+# Inject a cassette tape directly into memory (instantly loaded)
+cargo run --bin rtvc -- -i path/to/tape.cas
+```
+
 Place ROM files in `roms/` before running. The native UI currently supports these machine selections:
 
 - `64k+ 1.2, VT-DOS`

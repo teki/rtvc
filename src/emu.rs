@@ -244,6 +244,8 @@ pub struct Emu {
     pub loaded_disk: Option<String>,
     pub loaded_tape_file_name: Option<String>,
     pub loaded_disk_file_name: Option<String>,
+    pub recent_tapes: Vec<String>,
+    pub recent_disks: Vec<String>,
 }
 
 impl Emu {
@@ -259,6 +261,8 @@ impl Emu {
             loaded_disk: None,
             loaded_tape_file_name: None,
             loaded_disk_file_name: None,
+            recent_tapes: Vec::new(),
+            recent_disks: Vec::new(),
         };
         emu.scan_progs();
         emu
@@ -360,11 +364,28 @@ impl Emu {
         self.machine_type = machine_type;
         self.tvc = Tvc::new(machine_type.is_plus);
         self.roms_loaded = false;
-        self.loaded_tape = None;
-        self.loaded_disk = None;
-        self.loaded_tape_file_name = None;
-        self.loaded_disk_file_name = None;
         self.load_roms();
+
+        // Re-load the disk if there was one loaded
+        if let Some(file_name) = self.loaded_disk_file_name.clone() {
+            self.insert_disk_by_file_name(&file_name);
+        }
+
+        // Re-load the tape if there was one loaded/injected
+        if let Some(file_name) = self.loaded_tape_file_name.clone() {
+            let was_injected = self.loaded_tape.as_ref().map(|s| s.contains("(Injected)")).unwrap_or(false);
+            if was_injected {
+                self.inject_tape_by_file_name(&file_name);
+            } else {
+                let path = Path::new(&file_name);
+                if path.exists() && path.is_file() {
+                    let _ = self.play_tape_file_path(path);
+                } else {
+                    let path = data_dir("progs").join(&file_name);
+                    let _ = self.play_tape_file_path(&path);
+                }
+            }
+        }
     }
 
     pub fn select_prog_by_file_name(&mut self, file_name: &str) -> bool {
@@ -507,43 +528,9 @@ impl Emu {
         if !entry.is_cas {
             return;
         }
-        let file_name = entry.file_name.clone();
-        let path = data_dir("progs").join(&file_name);
-
-        let data = match std::fs::read(&path) {
-            Ok(d) => d,
-            Err(_) => return,
-        };
-
-        let mut cas_data = None;
-
-        if file_name.to_lowercase().ends_with(".cas") {
-            cas_data = Some(data);
-        } else if file_name.to_lowercase().ends_with(".zip") {
-            let reader = std::io::Cursor::new(data);
-            if let Ok(mut archive) = zip::ZipArchive::new(reader) {
-                for i in 0..archive.len() {
-                    let mut file = match archive.by_index(i) {
-                        Ok(f) => f,
-                        Err(_) => continue,
-                    };
-                    let entry_name = file.name().to_string();
-                    if entry_name.to_lowercase().ends_with(".cas") {
-                        let mut buf = Vec::new();
-                        if file.read_to_end(&mut buf).is_ok() {
-                            cas_data = Some(buf);
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-
-        if let Some(buf) = cas_data {
-            if self.tvc.load_cas(&buf) {
-                self.loaded_tape = Some(format!("{} (Injected)", entry.name));
-                self.loaded_tape_file_name = Some(entry.file_name.clone());
-            }
+        let path = data_dir("progs").join(&entry.file_name);
+        if let Err(err) = self.inject_tape_file_path(&path) {
+            eprintln!("failed to inject selected tape: {err}");
         }
     }
 
@@ -555,46 +542,19 @@ impl Emu {
         if !entry.is_disk {
             return;
         }
-        let file_name = entry.file_name.clone();
-        let path = data_dir("progs").join(&file_name);
-
-        let data = match std::fs::read(&path) {
-            Ok(d) => d,
-            Err(_) => return,
-        };
-
-        let mut dsk_data = None;
-
-        if file_name.to_lowercase().ends_with(".dsk") {
-            dsk_data = Some((file_name.clone(), data));
-        } else if file_name.to_lowercase().ends_with(".zip") {
-            let reader = std::io::Cursor::new(data);
-            if let Ok(mut archive) = zip::ZipArchive::new(reader) {
-                for i in 0..archive.len() {
-                    let mut file = match archive.by_index(i) {
-                        Ok(f) => f,
-                        Err(_) => continue,
-                    };
-                    let entry_name = file.name().to_string();
-                    if entry_name.to_lowercase().ends_with(".dsk") {
-                        let mut buf = Vec::new();
-                        if file.read_to_end(&mut buf).is_ok() {
-                            dsk_data = Some((entry_name, buf));
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-
-        if let Some((dsk_name, buf)) = dsk_data {
-            self.tvc.load_disk(&dsk_name, &buf);
-            self.loaded_disk = Some(entry.name.clone());
-            self.loaded_disk_file_name = Some(entry.file_name.clone());
+        let path = data_dir("progs").join(&entry.file_name);
+        if let Err(err) = self.insert_disk_file_path(&path) {
+            eprintln!("failed to insert selected disk: {err}");
         }
     }
 
     pub fn inject_tape_by_file_name(&mut self, file_name: &str) -> bool {
+        let path = Path::new(file_name);
+        if path.exists() && path.is_file() {
+            if self.inject_tape_file_path(path).is_ok() {
+                return true;
+            }
+        }
         if self.select_prog_by_file_name(file_name) {
             self.inject_selected_tape();
             self.loaded_tape_file_name.as_deref() == Some(file_name)
@@ -604,6 +564,12 @@ impl Emu {
     }
 
     pub fn insert_disk_by_file_name(&mut self, file_name: &str) -> bool {
+        let path = Path::new(file_name);
+        if path.exists() && path.is_file() {
+            if self.insert_disk_file_path(path).is_ok() {
+                return true;
+            }
+        }
         if self.select_prog_by_file_name(file_name) {
             self.insert_selected_disk();
             self.loaded_disk_file_name.as_deref() == Some(file_name)
@@ -620,45 +586,44 @@ impl Emu {
         if !entry.is_cas {
             return;
         }
-        let file_name = entry.file_name.clone();
-        let path = data_dir("progs").join(&file_name);
-
-        let data = match std::fs::read(&path) {
-            Ok(d) => d,
-            Err(_) => return,
-        };
-
-        let mut cas_data = None;
-
-        if file_name.to_lowercase().ends_with(".cas") {
-            cas_data = Some(data);
-        } else if file_name.to_lowercase().ends_with(".zip") {
-            let reader = std::io::Cursor::new(data);
-            if let Ok(mut archive) = zip::ZipArchive::new(reader) {
-                for i in 0..archive.len() {
-                    let mut file = match archive.by_index(i) {
-                        Ok(f) => f,
-                        Err(_) => continue,
-                    };
-                    let entry_name = file.name().to_string();
-                    if entry_name.to_lowercase().ends_with(".cas") {
-                        let mut buf = Vec::new();
-                        if file.read_to_end(&mut buf).is_ok() {
-                            cas_data = Some(buf);
-                        }
-                        break;
-                    }
-                }
-            }
+        let path = data_dir("progs").join(&entry.file_name);
+        if let Err(err) = self.play_tape_file_path(&path) {
+            eprintln!("failed to play selected tape: {err}");
         }
+    }
 
-        if let Some(buf) = cas_data {
-            if let Ok(generator) = TapeBitstreamGenerator::new(&buf, &entry.name) {
-                self.tvc.bus.play_tape(generator);
-                self.loaded_tape = Some(entry.name.clone());
-                self.loaded_tape_file_name = Some(entry.file_name.clone());
-            }
+    pub fn play_tape_file_path(&mut self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        let (display_name, buf) = read_cas_data(path)?;
+        let generator = TapeBitstreamGenerator::new(&buf, &display_name)?;
+        self.tvc.bus.play_tape(generator);
+        self.loaded_tape = Some(display_name);
+        let path_str = path.to_string_lossy().to_string();
+        self.loaded_tape_file_name = Some(path_str.clone());
+        self.add_recent_tape(path_str);
+        Ok(())
+    }
+
+    pub fn inject_tape_file_path(&mut self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        let (display_name, buf) = read_cas_data(path)?;
+        if self.tvc.load_cas(&buf) {
+            self.loaded_tape = Some(format!("{} (Injected)", display_name));
+            let path_str = path.to_string_lossy().to_string();
+            self.loaded_tape_file_name = Some(path_str.clone());
+            self.add_recent_tape(path_str);
+            Ok(())
+        } else {
+            Err("Failed to inject CAS data into memory".into())
         }
+    }
+
+    pub fn insert_disk_file_path(&mut self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        let (display_name, buf) = read_dsk_data(path)?;
+        self.tvc.load_disk(&display_name, &buf);
+        self.loaded_disk = Some(display_name);
+        let path_str = path.to_string_lossy().to_string();
+        self.loaded_disk_file_name = Some(path_str.clone());
+        self.add_recent_disk(path_str);
+        Ok(())
     }
 
     pub fn stop_tape(&mut self) {
@@ -670,6 +635,18 @@ impl Emu {
             return self.tvc.bus.current_tape_level();
         }
         0.5
+    }
+
+    pub fn add_recent_tape(&mut self, path_str: String) {
+        self.recent_tapes.retain(|x| x != &path_str);
+        self.recent_tapes.insert(0, path_str);
+        self.recent_tapes.truncate(5);
+    }
+
+    pub fn add_recent_disk(&mut self, path_str: String) {
+        self.recent_disks.retain(|x| x != &path_str);
+        self.recent_disks.insert(0, path_str);
+        self.recent_disks.truncate(5);
     }
 }
 
@@ -722,4 +699,68 @@ fn unzip_snapshot(data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     }
 
     Err("zip archive does not contain a .rtvcsnap file".into())
+}
+
+fn read_cas_data(path: &Path) -> Result<(String, Vec<u8>), Box<dyn std::error::Error>> {
+    let file_name = path
+        .file_name()
+        .ok_or("Invalid path")?
+        .to_string_lossy()
+        .to_string();
+    let data = std::fs::read(path)?;
+    if file_name.to_lowercase().ends_with(".cas") {
+        Ok((file_name, data))
+    } else if file_name.to_lowercase().ends_with(".zip") {
+        let reader = std::io::Cursor::new(data);
+        let mut archive = zip::ZipArchive::new(reader)?;
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i)?;
+            let entry_name = file.name().to_string();
+            if entry_name.to_lowercase().ends_with(".cas") {
+                let mut buf = Vec::new();
+                file.read_to_end(&mut buf)?;
+                let display_name = std::path::Path::new(&entry_name)
+                    .file_name()
+                    .unwrap_or(file.name().as_ref())
+                    .to_string_lossy()
+                    .to_string();
+                return Ok((display_name, buf));
+            }
+        }
+        Err("No .cas file found in zip archive".into())
+    } else {
+        Err("Unsupported file format (expected .cas or .zip)".into())
+    }
+}
+
+fn read_dsk_data(path: &Path) -> Result<(String, Vec<u8>), Box<dyn std::error::Error>> {
+    let file_name = path
+        .file_name()
+        .ok_or("Invalid path")?
+        .to_string_lossy()
+        .to_string();
+    let data = std::fs::read(path)?;
+    if file_name.to_lowercase().ends_with(".dsk") {
+        Ok((file_name, data))
+    } else if file_name.to_lowercase().ends_with(".zip") {
+        let reader = std::io::Cursor::new(data);
+        let mut archive = zip::ZipArchive::new(reader)?;
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i)?;
+            let entry_name = file.name().to_string();
+            if entry_name.to_lowercase().ends_with(".dsk") {
+                let mut buf = Vec::new();
+                file.read_to_end(&mut buf)?;
+                let display_name = std::path::Path::new(&entry_name)
+                    .file_name()
+                    .unwrap_or(file.name().as_ref())
+                    .to_string_lossy()
+                    .to_string();
+                return Ok((display_name, buf));
+            }
+        }
+        Err("No .dsk file found in zip archive".into())
+    } else {
+        Err("Unsupported file format (expected .dsk or .zip)".into())
+    }
 }

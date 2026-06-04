@@ -1,9 +1,12 @@
-machine_type = "64k-1.2"
+machine_type = "64k-plus-1.2-vtdos"
 video_model = "interleaved"
 
 [tape]
-selected = "TVBALL.CAS"
+selected = "progs/TVBALL.CAS"
 loaded = true
+recent = ["progs/TVBALL.CAS"]
 
 [disk]
-loaded = false
+selected = "/Users/teki/dev/jstvc/games/kismozdony.zip"
+loaded = true
+recent = ["/Users/teki/dev/jstvc/games/kismozdony.zip", "/Users/teki/dev/jstvc/games/break.zip", "/Users/teki/dev/jstvc/games/kitoltes.zip", "/Users/teki/dev/jstvc/games/elite.zip"]

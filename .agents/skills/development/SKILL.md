@@ -24,12 +24,18 @@ This skill provides step-by-step instructions and references for compiling, exec
   ```bash
   cargo run --bin rtvc -- snapshots/load_tape.rtvcsnap.zip
   ```
+  To mount a disk, mount a tape, or inject a tape directly on startup:
+  ```bash
+  cargo run --bin rtvc -- -d path/to/disk.dsk
+  cargo run --bin rtvc -- -t path/to/tape.cas
+  cargo run --bin rtvc -- -i path/to/tape.cas
+  ```
   - Place ROM files (`TVC12_D3.64K`, `TVC12_D4.64K`, `TVC12_D7.64K`) in `roms/` for the TVC to boot.
   - Use the Machine menu to run/pause, reset, select machine type, and select video model.
   - Use the View > IO Log menu item to toggle the IO port log panel.
-  - Use the File menu to write/read `.rtvcsnap.zip` or raw `.rtvcsnap` files and to save the current framebuffer as a 4:3 PNG (`768x576`).
-  - Use the Tape and Disk menus to select cassette and floppy media separately.
-  - The bottom status bar shows tape activity, loaded tape/disk media, run state, FPS, ROM state, audio status, and recent file status.
+  - Use the File menu to write/read `.rtvcsnap.zip` snapshots, load tape/disk files via open file dialog, and save the current framebuffer as a 4:3 PNG (`768x576`).
+  - Use the Tape and Disk menus to load cassette and floppy media (either from local list or by browsing for any file). Selecting an entry immediately loads it.
+  - The bottom status bar shows tape activity, loaded tape/disk media, run state, FPS, ROM state, audio status, and recent file status, plus a Reset button in the bottom right corner.
   - Native app preferences are stored in `rtvc.toml`, checked in the current working directory first and then beside the executable.
   - PAL 4:3 display aspect ratio is applied to the framebuffer.
 

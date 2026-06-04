@@ -12,8 +12,75 @@ fn main() -> eframe::Result<()> {
         emu.tvc.set_vid_model(vid_model);
     }
     emu.load_roms();
+    // Command-line arguments parsing
+    let args = std::env::args().collect::<Vec<String>>();
+    let mut disk_to_mount: Option<String> = None;
+    let mut tape_to_mount: Option<String> = None;
+    let mut tape_to_inject: Option<String> = None;
+    let mut snapshot_to_load: Option<String> = None;
+
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-d" | "--disk" => {
+                if i + 1 < args.len() {
+                    disk_to_mount = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    eprintln!("Error: missing value for {}", args[i]);
+                    std::process::exit(1);
+                }
+            }
+            "-t" | "--tape" => {
+                if i + 1 < args.len() {
+                    tape_to_mount = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    eprintln!("Error: missing value for {}", args[i]);
+                    std::process::exit(1);
+                }
+            }
+            "-i" | "--inject" => {
+                if i + 1 < args.len() {
+                    tape_to_inject = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    eprintln!("Error: missing value for {}", args[i]);
+                    std::process::exit(1);
+                }
+            }
+            "-h" | "--help" => {
+                println!(
+                    "rtvc v{} - Videoton TV Computer Emulator",
+                    env!("CARGO_PKG_VERSION")
+                );
+                println!();
+                println!("Usage: rtvc [options] [snapshot]");
+                println!();
+                println!("Options:");
+                println!("  -d, --disk <path>      Mount a disk");
+                println!("  -t, --tape <path>      Mount a CAS tape for loading");
+                println!("  -i, --inject <path>    Inject a CAS tape directly into memory");
+                println!("  -h, --help             Display this help message");
+                std::process::exit(0);
+            }
+            arg => {
+                if arg.starts_with('-') {
+                    eprintln!("Error: unknown option {}", arg);
+                    std::process::exit(1);
+                } else if snapshot_to_load.is_none() {
+                    snapshot_to_load = Some(arg.to_string());
+                    i += 1;
+                } else {
+                    eprintln!("Error: multiple positional arguments (only one snapshot allowed)");
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+
     let mut loaded_snapshot = false;
-    if let Some(snapshot_path) = std::env::args_os().nth(1) {
+    if let Some(snapshot_path) = snapshot_to_load {
         let snapshot_path = std::path::PathBuf::from(snapshot_path);
         if let Err(err) = emu.load_snapshot_file(&snapshot_path) {
             eprintln!("failed to load snapshot {}: {err}", snapshot_path.display());
@@ -21,13 +88,33 @@ fn main() -> eframe::Result<()> {
             loaded_snapshot = true;
         }
     }
+
+    if let Some(disk_path) = disk_to_mount {
+        let path = std::path::PathBuf::from(disk_path);
+        if let Err(err) = emu.insert_disk_file_path(&path) {
+            eprintln!("failed to mount disk {}: {err}", path.display());
+        }
+    }
+    if let Some(tape_path) = tape_to_mount {
+        let path = std::path::PathBuf::from(tape_path);
+        if let Err(err) = emu.play_tape_file_path(&path) {
+            eprintln!("failed to mount tape {}: {err}", path.display());
+        }
+    }
+    if let Some(tape_path) = tape_to_inject {
+        let path = std::path::PathBuf::from(tape_path);
+        if let Err(err) = emu.inject_tape_file_path(&path) {
+            eprintln!("failed to inject tape {}: {err}", path.display());
+        }
+    }
+
     if !loaded_snapshot {
-        if app_state_file.state.disk_loaded {
+        if emu.loaded_disk.is_none() && app_state_file.state.disk_loaded {
             if let Some(file_name) = &app_state_file.state.disk_file_name {
                 emu.insert_disk_by_file_name(file_name);
             }
         }
-        if app_state_file.state.tape_loaded {
+        if emu.loaded_tape.is_none() && app_state_file.state.tape_loaded {
             if let Some(file_name) = &app_state_file.state.tape_file_name {
                 emu.inject_tape_by_file_name(file_name);
             }

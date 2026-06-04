@@ -120,13 +120,15 @@ pub struct EmuApp {
 }
 
 impl EmuApp {
-    pub fn new(emu: Emu, app_state_file: AppStateFile) -> Self {
+    pub fn new(mut emu: Emu, app_state_file: AppStateFile) -> Self {
         let machine_types = MachineType::all_types();
         let selected_machine = Self::selected_machine_index(&machine_types, emu.machine_type);
         let (audio, audio_status) = match NativeAudioSink::new(emu.tvc.sound_sample_rate()) {
             Ok(sink) => (Some(sink), None),
             Err(err) => (None, Some(format!("Audio unavailable: {err}"))),
         };
+        emu.recent_tapes = app_state_file.state.recent_tapes.clone();
+        emu.recent_disks = app_state_file.state.recent_disks.clone();
         EmuApp {
             emu,
             screen_texture: None,
@@ -269,6 +271,40 @@ impl EmuApp {
         }
     }
 
+    fn load_tape_dialog(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("tape image", &["cas", "zip"])
+            .pick_file()
+        {
+            match self.emu.play_tape_file_path(&path) {
+                Ok(()) => {
+                    self.save_app_state();
+                    self.file_status = Some(format!("Loaded tape: {}", path.display()));
+                }
+                Err(err) => {
+                    self.file_status = Some(format!("Tape load failed: {}", err));
+                }
+            }
+        }
+    }
+
+    fn load_disk_dialog(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("disk image", &["dsk", "zip"])
+            .pick_file()
+        {
+            match self.emu.insert_disk_file_path(&path) {
+                Ok(()) => {
+                    self.save_app_state();
+                    self.file_status = Some(format!("Loaded disk: {}", path.display()));
+                }
+                Err(err) => {
+                    self.file_status = Some(format!("Disk load failed: {}", err));
+                }
+            }
+        }
+    }
+
     fn save_screenshot_dialog(&mut self) {
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("png image", &["png"])
@@ -308,6 +344,16 @@ impl EmuApp {
                 self.save_snapshot_dialog();
                 ui.close_menu();
             }
+            ui.separator();
+            if ui.button("Load Tape...").clicked() {
+                self.load_tape_dialog();
+                ui.close_menu();
+            }
+            if ui.button("Load Disk...").clicked() {
+                self.load_disk_dialog();
+                ui.close_menu();
+            }
+            ui.separator();
             if ui.button("Save Screenshot...").clicked() {
                 self.save_screenshot_dialog();
                 ui.close_menu();
@@ -376,6 +422,34 @@ impl EmuApp {
 
     fn draw_tape_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Tape", |ui| {
+            if ui.button("Open Tape File...").clicked() {
+                self.load_tape_dialog();
+                ui.close_menu();
+            }
+
+            if !self.emu.recent_tapes.is_empty() {
+                ui.separator();
+                ui.label("Recent Tapes:");
+                for path_str in self.emu.recent_tapes.clone() {
+                    let display_name = std::path::Path::new(&path_str)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| path_str.clone());
+
+                    if ui.button(display_name).clicked() {
+                        let path = std::path::Path::new(&path_str);
+                        if let Err(err) = self.emu.play_tape_file_path(path) {
+                            self.file_status = Some(format!("Tape load failed: {}", err));
+                        } else {
+                            self.save_app_state();
+                        }
+                        ui.close_menu();
+                    }
+                }
+            }
+
+            ui.separator();
+
             let entries = media_entries(&self.emu.progs, |entry| entry.is_cas);
             if entries.is_empty() {
                 ui.add_enabled(false, egui::Label::new("No tape images"));
@@ -386,6 +460,8 @@ impl EmuApp {
                         .clicked()
                     {
                         self.emu.selected_prog = index;
+                        self.emu.play_tape();
+                        self.save_app_state();
                         ui.close_menu();
                     }
                 }
@@ -421,6 +497,34 @@ impl EmuApp {
 
     fn draw_disk_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Disk", |ui| {
+            if ui.button("Open Disk File...").clicked() {
+                self.load_disk_dialog();
+                ui.close_menu();
+            }
+
+            if !self.emu.recent_disks.is_empty() {
+                ui.separator();
+                ui.label("Recent Disks:");
+                for path_str in self.emu.recent_disks.clone() {
+                    let display_name = std::path::Path::new(&path_str)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| path_str.clone());
+
+                    if ui.button(display_name).clicked() {
+                        let path = std::path::Path::new(&path_str);
+                        if let Err(err) = self.emu.insert_disk_file_path(path) {
+                            self.file_status = Some(format!("Disk load failed: {}", err));
+                        } else {
+                            self.save_app_state();
+                        }
+                        ui.close_menu();
+                    }
+                }
+            }
+
+            ui.separator();
+
             let entries = media_entries(&self.emu.progs, |entry| entry.is_disk);
             if entries.is_empty() {
                 ui.add_enabled(false, egui::Label::new("No disk images"));
@@ -431,6 +535,8 @@ impl EmuApp {
                         .clicked()
                     {
                         self.emu.selected_prog = index;
+                        self.emu.insert_selected_disk();
+                        self.save_app_state();
                         ui.close_menu();
                     }
                 }
@@ -461,6 +567,12 @@ impl EmuApp {
             .exact_height(24.0)
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
+                    if ui.small_button("Reset").clicked() {
+                        self.emu.reset();
+                        self.emu_frame_accumulator = 0.0;
+                        self.save_app_state();
+                    }
+                    ui.separator();
                     draw_tape_led(
                         ui,
                         self.emu.tvc.bus.tape_play_active(),
@@ -491,11 +603,11 @@ impl EmuApp {
                     ui.label(format!("FPS: {}", self.fps));
                     ui.separator();
                     ui.label(format!(
-                        "ROMs: {}",
+                        "Machine: {}",
                         if self.emu.roms_loaded {
-                            "loaded"
+                            self.emu.machine_type.label()
                         } else {
-                            "not found"
+                            format!("{} (ROMs missing)", self.emu.machine_type.label())
                         }
                     ));
                     if let Some(status) = &self.audio_status {
@@ -518,6 +630,8 @@ impl EmuApp {
             tape_loaded: self.emu.loaded_tape_file_name.is_some(),
             disk_file_name: self.emu.loaded_disk_file_name.clone(),
             disk_loaded: self.emu.loaded_disk_file_name.is_some(),
+            recent_tapes: self.emu.recent_tapes.clone(),
+            recent_disks: self.emu.recent_disks.clone(),
         }
     }
 
