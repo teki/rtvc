@@ -587,7 +587,7 @@ impl Z80 {
                     (8, 2)
                 } else {
                     let e = mmu.r8s(pc.wrapping_add(1)) as i16;
-                    self.state.r16[R_PC] = (pc as i16 + 2 + e) as u16;
+                    self.state.r16[R_PC] = pc.wrapping_add(2).wrapping_add(e as u16);
                     (13, 0)
                 }
             }
@@ -633,7 +633,7 @@ impl Z80 {
             0x18 => {
                 let pc = self.state.r16[R_PC];
                 let e = mmu.r8s(pc.wrapping_add(1)) as i16;
-                self.state.r16[R_PC] = (pc as i16 + 2 + e) as u16;
+                self.state.r16[R_PC] = pc.wrapping_add(2).wrapping_add(e as u16);
                 (12, 0)
             }
             0x19 => {
@@ -684,7 +684,7 @@ impl Z80 {
                     (7, 2)
                 } else {
                     let e = mmu.r8s(pc.wrapping_add(1)) as i16;
-                    self.state.r16[R_PC] = (pc as i16 + 2 + e) as u16;
+                    self.state.r16[R_PC] = pc.wrapping_add(2).wrapping_add(e as u16);
                     (12, 0)
                 }
             }
@@ -750,7 +750,7 @@ impl Z80 {
                 let pc = self.state.r16[R_PC];
                 if self.state.r8[R_F] & F_Z != 0 {
                     let e = mmu.r8s(pc.wrapping_add(1)) as i16;
-                    self.state.r16[R_PC] = (pc as i16 + 2 + e) as u16;
+                    self.state.r16[R_PC] = pc.wrapping_add(2).wrapping_add(e as u16);
                     (12, 0)
                 } else {
                     (7, 2)
@@ -807,7 +807,7 @@ impl Z80 {
                     (7, 2)
                 } else {
                     let e = mmu.r8s(pc.wrapping_add(1)) as i16;
-                    self.state.r16[R_PC] = (pc as i16 + 2 + e) as u16;
+                    self.state.r16[R_PC] = pc.wrapping_add(2).wrapping_add(e as u16);
                     (12, 0)
                 }
             }
@@ -859,7 +859,7 @@ impl Z80 {
                 let pc = self.state.r16[R_PC];
                 if self.state.r8[R_F] & F_C != 0 {
                     let e = mmu.r8s(pc.wrapping_add(1)) as i16;
-                    self.state.r16[R_PC] = (pc as i16 + 2 + e) as u16;
+                    self.state.r16[R_PC] = pc.wrapping_add(2).wrapping_add(e as u16);
                     (12, 0)
                 } else {
                     (7, 2)
