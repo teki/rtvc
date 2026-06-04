@@ -50,7 +50,7 @@ xattr -dr com.apple.quarantine RTVC.app
 Alternatively, you can download the release archive directly from the terminal using `curl`, which bypasses the macOS quarantine:
 
 ```bash
-curl -LO <release_url>
+curl -L https://github.com/teki/rtvc/releases/latest/download/rtvc-macos-arm64.zip | ditto -x -k - $HOME/Downloads/rtvc
 ```
 
 To use the web player, copy a compressed snapshot into `web/snapshot.rtvcsnap.zip`, serve the `web/` directory with any static web server, and open it in a browser:

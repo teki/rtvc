@@ -50,7 +50,7 @@ xattr -dr com.apple.quarantine RTVC.app
 Alternatív megoldásként a kiadási archívum közvetlenül a terminálból is letölthető a `curl` használatával, ami elkerüli a macOS karantént:
 
 ```bash
-curl -LO <release_url>
+curl -L https://github.com/teki/rtvc/releases/latest/download/rtvc-macos-arm64.zip | ditto -x -k - $HOME/Downloads/rtvc
 ```
 
 A webes lejátszó használatához másolj egy tömörített snapshotot `web/snapshot.rtvcsnap.zip` néven, szolgáld ki a `web/` könyvtárat bármilyen statikus webszerverrel, majd nyisd meg böngészőben:
