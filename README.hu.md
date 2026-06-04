@@ -47,6 +47,12 @@ A macOS alkalmazás ad hoc aláírást kap, mert a projekt nem használ fizetős
 xattr -dr com.apple.quarantine RTVC.app
 ```
 
+Alternatív megoldásként a kiadási archívum közvetlenül a terminálból is letölthető a `curl` használatával, ami elkerüli a macOS karantént:
+
+```bash
+curl -LO <release_url>
+```
+
 A webes lejátszó használatához másolj egy tömörített snapshotot `web/snapshot.rtvcsnap.zip` néven, szolgáld ki a `web/` könyvtárat bármilyen statikus webszerverrel, majd nyisd meg böngészőben:
 
 ```bash
