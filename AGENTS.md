@@ -38,4 +38,4 @@ To prevent documentation rot and ensure all agents have access to accurate infor
 To maintain control over repository history and remote operations, all agents must adhere to the following rules:
 
 1. **No Automatic Pushing**: Never execute `git push` or perform any remote branch publishing/deletion commands without explicit, written confirmation and approval from the user.
-2. **Local Commits**: You may stage (`git add`) and commit (`git commit`) files locally to save progress, but always present the diff and ask the user before committing or pushing.
+2. **No Automatic Staging or Committing**: Never execute `git add`, `git commit`, or similar staging/commit commands without explicit, written confirmation and approval from the user, unless executing a documented repository skill (such as the Release Skill) that explicitly grants permission for these operations as part of its workflow.
