@@ -1,4 +1,10 @@
+#[cfg(target_arch = "wasm32")]
+use web_time::{Duration, Instant};
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
+
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::JsCast;
 
 use crate::app_state::{AppState, AppStateFile};
 use crate::audio::NativeAudioSink;
@@ -6,9 +12,79 @@ use crate::emu::{Emu, MachineType, ProgEntry};
 use crate::vid::VidModel;
 use eframe::egui::{self, ColorImage, TextureHandle};
 
+#[cfg(all(feature = "native", not(target_arch = "wasm32")))]
+pub type DebuggerType = crate::debugger::DebuggerInterface;
+#[cfg(not(all(feature = "native", not(target_arch = "wasm32"))))]
+pub type DebuggerType = ();
+
+pub enum PendingFile {
+    Tape { name: String, bytes: Vec<u8> },
+    Disk { name: String, bytes: Vec<u8> },
+    Snapshot { name: String, bytes: Vec<u8> },
+    StorageResult { error: Option<String> },
+    RecentCleared { kind: String },
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn download_file(name: &str, data: &[u8], mime_type: &str) {
+    if let Some(window) = web_sys::window() {
+        if let Some(document) = window.document() {
+            if let Some(body) = document.body() {
+                let uint8_array = unsafe { js_sys::Uint8Array::view(data) };
+                let array = js_sys::Array::new();
+                array.push(&uint8_array);
+                let blob_options = web_sys::BlobPropertyBag::new();
+                blob_options.set_type(mime_type);
+                if let Ok(blob) = web_sys::Blob::new_with_u8_array_sequence_and_options(&array, &blob_options) {
+                    if let Ok(url) = web_sys::Url::create_object_url_with_blob(&blob) {
+                        if let Ok(a) = document.create_element("a") {
+                            if let Ok(a) = a.dyn_into::<web_sys::HtmlAnchorElement>() {
+                                a.set_href(&url);
+                                a.set_download(name);
+                                a.style().set_property("display", "none").ok();
+                                body.append_child(&a).ok();
+                                a.click();
+                                body.remove_child(&a).ok();
+                                web_sys::Url::revoke_object_url(&url).ok();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen::prelude::wasm_bindgen(
+        js_namespace = globalThis,
+        js_name = rtvcTakeKeyboardEvents
+    )]
+    fn web_take_keyboard_events() -> js_sys::Array;
+
+    #[wasm_bindgen::prelude::wasm_bindgen(
+        js_namespace = globalThis,
+        js_name = rtvcStoreRecentMedia
+    )]
+    fn web_store_recent_media(
+        kind: &str,
+        name: &str,
+        bytes: &js_sys::Uint8Array,
+    ) -> js_sys::Promise;
+
+    #[wasm_bindgen::prelude::wasm_bindgen(
+        js_namespace = globalThis,
+        js_name = rtvcClearRecentMedia
+    )]
+    fn web_clear_recent_media(kind: &str) -> js_sys::Promise;
+}
+
 const TVC_REFRESH_HZ: u32 = 50;
 const TVC_FRAME_DT: f64 = 1.0 / TVC_REFRESH_HZ as f64;
 
+#[cfg(not(target_arch = "wasm32"))]
 fn egui_key_to_js_code(key: egui::Key) -> Option<u32> {
     Some(match key {
         egui::Key::Backspace => 8,
@@ -117,17 +193,25 @@ pub struct EmuApp {
     audio: Option<NativeAudioSink>,
     audio_status: Option<String>,
     app_state_file: AppStateFile,
-    pub debugger: Option<crate::debugger::DebuggerInterface>,
+    pub debugger: Option<DebuggerType>,
+    pressed_keys: std::collections::HashSet<u32>,
+    #[cfg(target_arch = "wasm32")]
+    pub file_tx: std::sync::mpsc::Sender<PendingFile>,
+    #[cfg(target_arch = "wasm32")]
+    pub file_rx: std::sync::mpsc::Receiver<PendingFile>,
 }
 
 impl EmuApp {
-    pub fn new(mut emu: Emu, app_state_file: AppStateFile, debugger: Option<crate::debugger::DebuggerInterface>) -> Self {
+    pub fn new(mut emu: Emu, app_state_file: AppStateFile, debugger: Option<DebuggerType>) -> Self {
         let machine_types = MachineType::all_types();
         let selected_machine = Self::selected_machine_index(&machine_types, emu.machine_type);
         let (audio, audio_status) = match NativeAudioSink::new(emu.tvc.sound_sample_rate()) {
             Ok(sink) => (Some(sink), None),
             Err(err) => (None, Some(format!("Audio unavailable: {err}"))),
         };
+        #[cfg(target_arch = "wasm32")]
+        let (file_tx, file_rx) = std::sync::mpsc::channel();
+
         emu.recent_tapes = app_state_file.state.recent_tapes.clone();
         emu.recent_disks = app_state_file.state.recent_disks.clone();
         EmuApp {
@@ -149,6 +233,11 @@ impl EmuApp {
             audio_status,
             app_state_file,
             debugger,
+            pressed_keys: std::collections::HashSet::new(),
+            #[cfg(target_arch = "wasm32")]
+            file_tx,
+            #[cfg(target_arch = "wasm32")]
+            file_rx,
         }
     }
 
@@ -157,6 +246,14 @@ impl EmuApp {
             .iter()
             .position(|candidate| *candidate == machine_type)
             .unwrap_or(0)
+    }
+
+    pub fn set_audio_status(&mut self, status: String) {
+        self.audio_status = Some(status);
+    }
+
+    pub fn set_file_status(&mut self, status: String) {
+        self.file_status = Some(status);
     }
 
     fn sync_selection_from_emu(&mut self) {
@@ -183,6 +280,7 @@ impl EmuApp {
         self.emu.tvc.frame_complete = false;
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn handle_modifier(&mut self, new_shift: bool, new_ctrl: bool, new_alt: bool) {
         if new_shift != self.prev_shift {
             if new_shift {
@@ -210,91 +308,180 @@ impl EmuApp {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn save_screenshot(&self, path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
         self.emu.save_screenshot(path)
     }
 
     fn save_snapshot_dialog(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
-            .add_filter("compressed rtvc snapshot", &["zip"])
-            .add_filter("rtvc snapshot", &["rtvcsnap"])
-            .set_file_name("snapshot.rtvcsnap.zip")
-            .save_file()
+        #[cfg(target_arch = "wasm32")]
         {
-            match self.emu.save_snapshot_file(&path) {
-                Ok(()) => {
-                    self.file_status = Some(format!("Saved: {}", path.display()));
+            let snapshot = self.emu.save_snapshot();
+            match crate::emu::zip_snapshot(&snapshot) {
+                Ok(zipped) => {
+                    download_file("snapshot.rtvcsnap.zip", &zipped, "application/zip");
+                    self.file_status = Some("Snapshot download started".to_string());
                 }
                 Err(err) => {
-                    self.file_status = Some(format!("Save failed: {}", err));
+                    self.file_status = Some(format!("Snapshot zip failed: {err}"));
+                }
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("compressed rtvc snapshot", &["zip"])
+                .add_filter("rtvc snapshot", &["rtvcsnap"])
+                .set_file_name("snapshot.rtvcsnap.zip")
+                .save_file()
+            {
+                match self.emu.save_snapshot_file(&path) {
+                    Ok(()) => {
+                        self.file_status = Some(format!("Saved: {}", path.display()));
+                    }
+                    Err(err) => {
+                        self.file_status = Some(format!("Save failed: {}", err));
+                    }
                 }
             }
         }
     }
 
-    fn load_snapshot_dialog(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
-            .add_filter("rtvc snapshot", &["rtvcsnap", "zip"])
-            .pick_file()
+    fn load_snapshot_dialog(&mut self, _ctx: egui::Context) {
+        #[cfg(target_arch = "wasm32")]
         {
-            match self.emu.load_snapshot_file(&path) {
-                Ok(()) => {
-                    self.sync_selection_from_emu();
-                    self.file_status = Some(format!("Loaded: {}", path.display()));
+            let file_tx = self.file_tx.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let file = rfd::AsyncFileDialog::new()
+                    .add_filter("rtvc snapshot", &["rtvcsnap", "zip"])
+                    .pick_file()
+                    .await;
+                if let Some(file) = file {
+                    let name = file.file_name();
+                    let bytes = file.read().await;
+                    let _ = file_tx.send(PendingFile::Snapshot { name, bytes });
+                    _ctx.request_repaint();
                 }
-                Err(err) => {
-                    self.file_status = Some(format!("Load failed: {}", err));
+            });
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("rtvc snapshot", &["rtvcsnap", "zip"])
+                .pick_file()
+            {
+                match self.emu.load_snapshot_file(&path) {
+                    Ok(()) => {
+                        self.sync_selection_from_emu();
+                        self.file_status = Some(format!("Loaded: {}", path.display()));
+                    }
+                    Err(err) => {
+                        self.file_status = Some(format!("Load failed: {}", err));
+                    }
                 }
             }
         }
     }
 
-    fn load_tape_dialog(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
-            .add_filter("tape image", &["cas", "zip"])
-            .pick_file()
+    fn load_tape_dialog(&mut self, _ctx: egui::Context) {
+        #[cfg(target_arch = "wasm32")]
         {
-            match self.emu.play_tape_file_path(&path) {
-                Ok(()) => {
-                    self.save_app_state();
-                    self.file_status = Some(format!("Loaded tape: {}", path.display()));
+            let file_tx = self.file_tx.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let file = rfd::AsyncFileDialog::new()
+                    .add_filter("tape image", &["cas", "zip"])
+                    .pick_file()
+                    .await;
+                if let Some(file) = file {
+                    let name = file.file_name();
+                    let bytes = file.read().await;
+                    let _ = file_tx.send(PendingFile::Tape { name, bytes });
+                    _ctx.request_repaint();
                 }
-                Err(err) => {
-                    self.file_status = Some(format!("Tape load failed: {}", err));
+            });
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("tape image", &["cas", "zip"])
+                .pick_file()
+            {
+                match self.emu.play_tape_file_path(&path) {
+                    Ok(()) => {
+                        self.save_app_state();
+                        self.file_status = Some(format!("Loaded tape: {}", path.display()));
+                    }
+                    Err(err) => {
+                        self.file_status = Some(format!("Tape load failed: {}", err));
+                    }
                 }
             }
         }
     }
 
-    fn load_disk_dialog(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
-            .add_filter("disk image", &["dsk", "zip"])
-            .pick_file()
+    fn load_disk_dialog(&mut self, _ctx: egui::Context) {
+        #[cfg(target_arch = "wasm32")]
         {
-            match self.emu.insert_disk_file_path(&path) {
-                Ok(()) => {
-                    self.save_app_state();
-                    self.file_status = Some(format!("Loaded disk: {}", path.display()));
+            let file_tx = self.file_tx.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let file = rfd::AsyncFileDialog::new()
+                    .add_filter("disk image", &["dsk", "zip"])
+                    .pick_file()
+                    .await;
+                if let Some(file) = file {
+                    let name = file.file_name();
+                    let bytes = file.read().await;
+                    let _ = file_tx.send(PendingFile::Disk { name, bytes });
+                    _ctx.request_repaint();
                 }
-                Err(err) => {
-                    self.file_status = Some(format!("Disk load failed: {}", err));
+            });
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("disk image", &["dsk", "zip"])
+                .pick_file()
+            {
+                match self.emu.insert_disk_file_path(&path) {
+                    Ok(()) => {
+                        self.save_app_state();
+                        self.file_status = Some(format!("Loaded disk: {}", path.display()));
+                    }
+                    Err(err) => {
+                        self.file_status = Some(format!("Disk load failed: {}", err));
+                    }
                 }
             }
         }
     }
 
     fn save_screenshot_dialog(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
-            .add_filter("png image", &["png"])
-            .set_file_name("rtvc-screen.png")
-            .save_file()
+        #[cfg(target_arch = "wasm32")]
         {
-            match self.save_screenshot(&path) {
-                Ok(()) => {
-                    self.file_status = Some(format!("Saved: {}", path.display()));
+            match self.emu.get_screenshot_png() {
+                Ok(png) => {
+                    download_file("rtvc-screen.png", &png, "image/png");
+                    self.file_status = Some("Screenshot download started".to_string());
                 }
                 Err(err) => {
-                    self.file_status = Some(format!("Screenshot failed: {}", err));
+                    self.file_status = Some(format!("Screenshot failed: {err}"));
+                }
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("png image", &["png"])
+                .set_file_name("rtvc-screen.png")
+                .save_file()
+            {
+                match self.save_screenshot(&path) {
+                    Ok(()) => {
+                        self.file_status = Some(format!("Saved: {}", path.display()));
+                    }
+                    Err(err) => {
+                        self.file_status = Some(format!("Screenshot failed: {}", err));
+                    }
                 }
             }
         }
@@ -315,7 +502,7 @@ impl EmuApp {
     fn draw_file_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("File", |ui| {
             if ui.button("Load Snapshot...").clicked() {
-                self.load_snapshot_dialog();
+                self.load_snapshot_dialog(ui.ctx().clone());
                 ui.close_menu();
             }
             if ui.button("Save Snapshot...").clicked() {
@@ -324,11 +511,11 @@ impl EmuApp {
             }
             ui.separator();
             if ui.button("Load Tape...").clicked() {
-                self.load_tape_dialog();
+                self.load_tape_dialog(ui.ctx().clone());
                 ui.close_menu();
             }
             if ui.button("Load Disk...").clicked() {
-                self.load_disk_dialog();
+                self.load_disk_dialog(ui.ctx().clone());
                 ui.close_menu();
             }
             ui.separator();
@@ -369,7 +556,9 @@ impl EmuApp {
                 {
                     self.selected_machine = index;
                     let vid_model = self.emu.tvc.vid_model();
-                    self.emu.reload(machine_type);
+                    if let Err(err) = self.emu.reload(machine_type) {
+                        self.file_status = Some(err);
+                    }
                     self.emu.tvc.set_vid_model(vid_model);
                     self.save_app_state();
                     ui.close_menu();
@@ -401,27 +590,54 @@ impl EmuApp {
     fn draw_tape_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Tape", |ui| {
             if ui.button("Open Tape File...").clicked() {
-                self.load_tape_dialog();
+                self.load_tape_dialog(ui.ctx().clone());
                 ui.close_menu();
             }
 
-            if !self.emu.recent_tapes.is_empty() {
-                ui.separator();
-                ui.label("Recent Tapes:");
-                for path_str in self.emu.recent_tapes.clone() {
-                    let display_name = std::path::Path::new(&path_str)
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| path_str.clone());
-
-                    if ui.button(display_name).clicked() {
-                        let path = std::path::Path::new(&path_str);
-                        if let Err(err) = self.emu.play_tape_file_path(path) {
-                            self.file_status = Some(format!("Tape load failed: {}", err));
-                        } else {
-                            self.save_app_state();
+            #[cfg(target_arch = "wasm32")]
+            {
+                if !self.emu.recent_tapes_wasm.is_empty() {
+                    ui.separator();
+                    ui.label("Recent Tapes:");
+                    for recent in self.emu.recent_tapes_wasm.clone() {
+                        if ui.button(&recent.name).clicked() {
+                            if let Err(err) = self.emu.play_tape_bytes(&recent.name, &recent.bytes) {
+                                self.file_status = Some(format!("Tape load failed: {}", err));
+                            } else {
+                                self.persist_wasm_recent("tape", recent, ui.ctx().clone());
+                            }
+                            ui.close_menu();
                         }
+                    }
+                }
+                if !self.emu.recent_tapes_wasm.is_empty() {
+                    if ui.button("Clear Recent Tapes").clicked() {
+                        self.clear_wasm_recents("tape", ui.ctx().clone());
                         ui.close_menu();
+                    }
+                }
+            }
+
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                if !self.emu.recent_tapes.is_empty() {
+                    ui.separator();
+                    ui.label("Recent Tapes:");
+                    for path_str in self.emu.recent_tapes.clone() {
+                        let display_name = std::path::Path::new(&path_str)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| path_str.clone());
+
+                        if ui.button(display_name).clicked() {
+                            let path = std::path::Path::new(&path_str);
+                            if let Err(err) = self.emu.play_tape_file_path(path) {
+                                self.file_status = Some(format!("Tape load failed: {}", err));
+                            } else {
+                                self.save_app_state();
+                            }
+                            ui.close_menu();
+                        }
                     }
                 }
             }
@@ -476,27 +692,54 @@ impl EmuApp {
     fn draw_disk_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Disk", |ui| {
             if ui.button("Open Disk File...").clicked() {
-                self.load_disk_dialog();
+                self.load_disk_dialog(ui.ctx().clone());
                 ui.close_menu();
             }
 
-            if !self.emu.recent_disks.is_empty() {
-                ui.separator();
-                ui.label("Recent Disks:");
-                for path_str in self.emu.recent_disks.clone() {
-                    let display_name = std::path::Path::new(&path_str)
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| path_str.clone());
-
-                    if ui.button(display_name).clicked() {
-                        let path = std::path::Path::new(&path_str);
-                        if let Err(err) = self.emu.insert_disk_file_path(path) {
-                            self.file_status = Some(format!("Disk load failed: {}", err));
-                        } else {
-                            self.save_app_state();
+            #[cfg(target_arch = "wasm32")]
+            {
+                if !self.emu.recent_disks_wasm.is_empty() {
+                    ui.separator();
+                    ui.label("Recent Disks:");
+                    for recent in self.emu.recent_disks_wasm.clone() {
+                        if ui.button(&recent.name).clicked() {
+                            if let Err(err) = self.emu.insert_disk_bytes(&recent.name, &recent.bytes) {
+                                self.file_status = Some(format!("Disk load failed: {}", err));
+                            } else {
+                                self.persist_wasm_recent("disk", recent, ui.ctx().clone());
+                            }
+                            ui.close_menu();
                         }
+                    }
+                }
+                if !self.emu.recent_disks_wasm.is_empty() {
+                    if ui.button("Clear Recent Disks").clicked() {
+                        self.clear_wasm_recents("disk", ui.ctx().clone());
                         ui.close_menu();
+                    }
+                }
+            }
+
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                if !self.emu.recent_disks.is_empty() {
+                    ui.separator();
+                    ui.label("Recent Disks:");
+                    for path_str in self.emu.recent_disks.clone() {
+                        let display_name = std::path::Path::new(&path_str)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| path_str.clone());
+
+                        if ui.button(display_name).clicked() {
+                            let path = std::path::Path::new(&path_str);
+                            if let Err(err) = self.emu.insert_disk_file_path(path) {
+                                self.file_status = Some(format!("Disk load failed: {}", err));
+                            } else {
+                                self.save_app_state();
+                            }
+                            ui.close_menu();
+                        }
                     }
                 }
             }
@@ -619,6 +862,118 @@ impl EmuApp {
             self.file_status = Some(format!("Config save failed: {err}"));
         }
     }
+
+    #[cfg(target_arch = "wasm32")]
+    fn persist_wasm_recent(
+        &self,
+        kind: &'static str,
+        recent: crate::emu::WasmRecentFile,
+        ctx: egui::Context,
+    ) {
+        let tx = self.file_tx.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let bytes = js_sys::Uint8Array::new_with_length(recent.bytes.len() as u32);
+            bytes.copy_from(&recent.bytes);
+            let result = wasm_bindgen_futures::JsFuture::from(web_store_recent_media(
+                kind,
+                &recent.name,
+                &bytes,
+            ))
+            .await;
+            let error = result.err().map(js_value_string);
+            let _ = tx.send(PendingFile::StorageResult { error });
+            ctx.request_repaint();
+        });
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn clear_wasm_recents(&self, kind: &'static str, ctx: egui::Context) {
+        let tx = self.file_tx.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let result =
+                wasm_bindgen_futures::JsFuture::from(web_clear_recent_media(kind)).await;
+            let event = match result {
+                Ok(_) => PendingFile::RecentCleared {
+                    kind: kind.to_string(),
+                },
+                Err(err) => PendingFile::StorageResult {
+                    error: Some(js_value_string(err)),
+                },
+            };
+            let _ = tx.send(event);
+            ctx.request_repaint();
+        });
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn handle_wasm_keyboard_events(&mut self) {
+        for event in web_take_keyboard_events().iter() {
+            let event_type = js_sys::Reflect::get(
+                &event,
+                &wasm_bindgen::JsValue::from_str("type"),
+            )
+            .ok()
+            .and_then(|value| value.as_string())
+            .unwrap_or_default();
+            match event_type.as_str() {
+                "down" => {
+                    let code = wasm_event_code(&event);
+                    let first_press = code == 0 || self.pressed_keys.insert(code);
+                    if code != 0 && first_press {
+                        self.emu.tvc.key_down(code);
+                    }
+                    if first_press {
+                        for ch in wasm_event_text(&event).chars() {
+                            self.emu.tvc.key_press(ch);
+                        }
+                    }
+                }
+                "up" => {
+                    let code = wasm_event_code(&event);
+                    if code != 0 {
+                        self.pressed_keys.remove(&code);
+                        self.emu.tvc.key_up(code);
+                    }
+                }
+                "text" => {
+                    for ch in wasm_event_text(&event).chars() {
+                        self.emu.tvc.key_press(ch);
+                    }
+                }
+                "blur" => {
+                    self.pressed_keys.clear();
+                    self.emu.tvc.focus_change(false);
+                    self.prev_shift = false;
+                    self.prev_ctrl = false;
+                    self.prev_alt = false;
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn wasm_event_code(event: &wasm_bindgen::JsValue) -> u32 {
+    js_sys::Reflect::get(event, &wasm_bindgen::JsValue::from_str("code"))
+        .ok()
+        .and_then(|value| value.as_f64())
+        .unwrap_or(0.0) as u32
+}
+
+#[cfg(target_arch = "wasm32")]
+fn wasm_event_text(event: &wasm_bindgen::JsValue) -> String {
+    js_sys::Reflect::get(event, &wasm_bindgen::JsValue::from_str("text"))
+        .ok()
+        .and_then(|value| value.as_string())
+        .unwrap_or_default()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn js_value_string(value: wasm_bindgen::JsValue) -> String {
+    value
+        .as_string()
+        .unwrap_or_else(|| "browser storage operation failed".to_string())
 }
 
 fn draw_tape_led(ui: &mut egui::Ui, active: bool, level: f32) {
@@ -642,6 +997,30 @@ fn draw_tape_led(ui: &mut egui::Ui, active: bool, level: f32) {
 
 impl eframe::App for EmuApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let mut user_interacted = false;
+        ctx.input(|i| {
+            if !i.events.is_empty() {
+                user_interacted = true;
+            }
+        });
+        if user_interacted {
+            if self.audio.is_none() {
+                match NativeAudioSink::new(self.emu.tvc.sound_sample_rate()) {
+                    Ok(sink) => {
+                        self.audio = Some(sink);
+                        self.audio_status = None;
+                    }
+                    Err(err) => {
+                        self.audio_status = Some(format!("Audio unavailable: {err}"));
+                    }
+                }
+            }
+            if let Some(ref audio) = self.audio {
+                let _ = audio.resume();
+            }
+        }
+
+        #[cfg(all(feature = "native", not(target_arch = "wasm32")))]
         if let Some(ref dbg) = self.debugger {
             dbg.set_context(ctx.clone());
             while let Ok(msg) = dbg.cmd_rx.try_recv() {
@@ -650,6 +1029,90 @@ impl eframe::App for EmuApp {
             }
         }
 
+        #[cfg(target_arch = "wasm32")]
+        while let Ok(pending) = self.file_rx.try_recv() {
+            match pending {
+                PendingFile::Tape { name, bytes } => {
+                    match self.emu.play_tape_bytes(&name, &bytes) {
+                        Ok(()) => {
+                            if let Some(recent) = self.emu.recent_tapes_wasm.first().cloned() {
+                                self.persist_wasm_recent("tape", recent, ctx.clone());
+                            }
+                            self.file_status = Some(format!("Loaded tape: {name}"));
+                        }
+                        Err(err) => {
+                            self.file_status = Some(format!("Tape load failed: {err}"));
+                        }
+                    }
+                }
+                PendingFile::Disk { name, bytes } => {
+                    match self.emu.insert_disk_bytes(&name, &bytes) {
+                        Ok(()) => {
+                            if let Some(recent) = self.emu.recent_disks_wasm.first().cloned() {
+                                self.persist_wasm_recent("disk", recent, ctx.clone());
+                            }
+                            self.file_status = Some(format!("Loaded disk: {name}"));
+                        }
+                        Err(err) => {
+                            self.file_status = Some(format!("Disk load failed: {err}"));
+                        }
+                    }
+                }
+                PendingFile::Snapshot { name, bytes } => {
+                    let mut data = bytes;
+                    if crate::emu::is_zip_data(&data) {
+                        match crate::emu::unzip_snapshot(&data) {
+                            Ok(unzipped) => data = unzipped,
+                            Err(err) => {
+                                self.file_status = Some(format!("Snapshot unzip failed: {err}"));
+                                continue;
+                            }
+                        }
+                    }
+                    match self.emu.load_snapshot(&data) {
+                        Ok(()) => {
+                            self.sync_selection_from_emu();
+                            self.file_status = Some(format!("Loaded snapshot: {name}"));
+                        }
+                        Err(err) => {
+                            self.file_status = Some(format!("Snapshot load failed: {err}"));
+                        }
+                    }
+                }
+                PendingFile::StorageResult { error } => {
+                    if let Some(err) = error {
+                        self.file_status = Some(format!("Browser storage failed: {err}"));
+                    }
+                }
+                PendingFile::RecentCleared { kind } => match kind.as_str() {
+                    "tape" => {
+                        self.emu.recent_tapes_wasm.clear();
+                        self.file_status = Some("Recent tapes cleared".to_string());
+                    }
+                    "disk" => {
+                        self.emu.recent_disks_wasm.clear();
+                        self.file_status = Some("Recent disks cleared".to_string());
+                    }
+                    _ => {}
+                },
+            }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        self.handle_wasm_keyboard_events();
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let has_focus = ctx.input(|i| i.focused);
+        #[cfg(not(target_arch = "wasm32"))]
+        if !has_focus && !self.pressed_keys.is_empty() {
+            self.pressed_keys.clear();
+            self.emu.tvc.focus_change(false);
+            self.prev_shift = false;
+            self.prev_ctrl = false;
+            self.prev_alt = false;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
         ctx.input(|i| {
             let modifiers = i.modifiers;
             self.handle_modifier(modifiers.shift, modifiers.ctrl, modifiers.alt);
@@ -657,18 +1120,27 @@ impl eframe::App for EmuApp {
             for event in &i.events {
                 match event {
                     egui::Event::Key {
-                        key, pressed: true, ..
+                        key,
+                        physical_key,
+                        pressed: true,
+                        ..
                     } => {
-                        if let Some(code) = egui_key_to_js_code(*key) {
-                            self.emu.tvc.key_down(code);
+                        let key = physical_key.unwrap_or(*key);
+                        if let Some(code) = egui_key_to_js_code(key) {
+                            if self.pressed_keys.insert(code) {
+                                self.emu.tvc.key_down(code);
+                            }
                         }
                     }
                     egui::Event::Key {
                         key,
+                        physical_key,
                         pressed: false,
                         ..
                     } => {
-                        if let Some(code) = egui_key_to_js_code(*key) {
+                        let key = physical_key.unwrap_or(*key);
+                        if let Some(code) = egui_key_to_js_code(key) {
+                            self.pressed_keys.remove(&code);
                             self.emu.tvc.key_up(code);
                         }
                     }
@@ -693,6 +1165,7 @@ impl eframe::App for EmuApp {
             let hit_breakpoint = self.emu.tick();
             if hit_breakpoint {
                 self.emu.running = false;
+                #[cfg(all(feature = "native", not(target_arch = "wasm32")))]
                 if let Some(ref dbg) = self.debugger {
                     let pc = self.emu.tvc.z80.state.r16[11];
                     let _ = dbg.event_tx.send(crate::debugger::DebuggerEvent::BreakpointHit { pc });

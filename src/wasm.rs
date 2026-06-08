@@ -1,4 +1,6 @@
 use wasm_bindgen::prelude::*;
+#[cfg(feature = "wasm-full")]
+use wasm_bindgen::JsCast;
 
 use crate::tvc::Tvc;
 use crate::vid::VidModel;
@@ -140,4 +142,131 @@ impl WasmTvc {
 
 fn default_web_vid_model() -> VidModel {
     VidModel::FastFrame
+}
+
+#[cfg(feature = "wasm-full")]
+#[wasm_bindgen]
+pub struct WebHandle {
+    runner: eframe::WebRunner,
+}
+
+#[cfg(feature = "wasm-full")]
+#[wasm_bindgen]
+impl WebHandle {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            runner: eframe::WebRunner::new(),
+        }
+    }
+
+    #[wasm_bindgen(js_name = start)]
+    pub fn start(&self, canvas_id: &str) -> Result<(), JsValue> {
+        use crate::emu::Emu;
+
+        let document = web_sys::window()
+            .ok_or_else(|| JsValue::from_str("no window"))?
+            .document()
+            .ok_or_else(|| JsValue::from_str("no document"))?;
+        let canvas = document
+            .get_element_by_id(canvas_id)
+            .ok_or_else(|| JsValue::from_str("canvas not found"))?
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .map_err(|_| JsValue::from_str("element is not a canvas"))?;
+
+        let app_state_file = crate::app_state::AppStateFile::load();
+        let machine_type = app_state_file
+            .state
+            .machine_type
+            .unwrap_or_else(|| crate::emu::MachineType::all_types()[0]);
+        let mut emu = Emu::new(machine_type);
+        if let Some(vid_model) = app_state_file.state.vid_model {
+            emu.tvc.set_vid_model(vid_model);
+        }
+        emu.load_roms();
+        let audio_error = startup_audio_error();
+        let storage_error = startup_storage_error();
+        let (recent_tapes, recent_disks) = load_recent_media()?;
+        emu.recent_tapes_wasm = recent_tapes;
+        emu.recent_disks_wasm = recent_disks;
+
+        let mut app = crate::ui::EmuApp::new(emu, app_state_file, None);
+        if let Some(error) = audio_error {
+            app.set_audio_status(format!("Audio unavailable: {error}"));
+        }
+        if let Some(error) = storage_error {
+            app.set_file_status(format!("Browser storage unavailable: {error}"));
+        }
+
+        let runner = self.runner.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Err(err) = runner
+                .start(
+                    canvas,
+                    eframe::WebOptions::default(),
+                    Box::new(|_cc| Ok(Box::new(app))),
+                )
+                .await
+            {
+                web_sys::console::error_1(&err);
+            }
+        });
+        Ok(())
+    }
+}
+
+#[cfg(feature = "wasm-full")]
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = globalThis, js_name = rtvcGetStartupAudioError)]
+    fn web_startup_audio_error() -> JsValue;
+
+    #[wasm_bindgen(js_namespace = globalThis, js_name = rtvcGetStartupStorageError)]
+    fn web_startup_storage_error() -> JsValue;
+
+    #[wasm_bindgen(js_namespace = globalThis, js_name = rtvcGetStartupRecentMedia)]
+    fn web_startup_recent_media() -> JsValue;
+}
+
+#[cfg(feature = "wasm-full")]
+fn startup_audio_error() -> Option<String> {
+    web_startup_audio_error().as_string()
+}
+
+#[cfg(feature = "wasm-full")]
+fn startup_storage_error() -> Option<String> {
+    web_startup_storage_error().as_string()
+}
+
+#[cfg(feature = "wasm-full")]
+fn load_recent_media(
+) -> Result<(Vec<crate::emu::WasmRecentFile>, Vec<crate::emu::WasmRecentFile>), JsValue> {
+    let records = web_startup_recent_media()
+        .dyn_into::<js_sys::Array>()
+        .map_err(|_| JsValue::from_str("recent media result is not an array"))?;
+    let mut tapes = Vec::new();
+    let mut disks = Vec::new();
+
+    for record in records.iter() {
+        let kind = js_sys::Reflect::get(&record, &JsValue::from_str("kind"))?
+            .as_string()
+            .unwrap_or_default();
+        let name = js_sys::Reflect::get(&record, &JsValue::from_str("name"))?
+            .as_string()
+            .unwrap_or_default();
+        let bytes = js_sys::Uint8Array::new(&js_sys::Reflect::get(
+            &record,
+            &JsValue::from_str("bytes"),
+        )?)
+        .to_vec();
+        let recent = crate::emu::WasmRecentFile { name, bytes };
+        match kind.as_str() {
+            "tape" => tapes.push(recent),
+            "disk" => disks.push(recent),
+            _ => {}
+        }
+    }
+    tapes.truncate(5);
+    disks.truncate(5);
+    Ok((tapes, disks))
 }

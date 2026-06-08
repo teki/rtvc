@@ -226,6 +226,12 @@ struct EmuSnapshotState {
 }
 
 #[derive(Clone)]
+pub struct WasmRecentFile {
+    pub name: String,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Clone)]
 pub struct ProgEntry {
     pub name: String,
     pub file_name: String,
@@ -246,6 +252,16 @@ pub struct Emu {
     pub loaded_disk_file_name: Option<String>,
     pub recent_tapes: Vec<String>,
     pub recent_disks: Vec<String>,
+    #[cfg(target_arch = "wasm32")]
+    pub recent_tapes_wasm: Vec<WasmRecentFile>,
+    #[cfg(target_arch = "wasm32")]
+    pub recent_disks_wasm: Vec<WasmRecentFile>,
+    #[cfg(target_arch = "wasm32")]
+    loaded_tape_wasm: Option<WasmRecentFile>,
+    #[cfg(target_arch = "wasm32")]
+    loaded_disk_wasm: Option<WasmRecentFile>,
+    #[cfg(target_arch = "wasm32")]
+    loaded_tape_was_injected: bool,
 }
 
 impl Emu {
@@ -263,6 +279,16 @@ impl Emu {
             loaded_disk_file_name: None,
             recent_tapes: Vec::new(),
             recent_disks: Vec::new(),
+            #[cfg(target_arch = "wasm32")]
+            recent_tapes_wasm: Vec::new(),
+            #[cfg(target_arch = "wasm32")]
+            recent_disks_wasm: Vec::new(),
+            #[cfg(target_arch = "wasm32")]
+            loaded_tape_wasm: None,
+            #[cfg(target_arch = "wasm32")]
+            loaded_disk_wasm: None,
+            #[cfg(target_arch = "wasm32")]
+            loaded_tape_was_injected: false,
         };
         emu.scan_progs();
         emu
@@ -312,6 +338,12 @@ impl Emu {
         self.loaded_disk = None;
         self.loaded_tape_file_name = None;
         self.loaded_disk_file_name = None;
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.loaded_tape_wasm = None;
+            self.loaded_disk_wasm = None;
+            self.loaded_tape_was_injected = false;
+        }
         if let Some(file_name) = snapshot_state.selected_prog_file_name {
             self.select_prog_by_file_name(&file_name);
             self.restore_accessible_selected_media();
@@ -360,30 +392,89 @@ impl Emu {
         self.running = !self.running;
     }
 
-    pub fn reload(&mut self, machine_type: MachineType) {
+    pub fn reload(&mut self, machine_type: MachineType) -> Result<(), String> {
+        #[cfg(target_arch = "wasm32")]
+        let loaded_disk = self.loaded_disk_wasm.clone();
+        #[cfg(target_arch = "wasm32")]
+        let loaded_tape = self.loaded_tape_wasm.clone();
+        #[cfg(target_arch = "wasm32")]
+        let tape_was_injected = self.loaded_tape_was_injected;
+
         self.machine_type = machine_type;
         self.tvc = Tvc::new(machine_type.is_plus);
         self.roms_loaded = false;
         self.load_roms();
 
-        // Re-load the disk if there was one loaded
-        if let Some(file_name) = self.loaded_disk_file_name.clone() {
-            self.insert_disk_by_file_name(&file_name);
+        #[cfg(target_arch = "wasm32")]
+        {
+            let mut errors = Vec::new();
+            if let Some(media) = loaded_disk {
+                if let Err(err) = self.insert_disk_bytes(&media.name, &media.bytes) {
+                    self.loaded_disk = None;
+                    self.loaded_disk_file_name = None;
+                    self.loaded_disk_wasm = None;
+                    errors.push(format!("disk restore failed: {err}"));
+                }
+            }
+            if let Some(media) = loaded_tape {
+                let result = if tape_was_injected {
+                    self.inject_tape_bytes(&media.name, &media.bytes)
+                } else {
+                    self.play_tape_bytes(&media.name, &media.bytes)
+                };
+                if let Err(err) = result {
+                    self.loaded_tape = None;
+                    self.loaded_tape_file_name = None;
+                    self.loaded_tape_wasm = None;
+                    self.loaded_tape_was_injected = false;
+                    errors.push(format!("tape restore failed: {err}"));
+                }
+            }
+            if errors.is_empty() {
+                Ok(())
+            } else {
+                Err(errors.join("; "))
+            }
         }
 
-        // Re-load the tape if there was one loaded/injected
-        if let Some(file_name) = self.loaded_tape_file_name.clone() {
-            let was_injected = self.loaded_tape.as_ref().map(|s| s.contains("(Injected)")).unwrap_or(false);
-            if was_injected {
-                self.inject_tape_by_file_name(&file_name);
-            } else {
-                let path = Path::new(&file_name);
-                if path.exists() && path.is_file() {
-                    let _ = self.play_tape_file_path(path);
-                } else {
-                    let path = data_dir("progs").join(&file_name);
-                    let _ = self.play_tape_file_path(&path);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut errors = Vec::new();
+            if let Some(file_name) = self.loaded_disk_file_name.clone() {
+                if !self.insert_disk_by_file_name(&file_name) {
+                    self.loaded_disk = None;
+                    self.loaded_disk_file_name = None;
+                    errors.push(format!("disk restore failed: {file_name}"));
                 }
+            }
+
+            if let Some(file_name) = self.loaded_tape_file_name.clone() {
+                let was_injected = self
+                    .loaded_tape
+                    .as_ref()
+                    .map(|s| s.contains("(Injected)"))
+                    .unwrap_or(false);
+                let restored = if was_injected {
+                    self.inject_tape_by_file_name(&file_name)
+                } else {
+                    let path = Path::new(&file_name);
+                    if path.exists() && path.is_file() {
+                        self.play_tape_file_path(path).is_ok()
+                    } else {
+                        let path = data_dir("progs").join(&file_name);
+                        self.play_tape_file_path(&path).is_ok()
+                    }
+                };
+                if !restored {
+                    self.loaded_tape = None;
+                    self.loaded_tape_file_name = None;
+                    errors.push(format!("tape restore failed: {file_name}"));
+                }
+            }
+            if errors.is_empty() {
+                Ok(())
+            } else {
+                Err(errors.join("; "))
             }
         }
     }
@@ -411,99 +502,128 @@ impl Emu {
     }
 
     pub fn load_roms(&mut self) {
-        let roms_dir = data_dir("roms");
-        if !roms_dir.exists() && roms_dir == Path::new("roms") {
-            std::fs::create_dir_all(&roms_dir).ok();
-        }
-        let mut any_loaded = false;
-
-        for name in self.machine_type.rom_files() {
-            match std::fs::read(roms_dir.join(name)) {
-                Ok(data) => {
-                    self.tvc.add_rom(name, &data);
-                    any_loaded = true;
+        #[cfg(target_arch = "wasm32")]
+        {
+            let roms: &[(&str, &[u8])] = &[
+                ("TVC12_D3.64K", include_bytes!("../roms/TVC12_D3.64K")),
+                ("TVC12_D4.64K", include_bytes!("../roms/TVC12_D4.64K")),
+                ("TVC12_D7.64K", include_bytes!("../roms/TVC12_D7.64K")),
+                ("TVC22_D4.64K", include_bytes!("../roms/TVC22_D4.64K")),
+                ("TVC22_D6.64K", include_bytes!("../roms/TVC22_D6.64K")),
+                ("TVC22_D7.64K", include_bytes!("../roms/TVC22_D7.64K")),
+                ("D_TVCDOS.128", include_bytes!("../roms/D_TVCDOS.128")),
+            ];
+            for name in self.machine_type.rom_files() {
+                if let Some((_, data)) = roms.iter().find(|(n, _)| *n == name) {
+                    self.tvc.add_rom(name, data);
                 }
-                Err(_) => {}
             }
-        }
-
-        if any_loaded {
             self.roms_loaded = true;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let roms_dir = data_dir("roms");
+            if !roms_dir.exists() && roms_dir == Path::new("roms") {
+                std::fs::create_dir_all(&roms_dir).ok();
+            }
+            let mut any_loaded = false;
+
+            for name in self.machine_type.rom_files() {
+                match std::fs::read(roms_dir.join(name)) {
+                    Ok(data) => {
+                        self.tvc.add_rom(name, &data);
+                        any_loaded = true;
+                    }
+                    Err(_) => {}
+                }
+            }
+
+            if any_loaded {
+                self.roms_loaded = true;
+            }
         }
     }
 
     pub fn scan_progs(&mut self) {
-        self.progs.clear();
-        let dir = data_dir("progs");
-        if !dir.exists() {
-            return;
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.progs.clear();
+            self.selected_prog = 0;
         }
-        let mut entries: Vec<_> = match std::fs::read_dir(&dir) {
-            Ok(rd) => rd
-                .filter_map(|e| e.ok())
-                .filter(|e| {
-                    let path = e.path();
-                    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-                    ext.eq_ignore_ascii_case("zip")
-                        || ext.eq_ignore_ascii_case("cas")
-                        || ext.eq_ignore_ascii_case("dsk")
-                })
-                .collect(),
-            Err(_) => return,
-        };
-        entries.sort_by_key(|e| e.file_name());
-        for entry in entries {
-            let file_name = entry.file_name().to_string_lossy().to_string();
-            let name = if file_name.to_lowercase().ends_with(".zip") {
-                file_name
-                    .strip_suffix(".zip")
-                    .unwrap_or(&file_name)
-                    .to_string()
-            } else {
-                file_name
-                    .strip_suffix(".cas")
-                    .or_else(|| file_name.strip_suffix(".dsk"))
-                    .unwrap_or(&file_name)
-                    .to_string()
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.progs.clear();
+            let dir = data_dir("progs");
+            if !dir.exists() {
+                return;
+            }
+            let mut entries: Vec<_> = match std::fs::read_dir(&dir) {
+                Ok(rd) => rd
+                    .filter_map(|e| e.ok())
+                    .filter(|e| {
+                        let path = e.path();
+                        let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+                        ext.eq_ignore_ascii_case("zip")
+                            || ext.eq_ignore_ascii_case("cas")
+                            || ext.eq_ignore_ascii_case("dsk")
+                    })
+                    .collect(),
+                Err(_) => return,
             };
+            entries.sort_by_key(|e| e.file_name());
+            for entry in entries {
+                let file_name = entry.file_name().to_string_lossy().to_string();
+                let name = if file_name.to_lowercase().ends_with(".zip") {
+                    file_name
+                        .strip_suffix(".zip")
+                        .unwrap_or(&file_name)
+                        .to_string()
+                } else {
+                    file_name
+                        .strip_suffix(".cas")
+                        .or_else(|| file_name.strip_suffix(".dsk"))
+                        .unwrap_or(&file_name)
+                        .to_string()
+                };
 
-            let path = dir.join(&file_name);
-            let mut is_cas = false;
-            let mut is_disk = false;
-            if file_name.to_lowercase().ends_with(".cas") {
-                is_cas = true;
-            } else if file_name.to_lowercase().ends_with(".dsk") {
-                is_disk = true;
-            } else if file_name.to_lowercase().ends_with(".zip") {
-                if let Ok(data) = std::fs::read(&path) {
-                    let reader = std::io::Cursor::new(data);
-                    if let Ok(mut archive) = zip::ZipArchive::new(reader) {
-                        for i in 0..archive.len() {
-                            if let Ok(file) = archive.by_index(i) {
-                                let entry_name = file.name().to_lowercase();
-                                if entry_name.ends_with(".cas") {
-                                    is_cas = true;
-                                } else if entry_name.ends_with(".dsk") {
-                                    is_disk = true;
-                                }
-                                if is_cas && is_disk {
-                                    break;
+                let path = dir.join(&file_name);
+                let mut is_cas = false;
+                let mut is_disk = false;
+                if file_name.to_lowercase().ends_with(".cas") {
+                    is_cas = true;
+                } else if file_name.to_lowercase().ends_with(".dsk") {
+                    is_disk = true;
+                } else if file_name.to_lowercase().ends_with(".zip") {
+                    if let Ok(data) = std::fs::read(&path) {
+                        let reader = std::io::Cursor::new(data);
+                        if let Ok(mut archive) = zip::ZipArchive::new(reader) {
+                            for i in 0..archive.len() {
+                                if let Ok(file) = archive.by_index(i) {
+                                    let entry_name = file.name().to_lowercase();
+                                    if entry_name.ends_with(".cas") {
+                                        is_cas = true;
+                                    } else if entry_name.ends_with(".dsk") {
+                                        is_disk = true;
+                                    }
+                                    if is_cas && is_disk {
+                                        break;
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            self.progs.push(ProgEntry {
-                name,
-                file_name,
-                is_cas,
-                is_disk,
-            });
-        }
-        if self.selected_prog >= self.progs.len() {
-            self.selected_prog = 0;
+                self.progs.push(ProgEntry {
+                    name,
+                    file_name,
+                    is_cas,
+                    is_disk,
+                });
+            }
+            if self.selected_prog >= self.progs.len() {
+                self.selected_prog = 0;
+            }
         }
     }
 
@@ -649,32 +769,111 @@ impl Emu {
         self.recent_disks.truncate(5);
     }
 
-    pub fn save_screenshot(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn get_screenshot_png(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         const SRC_W: usize = 608;
         const SRC_H: usize = 288;
         const OUT_W: usize = 768;
         const OUT_H: usize = 576;
 
-        let file = std::fs::File::create(path)?;
-        let writer = std::io::BufWriter::new(file);
-        let mut encoder = png::Encoder::new(writer, OUT_W as u32, OUT_H as u32);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut png_writer = encoder.write_header()?;
+        let mut buf = Vec::new();
+        {
+            let writer = std::io::Cursor::new(&mut buf);
+            let mut encoder = png::Encoder::new(writer, OUT_W as u32, OUT_H as u32);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut png_writer = encoder.write_header()?;
 
-        let mut pixels = vec![0; OUT_W * OUT_H * 4];
-        for y in 0..OUT_H {
-            let src_y = y * SRC_H / OUT_H;
-            for x in 0..OUT_W {
-                let src_x = x * SRC_W / OUT_W;
-                let rgba = self.tvc.framebuffer[src_y * SRC_W + src_x].to_ne_bytes();
-                let offset = (y * OUT_W + x) * 4;
-                pixels[offset..offset + 4].copy_from_slice(&rgba);
+            let mut pixels = vec![0; OUT_W * OUT_H * 4];
+            for y in 0..OUT_H {
+                let src_y = y * SRC_H / OUT_H;
+                for x in 0..OUT_W {
+                    let src_x = x * SRC_W / OUT_W;
+                    let rgba = self.tvc.framebuffer[src_y * SRC_W + src_x].to_ne_bytes();
+                    let offset = (y * OUT_W + x) * 4;
+                    pixels[offset..offset + 4].copy_from_slice(&rgba);
+                }
             }
-        }
 
-        png_writer.write_image_data(&pixels)?;
+            png_writer.write_image_data(&pixels)?;
+        }
+        Ok(buf)
+    }
+
+    pub fn save_screenshot(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        let png = self.get_screenshot_png()?;
+        std::fs::write(path, png)?;
         Ok(())
+    }
+
+    pub fn play_tape_bytes(&mut self, name: &str, bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+        let (display_name, buf) = unpack_cas_bytes(name, bytes)?;
+        let generator = TapeBitstreamGenerator::new(&buf, &display_name)?;
+        self.tvc.bus.play_tape(generator);
+        self.loaded_tape = Some(display_name);
+        self.loaded_tape_file_name = Some(name.to_string());
+        #[cfg(target_arch = "wasm32")]
+        {
+            let media = WasmRecentFile {
+                name: name.to_string(),
+                bytes: bytes.to_vec(),
+            };
+            self.loaded_tape_wasm = Some(media.clone());
+            self.loaded_tape_was_injected = false;
+            self.add_recent_tape_wasm(media.name, media.bytes);
+        }
+        Ok(())
+    }
+
+    pub fn inject_tape_bytes(&mut self, name: &str, bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+        let (display_name, buf) = unpack_cas_bytes(name, bytes)?;
+        if self.tvc.load_cas(&buf) {
+            self.loaded_tape = Some(format!("{} (Injected)", display_name));
+            self.loaded_tape_file_name = Some(name.to_string());
+            #[cfg(target_arch = "wasm32")]
+            {
+                let media = WasmRecentFile {
+                    name: name.to_string(),
+                    bytes: bytes.to_vec(),
+                };
+                self.loaded_tape_wasm = Some(media.clone());
+                self.loaded_tape_was_injected = true;
+                self.add_recent_tape_wasm(media.name, media.bytes);
+            }
+            Ok(())
+        } else {
+            Err("Failed to inject CAS data into memory".into())
+        }
+    }
+
+    pub fn insert_disk_bytes(&mut self, name: &str, bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+        let (display_name, buf) = unpack_dsk_bytes(name, bytes)?;
+        self.tvc.load_disk(&display_name, &buf);
+        self.loaded_disk = Some(display_name);
+        self.loaded_disk_file_name = Some(name.to_string());
+        #[cfg(target_arch = "wasm32")]
+        {
+            let media = WasmRecentFile {
+                name: name.to_string(),
+                bytes: bytes.to_vec(),
+            };
+            self.loaded_disk_wasm = Some(media.clone());
+            self.add_recent_disk_wasm(media.name, media.bytes);
+        }
+        Ok(())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn add_recent_tape_wasm(&mut self, name: String, bytes: Vec<u8>) {
+        self.recent_tapes_wasm.retain(|x| x.name != name);
+        self.recent_tapes_wasm.insert(0, WasmRecentFile { name, bytes });
+        self.recent_tapes_wasm.truncate(5);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn add_recent_disk_wasm(&mut self, name: String, bytes: Vec<u8>) {
+        self.recent_disks_wasm.retain(|x| x.name != name);
+        self.recent_disks_wasm.insert(0, WasmRecentFile { name, bytes });
+        self.recent_disks_wasm.truncate(5);
     }
 
     pub fn read_raw_bank(&self, bank: &str, addr: usize, len: usize) -> Option<Vec<u8>> {
@@ -702,11 +901,11 @@ fn is_zip_path(path: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
-fn is_zip_data(data: &[u8]) -> bool {
+pub fn is_zip_data(data: &[u8]) -> bool {
     data.starts_with(b"PK\x03\x04")
 }
 
-fn zip_snapshot(snapshot: &[u8]) -> std::io::Result<Vec<u8>> {
+pub fn zip_snapshot(snapshot: &[u8]) -> std::io::Result<Vec<u8>> {
     let cursor = std::io::Cursor::new(Vec::new());
     let mut archive = zip::ZipWriter::new(cursor);
     let options = zip::write::SimpleFileOptions::default()
@@ -716,7 +915,7 @@ fn zip_snapshot(snapshot: &[u8]) -> std::io::Result<Vec<u8>> {
     Ok(archive.finish()?.into_inner())
 }
 
-fn unzip_snapshot(data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+pub fn unzip_snapshot(data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let reader = std::io::Cursor::new(data);
     let mut archive = zip::ZipArchive::new(reader)?;
 
@@ -740,8 +939,22 @@ fn read_cas_data(path: &Path) -> Result<(String, Vec<u8>), Box<dyn std::error::E
         .to_string_lossy()
         .to_string();
     let data = std::fs::read(path)?;
+    unpack_cas_bytes(&file_name, &data)
+}
+
+fn read_dsk_data(path: &Path) -> Result<(String, Vec<u8>), Box<dyn std::error::Error>> {
+    let file_name = path
+        .file_name()
+        .ok_or("Invalid path")?
+        .to_string_lossy()
+        .to_string();
+    let data = std::fs::read(path)?;
+    unpack_dsk_bytes(&file_name, &data)
+}
+
+pub fn unpack_cas_bytes(file_name: &str, data: &[u8]) -> Result<(String, Vec<u8>), Box<dyn std::error::Error>> {
     if file_name.to_lowercase().ends_with(".cas") {
-        Ok((file_name, data))
+        Ok((file_name.to_string(), data.to_vec()))
     } else if file_name.to_lowercase().ends_with(".zip") {
         let reader = std::io::Cursor::new(data);
         let mut archive = zip::ZipArchive::new(reader)?;
@@ -765,15 +978,9 @@ fn read_cas_data(path: &Path) -> Result<(String, Vec<u8>), Box<dyn std::error::E
     }
 }
 
-fn read_dsk_data(path: &Path) -> Result<(String, Vec<u8>), Box<dyn std::error::Error>> {
-    let file_name = path
-        .file_name()
-        .ok_or("Invalid path")?
-        .to_string_lossy()
-        .to_string();
-    let data = std::fs::read(path)?;
+pub fn unpack_dsk_bytes(file_name: &str, data: &[u8]) -> Result<(String, Vec<u8>), Box<dyn std::error::Error>> {
     if file_name.to_lowercase().ends_with(".dsk") {
-        Ok((file_name, data))
+        Ok((file_name.to_string(), data.to_vec()))
     } else if file_name.to_lowercase().ends_with(".zip") {
         let reader = std::io::Cursor::new(data);
         let mut archive = zip::ZipArchive::new(reader)?;

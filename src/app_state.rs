@@ -1,9 +1,11 @@
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::Write;
 use std::path::PathBuf;
 
 use crate::emu::{MachineType, RomVersion};
 use crate::vid::VidModel;
 
+#[cfg(not(target_arch = "wasm32"))]
 const CONFIG_FILE_NAME: &str = "rtvc.toml";
 
 #[derive(Default)]
@@ -30,6 +32,7 @@ enum Section {
     Disk,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl AppStateFile {
     pub fn load() -> Self {
         let cwd_path = PathBuf::from(CONFIG_FILE_NAME);
@@ -71,12 +74,89 @@ impl AppStateFile {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+impl AppStateFile {
+    pub fn load() -> Self {
+        let state = if let Some(window) = web_sys::window() {
+            if let Ok(Some(local_storage)) = window.local_storage() {
+                local_storage.get_item("rtvc_config")
+                    .ok()
+                    .flatten()
+                    .map(|s| parse_state(&s))
+                    .unwrap_or_default()
+            } else {
+                AppState::default()
+            }
+        } else {
+            AppState::default()
+        };
+        Self {
+            path: PathBuf::new(),
+            state,
+        }
+    }
+
+    pub fn save(&mut self, state: &AppState) -> std::io::Result<()> {
+        let mut text = String::new();
+        text.push_str(&format!("machine_type = \"{}\"\n", machine_type_id(state.machine_type)));
+        text.push_str(&format!("video_model = \"{}\"\n\n", vid_model_id(state.vid_model)));
+        text.push_str("[tape]\n");
+        if let Some(file_name) = &state.tape_file_name {
+            text.push_str(&format!("selected = \"{}\"\n", escape_string(file_name)));
+        }
+        text.push_str(&format!("loaded = {}\n", state.tape_loaded));
+        if !state.recent_tapes.is_empty() {
+            text.push_str("recent = [");
+            for (i, val) in state.recent_tapes.iter().enumerate() {
+                if i > 0 {
+                    text.push_str(", ");
+                }
+                text.push_str(&format!("\"{}\"", escape_string(val)));
+            }
+            text.push_str("]\n");
+        }
+        text.push_str("\n[disk]\n");
+        if let Some(file_name) = &state.disk_file_name {
+            text.push_str(&format!("selected = \"{}\"\n", escape_string(file_name)));
+        }
+        text.push_str(&format!("loaded = {}\n", state.disk_loaded));
+        if !state.recent_disks.is_empty() {
+            text.push_str("recent = [");
+            for (i, val) in state.recent_disks.iter().enumerate() {
+                if i > 0 {
+                    text.push_str(", ");
+                }
+                text.push_str(&format!("\"{}\"", escape_string(val)));
+            }
+            text.push_str("]\n");
+        }
+
+        if let Some(window) = web_sys::window() {
+            if let Ok(Some(local_storage)) = window.local_storage() {
+                local_storage
+                    .set_item("rtvc_config", &text)
+                    .map_err(|err| std::io::Error::other(js_value_string(err)))?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn js_value_string(value: wasm_bindgen::JsValue) -> String {
+    value
+        .as_string()
+        .unwrap_or_else(|| "browser configuration storage failed".to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn executable_config_path() -> Option<PathBuf> {
     std::env::current_exe()
         .ok()
         .and_then(|path| path.parent().map(|parent| parent.join(CONFIG_FILE_NAME)))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn read_state_file(path: &std::path::Path) -> AppState {
     let Ok(text) = std::fs::read_to_string(path) else {
         return AppState::default();
@@ -84,6 +164,7 @@ fn read_state_file(path: &std::path::Path) -> AppState {
     parse_state(&text)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn write_state_file(path: &std::path::Path, state: &AppState) -> std::io::Result<()> {
     let mut file = std::fs::File::create(path)?;
     writeln!(

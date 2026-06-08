@@ -34,6 +34,7 @@ Source: [VIDEOTON TVC historical overview](http://tvc.hu/html/tvc_attekintes.htm
 - CAS cassette playback/loading and DSK disk image support.
 - Native snapshot save/load using `.rtvcsnap` and `.rtvcsnap.zip`.
 - Static web snapshot bundle generation for browser-hosted demos.
+- Full egui web application with local tape/disk selection and IndexedDB-backed recent media.
 - Interactive TCP socket debugger interface with a Python REPL client, supporting both native GUI and headless execution modes.
 
 ## Download
@@ -62,6 +63,17 @@ python -m http.server 8000
 ```
 
 Try the web demo: [teki.one/rtvc](http://teki.one/rtvc/)
+
+Build the complete egui web application:
+
+```bash
+cargo install wasm-bindgen-cli --version 0.2.122
+cargo xtask bundle-web-full
+cd dist/rtvc-web-full
+python -m http.server 8000
+```
+
+The full web build can open local CAS, DSK, ZIP, and snapshot files. Small preferences use `localStorage`; recent tape and disk bytes use IndexedDB.
 
 ## Run the Native Emulator
 

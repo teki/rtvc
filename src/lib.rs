@@ -18,20 +18,20 @@ pub mod tvc_snapshot;
 pub mod vid;
 pub mod z80;
 
-#[cfg(feature = "native")]
+#[cfg(any(feature = "native", feature = "wasm-full"))]
 pub mod app_state;
 
-#[cfg(feature = "native")]
+#[cfg(any(feature = "native", feature = "wasm-full"))]
 pub mod audio;
 
-#[cfg(feature = "native")]
+#[cfg(any(feature = "native", feature = "wasm-full"))]
 pub mod emu;
 
-#[cfg(feature = "native")]
+#[cfg(any(feature = "native", feature = "wasm-full"))]
 pub mod ui;
 
-#[cfg(feature = "native")]
+#[cfg(all(feature = "native", not(target_arch = "wasm32")))]
 pub mod debugger;
 
-#[cfg(feature = "wasm")]
+#[cfg(any(feature = "wasm", feature = "wasm-full"))]
 pub mod wasm;

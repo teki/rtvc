@@ -6,7 +6,7 @@ This document records intended direction for future changes so implementation wo
 
 - Keep a normal local desktop build using the native egui UI.
 - Keep a very lightweight WebAssembly build that excludes egui/eframe and uses a small `wasm-bindgen` API for a browser canvas UI.
-- Support a future full WebAssembly build that can use egui on the web and browser-local file storage.
+- Support a full WebAssembly build that uses egui on the web and browser-local file storage.
 - Keep both video models in [src/vid.rs](../src/vid.rs); choose the default with build features on web and with a runtime setting on native.
 - Use [info/snapshot.md](snapshot.md) as the source of truth for snapshot state and lightweight web snapshot bundles.
 
@@ -34,10 +34,22 @@ This document records intended direction for future changes so implementation wo
 
 ### Full Web
 
-- Future tier for an egui web application.
-- Should use browser storage, likely local storage or IndexedDB, for ROM/disk persistence.
-- Should not force the lightweight web build to include egui/eframe or browser storage dependencies.
-- Should share the same emulator core and `VidModel` options as native and lightweight web.
+- Build check:
+  ```bash
+  cargo check --lib --no-default-features --features wasm-full --target wasm32-unknown-unknown
+  ```
+- Static bundle:
+  ```bash
+  cargo xtask bundle-web-full [out-dir]
+  ```
+- Uses the native egui/eframe application structure with browser-specific audio, storage, file dialogs, downloads, and keyboard plumbing.
+- Uses an `AudioWorklet` for PCM playback. The browser audio context is created during startup and resumed after a user gesture.
+- Stores small configuration values in `localStorage`.
+- Stores recent tape and disk bytes in IndexedDB, limited to five entries per media kind. Storage failures must be visible in the UI.
+- Uses raw DOM keyboard events because eframe 0.31 does not expose physical keys on web. `KeyboardEvent.code` identifies the host key, `KeyboardEvent.key` supplies the layout-aware character, and `getModifierState("AltGraph")` distinguishes AltGr.
+- Keeps byte-backed mounted media in `Emu` so changing machine type can restore browser-mounted tape and disk content.
+- Must not force the lightweight web build to include egui/eframe, zip, IndexedDB helpers, or full-web UI code.
+- Shares the same emulator core and runtime `VidModel` options as native and lightweight web.
 
 ## Video Model Policy
 
@@ -68,6 +80,7 @@ cargo check
 cargo check --bins
 cargo check --lib --no-default-features --features wasm,web-vid-simple --target wasm32-unknown-unknown
 cargo check --lib --no-default-features --features wasm,web-vid-realistic --target wasm32-unknown-unknown
+cargo check --lib --no-default-features --features wasm-full --target wasm32-unknown-unknown
 cargo check --manifest-path xtask/Cargo.toml
 cargo tree --no-default-features --features wasm,web-vid-simple -e normal --target wasm32-unknown-unknown
 ```

@@ -85,6 +85,20 @@ This skill provides step-by-step instructions and references for compiling, exec
   - Emits a static snapshot player under `dist/rtvc-web-skeleton/` by default.
   - Users can copy `snapshot.rtvcsnap.zip` or `snapshot.rtvcsnap` beside `index.html` and serve the directory with any static web server.
 
+- **Build and bundle the full egui web application:**
+  ```bash
+  cargo check --lib --no-default-features --features wasm-full --target wasm32-unknown-unknown
+  cargo xtask bundle-web-full
+  # or choose an output directory:
+  cargo xtask bundle-web-full package/web-full
+  ```
+  - Builds the `wasm-full` feature with the complete egui/eframe emulator UI.
+  - Emits a static application under `dist/rtvc-web-full/` by default.
+  - Browser audio uses an `AudioWorklet`; the audio context resumes after user interaction.
+  - Recent tape and disk bytes are stored in IndexedDB. Small UI preferences remain in `localStorage`.
+  - Browser keyboard input uses DOM `KeyboardEvent.code` for key identity and `KeyboardEvent.key` for layout-aware character mapping, including AltGr.
+  - Serve the output directory over HTTP; opening `index.html` directly with `file://` is not supported.
+
 - **Build release packages on GitHub Actions:**
   ```bash
   git tag v0.1.0

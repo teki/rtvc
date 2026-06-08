@@ -7,6 +7,6 @@ loaded = true
 recent = ["progs/TVBALL.CAS"]
 
 [disk]
-selected = "/Users/teki/dev/jstvc/games/kismozdony.zip"
+selected = "progs/tvball.dsk"
 loaded = true
-recent = ["/Users/teki/dev/jstvc/games/kismozdony.zip", "/Users/teki/dev/jstvc/games/break.zip", "/Users/teki/dev/jstvc/games/kitoltes.zip", "/Users/teki/dev/jstvc/games/elite.zip"]
+recent = ["progs/tvball.dsk", "/Users/teki/dev/jstvc/games/kismozdony.zip", "/Users/teki/dev/jstvc/games/break.zip", "/Users/teki/dev/jstvc/games/kitoltes.zip", "/Users/teki/dev/jstvc/games/elite.zip"]

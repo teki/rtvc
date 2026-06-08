@@ -1,10 +1,15 @@
+#[cfg(not(target_arch = "wasm32"))]
 use std::collections::VecDeque;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::{Arc, Mutex};
 
+#[cfg(not(target_arch = "wasm32"))]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
+#[cfg(not(target_arch = "wasm32"))]
 const BUFFER_SECONDS: usize = 1;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub struct NativeAudioSink {
     queue: Arc<Mutex<VecDeque<f32>>>,
     _stream: cpal::Stream,
@@ -13,6 +18,7 @@ pub struct NativeAudioSink {
     resample_phase: f64,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl NativeAudioSink {
     pub fn new(source_sample_rate: u32) -> Result<Self, String> {
         let host = cpal::default_host();
@@ -66,6 +72,10 @@ impl NativeAudioSink {
         })
     }
 
+    pub fn resume(&self) -> Result<(), String> {
+        Ok(())
+    }
+
     pub fn push_samples(&mut self, samples: &[f32]) {
         if samples.is_empty() {
             return;
@@ -105,6 +115,54 @@ impl NativeAudioSink {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+pub struct NativeAudioSink;
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen::prelude::wasm_bindgen(
+        js_namespace = globalThis,
+        js_name = rtvcAudioResume,
+        catch
+    )]
+    fn web_audio_resume() -> Result<(), wasm_bindgen::JsValue>;
+
+    #[wasm_bindgen::prelude::wasm_bindgen(
+        js_namespace = globalThis,
+        js_name = rtvcAudioPush
+    )]
+    fn web_audio_push(samples: &js_sys::Float32Array);
+}
+
+#[cfg(target_arch = "wasm32")]
+impl NativeAudioSink {
+    pub fn new(_source_sample_rate: u32) -> Result<Self, String> {
+        Ok(Self)
+    }
+
+    pub fn resume(&self) -> Result<(), String> {
+        web_audio_resume().map_err(js_error)
+    }
+
+    pub fn push_samples(&mut self, samples: &[f32]) {
+        if samples.is_empty() {
+            return;
+        }
+        let samples_js = js_sys::Float32Array::new_with_length(samples.len() as u32);
+        samples_js.copy_from(samples);
+        web_audio_push(&samples_js);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn js_error(value: wasm_bindgen::JsValue) -> String {
+    value
+        .as_string()
+        .unwrap_or_else(|| "browser audio operation failed".to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn choose_output_config(
     device: &cpal::Device,
     sample_rate: u32,
@@ -128,6 +186,7 @@ fn choose_output_config(
     fallback.ok_or_else(|| "audio output device has no supported output configs".to_string())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn fill_output<T>(data: &mut [T], channels: usize, queue: &Arc<Mutex<VecDeque<f32>>>)
 where
     T: AudioSample,
@@ -147,22 +206,26 @@ where
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 trait AudioSample {
     fn from_f32(sample: f32) -> Self;
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl AudioSample for f32 {
     fn from_f32(sample: f32) -> Self {
         sample
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl AudioSample for i16 {
     fn from_f32(sample: f32) -> Self {
         (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl AudioSample for u16 {
     fn from_f32(sample: f32) -> Self {
         ((sample.clamp(-1.0, 1.0) * 0.5 + 0.5) * u16::MAX as f32) as u16

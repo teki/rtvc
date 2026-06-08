@@ -95,13 +95,20 @@ To support layout-independent typing (e.g., typing on a US, German, or Hungarian
 
 ### Rust + egui / winit Implementation Notes
 
-When porting this logic to a Rust application using `egui` (or `winit`), hook into the following event loop matches:
+Native and full-web builds deliberately use different host event sources:
 
-- **Key Down / Up**: Match `egui::Event::Key` to capture physical keys.
+- **Native Key Down / Up**: Match `egui::Event::Key` and prefer `physical_key`, falling back to the logical `key`.
   - On press (`pressed: true`), store the `egui::Key` (or raw physical scancode) as the `last_press`. Call the emulator's equivalent of `keyDown(key)`.
   - On release (`pressed: false`), call the emulator's equivalent of `keyUp(key)`.
-- **Character Input**: Match `egui::Event::Text` to intercept typable characters.
+- **Native Character Input**: Match `egui::Event::Text` to intercept typable characters.
   - If a character is received, check if it has been mapped. If not, trigger the layout search using the active `last_press` key code, and call `keyPress(char)`.
+- **Full-web Input**: Use raw DOM keyboard events because eframe 0.31 does not provide `physical_key` on web.
+  - `KeyboardEvent.code` is translated to a stable legacy host-key identifier.
+  - `KeyboardEvent.key` supplies the Unicode character used by dynamic mapping.
+  - Repeated key-down events are ignored through `KeyboardEvent.repeat` and a held-key table keyed by `KeyboardEvent.code`.
+  - `getModifierState("AltGraph")` maps right Alt/AltGr to host code `225`, separate from ordinary Alt.
+  - Canvas blur, window blur, and document visibility loss reset the full TVC keyboard matrix.
+  - Browser defaults are prevented only while the emulator canvas handles the key.
 
 ---
 
@@ -144,3 +151,5 @@ if (!down) {
     }, this);
 }
 ```
+
+The release path also reapplies `fixState(..., false)` for every mapping. This releases a synthesized TVC Shift (`KSADD`) and restores or releases compensated Shift state (`KSDEL`) even when the physical Shift key was released before the character key.

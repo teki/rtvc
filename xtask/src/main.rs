@@ -31,8 +31,15 @@ fn run() -> Result<(), String> {
             }
             bundle_web_skeleton(out_dir.as_deref())
         }
+        Some("bundle-web-full") => {
+            let out_dir = args.next().map(PathBuf::from);
+            if args.next().is_some() {
+                return Err("usage: cargo xtask bundle-web-full [out-dir]".to_string());
+            }
+            bundle_web_full(out_dir.as_deref())
+        }
         _ => Err(
-            "usage: cargo bundle-web <snapshot.rtvcsnap>\n       cargo xtask bundle-web-skeleton [out-dir]"
+            "usage: cargo bundle-web <snapshot.rtvcsnap>\n       cargo xtask bundle-web-skeleton [out-dir]\n       cargo xtask bundle-web-full [out-dir]"
                 .to_string(),
         ),
     }
@@ -73,6 +80,69 @@ fn bundle_web_skeleton(out_dir: Option<&Path>) -> Result<(), String> {
         .map_err(|err| format!("failed to write README.txt: {err}"))?;
 
     println!("web skeleton written to {}", bundle_dir.display());
+    Ok(())
+}
+
+fn bundle_web_full(out_dir: Option<&Path>) -> Result<(), String> {
+    let workspace = workspace_dir()?;
+    let bundle_dir = match out_dir {
+        Some(path) if path.is_absolute() => path.to_path_buf(),
+        Some(path) => env::current_dir()
+            .map_err(|err| format!("failed to read current directory: {err}"))?
+            .join(path),
+        None => workspace.join("dist").join("rtvc-web-full"),
+    };
+
+    fs::create_dir_all(&bundle_dir)
+        .map_err(|err| format!("failed to create {}: {err}", bundle_dir.display()))?;
+
+    run_command(
+        Command::new("cargo")
+            .current_dir(&workspace)
+            .arg("build")
+            .arg("--release")
+            .arg("--lib")
+            .arg("--no-default-features")
+            .arg("--features")
+            .arg("wasm-full")
+            .arg("--target")
+            .arg("wasm32-unknown-unknown"),
+        "cargo build",
+    )?;
+
+    let wasm_in = workspace
+        .join("target")
+        .join("wasm32-unknown-unknown")
+        .join("release")
+        .join("rtvc.wasm");
+    if !wasm_in.is_file() {
+        return Err(format!("WASM output not found: {}", wasm_in.display()));
+    }
+
+    run_command(
+        Command::new(wasm_bindgen_bin())
+            .current_dir(&workspace)
+            .arg("--target")
+            .arg("web")
+            .arg("--out-dir")
+            .arg(&bundle_dir)
+            .arg("--out-name")
+            .arg("rtvc")
+            .arg(&wasm_in),
+        "wasm-bindgen",
+    )
+    .map_err(|err| format!("{err}\ninstall wasm-bindgen-cli with: cargo install wasm-bindgen-cli"))?;
+
+    fs::write(bundle_dir.join("index.html"), WEB_FULL_INDEX_HTML)
+        .map_err(|err| format!("failed to write index.html: {err}"))?;
+    fs::write(bundle_dir.join("favicon.ico"), FAVICON_ICO)
+        .map_err(|err| format!("failed to write favicon.ico: {err}"))?;
+    fs::write(bundle_dir.join("app.js"), WEB_FULL_APP_JS)
+        .map_err(|err| format!("failed to write app.js: {err}"))?;
+    fs::write(bundle_dir.join("audio-worklet.js"), AUDIO_WORKLET_JS)
+        .map_err(|err| format!("failed to write audio-worklet.js: {err}"))?;
+
+    println!("web full bundle written to {}", bundle_dir.display());
     Ok(())
 }
 
@@ -324,6 +394,13 @@ const ctx = canvas.getContext("2d", { alpha: false });
 const image = ctx.createImageData(width, height);
 const audio = await createAudioSink(emu.audioSampleRate());
 
+const resumeAudio = () => {
+  audio.resume();
+};
+window.addEventListener("click", resumeAudio, { once: true });
+window.addEventListener("touchstart", resumeAudio, { once: true });
+window.addEventListener("keydown", resumeAudio, { once: true });
+
 async function loadSnapshot() {
   let response = await fetch("./snapshot.rtvcsnap.zip");
   if (response.ok) {
@@ -475,10 +552,19 @@ function keyCode(event) {
   }[event.key] ?? 0;
 }
 
+const activeKeyCodes = new Map();
+
 canvas.addEventListener("keydown", (event) => {
   const code = keyCode(event);
+  if (event.repeat || activeKeyCodes.has(event.code)) {
+    if (code !== 0) {
+      event.preventDefault();
+    }
+    return;
+  }
   if (code !== 0) {
     event.preventDefault();
+    activeKeyCodes.set(event.code, code);
     audio.resume();
     emu.keyDown(code);
   }
@@ -490,11 +576,16 @@ canvas.addEventListener("pointerdown", () => {
 });
 
 canvas.addEventListener("keyup", (event) => {
-  const code = keyCode(event);
+  const code = activeKeyCodes.get(event.code) ?? keyCode(event);
+  activeKeyCodes.delete(event.code);
   if (code !== 0) {
     event.preventDefault();
     emu.keyUp(code);
   }
+});
+
+canvas.addEventListener("blur", () => {
+  activeKeyCodes.clear();
 });
 
 canvas.addEventListener("input", (event) => {
@@ -564,3 +655,346 @@ const AUDIO_WORKLET_JS: &str = r#"class RtvcAudioProcessor extends AudioWorkletP
 
 registerProcessor("rtvc-audio", RtvcAudioProcessor);
 "#;
+
+const WEB_FULL_INDEX_HTML: &str = r#"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>rtvc - Videoton TV Computer Emulator</title>
+  <link rel="icon" href="./favicon.ico" sizes="any">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #1a1a1a;
+      font: 14px system-ui, sans-serif;
+    }
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      outline: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="tvc_canvas"></canvas>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
+"#;
+
+const WEB_FULL_APP_JS: &str = r#"import init, { WebHandle } from "./rtvc.js";
+
+const DB_NAME = "rtvc";
+const DB_VERSION = 1;
+const MEDIA_STORE = "recent-media";
+const MAX_RECENT_PER_KIND = 5;
+const keyboardEvents = [];
+const activeKeyCodes = new Map();
+let audioSink;
+
+globalThis.rtvcStartupAudioError = null;
+globalThis.rtvcStartupStorageError = null;
+globalThis.rtvcStartupRecentMedia = [];
+globalThis.rtvcGetStartupAudioError = () => globalThis.rtvcStartupAudioError;
+globalThis.rtvcGetStartupStorageError = () => globalThis.rtvcStartupStorageError;
+globalThis.rtvcGetStartupRecentMedia = () => globalThis.rtvcStartupRecentMedia;
+
+globalThis.rtvcAudioInit = async (sampleRate) => {
+  try {
+    audioSink = await createAudioSink(sampleRate);
+    return null;
+  } catch (error) {
+    audioSink = { push() {}, resume() {} };
+    return error instanceof Error ? error.message : String(error);
+  }
+};
+
+globalThis.rtvcAudioResume = () => {
+  audioSink?.resume();
+};
+
+globalThis.rtvcAudioPush = (samples) => {
+  audioSink?.push(samples);
+};
+
+globalThis.rtvcTakeKeyboardEvents = () => keyboardEvents.splice(0);
+
+globalThis.rtvcLoadRecentMedia = async () => {
+  const db = await openDatabase();
+  const records = await requestResult(
+    db.transaction(MEDIA_STORE, "readonly").objectStore(MEDIA_STORE).getAll()
+  );
+  return records
+    .sort((a, b) => b.usedAt - a.usedAt)
+    .map((record) => ({
+      kind: record.kind,
+      name: record.name,
+      bytes: new Uint8Array(record.bytes),
+    }));
+};
+
+globalThis.rtvcStoreRecentMedia = async (kind, name, bytes) => {
+  const db = await openDatabase();
+  const transaction = db.transaction(MEDIA_STORE, "readwrite");
+  const store = transaction.objectStore(MEDIA_STORE);
+  store.put({
+    id: `${kind}:${name}`,
+    kind,
+    name,
+    bytes: Uint8Array.from(bytes).buffer,
+    usedAt: Date.now(),
+  });
+  await transactionDone(transaction);
+
+  const all = await requestResult(
+    db.transaction(MEDIA_STORE, "readonly").objectStore(MEDIA_STORE).getAll()
+  );
+  const stale = all
+    .filter((record) => record.kind === kind)
+    .sort((a, b) => b.usedAt - a.usedAt)
+    .slice(MAX_RECENT_PER_KIND);
+  if (stale.length > 0) {
+    const cleanup = db.transaction(MEDIA_STORE, "readwrite");
+    const cleanupStore = cleanup.objectStore(MEDIA_STORE);
+    stale.forEach((record) => cleanupStore.delete(record.id));
+    await transactionDone(cleanup);
+  }
+};
+
+globalThis.rtvcClearRecentMedia = async (kind) => {
+  const db = await openDatabase();
+  const records = await requestResult(
+    db.transaction(MEDIA_STORE, "readonly").objectStore(MEDIA_STORE).getAll()
+  );
+  const transaction = db.transaction(MEDIA_STORE, "readwrite");
+  const store = transaction.objectStore(MEDIA_STORE);
+  records
+    .filter((record) => record.kind === kind)
+    .forEach((record) => store.delete(record.id));
+  await transactionDone(transaction);
+};
+
+async function createAudioSink(sampleRate) {
+  const AudioContext = globalThis.AudioContext || globalThis.webkitAudioContext;
+  if (!AudioContext || !("AudioWorkletNode" in globalThis)) {
+    throw new Error("This browser does not support AudioWorklet");
+  }
+
+  let context;
+  try {
+    context = new AudioContext({ sampleRate });
+  } catch {
+    context = new AudioContext();
+  }
+  await context.audioWorklet.addModule("./audio-worklet.js");
+  const node = new AudioWorkletNode(context, "rtvc-audio", {
+    numberOfInputs: 0,
+    numberOfOutputs: 1,
+    outputChannelCount: [1],
+  });
+  node.connect(context.destination);
+  const ratio = context.sampleRate / sampleRate;
+  let resamplePhase = 0;
+
+  return {
+    push(samples) {
+      if (samples.length === 0) {
+        return;
+      }
+      const input = Float32Array.from(samples);
+      const output = ratio === 1 ? input : resample(input);
+      node.port.postMessage(output, [output.buffer]);
+    },
+    resume() {
+      if (context.state !== "running") {
+        void context.resume();
+      }
+    },
+  };
+
+  function resample(samples) {
+    const converted = [];
+    for (const sample of samples) {
+      resamplePhase += ratio;
+      while (resamplePhase >= 1) {
+        converted.push(sample);
+        resamplePhase -= 1;
+      }
+    }
+    return new Float32Array(converted);
+  }
+}
+
+function openDatabase() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(MEDIA_STORE)) {
+        db.createObjectStore(MEDIA_STORE, { keyPath: "id" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error("Unable to open IndexedDB"));
+  });
+}
+
+function requestResult(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error("IndexedDB request failed"));
+  });
+}
+
+function transactionDone(transaction) {
+  return new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () =>
+      reject(transaction.error ?? new Error("IndexedDB transaction failed"));
+    transaction.onabort = () =>
+      reject(transaction.error ?? new Error("IndexedDB transaction was aborted"));
+  });
+}
+
+function installKeyboard(canvas) {
+  canvas.tabIndex = 0;
+  canvas.addEventListener("pointerdown", () => {
+    canvas.focus();
+    audioSink?.resume();
+  });
+  canvas.addEventListener("keydown", (event) => {
+    const code = legacyKeyCode(event);
+    const text =
+      !event.ctrlKey && !event.metaKey && event.key.length === 1 ? event.key : "";
+    if (event.repeat || activeKeyCodes.has(event.code)) {
+      if (code !== 0 || text) {
+        event.preventDefault();
+      }
+      return;
+    }
+    if (code !== 0) {
+      if (code === 225) {
+        keyboardEvents.push({ type: "up", code: 17 });
+      }
+      activeKeyCodes.set(event.code, code);
+      keyboardEvents.push({ type: "down", code, text });
+      audioSink?.resume();
+      event.preventDefault();
+    } else if (text) {
+      keyboardEvents.push({ type: "text", text });
+      event.preventDefault();
+    }
+  });
+  canvas.addEventListener("keyup", (event) => {
+    const code = activeKeyCodes.get(event.code) ?? legacyKeyCode(event);
+    activeKeyCodes.delete(event.code);
+    if (code !== 0) {
+      keyboardEvents.push({ type: "up", code });
+      event.preventDefault();
+    }
+  });
+  canvas.addEventListener("blur", resetKeyboard);
+  window.addEventListener("blur", resetKeyboard);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      resetKeyboard();
+    }
+  });
+}
+
+function resetKeyboard() {
+  activeKeyCodes.clear();
+  keyboardEvents.push({ type: "blur" });
+}
+
+function legacyKeyCode(event) {
+  if (event.code === "AltRight" && event.getModifierState("AltGraph")) {
+    return 225;
+  }
+  if (event.code.startsWith("Key") && event.code.length === 4) {
+    return event.code.charCodeAt(3);
+  }
+  if (event.code.startsWith("Digit") && event.code.length === 6) {
+    return event.code.charCodeAt(5);
+  }
+  return {
+    Backspace: 8,
+    Tab: 9,
+    Enter: 13,
+    NumpadEnter: 13,
+    ShiftLeft: 16,
+    ShiftRight: 16,
+    ControlLeft: 17,
+    ControlRight: 17,
+    AltLeft: 18,
+    AltRight: 18,
+    CapsLock: 20,
+    Escape: 27,
+    Space: 32,
+    PageUp: 33,
+    PageDown: 34,
+    End: 35,
+    Home: 36,
+    ArrowLeft: 37,
+    ArrowUp: 38,
+    ArrowRight: 39,
+    ArrowDown: 40,
+    Insert: 45,
+    Delete: 46,
+    Semicolon: 186,
+    Equal: 187,
+    Comma: 188,
+    Minus: 189,
+    Period: 190,
+    Slash: 191,
+    Backquote: 192,
+    BracketLeft: 219,
+    Backslash: 220,
+    BracketRight: 221,
+    Quote: 222,
+  }[event.code] ?? 0;
+}
+
+async function run() {
+  await init();
+  const canvas = document.getElementById("tvc_canvas");
+  globalThis.rtvcStartupAudioError = await globalThis.rtvcAudioInit(44100);
+  try {
+    globalThis.rtvcStartupRecentMedia = await globalThis.rtvcLoadRecentMedia();
+    globalThis.rtvcStartupStorageError = null;
+  } catch (error) {
+    globalThis.rtvcStartupRecentMedia = [];
+    globalThis.rtvcStartupStorageError =
+      error instanceof Error ? error.message : String(error);
+  }
+  installKeyboard(canvas);
+  const handle = new WebHandle();
+  globalThis.rtvcHandle = handle;
+  handle.start("tvc_canvas");
+}
+
+run().catch((err) => {
+  console.error("Failed to start rtvc: ", err);
+});
+"#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn web_keyboard_filters_held_physical_key_repeats() {
+        for app_js in [APP_JS, WEB_FULL_APP_JS] {
+            assert!(app_js.contains("const activeKeyCodes = new Map();"));
+            assert!(app_js.contains("event.repeat || activeKeyCodes.has(event.code)"));
+            assert!(app_js.contains("activeKeyCodes.set(event.code, code);"));
+            assert!(app_js.contains("activeKeyCodes.delete(event.code);"));
+        }
+    }
+}
