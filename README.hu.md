@@ -32,7 +32,8 @@ További történeti háttér a
 - Natív billentyűzet-, video- és hangkezelés az asztali felületen.
 - CAS kazettabetöltés és DSK lemezkép-támogatás.
 - Snapshot mentés/betöltés `.rtvcsnap` és `.rtvcsnap.zip` formátumban.
-- Statikus webes snapshot-lejátszó és teljes böngészős egui webalkalmazás.
+- Teljes böngészős egui webalkalmazás, valamint könnyű snapshot-csomagok
+  önálló demókhoz.
 - TCP socket hibakereső natív GUI és headless használathoz.
 
 ## Letöltés
@@ -52,7 +53,7 @@ Csomagold ki az archívumot, majd indítsd el:
 - macOS alatt az `RTVC.app` alkalmazást
 
 A release csomagok tartalmazzák az emulátort, a ROM-fájlokat, mellékelt
-programokat és egy statikus `web/` snapshot-lejátszót.
+programokat és a teljes böngészős verziót a `web/` könyvtárban.
 
 ### Első indítás macOS-en
 
@@ -121,18 +122,17 @@ cargo run --bin rtvc -- -i utvonal/kazetta.cas
 Forrásból futtatáskor helyezd a ROM-fájlokat a `roms/` könyvtárba. Az
 opcionális programarchívumok és médiafájlok a `progs/` könyvtárba kerülhetnek.
 
-## Webes lejátszó
+## Webes emulátor
 
-A release archívum tartalmaz egy kis statikus webes snapshot-lejátszót. A
-használatához másolj egy tömörített snapshotot `web/snapshot.rtvcsnap.zip`
-néven, szolgáld ki a `web/` könyvtárat, majd nyisd meg böngészőben:
+A release archívum tartalmazza az emulátor teljes böngészős verzióját.
+Használatához szolgáld ki a `web/` könyvtárat, majd nyisd meg böngészőben:
 
 ```bash
 cd web
 python -m http.server 8000
 ```
 
-Fejlesztők a teljes egui webalkalmazást így építhetik:
+Fejlesztők ugyanezt a webalkalmazást így építhetik:
 
 ```bash
 cargo install wasm-bindgen-cli --version 0.2.122
@@ -141,9 +141,9 @@ cd dist/rtvc-web-full
 python -m http.server 8000
 ```
 
-A teljes webes build helyi CAS, DSK, ZIP és snapshot fájlokat is meg tud
-nyitni. A kisebb beállítások `localStorage`-ba kerülnek; a legutóbbi kazetta-
-és lemezadatok IndexedDB-ben tárolódnak.
+A webes emulátor helyi CAS, DSK, ZIP és snapshot fájlokat is meg tud nyitni. A
+kisebb beállítások `localStorage`-ba kerülnek; a legutóbbi kazetta- és
+lemezadatok IndexedDB-ben tárolódnak.
 
 ## Fejlesztői jegyzetek
 

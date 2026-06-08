@@ -76,7 +76,7 @@ A felhasználói snapshot- és webes csomagparancsok a [README.hu.md](../README.
 `cargo xtask bundle-web-skeleton` ugyanazt a lejátszót készíti el beágyazott snapshot nélkül, alapértelmezés szerint `dist/rtvc-web-skeleton/` alá. Példa explicit kimeneti könyvtárra:
 
 ```bash
-cargo xtask bundle-web-skeleton package/web
+cargo xtask bundle-web-skeleton dist/rtvc-snapshot-player
 ```
 
-A release archívumok ezt a vázat `web/` néven tartalmazzák. Használathoz tegyél mellé egy `snapshot.rtvcsnap.zip` vagy `snapshot.rtvcsnap` nevű snapshotot, majd szolgáld ki statikus webszerverrel.
+A release archívumok a teljes webes emulátort tartalmazzák `web/` néven. A normál böngészős emulátorfelülethez használd a `cargo xtask bundle-web-full [out-dir]` parancsot; a `bundle-web` és `bundle-web-skeleton` parancsok a könnyű, snapshot-specifikus oldalakhoz maradnak.

@@ -28,8 +28,8 @@ jobs:
       - name: Build
         run: cargo build --release --bin rtvc
 
-      - name: Build web skeleton
-        run: cargo xtask bundle-web-skeleton package/web
+      - name: Build web app
+        run: cargo xtask bundle-web-full package/web
 
       - name: Package
         shell: pwsh
@@ -77,8 +77,8 @@ jobs:
       - name: Build
         run: cargo build --release --bin rtvc --target ${{ matrix.target }}
 
-      - name: Build web skeleton
-        run: cargo xtask bundle-web-skeleton package/web
+      - name: Build web app
+        run: cargo xtask bundle-web-full package/web
 
       - name: Package
         run: |

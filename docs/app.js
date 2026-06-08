@@ -1,147 +1,134 @@
-import init, { WasmTvc } from "./rtvc.js";
+import init, { WebHandle } from "./rtvc.js";
 
-const canvas = document.getElementById("screen");
-const status = document.getElementById("status");
+const DB_NAME = "rtvc";
+const DB_VERSION = 1;
+const MEDIA_STORE = "recent-media";
+const MAX_RECENT_PER_KIND = 5;
+const keyboardEvents = [];
+const activeKeyCodes = new Map();
+let audioSink;
 
-const wasm = await init();
-const emu = new WasmTvc(true);
-let snapshot;
-try {
-  snapshot = await loadSnapshot();
-} catch (error) {
-  status.textContent = `${error.message}. Copy snapshot.rtvcsnap.zip beside index.html and reload.`;
-  throw error;
-}
-emu.loadSnapshot(snapshot);
+globalThis.rtvcStartupAudioError = null;
+globalThis.rtvcStartupStorageError = null;
+globalThis.rtvcStartupRecentMedia = [];
+globalThis.rtvcGetStartupAudioError = () => globalThis.rtvcStartupAudioError;
+globalThis.rtvcGetStartupStorageError = () => globalThis.rtvcStartupStorageError;
+globalThis.rtvcGetStartupRecentMedia = () => globalThis.rtvcStartupRecentMedia;
 
-const width = emu.screenWidth();
-const height = emu.screenHeight();
-canvas.width = width;
-canvas.height = height;
-canvas.focus();
-
-const ctx = canvas.getContext("2d", { alpha: false });
-const image = ctx.createImageData(width, height);
-const audio = await createAudioSink(emu.audioSampleRate());
-
-async function loadSnapshot() {
-  let response = await fetch("./snapshot.rtvcsnap.zip");
-  if (response.ok) {
-    return unzipSnapshot(new Uint8Array(await response.arrayBuffer()));
+globalThis.rtvcAudioInit = async (sampleRate) => {
+  try {
+    audioSink = await createAudioSink(sampleRate);
+    return null;
+  } catch (error) {
+    audioSink = { push() {}, resume() {} };
+    return error instanceof Error ? error.message : String(error);
   }
+};
 
-  response = await fetch("./snapshot.rtvcsnap");
-  if (!response.ok) {
-    throw new Error(`Failed to load snapshot: ${response.status}`);
+globalThis.rtvcAudioResume = () => {
+  audioSink?.resume();
+};
+
+globalThis.rtvcAudioPush = (samples) => {
+  audioSink?.push(samples);
+};
+
+globalThis.rtvcTakeKeyboardEvents = () => keyboardEvents.splice(0);
+
+globalThis.rtvcLoadRecentMedia = async () => {
+  const db = await openDatabase();
+  const records = await requestResult(
+    db.transaction(MEDIA_STORE, "readonly").objectStore(MEDIA_STORE).getAll()
+  );
+  return records
+    .sort((a, b) => b.usedAt - a.usedAt)
+    .map((record) => ({
+      kind: record.kind,
+      name: record.name,
+      bytes: new Uint8Array(record.bytes),
+    }));
+};
+
+globalThis.rtvcStoreRecentMedia = async (kind, name, bytes) => {
+  const db = await openDatabase();
+  const transaction = db.transaction(MEDIA_STORE, "readwrite");
+  const store = transaction.objectStore(MEDIA_STORE);
+  store.put({
+    id: `${kind}:${name}`,
+    kind,
+    name,
+    bytes: Uint8Array.from(bytes).buffer,
+    usedAt: Date.now(),
+  });
+  await transactionDone(transaction);
+
+  const all = await requestResult(
+    db.transaction(MEDIA_STORE, "readonly").objectStore(MEDIA_STORE).getAll()
+  );
+  const stale = all
+    .filter((record) => record.kind === kind)
+    .sort((a, b) => b.usedAt - a.usedAt)
+    .slice(MAX_RECENT_PER_KIND);
+  if (stale.length > 0) {
+    const cleanup = db.transaction(MEDIA_STORE, "readwrite");
+    const cleanupStore = cleanup.objectStore(MEDIA_STORE);
+    stale.forEach((record) => cleanupStore.delete(record.id));
+    await transactionDone(cleanup);
   }
-  return new Uint8Array(await response.arrayBuffer());
-}
+};
 
-async function unzipSnapshot(zipBytes) {
-  const entry = findFirstZipEntry(zipBytes);
-  if (entry.method === 0) {
-    return zipBytes.slice(entry.dataStart, entry.dataEnd);
-  }
-  if (entry.method !== 8) {
-    throw new Error(`Unsupported zip compression method: ${entry.method}`);
-  }
-  if (!("DecompressionStream" in globalThis)) {
-    throw new Error("This browser cannot decompress zipped snapshots");
-  }
-
-  const stream = new Blob([zipBytes.slice(entry.dataStart, entry.dataEnd)])
-    .stream()
-    .pipeThrough(new DecompressionStream("deflate-raw"));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
-}
-
-function findFirstZipEntry(bytes) {
-  let pos = 0;
-  while (pos + 30 <= bytes.length) {
-    if (u32(bytes, pos) !== 0x04034b50) {
-      break;
-    }
-    const method = u16(bytes, pos + 8);
-    const compressedSize = u32(bytes, pos + 18);
-    const fileNameLen = u16(bytes, pos + 26);
-    const extraLen = u16(bytes, pos + 28);
-    const nameStart = pos + 30;
-    const nameEnd = nameStart + fileNameLen;
-    const dataStart = nameEnd + extraLen;
-    const dataEnd = dataStart + compressedSize;
-    const name = new TextDecoder().decode(bytes.slice(nameStart, nameEnd)).toLowerCase();
-    if (name.endsWith(".rtvcsnap")) {
-      return { method, dataStart, dataEnd };
-    }
-    pos = dataEnd;
-  }
-  throw new Error("Snapshot zip does not contain a .rtvcsnap entry");
-}
-
-function u16(bytes, offset) {
-  return bytes[offset] | (bytes[offset + 1] << 8);
-}
-
-function u32(bytes, offset) {
-  return (
-    bytes[offset] |
-    (bytes[offset + 1] << 8) |
-    (bytes[offset + 2] << 16) |
-    (bytes[offset + 3] << 24)
-  ) >>> 0;
-}
-
-function draw() {
-  const ptr = emu.framebufferPtr();
-  const len = emu.framebufferLen();
-  image.data.set(new Uint8ClampedArray(wasm.memory.buffer, ptr, len));
-  ctx.putImageData(image, 0, 0);
-}
+globalThis.rtvcClearRecentMedia = async (kind) => {
+  const db = await openDatabase();
+  const records = await requestResult(
+    db.transaction(MEDIA_STORE, "readonly").objectStore(MEDIA_STORE).getAll()
+  );
+  const transaction = db.transaction(MEDIA_STORE, "readwrite");
+  const store = transaction.objectStore(MEDIA_STORE);
+  records
+    .filter((record) => record.kind === kind)
+    .forEach((record) => store.delete(record.id));
+  await transactionDone(transaction);
+};
 
 async function createAudioSink(sampleRate) {
   const AudioContext = globalThis.AudioContext || globalThis.webkitAudioContext;
   if (!AudioContext || !("AudioWorkletNode" in globalThis)) {
-    return { push() {}, resume() {} };
+    throw new Error("This browser does not support AudioWorklet");
   }
 
+  let context;
   try {
-    let context;
-    try {
-      context = new AudioContext({ sampleRate });
-    } catch {
-      context = new AudioContext();
-    }
-    if (!context.audioWorklet) {
-      throw new Error("audioWorklet is undefined");
-    }
-    await context.audioWorklet.addModule("./audio-worklet.js");
-    const node = new AudioWorkletNode(context, "rtvc-audio", {
-      numberOfInputs: 0,
-      numberOfOutputs: 1,
-      outputChannelCount: [1],
-    });
-    node.connect(context.destination);
-    const ratio = context.sampleRate / sampleRate;
-    let resamplePhase = 0;
-    return {
-      push(samples) {
-        if (samples.length > 0) {
-          const output = ratio === 1 ? samples : resample(samples, ratio);
-          node.port.postMessage(output, [output.buffer]);
-        }
-      },
-      resume() {
-        if (context.state !== "running") {
-          context.resume();
-        }
-      },
-    };
-  } catch (error) {
-    console.warn("Audio unavailable", error);
-    return { push() {}, resume() {} };
+    context = new AudioContext({ sampleRate });
+  } catch {
+    context = new AudioContext();
   }
+  await context.audioWorklet.addModule("./audio-worklet.js");
+  const node = new AudioWorkletNode(context, "rtvc-audio", {
+    numberOfInputs: 0,
+    numberOfOutputs: 1,
+    outputChannelCount: [1],
+  });
+  node.connect(context.destination);
+  const ratio = context.sampleRate / sampleRate;
+  let resamplePhase = 0;
 
-  function resample(samples, ratio) {
+  return {
+    push(samples) {
+      if (samples.length === 0) {
+        return;
+      }
+      const input = Float32Array.from(samples);
+      const output = ratio === 1 ? input : resample(input);
+      node.port.postMessage(output, [output.buffer]);
+    },
+    resume() {
+      if (context.state !== "running") {
+        void context.resume();
+      }
+    },
+  };
+
+  function resample(samples) {
     const converted = [];
     for (const sample of samples) {
       resamplePhase += ratio;
@@ -154,63 +141,154 @@ async function createAudioSink(sampleRate) {
   }
 }
 
-function keyCode(event) {
-  if (event.key && event.key.length === 1) {
-    return event.key.toUpperCase().charCodeAt(0);
+function openDatabase() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(MEDIA_STORE)) {
+        db.createObjectStore(MEDIA_STORE, { keyPath: "id" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error("Unable to open IndexedDB"));
+  });
+}
+
+function requestResult(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error("IndexedDB request failed"));
+  });
+}
+
+function transactionDone(transaction) {
+  return new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () =>
+      reject(transaction.error ?? new Error("IndexedDB transaction failed"));
+    transaction.onabort = () =>
+      reject(transaction.error ?? new Error("IndexedDB transaction was aborted"));
+  });
+}
+
+function installKeyboard(canvas) {
+  canvas.tabIndex = 0;
+  canvas.addEventListener("pointerdown", () => {
+    canvas.focus();
+    audioSink?.resume();
+  });
+  canvas.addEventListener("keydown", (event) => {
+    const code = legacyKeyCode(event);
+    const text =
+      !event.ctrlKey && !event.metaKey && event.key.length === 1 ? event.key : "";
+    if (event.repeat || activeKeyCodes.has(event.code)) {
+      if (code !== 0 || text) {
+        event.preventDefault();
+      }
+      return;
+    }
+    if (code !== 0) {
+      if (code === 225) {
+        keyboardEvents.push({ type: "up", code: 17 });
+      }
+      activeKeyCodes.set(event.code, code);
+      keyboardEvents.push({ type: "down", code, text });
+      audioSink?.resume();
+      event.preventDefault();
+    } else if (text) {
+      keyboardEvents.push({ type: "text", text });
+      event.preventDefault();
+    }
+  });
+  canvas.addEventListener("keyup", (event) => {
+    const code = activeKeyCodes.get(event.code) ?? legacyKeyCode(event);
+    activeKeyCodes.delete(event.code);
+    if (code !== 0) {
+      keyboardEvents.push({ type: "up", code });
+      event.preventDefault();
+    }
+  });
+  canvas.addEventListener("blur", resetKeyboard);
+  window.addEventListener("blur", resetKeyboard);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      resetKeyboard();
+    }
+  });
+}
+
+function resetKeyboard() {
+  activeKeyCodes.clear();
+  keyboardEvents.push({ type: "blur" });
+}
+
+function legacyKeyCode(event) {
+  if (event.code === "AltRight" && event.getModifierState("AltGraph")) {
+    return 225;
+  }
+  if (event.code.startsWith("Key") && event.code.length === 4) {
+    return event.code.charCodeAt(3);
+  }
+  if (event.code.startsWith("Digit") && event.code.length === 6) {
+    return event.code.charCodeAt(5);
   }
   return {
     Backspace: 8,
     Tab: 9,
     Enter: 13,
-    Shift: 16,
-    Control: 17,
-    Alt: 18,
+    NumpadEnter: 13,
+    ShiftLeft: 16,
+    ShiftRight: 16,
+    ControlLeft: 17,
+    ControlRight: 17,
+    AltLeft: 18,
+    AltRight: 18,
+    CapsLock: 20,
     Escape: 27,
-    " ": 32,
+    Space: 32,
+    PageUp: 33,
+    PageDown: 34,
+    End: 35,
+    Home: 36,
     ArrowLeft: 37,
     ArrowUp: 38,
     ArrowRight: 39,
     ArrowDown: 40,
+    Insert: 45,
     Delete: 46,
-  }[event.key] ?? 0;
+    Semicolon: 186,
+    Equal: 187,
+    Comma: 188,
+    Minus: 189,
+    Period: 190,
+    Slash: 191,
+    Backquote: 192,
+    BracketLeft: 219,
+    Backslash: 220,
+    BracketRight: 221,
+    Quote: 222,
+  }[event.code] ?? 0;
 }
 
-canvas.addEventListener("keydown", (event) => {
-  const code = keyCode(event);
-  if (code !== 0) {
-    event.preventDefault();
-    audio.resume();
-    emu.keyDown(code);
+async function run() {
+  await init();
+  const canvas = document.getElementById("tvc_canvas");
+  globalThis.rtvcStartupAudioError = await globalThis.rtvcAudioInit(44100);
+  try {
+    globalThis.rtvcStartupRecentMedia = await globalThis.rtvcLoadRecentMedia();
+    globalThis.rtvcStartupStorageError = null;
+  } catch (error) {
+    globalThis.rtvcStartupRecentMedia = [];
+    globalThis.rtvcStartupStorageError =
+      error instanceof Error ? error.message : String(error);
   }
-});
-
-canvas.addEventListener("pointerdown", () => {
-  audio.resume();
-  canvas.focus();
-});
-
-canvas.addEventListener("keyup", (event) => {
-  const code = keyCode(event);
-  if (code !== 0) {
-    event.preventDefault();
-    emu.keyUp(code);
-  }
-});
-
-canvas.addEventListener("input", (event) => {
-  if (event.data) {
-    emu.keyPressText(event.data);
-  }
-});
-
-function frame() {
-  emu.runFrame();
-  audio.push(emu.takeAudioSamples());
-  if (emu.takeFrameComplete()) {
-    draw();
-  }
-  requestAnimationFrame(frame);
+  installKeyboard(canvas);
+  const handle = new WebHandle();
+  globalThis.rtvcHandle = handle;
+  handle.start("tvc_canvas");
 }
 
-draw();
-requestAnimationFrame(frame);
+run().catch((err) => {
+  console.error("Failed to start rtvc: ", err);
+});

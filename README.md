@@ -31,7 +31,8 @@ More historical background is available on the
 - Native keyboard, video, and sound through the desktop UI.
 - CAS cassette loading and DSK disk image support.
 - Snapshot save/load using `.rtvcsnap` and `.rtvcsnap.zip`.
-- Static web snapshot player and full browser-based egui web application.
+- Full browser-based egui web application, plus lightweight snapshot bundles
+  for standalone demos.
 - TCP socket debugger for native GUI and headless use.
 
 ## Download
@@ -51,7 +52,7 @@ Extract the archive and run:
 - `RTVC.app` on macOS
 
 The release packages include the emulator, ROM files, bundled programs, and a
-static `web/` snapshot player.
+full browser version in `web/`.
 
 ### macOS First Launch
 
@@ -119,18 +120,17 @@ cargo run --bin rtvc -- -i path/to/tape.cas
 When running from source, place ROM files in `roms/`. Optional program archives
 and media files can go in `progs/`.
 
-## Web Player
+## Web Emulator
 
-The release archive includes a small static web snapshot player. To use it,
-copy a compressed snapshot into `web/snapshot.rtvcsnap.zip`, serve the `web/`
-directory, and open it in a browser:
+The release archive includes a full browser version of the emulator. To use it,
+serve the `web/` directory and open it in a browser:
 
 ```bash
 cd web
 python -m http.server 8000
 ```
 
-Developers can build the full egui web application with:
+Developers can build the same web application with:
 
 ```bash
 cargo install wasm-bindgen-cli --version 0.2.122
@@ -139,7 +139,7 @@ cd dist/rtvc-web-full
 python -m http.server 8000
 ```
 
-The full web build can open local CAS, DSK, ZIP, and snapshot files. Small
+The web emulator can open local CAS, DSK, ZIP, and snapshot files. Small
 preferences use `localStorage`; recent tape and disk bytes use IndexedDB.
 
 ## Developer Notes

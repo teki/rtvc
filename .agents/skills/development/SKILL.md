@@ -79,7 +79,7 @@ This skill provides step-by-step instructions and references for compiling, exec
   ```bash
   cargo xtask bundle-web-skeleton
   # or choose an output directory:
-  cargo xtask bundle-web-skeleton package/web
+  cargo xtask bundle-web-skeleton dist/rtvc-snapshot-player
   ```
   - Builds the same small `wasm,web-vid-simple` target.
   - Emits a static snapshot player under `dist/rtvc-web-skeleton/` by default.
@@ -112,7 +112,7 @@ This skill provides step-by-step instructions and references for compiling, exec
   - The macOS archives contain an ad hoc signed `RTVC.app` bundle, `README.md`, and `LICENSE`. The release workflow does not use paid Developer ID signing or notarization, so users may need to remove the browser quarantine flag with `xattr -dr com.apple.quarantine RTVC.app` before first launch.
   - The app bundle includes `roms/`, `progs/`, and `web/` beside `Contents/MacOS/rtvc` so Finder launches can find runtime assets.
   - The native app searches `roms/` and `progs/` in the current working directory first, then beside the executable for extracted release archives and app bundles.
-  - The bundled `web/` directory is a static WASM snapshot player. Copy `snapshot.rtvcsnap.zip` into it and serve the directory to run the snapshot in a browser.
+  - The bundled `web/` directory is the full browser emulator UI. Serve it over HTTP to open local CAS, DSK, ZIP, and snapshot files in a browser.
 
 - **Convert a TVC CAS cassette image to WAV:**
   ```bash

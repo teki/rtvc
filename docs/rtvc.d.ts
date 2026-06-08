@@ -27,11 +27,19 @@ export class WasmTvc {
     vidModel(): string;
 }
 
+export class WebHandle {
+    free(): void;
+    [Symbol.dispose](): void;
+    constructor();
+    start(canvas_id: string): void;
+}
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_wasmtvc_free: (a: number, b: number) => void;
+    readonly __wbg_webhandle_free: (a: number, b: number) => void;
     readonly wasmtvc_addRom: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly wasmtvc_audioSampleRate: (a: number) => number;
     readonly wasmtvc_focusChange: (a: number, b: number) => void;
@@ -53,10 +61,20 @@ export interface InitOutput {
     readonly wasmtvc_takeAudioSamples: (a: number, b: number) => void;
     readonly wasmtvc_takeFrameComplete: (a: number) => number;
     readonly wasmtvc_vidModel: (a: number, b: number) => void;
+    readonly webhandle_new: () => number;
+    readonly webhandle_start: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_3762: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_3767: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_1006: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_1006_2: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_1009: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_774: (a: number, b: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
+    readonly __wbindgen_export3: (a: number) => void;
+    readonly __wbindgen_export4: (a: number, b: number, c: number) => void;
+    readonly __wbindgen_export5: (a: number, b: number) => void;
     readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
-    readonly __wbindgen_export3: (a: number, b: number, c: number) => void;
 }
 
 export type SyncInitInput = BufferSource | WebAssembly.Module;

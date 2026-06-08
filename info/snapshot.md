@@ -78,7 +78,7 @@ User-facing snapshot and web bundle commands are documented in [../README.md](..
 `cargo xtask bundle-web-skeleton` builds the same player without embedding a snapshot and writes it to `dist/rtvc-web-skeleton/` by default. An explicit output directory may be supplied, for example:
 
 ```bash
-cargo xtask bundle-web-skeleton package/web
+cargo xtask bundle-web-skeleton dist/rtvc-snapshot-player
 ```
 
-Release archives include this skeleton as `web/`. To use it, copy a snapshot named `snapshot.rtvcsnap.zip` or `snapshot.rtvcsnap` beside `web/index.html` and serve the directory with any static web server.
+Release archives include the full web emulator as `web/`. Use `cargo xtask bundle-web-full [out-dir]` when you want the normal browser emulator UI; keep `bundle-web` and `bundle-web-skeleton` for lightweight snapshot-specific pages.

@@ -1,7 +1,11 @@
-rtvc web snapshot player
+rtvc full web emulator
 
-Copy a compressed snapshot named snapshot.rtvcsnap.zip into this directory, then
-serve the directory with any static web server.
+This directory contains the full browser version of rtvc, built with:
+
+  cargo xtask bundle-web-full docs
+
+It opens the normal emulator UI in a browser and can load local CAS, DSK, ZIP,
+and snapshot files through the app menus.
 
 Example:
 
@@ -10,5 +14,3 @@ Example:
 Then open:
 
   http://localhost:8000/
-
-Raw snapshots named snapshot.rtvcsnap are also supported.

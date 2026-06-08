@@ -8,7 +8,7 @@ This document records intended direction for future changes so implementation wo
 - Keep a very lightweight WebAssembly build that excludes egui/eframe and uses a small `wasm-bindgen` API for a browser canvas UI.
 - Support a full WebAssembly build that uses egui on the web and browser-local file storage.
 - Keep both video models in [src/vid.rs](../src/vid.rs); choose the default with build features on web and with a runtime setting on native.
-- Use [info/snapshot.md](snapshot.md) as the source of truth for snapshot state and lightweight web snapshot bundles.
+- Use [info/snapshot.md](snapshot.md) as the source of truth for snapshot state and web bundle commands.
 
 ## Build Tiers
 
@@ -30,7 +30,7 @@ This document records intended direction for future changes so implementation wo
 - JavaScript owns browser UI, canvas presentation, Web Audio playback, keyboard event wiring, and file picker plumbing.
 - Default video model is `VidModel::FastFrame` for WASM constructors.
 - Snapshot upload bundles are produced with `cargo bundle-web <snapshot>`.
-- Snapshot player skeletons without an embedded snapshot are produced with `cargo xtask bundle-web-skeleton [out-dir]` and are included in release archives as `web/`.
+- Snapshot player skeletons without an embedded snapshot are produced with `cargo xtask bundle-web-skeleton [out-dir]`.
 
 ### Full Web
 
@@ -42,6 +42,7 @@ This document records intended direction for future changes so implementation wo
   ```bash
   cargo xtask bundle-web-full [out-dir]
   ```
+- Release archives and the public `docs/` demo use this full web build.
 - Uses the native egui/eframe application structure with browser-specific audio, storage, file dialogs, downloads, and keyboard plumbing.
 - Uses an `AudioWorklet` for PCM playback. The browser audio context is created during startup and resumed after a user gesture.
 - Stores small configuration values in `localStorage`.
