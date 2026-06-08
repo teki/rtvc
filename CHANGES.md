@@ -5,6 +5,10 @@ Release notes start here. Older release history is intentionally not backfilled.
 ## Unreleased
 
 
+## v0.6.0 - 2026-06-09
+
+- Added a full browser-based emulator UI with local CAS, DSK, ZIP, and snapshot file loading.
+
 ## v0.5.0 - 2026-06-04
 
 - Added a TCP socket debugger command interface, supporting both native GUI and headless modes.
