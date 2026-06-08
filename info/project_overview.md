@@ -68,9 +68,9 @@ Future build-target and UI direction is tracked in [info/future_plan.md](future_
 ## Toolchain
 
 - Rust Edition: `2024` (requires Rust ≥ 1.85).
-- Default feature: `native`, which enables `cpal` 0.17, `egui` 0.31, `eframe` 0.31, `zip` 2, and `png` 0.17 for the desktop application.
+- Default feature: `native`, which enables `cpal` 0.17, `egui` 0.31, `eframe` 0.31, `zip` 2, `png` 0.17, and native debugger JSON support through `serde`/`serde_json` for the desktop application.
 - WASM feature: `wasm`, which enables only `wasm-bindgen` for the browser-facing API. Build it with `--no-default-features --features wasm`.
 - Full-web feature: `wasm-full`, which enables egui/eframe, PNG, file dialogs, zip media, and browser integration without enabling native `cpal`.
 - Native `Tvc::new()` defaults to `VidModel::Interleaved`. WASM constructors default to `VidModel::FastFrame`; browser callers can still switch modes through the WASM string API, which accepts `fast-frame` and `interleaved` plus the legacy aliases `simple` and `realistic`.
-- Package dependencies and metadata are managed in [Cargo.toml](../Cargo.toml). Direct dependencies also include `serde` and `serde_json` for debugger JSON-RPC.
+- Package dependencies and metadata are managed in [Cargo.toml](../Cargo.toml). `serde` and `serde_json` are optional native-only dependencies for debugger JSON-RPC and are intentionally excluded from the web build tiers.
 - License: MIT for emulator code. ROMs, cassette/disk images, snapshots, screenshots, manuals, and other historical or third-party machine materials may be present for preservation, compatibility testing, or convenience, but are outside the project license unless explicitly stated.
