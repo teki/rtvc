@@ -2,122 +2,82 @@
 
 Nyelv: [English](README.md) | [Magyar](README.hu.md)
 
-Az `rtvc` egy nyílt forráskódú, több platformon futó, Rust-alapú emulátor a Videoton TV Computerhez (TVC).
+Az `rtvc` egy nyílt forráskódú, több platformon futó emulátor a Videoton TV
+Computerhez (TVC), az 1980-as évek magyar 8 bites otthoni és iskolai
+számítógépéhez.
 
-A projekt aktív fejlesztés alatt áll. A CPU futtatása, a TVC memóriakezelése, a billentyűzetkezelés, a videokimenet, a kazettabetöltés, a HBF/VT-DOS lemeztámogatás és a natív snapshotok már működnek, de a hardverpontosságon még folyik a munka.
+Az emulátor aktív fejlesztés alatt áll. Már futtat TVC 64K és 64K+ gépeket
+billentyűzetkezeléssel, videóval, hanggal, kazettabetöltéssel, HBF/VT-DOS
+lemezképekkel, snapshotokkal és natív asztali felülettel.
 
-## Miért?
-
-Főként azért, hogy tanuljak a Rust ökoszisztémáról és egy nyílt forráskódú alkalmazás publikálásáról.
-
-Másodlagos cél egy olyan eszköz készítése, amely segíti a TVC-s programok létrehozását és portolását.
+Próbáld ki a webes demót: [teki.one/rtvc](http://teki.one/rtvc/)
 
 ## A TVC-ről
 
-A Videoton TV Computer, röviden TVC, egy magyar 8 bites otthoni és iskolai számítógép volt, amelyet a Videoton gyártott az 1980-as évek második felében. A gép az Enterprise vonalhoz kapcsolódó licencelt terven alapult, és a magyar oktatási felhasználáshoz igazították.
+A Videoton TV Computer, röviden TVC, egy magyar 8 bites otthoni és iskolai
+számítógép volt, amelyet a Videoton gyártott az 1980-as évek második felében.
+Z80 CPU-t, beépített BASIC-et, kazettás tárolást, külön szöveges mód helyett
+grafikus megjelenítési módokat, valamint opcionális bővítéseket, például
+floppy támogatást használt.
 
-A gép Z80 CPU-t használt 3,125 MHz-es órajellel, és főként három változatban került forgalomba: 32K, 64K és 64K+. A 64K+ modell több videomemóriát és újabb BASIC 2.2 ROM-ot kapott. A beépített TVC OS és BASIC ROM-ban lakott; az alaprendszer kazettás tárolást támogatott, míg az UPM és a VT-DOS fejlettebb lemezorientált környezetet adott.
-
-Sok korabeli otthoni géptől eltérően a TVC-nek nem volt külön, csak szöveges kijelzési módja. A szöveg a grafikus rendszeren keresztül jelent meg, 512x240-es 2 színű, 256x240-es 4 színű és 128x240-es 16 színű módokkal. A videokimenetet egy 6845 CRTC állította elő. A hang egyetlen programozható csatornából állt, amely a rendszerórajelből származott, 16 hangerőszinttel és 4 bites D/A móddal, amikor a frekvenciaosztó ki volt kapcsolva.
-
-A TVC bővíthető gépnek készült. Volt rajta kazetta-, RGB-, TV-, nyomtató-, joystick-, cartridge- és felső bővítőcsatlakozó; gyakori bővítések voltak a memóriakártyák, floppyvezérlők, soros kártyák és EPROM-programozók. Nagyjából 12 000 darab készült, főként iskolák számára, mielőtt a gyártás néhány év után véget ért.
-
-Forrás: [VIDEOTON TVC történeti áttekintés](http://tvc.hu/html/tvc_attekintes.html).
+További történeti háttér a
+[VIDEOTON TVC weboldalon](http://tvc.hu/html/tvc_attekintes.html) olvasható.
 
 ## Funkciók
 
-- Z80 CPU-emuláció FUSE és ZEX tesztkészletekkel.
 - TVC 64K és 64K+ gépváltozatok.
 - ROM 1.2 és ROM 2.2 gépválasztás, opcionális VT-DOS/HBF bővítéssel.
-- MC6845-alapú TVC videokimenet gyors képkockás és interleaved renderelési móddal.
-- TVC billentyűzetmátrix-kezelés a natív egui felületen.
-- CAS kazetta-lejátszás/betöltés és DSK lemezkép-támogatás.
-- Natív snapshot mentés/betöltés `.rtvcsnap` és `.rtvcsnap.zip` formátumban.
-- Statikus webes snapshot-csomagok készítése böngészőben futó demókhoz.
-- Interaktív TCP socket hibakereső (debugger) felület Python REPL klienssel, natív GUI és headless mód támogatással.
+- Z80 CPU-emuláció FUSE és ZEX validációs tesztkészletekkel.
+- MC6845-alapú videokimenet gyors képkockás és interleaved renderelési móddal.
+- Natív billentyűzet-, video- és hangkezelés az asztali felületen.
+- CAS kazettabetöltés és DSK lemezkép-támogatás.
+- Snapshot mentés/betöltés `.rtvcsnap` és `.rtvcsnap.zip` formátumban.
+- Statikus webes snapshot-lejátszó és teljes böngészős egui webalkalmazás.
+- TCP socket hibakereső natív GUI és headless használathoz.
 
 ## Letöltés
 
-Töltsd le a legfrissebb kiadást a [GitHub Releases oldalon](https://github.com/teki/rtvc/releases).
+Töltsd le a legfrissebb kiadást a
+[GitHub Releases oldalon](https://github.com/teki/rtvc/releases).
 
-Release archívumok Windows x64, macOS x64 és macOS Apple Silicon rendszerekhez érhetők el. Tartalmazzák a natív emulátort, a ROM-okat, mellékelt programokat és egy `web/` snapshot-lejátszót. Csomagold ki a zipet, majd Windows alatt indítsd el az `rtvc.exe`, macOS alatt pedig az `RTVC.app` alkalmazást.
+Release archívumok ezekhez érhetők el:
 
-A macOS alkalmazás ad hoc aláírást kap, mert a projekt nem használ fizetős Developer ID aláírást vagy notarizációt. Ha a macOS blokkolja a letöltött alkalmazást, töröld a böngésző által hozzáadott karantén jelölést a kicsomagolt alkalmazásról, majd indítsd el:
+- Windows x64
+- macOS x64
+- macOS Apple Silicon
+
+Csomagold ki az archívumot, majd indítsd el:
+
+- Windows alatt az `rtvc.exe` fájlt
+- macOS alatt az `RTVC.app` alkalmazást
+
+A release csomagok tartalmazzák az emulátort, a ROM-fájlokat, mellékelt
+programokat és egy statikus `web/` snapshot-lejátszót.
+
+### Első indítás macOS-en
+
+A macOS alkalmazás ad hoc aláírást kap, nincs notarizálva. Ha a macOS blokkolja
+letöltés után, töröld a böngésző által hozzáadott karantén jelölést a
+kicsomagolt alkalmazásról:
 
 ```bash
 xattr -dr com.apple.quarantine RTVC.app
 ```
 
-Alternatív megoldásként a kiadási archívum közvetlenül a terminálból is letölthető a `curl` használatával, ami elkerüli a macOS karantént:
+A kiadási archívum terminálból is letölthető, ami általában elkerüli a
+böngészős karantén jelölést:
 
 ```bash
 curl -L https://github.com/teki/rtvc/releases/latest/download/rtvc-macos-arm64.zip | ditto -x -k - $HOME/Downloads/rtvc
 ```
 
-A webes lejátszó használatához másolj egy tömörített snapshotot `web/snapshot.rtvcsnap.zip` néven, szolgáld ki a `web/` könyvtárat bármilyen statikus webszerverrel, majd nyisd meg böngészőben:
+## Az emulátor használata
 
-```bash
-cd web
-python -m http.server 8000
-```
+A natív alkalmazás menüket ad a géptípus kiválasztásához, kazetta- vagy
+lemezképek betöltéséhez, snapshotok mentéséhez és betöltéséhez,
+képernyőmentések mentéséhez, valamint az I/O napló megjelenítéséhez.
 
-Próbáld ki a webes demót: [teki.one/rtvc](http://teki.one/rtvc/)
-
-## A natív emulátor futtatása
-
-```bash
-cargo run --bin rtvc
-```
-
-Indítás közvetlenül snapshotból:
-
-```bash
-cargo run --bin rtvc -- snapshots/load_tape.rtvcsnap.zip
-```
-
-Lemez csatlakoztatása, kazetta behelyezése vagy közvetlen memóriába fecskendezése indításkor:
-
-```bash
-# Floppy lemezkép csatlakoztatása
-cargo run --bin rtvc -- -d utvonal/lemez.dsk
-
-# Kazetta betöltésre való felkészítése (a TVC-ben a LOAD paranccsal kell indítani)
-cargo run --bin rtvc -- -t utvonal/kazetta.cas
-
-# Kazetta közvetlen memóriába írása (azonnal betöltődik)
-cargo run --bin rtvc -- -i utvonal/kazetta.cas
-
-# A socket hibakereső (debugger) indítása egy egyedi porton (alapértelmezett: 8080)
-cargo run --bin rtvc -- -p 8089
-
-# Headless emulátor indítása a háttérben futó hibakeresővel a 8080-as porton
-cargo run --bin rtvc -- -H -p 8080
-```
-
-Futtatás előtt helyezd a ROM-fájlokat a `roms/` könyvtárba. A natív felület jelenleg ezeket a gépválasztásokat támogatja:
-
-- `64k+ 1.2, VT-DOS`
-- `64k+ 2.2, VT-DOS`
-- `64k  1.2`
-- `64k+ 1.2`
-- `64k+ 2.2`
-
-A projekt által használt gyakori ROM-fájlnevek:
-
-- `TVC12_D3.64K`
-- `TVC12_D4.64K`
-- `TVC12_D7.64K`
-- `TVC22_D4.64K`
-- `TVC22_D6.64K`
-- `TVC22_D7.64K`
-- `C_TVCDOS.128`
-- `D_TVCDOS.128`
-- `C_DOS12.128`
-- `D_DOS12.128`
-
-Az opcionális programarchívumok és médiafájlok a `progs/` könyvtárba kerülhetnek.
-
-## Támogatott fájlok
+Támogatott felhasználói fájlok:
 
 | Fájltípus | Cél |
 | --- | --- |
@@ -127,25 +87,97 @@ Az opcionális programarchívumok és médiafájlok a `progs/` könyvtárba ker�
 | `.rtvcsnap` | Nyers rtvc snapshot. |
 | `.rtvcsnap.zip` | Tömörített rtvc snapshot. |
 
-## Natív snapshotok
+A snapshot a legegyszerűbb módja az aktuális gépállapot megőrzésének. A natív
+alkalmazás tud tömörített `.rtvcsnap.zip` fájlokat menteni, `.rtvcsnap` és
+`.rtvcsnap.zip` fájlokat betölteni, és közvetlenül snapshot-útvonalról indulni.
 
-A natív GUI snapshot-gombokat tartalmaz:
+## Futtatás forrásból
 
-- A `Save Snapshot` alapértelmezés szerint tömörített `.rtvcsnap.zip` fájlt ír.
-- A `Load Snapshot` `.rtvcsnap.zip` és nyers `.rtvcsnap` fájlokat is be tud olvasni.
-- A natív alkalmazás az első parancssori argumentumként opcionális snapshot-útvonalat is elfogad.
-- A `Save Screenshot` a jelenlegi TVC képkockapuffert 4:3 arányú PNG-ként menti (`768x576`).
+Telepíts egy friss Rust toolchaint, majd futtasd:
 
-A tömörített snapshotok hagyományos zip-fájlok, amelyek egy `snapshot.rtvcsnap` bejegyzést tartalmaznak.
+```bash
+cargo run --bin rtvc
+```
+
+Indítás snapshotból:
+
+```bash
+cargo run --bin rtvc -- snapshots/load_tape.rtvcsnap.zip
+```
+
+Média betöltése indításkor:
+
+```bash
+# Floppy lemezkép csatlakoztatása
+cargo run --bin rtvc -- -d utvonal/lemez.dsk
+
+# Kazetta csatlakoztatása standard betöltéshez
+cargo run --bin rtvc -- -t utvonal/kazetta.cas
+
+# Kazetta közvetlen memóriába töltése
+cargo run --bin rtvc -- -i utvonal/kazetta.cas
+```
+
+Forrásból futtatáskor helyezd a ROM-fájlokat a `roms/` könyvtárba. Az
+opcionális programarchívumok és médiafájlok a `progs/` könyvtárba kerülhetnek.
+
+## Webes lejátszó
+
+A release archívum tartalmaz egy kis statikus webes snapshot-lejátszót. A
+használatához másolj egy tömörített snapshotot `web/snapshot.rtvcsnap.zip`
+néven, szolgáld ki a `web/` könyvtárat, majd nyisd meg böngészőben:
+
+```bash
+cd web
+python -m http.server 8000
+```
+
+Fejlesztők a teljes egui webalkalmazást így építhetik:
+
+```bash
+cargo install wasm-bindgen-cli --version 0.2.122
+cargo xtask bundle-web-full
+cd dist/rtvc-web-full
+python -m http.server 8000
+```
+
+A teljes webes build helyi CAS, DSK, ZIP és snapshot fájlokat is meg tud
+nyitni. A kisebb beállítások `localStorage`-ba kerülnek; a legutóbbi kazetta-
+és lemezadatok IndexedDB-ben tárolódnak.
+
+## Fejlesztői jegyzetek
+
+Hasznos parancsok:
+
+```bash
+cargo build
+cargo run --bin fuse_test
+cargo run --bin perf_test
+```
+
+A socket hibakereső natív GUI-val és headless módban is használható:
+
+```bash
+# Natív UI hibakeresővel a 8089-es porton
+cargo run --bin rtvc -- -p 8089
+
+# Headless emulátor hibakeresővel a 8080-as porton
+cargo run --bin rtvc -- -H -p 8080
+```
+
+A teljes fejlesztési munkafolyamathoz lásd:
+[.agents/skills/development/SKILL.md](.agents/skills/development/SKILL.md).
 
 ## Dokumentáció
 
-- [Snapshotformátum](info.hu/snapshot.md)
+- [Projektáttekintés](info/project_overview.md)
+- [Snapshotformátum és webes csomagok](info.hu/snapshot.md)
 - [TVC gépmag](info.hu/tvc.md)
 - [Z80 CPU](info.hu/z80.md)
 - [Z80 opcode referencia](info.hu/z80opcodes.md)
 - [Memóriakezelő egység](info.hu/mmu.md)
 - [Videovezérlő](info.hu/vid.md)
+- [Hang](info/sound.md)
 - [Billentyűzetmátrix](info.hu/key.md)
 - [Kazettatámogatás](info.hu/cas.md)
 - [HBF floppy kártya és FD1793 vezérlő](info.hu/hbf.md)
@@ -153,16 +185,28 @@ A tömörített snapshotok hagyományos zip-fájlok, amelyek egy `snapshot.rtvcs
 
 ## Közreműködés
 
-Hibajegyeket és pull requesteket szívesen fogadunk. Az emulátorpontossági jelentések akkor a leghasznosabbak, ha tartalmaznak egy kis reprodukciót: géptípust, médiafájlt, snapshotot, a TVC-n beírt parancsot, valamint minden releváns port- vagy interruptnaplót.
+Hibajegyeket és pull requesteket szívesen fogadunk. Az
+emulátorpontossági jelentések akkor a leghasznosabbak, ha tartalmaznak egy kis
+reprodukciót: géptípust, médiafájlt, snapshotot, a TVC-n beírt parancsot,
+valamint minden releváns port- vagy interruptnaplót.
 
-Kérjük, az emulátor viselkedését érintő változtatásokat ahol ésszerű, fedd le célzott tesztekkel, és frissítsd az `info/` dokumentációt, ha az alaparchitektúra, a snapshotformátum, a médiakezelés vagy a buildfolyamat változik.
+Kérjük, az emulátor viselkedését érintő változtatásokat ahol ésszerű, fedd le
+célzott tesztekkel, és frissítsd az `info/` dokumentációt, ha az
+alaparchitektúra, a snapshotformátum, a médiakezelés vagy a buildfolyamat
+változik.
 
 ## Köszönetnyilvánítás
 
-Az `rtvc` a korábbi [teki/jstvc](https://github.com/teki/jstvc) JavaScript implementáció portolásából indult. A CPU-tesztelési folyamat nyilvános Z80 validációs anyagokat használ, például FUSE és ZEX tesztprogramokat. A projekt történeti TVC hardverinformációkra és megőrzési anyagokra is támaszkodik.
+Az `rtvc` a korábbi [teki/jstvc](https://github.com/teki/jstvc) JavaScript
+implementáció portolásából indult. A CPU-tesztelési folyamat nyilvános Z80
+validációs anyagokat használ, például FUSE és ZEX tesztprogramokat. A projekt
+történeti TVC hardverinformációkra és megőrzési anyagokra is támaszkodik.
 
 ## Licenc
 
 Az emulátor kódja az [MIT licenc](LICENSE) alatt érhető el.
 
-A ROM-ok, kazetta- és lemezképek, snapshotok, képernyőmentések, kézikönyvek és más történeti vagy harmadik féltől származó gépanyagok megőrzési, kompatibilitástesztelési vagy kényelmi céllal szerepelhetnek a projektben. Ezekre nem vonatkozik az MIT licenc, hacsak ez nincs külön jelezve.
+A ROM-ok, kazetta- és lemezképek, snapshotok, képernyőmentések, kézikönyvek és
+más történeti vagy harmadik féltől származó gépanyagok megőrzési,
+kompatibilitástesztelési vagy kényelmi céllal szerepelhetnek a projektben.
+Ezekre nem vonatkozik az MIT licenc, hacsak ez nincs külön jelezve.
