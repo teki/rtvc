@@ -2,11 +2,7 @@ machine_type = "64k-plus-1.2-vtdos"
 video_model = "interleaved"
 
 [tape]
-selected = "rtvc-media\\tapes\\goblinkastelya\\GOBLIN.CAS"
-loaded = true
-recent = ["rtvc-media\\tapes\\goblinkastelya\\GOBLIN.CAS", "progs\\TVBALL.CAS"]
+loaded = false
 
 [disk]
-selected = "rtvc-media\\disks\\nyuszi2\\nyuszi2.dsk"
-loaded = true
-recent = ["rtvc-media\\disks\\nyuszi2\\nyuszi2.dsk", "progs/tvball.dsk", "/Users/teki/dev/jstvc/games/kismozdony.zip", "/Users/teki/dev/jstvc/games/break.zip", "/Users/teki/dev/jstvc/games/kitoltes.zip"]
+loaded = false

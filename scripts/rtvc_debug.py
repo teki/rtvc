@@ -57,6 +57,31 @@ class RtvcShell(cmd.Cmd):
         print(f"IX: 0x{resp.get('ix', 0):04X}   IY: 0x{resp.get('iy', 0):04X}   SP: 0x{resp.get('sp', 0):04X}   PC: 0x{resp.get('pc', 0):04X}")
         print(f"Halted: {resp.get('halted')}   Running: {resp.get('running')}   Cycles: {resp.get('cycles')}")
 
+    def do_stats(self, arg):
+        """Show average emulation FPS over the recent rolling window."""
+        resp = self._send_cmd({"cmd": "stats"})
+        if not resp:
+            return
+        if resp.get("status") != "ok":
+            print(f"Error: {resp.get('message')}")
+            return
+
+        print(
+            f"Average FPS: {resp.get('average_fps', 0.0):.2f} "
+            f"over {resp.get('window_seconds', 0.0):.2f}s "
+            f"({resp.get('frames', 0)} frames, running: {resp.get('running')})"
+        )
+
+    def do_close_app(self, arg):
+        """Close the emulator application and exit the debugger shell."""
+        resp = self._send_cmd({"cmd": "close_app"})
+        if resp and resp.get("status") == "ok":
+            print("Emulator closed.")
+            return True
+        if resp:
+            print(f"Error: {resp.get('message')}")
+        return False
+
     def do_step(self, arg):
         """Step the Z80 CPU. Usage: step [count]"""
         count = 1
@@ -282,6 +307,8 @@ class RtvcShell(cmd.Cmd):
 
     # Aliases
     do_s = do_status
+    do_fps = do_stats
+    do_close = do_close_app
     do_t = do_step
     do_c = do_continue
     do_p = do_pause

@@ -2,19 +2,27 @@ use crate::bus::CpuBus;
 use crate::emu::Emu;
 use eframe::egui;
 use serde::Deserialize;
+use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+
+const FPS_WINDOW: Duration = Duration::from_secs(5);
 
 #[derive(Deserialize, Debug)]
 #[serde(tag = "cmd")]
 enum DebuggerCommand {
     #[serde(rename = "status")]
     Status,
+    #[serde(rename = "stats")]
+    Stats,
+    #[serde(rename = "close_app")]
+    CloseApp,
     #[serde(rename = "step")]
     Step { count: Option<u32> },
     #[serde(rename = "continue")]
@@ -65,6 +73,8 @@ pub struct DebuggerInterface {
     pub cmd_rx: Receiver<DebuggerMessage>,
     pub event_tx: Sender<DebuggerEvent>,
     ctx: Arc<Mutex<Option<egui::Context>>>,
+    frame_stats: Mutex<FrameStats>,
+    close_requested: AtomicBool,
 }
 
 impl DebuggerInterface {
@@ -73,6 +83,87 @@ impl DebuggerInterface {
             if guard.is_none() {
                 *guard = Some(ctx);
             }
+        }
+    }
+
+    pub fn record_frame(&self) {
+        if let Ok(mut stats) = self.frame_stats.lock() {
+            stats.record_at(Instant::now());
+        }
+    }
+
+    pub fn handle_command(&self, emu: &mut Emu, line: &str) -> String {
+        let close_requested = matches!(serde_json::from_str(line), Ok(DebuggerCommand::CloseApp));
+        let stats = self
+            .frame_stats
+            .lock()
+            .ok()
+            .map(|mut stats| stats.snapshot_at(Instant::now()))
+            .unwrap_or_default();
+        let response = handle_command(emu, line, stats);
+        if close_requested {
+            self.close_requested.store(true, Ordering::Release);
+        }
+        response
+    }
+
+    pub fn close_requested(&self) -> bool {
+        self.close_requested.load(Ordering::Acquire)
+    }
+}
+
+struct FrameStats {
+    started_at: Instant,
+    frames: VecDeque<Instant>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct FrameStatsSnapshot {
+    average_fps: f64,
+    window_seconds: f64,
+    frames: usize,
+}
+
+impl FrameStats {
+    fn new() -> Self {
+        Self::new_at(Instant::now())
+    }
+
+    fn new_at(now: Instant) -> Self {
+        Self {
+            started_at: now,
+            frames: VecDeque::new(),
+        }
+    }
+
+    fn record_at(&mut self, now: Instant) {
+        self.prune(now);
+        self.frames.push_back(now);
+    }
+
+    fn snapshot_at(&mut self, now: Instant) -> FrameStatsSnapshot {
+        self.prune(now);
+        let window = now.duration_since(self.started_at).min(FPS_WINDOW);
+        let window_seconds = window.as_secs_f64();
+        FrameStatsSnapshot {
+            average_fps: if window_seconds > 0.0 {
+                self.frames.len() as f64 / window_seconds
+            } else {
+                0.0
+            },
+            window_seconds,
+            frames: self.frames.len(),
+        }
+    }
+
+    fn prune(&mut self, now: Instant) {
+        let window_start = now.checked_sub(FPS_WINDOW).unwrap_or(self.started_at);
+        while self
+            .frames
+            .front()
+            .is_some_and(|frame| *frame < window_start)
+        {
+            self.frames.pop_front();
         }
     }
 }
@@ -174,6 +265,8 @@ pub fn start_debugger_server(port: u16) -> DebuggerInterface {
         cmd_rx,
         event_tx,
         ctx,
+        frame_stats: Mutex::new(FrameStats::new()),
+        close_requested: AtomicBool::new(false),
     }
 }
 
@@ -184,8 +277,12 @@ pub fn run_headless(mut emu: Emu, port: u16) {
     loop {
         // 1. Process debugger commands
         while let Ok(msg) = debugger.cmd_rx.try_recv() {
-            let response = handle_command(&mut emu, &msg.cmd_line);
+            let response = debugger.handle_command(&mut emu, &msg.cmd_line);
             let _ = msg.reply_tx.send(response);
+        }
+        if debugger.close_requested() {
+            thread::sleep(Duration::from_millis(10));
+            return;
         }
 
         // 2. Emulate frame if running
@@ -194,6 +291,7 @@ pub fn run_headless(mut emu: Emu, port: u16) {
             let elapsed = now.duration_since(last_frame_time);
             if elapsed >= Duration::from_millis(20) {
                 let hit_breakpoint = emu.tvc.run_for_a_frame();
+                debugger.record_frame();
                 last_frame_time = now;
 
                 if hit_breakpoint {
@@ -212,7 +310,7 @@ pub fn run_headless(mut emu: Emu, port: u16) {
     }
 }
 
-pub fn handle_command(emu: &mut Emu, line: &str) -> String {
+fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> String {
     let parsed: Result<DebuggerCommand, serde_json::Error> = serde_json::from_str(line);
     let response_val = match parsed {
         Ok(cmd) => match cmd {
@@ -232,6 +330,18 @@ pub fn handle_command(emu: &mut Emu, line: &str) -> String {
                     "halted": z80.state.halted != 0,
                     "cycles": emu.tvc.clock,
                 })
+            }
+            DebuggerCommand::Stats => {
+                serde_json::json!({
+                    "status": "ok",
+                    "running": emu.running,
+                    "average_fps": stats.average_fps,
+                    "window_seconds": stats.window_seconds,
+                    "frames": stats.frames,
+                })
+            }
+            DebuggerCommand::CloseApp => {
+                serde_json::json!({ "status": "ok" })
             }
             DebuggerCommand::Step { count } => {
                 let step_count = count.unwrap_or(1);
@@ -375,4 +485,38 @@ pub fn handle_command(emu: &mut Emu, line: &str) -> String {
     };
 
     response_val.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FPS_WINDOW, FrameStats};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn frame_stats_report_average_over_five_second_window() {
+        let start = Instant::now();
+        let mut stats = FrameStats::new_at(start);
+        for frame in 1..=250 {
+            stats.record_at(start + Duration::from_millis(frame * 20));
+        }
+
+        let snapshot = stats.snapshot_at(start + FPS_WINDOW);
+
+        assert_eq!(snapshot.frames, 250);
+        assert_eq!(snapshot.window_seconds, 5.0);
+        assert!((snapshot.average_fps - 50.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn frame_stats_drop_frames_outside_the_window() {
+        let start = Instant::now();
+        let mut stats = FrameStats::new_at(start);
+        stats.record_at(start + Duration::from_secs(1));
+        stats.record_at(start + Duration::from_secs(6));
+
+        let snapshot = stats.snapshot_at(start + Duration::from_secs(7));
+
+        assert_eq!(snapshot.frames, 1);
+        assert!((snapshot.average_fps - 0.2).abs() < f64::EPSILON);
+    }
 }

@@ -52,6 +52,25 @@ Lekérdezi a Z80 CPU regisztereit, ciklusszámlálóját és aktuális állapot�
   }
   ```
 
+#### `stats`
+Jelenti a befejezett emulációs képkockák átlagos sebességét egy gördülő, öt másodperces gazdagép-időablakban. Az emulátor indítása utáni első öt másodpercben az ablak rövidebb; a szüneteltetett idő beleszámít, ezért az átlag csökken, ha az emuláció nem tartja a valós idejű sebességet vagy szünetel.
+- **Kérés**: `{"cmd": "stats"}`
+- **Válasz**:
+  ```json
+  {
+    "status": "ok",
+    "running": true,
+    "average_fps": 49.8,
+    "window_seconds": 5.0,
+    "frames": 249
+  }
+  ```
+
+#### `close_app`
+Bezárja az emulátor alkalmazást. GUI módban a szokásos alkalmazásleállítás fut le, beleértve az alkalmazásállapot mentését; headless módban a futási ciklus kilép.
+- **Kérés**: `{"cmd": "close_app"}`
+- **Válasz**: `{"status": "ok"}`
+
 #### `step`
 Egy vagy több Z80 CPU utasítást hajt végre. Ez automatikusan frissíti a rendszertidőzítőket, a kazetta-lejátszást, a hanggenerálást és az órajelciklusokat.
 - **Kérés**: `{"cmd": "step", "count": 5}` (ahol a `"count"` egy opcionális egész szám, alapértelmezett értéke `1`)
@@ -167,6 +186,8 @@ python3 scripts/rtvc_debug.py --host 127.0.0.1 --port 8089
 | Parancs | Alias | Leírás |
 |---|---|---|
 | `status` | `s` | Kiírja a regisztereket (AF, BC, DE, HL, IX, IY, SP, PC), a ciklusszámot és az állapotokat. |
+| `stats` | `fps` | Kiírja az átlagos emulációs FPS-t a gördülő öt másodperces időablakban. |
+| `close_app` | `close` | Bezárja az emulátort és kilép a hibakereső konzolból. |
 | `step [count]` | `t` | Lépteti a CPU-t `count` utasítással és megjeleníti az új regiszterállapotokat. |
 | `continue` | `c` | Folytatja a valós idejű emulációt. |
 | `pause` | `p` | Szünetelteti a CPU futását. |

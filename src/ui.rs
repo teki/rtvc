@@ -14,7 +14,7 @@ use crate::app_state::{AppState, AppStateFile};
 use crate::audio::NativeAudioSink;
 use crate::emu::{Emu, MachineType, ProgEntry};
 use crate::vid::VidModel;
-use eframe::egui::{self, ColorImage, TextureHandle};
+use eframe::egui::{self, Color32, ColorImage, TextureHandle};
 
 #[cfg(all(feature = "native", not(target_arch = "wasm32")))]
 pub type DebuggerType = crate::debugger::DebuggerInterface;
@@ -406,16 +406,12 @@ impl EmuApp {
         }
 
         let size = [608usize, 288];
-        let pixels: Vec<u8> = self
-            .emu
-            .tvc
-            .framebuffer
-            .iter()
-            .copied()
-            .flat_map(u32::to_ne_bytes)
-            .collect();
-        let image = ColorImage::from_rgba_unmultiplied(size, &pixels);
-        self.screen_texture = Some(ctx.load_texture("tvc-screen", image, Default::default()));
+        let image = framebuffer_image(&self.emu.tvc.framebuffer, size);
+        if let Some(texture) = &mut self.screen_texture {
+            texture.set(image, Default::default());
+        } else {
+            self.screen_texture = Some(ctx.load_texture("tvc-screen", image, Default::default()));
+        }
         self.emu.tvc.frame_complete = false;
     }
 
@@ -1672,6 +1668,16 @@ fn decode_game_image(bytes: &[u8]) -> Result<ColorImage, String> {
     Ok(ColorImage::from_rgba_unmultiplied(size, image.as_raw()))
 }
 
+fn framebuffer_image(framebuffer: &[u32], size: [usize; 2]) -> ColorImage {
+    assert_eq!(framebuffer.len(), size[0] * size[1]);
+    let mut pixels = Vec::with_capacity(framebuffer.len());
+    for &rgba in framebuffer {
+        let [r, g, b, a] = rgba.to_le_bytes();
+        pixels.push(Color32::from_rgba_premultiplied(r, g, b, a));
+    }
+    ColorImage { size, pixels }
+}
+
 fn game_image_names(game: &GameEntry) -> Vec<String> {
     if game.screenshot.is_empty() {
         return Vec::new();
@@ -1757,6 +1763,25 @@ fn metadata_label(ui: &mut egui::Ui, label: &str, value: &str) {
     });
 }
 
+#[cfg(test)]
+mod tests {
+    use super::framebuffer_image;
+    use eframe::egui::Color32;
+
+    #[test]
+    fn framebuffer_image_preserves_rgba_channel_order() {
+        let image = framebuffer_image(&[0xFF332211, 0x80402010], [2, 1]);
+
+        assert_eq!(
+            image.pixels,
+            vec![
+                Color32::from_rgba_premultiplied(0x11, 0x22, 0x33, 0xFF),
+                Color32::from_rgba_premultiplied(0x10, 0x20, 0x40, 0x80),
+            ]
+        );
+    }
+}
+
 fn draw_tape_led(ui: &mut egui::Ui, active: bool, level: f32) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
     let color = if active {
@@ -1805,8 +1830,11 @@ impl eframe::App for EmuApp {
         if let Some(ref dbg) = self.debugger {
             dbg.set_context(ctx.clone());
             while let Ok(msg) = dbg.cmd_rx.try_recv() {
-                let response = crate::debugger::handle_command(&mut self.emu, &msg.cmd_line);
+                let response = dbg.handle_command(&mut self.emu, &msg.cmd_line);
                 let _ = msg.reply_tx.send(response);
+            }
+            if dbg.close_requested() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
         }
 
@@ -1946,6 +1974,10 @@ impl eframe::App for EmuApp {
 
         if self.emu.running && self.emu_frame_accumulator >= TVC_FRAME_DT {
             let hit_breakpoint = self.emu.tick();
+            #[cfg(all(feature = "native", not(target_arch = "wasm32")))]
+            if let Some(ref dbg) = self.debugger {
+                dbg.record_frame();
+            }
             if hit_breakpoint {
                 self.emu.running = false;
                 #[cfg(all(feature = "native", not(target_arch = "wasm32")))]

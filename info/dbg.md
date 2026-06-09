@@ -52,6 +52,25 @@ Queries the Z80 CPU registers, cycle counter, and current execution states.
   }
   ```
 
+#### `stats`
+Reports completed emulation frames over a rolling five-second host-time window. The initial window is shorter until the emulator has been open for five seconds; paused time is included, so the average falls when emulation cannot sustain real time or is paused.
+- **Request**: `{"cmd": "stats"}`
+- **Response**:
+  ```json
+  {
+    "status": "ok",
+    "running": true,
+    "average_fps": 49.8,
+    "window_seconds": 5.0,
+    "frames": 249
+  }
+  ```
+
+#### `close_app`
+Closes the emulator application. GUI mode performs the normal application shutdown path, including saving application state; headless mode exits its run loop.
+- **Request**: `{"cmd": "close_app"}`
+- **Response**: `{"status": "ok"}`
+
 #### `step`
 Executes one or more Z80 CPU instructions. This automatically updates system timers, tape playback, sound generation, and clock cycles.
 - **Request**: `{"cmd": "step", "count": 5}` (where `"count"` is an optional integer, defaulting to `1`)
@@ -167,6 +186,8 @@ python3 scripts/rtvc_debug.py --host 127.0.0.1 --port 8089
 | Shell Command | Alias | Description |
 |---|---|---|
 | `status` | `s` | Print register grid (AF, BC, DE, HL, IX, IY, SP, PC), cycles, halted, and running states. |
+| `stats` | `fps` | Print average emulation FPS over the recent rolling five-second window. |
+| `close_app` | `close` | Close the emulator and exit the debugger shell. |
 | `step [count]` | `t` | Step the Z80 CPU by `count` instructions and show register status. |
 | `continue` | `c` | Resume real-time emulator execution. |
 | `pause` | `p` | Pause CPU execution. |
