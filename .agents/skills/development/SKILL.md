@@ -126,6 +126,7 @@ This skill provides step-by-step instructions and references for compiling, exec
   - The GitHub release body is extracted from the matching `## v<version>` section in `CHANGES.md`.
   - The Windows archive contains the native binary, `README.md`, `LICENSE`, `roms/`, `progs/`, and `web/`.
   - The macOS archives contain an ad hoc signed `RTVC.app` bundle, `README.md`, and `LICENSE`. The release workflow does not use paid Developer ID signing or notarization, so users may need to remove the browser quarantine flag with `xattr -dr com.apple.quarantine RTVC.app` before first launch.
+  - Native windows use `assets/rtvc-app-icon.png`; Windows release executables embed `assets/rtvc-app-icon.ico`, and macOS app bundles include `assets/rtvc-app-icon.icns`.
   - The app bundle includes `roms/`, `progs/`, and `web/` beside `Contents/MacOS/rtvc` so Finder launches can find runtime assets.
   - The native app searches `roms/` and `progs/` in the current working directory first, then beside the executable for extracted release archives and app bundles.
   - The bundled `web/` directory is the full browser emulator UI. Serve it over HTTP to open local CAS, DSK, ZIP, and snapshot files in a browser.

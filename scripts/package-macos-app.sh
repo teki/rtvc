@@ -25,6 +25,7 @@ mkdir -p "$package_dir/$app_name/Contents/Resources"
 
 cp "$binary_path" "$package_dir/$app_name/Contents/MacOS/rtvc"
 chmod +x "$package_dir/$app_name/Contents/MacOS/rtvc"
+cp assets/rtvc-app-icon.icns "$package_dir/$app_name/Contents/Resources/rtvc-app-icon.icns"
 
 # The native app searches for these directories in the current working
 # directory and beside the executable. Finder launches do not set the extracted
@@ -48,6 +49,8 @@ cat > "$package_dir/$app_name/Contents/Info.plist" <<EOF
   <string>rtvc</string>
   <key>CFBundleIdentifier</key>
   <string>${bundle_id}</string>
+  <key>CFBundleIconFile</key>
+  <string>rtvc-app-icon.icns</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>

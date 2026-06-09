@@ -1,6 +1,8 @@
 use eframe::egui::ViewportBuilder;
 use rtvc::{app_state, emu, ui};
 
+const APP_ICON_PNG: &[u8] = include_bytes!("../assets/rtvc-app-icon.png");
+
 fn main() -> eframe::Result<()> {
     let app_state_file = app_state::AppStateFile::load();
     let machine_type = app_state_file
@@ -151,11 +153,14 @@ fn main() -> eframe::Result<()> {
 
     let debugger = Some(rtvc::debugger::start_debugger_server(port));
     let app = ui::EmuApp::new(emu, app_state_file, debugger);
+    let app_icon =
+        eframe::icon_data::from_png_bytes(APP_ICON_PNG).expect("invalid embedded RTVC app icon");
 
     let options = eframe::NativeOptions {
         viewport: ViewportBuilder::default()
             .with_inner_size([800.0, 600.0])
             .with_resizable(true)
+            .with_icon(app_icon)
             .with_title(format!(
                 "rtvc v{} - Videoton TV Computer Emulator",
                 env!("CARGO_PKG_VERSION")
