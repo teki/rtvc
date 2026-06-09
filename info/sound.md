@@ -39,7 +39,7 @@ The public core API is:
 - `Tvc::take_audio_samples()` drains pending mono samples.
 - `WasmTvc::audioSampleRate()` and `WasmTvc::takeAudioSamples()` expose the same data to browser code.
 
-The native egui frontend drains samples after each emulated frame and feeds them to [src/audio.rs](../src/audio.rs), a small `cpal` output sink. The sink opens the default host output device, prefers the TVC's 44.1 kHz stream rate, duplicates mono samples to all host channels, and keeps a bounded one-second queue. If a host device only accepts another sample rate, the sink does a lightweight queue-side resample.
+The native egui frontend drains samples after each emulated frame and feeds them to [src/audio.rs](../src/audio.rs), a small `cpal` output sink. The sink opens the default host output device, prefers the TVC's 44.1 kHz stream rate, converts samples to the selected host format (including Windows devices that expose unsigned 8-bit PCM), duplicates mono samples to all host channels, and keeps a bounded one-second queue. If a host device only accepts another sample rate, the sink does a lightweight queue-side resample.
 
 The web bundles drain samples through JavaScript and feed an `AudioWorklet` processor generated as `audio-worklet.js`. The full web app initializes the audio context and worklet from a user gesture. It requests a 44.1 kHz browser audio context and falls back to the browser default with a lightweight JavaScript resample when needed. The browser queue is bounded to one second so a suspended audio context cannot grow memory indefinitely.
 

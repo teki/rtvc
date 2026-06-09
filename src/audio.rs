@@ -49,6 +49,12 @@ impl NativeAudioSink {
                 err_fn,
                 None,
             ),
+            cpal::SampleFormat::U8 => device.build_output_stream(
+                &config,
+                move |data: &mut [u8], _| fill_output(data, channels, &queue_for_stream),
+                err_fn,
+                None,
+            ),
             cpal::SampleFormat::U16 => device.build_output_stream(
                 &config,
                 move |data: &mut [u16], _| fill_output(data, channels, &queue_for_stream),
@@ -226,8 +232,27 @@ impl AudioSample for i16 {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+impl AudioSample for u8 {
+    fn from_f32(sample: f32) -> Self {
+        ((sample.clamp(-1.0, 1.0) * 0.5 + 0.5) * u8::MAX as f32).round() as u8
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 impl AudioSample for u16 {
     fn from_f32(sample: f32) -> Self {
         ((sample.clamp(-1.0, 1.0) * 0.5 + 0.5) * u16::MAX as f32) as u16
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::AudioSample;
+
+    #[test]
+    fn converts_float_samples_to_unsigned_eight_bit_pcm() {
+        assert_eq!(u8::from_f32(-1.0), 0);
+        assert_eq!(u8::from_f32(0.0), 128);
+        assert_eq!(u8::from_f32(1.0), 255);
     }
 }
