@@ -1,6 +1,6 @@
 # Z80 opcode referencia
 
-Ez a fájl megőrzi a [../info/opcodes.txt](../info/opcodes.txt) egy utasítás per sor elrendezését, és kiegészíti a [../info/z80href.txt](../info/z80href.txt), [../info/z80inst.txt](../info/z80inst.txt), valamint a kompakt disassembler ([src/disasm.rs](../src/disasm.rs)) metaadataival.
+Ez a fájl megőrzi a történeti, utasításonként egy soros opcode-elrendezést, az időzítési, flag- és műveleti metaadatokat pedig a kompakt disassemblerrel ([src/disasm.rs](../src/disasm.rs)) összhangban tartja.
 
 Metaadat-jelmagyarázat:
 

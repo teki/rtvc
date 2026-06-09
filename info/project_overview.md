@@ -6,8 +6,6 @@
 
 The project is structured as a Rust library crate with a native desktop binary plus multiple test and utility binaries defined in [Cargo.toml](../Cargo.toml). The emulator core is shared by native and WebAssembly frontends.
 
-Future build-target and UI direction is tracked in [info/future_plan.md](future_plan.md). Check it before changing Cargo features, video model selection, web UI, native UI, or storage behavior.
-
 ### Crate Files and Directory Structure
 
 - [Cargo.toml](../Cargo.toml) — Package configuration specifying package edition, MIT license, features, library crate types, and binaries.
@@ -42,13 +40,27 @@ Future build-target and UI direction is tracked in [info/future_plan.md](future_
   - `tests.in` / `tests.expected` — FUSE test vectors.
   - `zexdoc.com` / `zexall.com` — ZEXDOC/ZEXALL binary test programs.
 
+## Build Targets and Frontends
+
+The project supports three frontend targets over the same emulator core:
+
+| Target | Cargo features | Frontend and platform integration |
+| --- | --- | --- |
+| Native desktop | Default `native` feature | Shared egui/eframe UI, native `cpal` audio, native file dialogs, filesystem media, and zipped program loading. Video model selection is a runtime UI setting. |
+| Lightweight web | `--no-default-features --features wasm,web-vid-simple` | Small `wasm-bindgen` API for a JavaScript-owned canvas UI, Web Audio, keyboard events, and file selection. It excludes cpal, egui, eframe, and zip. |
+| Full web | `--no-default-features --features wasm-full` | Shared egui/eframe application with browser file upload/download, an `AudioWorklet` initialized from a user gesture, `localStorage` preferences, and up to five recent tape and disk entries per media kind in IndexedDB. |
+
+The lightweight `web-vid-simple` and `web-vid-realistic` features are mutually exclusive compatibility selectors retained for existing build commands. Lightweight WASM constructors default to `VidModel::FastFrame` in either build; callers can select `VidModel::Interleaved` through the runtime API.
+
+Browser-only dependencies must remain behind explicit web features. In particular, changes to the full web application must not pull egui/eframe, zip, IndexedDB helpers, or native filesystem assumptions into the lightweight WASM target. Current build and dependency-tree validation commands are maintained in the [development and testing skill](../.agents/skills/development/SKILL.md).
+
 ## Architecture
 
 - **Z80 CPU**: The CPU emulator is implemented in [src/z80.rs](../src/z80.rs) and supports all documented and many undocumented Z80 opcodes.
 - **MMU**:
   - `FakeBus` in `bus.rs` provides a flat, 64 KB CPU bus specifically for running CPU tests (like FUSE and ZEX).
   - `TvcMmu` in `mmu.rs` implements TVC bank switching (mapping external/internal memory banks into four 16 KB pages), wired to the main binary via `TvcBus`.
-- **CPU Bus Trait**: `CpuBus` in `bus.rs` is the Z80-facing memory and I/O interface used by the CPU core. Test memory and the full TVC bus both implement it. The compact disassembler in [src/disasm.rs](../src/disasm.rs) also reads through this trait, so it can decode instructions from either `FakeBus` or the full TVC bus. Its `DisassembledInstruction` metadata uses the `SZHPNC` flag order from [info/z80href.txt](z80href.txt) and T-state notation from [info/z80inst.txt](z80inst.txt), including conditional forms such as `12/7`; [info/z80opcodes.md](z80opcodes.md) merges the opcode, flag, effect, and timing references in one maintained document.
+- **CPU Bus Trait**: `CpuBus` in `bus.rs` is the Z80-facing memory and I/O interface used by the CPU core. Test memory and the full TVC bus both implement it. The compact disassembler in [src/disasm.rs](../src/disasm.rs) also reads through this trait, so it can decode instructions from either `FakeBus` or the full TVC bus. Its `DisassembledInstruction` metadata uses `SZHPNC` flag order and conditional T-state notation such as `12/7`; [info/z80opcodes.md](z80opcodes.md) is the maintained opcode, flag, effect, and timing reference.
 - **Video**: `Vid` struct emulates the MC6845 CRTC and supports two runtime video schedules: `VidModel::FastFrame` (`draw_frame()` after one screen-time CPU budget) and `VidModel::Interleaved` (`stream_some()`/`render_stream()` after each CPU instruction).
 - **Sound**: `SoundTimer` models the TVC's 12-bit programmable divider, fixed 4-bit sound stage, amplitude register, DAC mode, and shared sound interrupt. It renders mono 44.1 kHz `f32` PCM samples that frontends can drain through `Tvc::take_audio_samples()`.
 - **Keyboard**: `Key` struct implements a row/column matrix with dynamic auto-mapping from host keyboard codes to TVC layout.
@@ -59,18 +71,16 @@ Future build-target and UI direction is tracked in [info/future_plan.md](future_
 - **Native App State**: `rtvc.toml` stores native UI preferences and restorable media state, including machine type, video model, and loaded tape/disk filenames. It is loaded from the current working directory first, then beside the executable; saving uses the loaded path and can fall back to the executable directory.
 - **egui GUI**: `EmuApp` displays the TVC screen at PAL 4:3 aspect ratio, exposes machine/media/view/file actions, drains generated audio samples, and shows an optional IO log panel. Native input comes from egui and prefers physical keys; full-web input comes from a DOM event queue so browser key identity, produced text, AltGr, repeat suppression, and blur reset remain available.
 - **WASM Facade**: `WasmTvc` in [src/wasm.rs](../src/wasm.rs) exposes a small `wasm-bindgen` API around `Tvc`, including `runFrame()`, `setVidModel()`, audio sample draining, key events, ROM/disk loading, and direct framebuffer pointer/length access for JavaScript canvas rendering. The generated lightweight web bundle feeds drained audio samples to a browser `AudioWorklet`. The WASM build does not include cpal, egui, eframe, or zip.
-- **Full Web Application**: `WebHandle` in [src/wasm.rs](../src/wasm.rs) starts the complete egui application. Its static bundle is generated by `cargo xtask bundle-web-full`, uses an `AudioWorklet`, stores recent media bytes in IndexedDB, stores small preferences in `localStorage`, and supports browser file upload/download flows.
+- **Full Web Application**: `WebHandle` in [src/wasm.rs](../src/wasm.rs) starts the complete egui application. Its static bundle is generated by `cargo xtask bundle-web-full`, uses an `AudioWorklet`, stores recent media bytes in IndexedDB, stores small preferences in `localStorage`, and supports browser file upload/download flows. Browser storage failures are reported through the UI.
 - **Socket Debugger**: The TCP socket server in [src/debugger.rs](../src/debugger.rs) runs a non-blocking TCP interface, accepting debugger client connections in both headless and native GUI modes. It accepts JSON commands to inspect state, single-step execution, continue/pause execution, save screenshots/snapshots, read raw memory banks, and inject inputs. A python client REPL script is provided in [scripts/rtvc_debug.py](../scripts/rtvc_debug.py) for interactive command-line debugging.
 - **Snapshots**: [info/snapshot.md](snapshot.md) defines the custom `RTVCSNAP` chunked state format, while `tvc_snapshot.rs` maps `Tvc` state to those chunks. User-facing snapshot and web bundle commands are in [README.md](../README.md).
-- **Cassette WAV Utility**: `cargo run --bin cas2wav -- input.cas output.wav [tape-name]` converts CAS images into the same 44.1 kHz unsigned 8-bit PCM waveform as the legacy [tools/cas2wav](../tools/cas2wav) converter.
+- **Cassette WAV Utility**: `cargo run --bin cas2wav -- input.cas output.wav [tape-name]` converts CAS images into the same 44.1 kHz unsigned 8-bit PCM waveform as the legacy converter.
 - **Profiling**: Use a sampling profiler such as `samply` against the native binary when profiling CPU performance.
 
 ## Toolchain
 
 - Rust Edition: `2024` (requires Rust ≥ 1.85).
-- Default feature: `native`, which enables `cpal` 0.17, `egui` 0.31, `eframe` 0.31, `zip` 2, `png` 0.17, and native debugger JSON support through `serde`/`serde_json` for the desktop application.
-- WASM feature: `wasm`, which enables only `wasm-bindgen` for the browser-facing API. Build it with `--no-default-features --features wasm`.
-- Full-web feature: `wasm-full`, which enables egui/eframe, PNG, file dialogs, zip media, and browser integration without enabling native `cpal`.
-- Native `Tvc::new()` defaults to `VidModel::Interleaved`. WASM constructors default to `VidModel::FastFrame`; browser callers can still switch modes through the WASM string API, which accepts `fast-frame` and `interleaved` plus the legacy aliases `simple` and `realistic`.
-- Package dependencies and metadata are managed in [Cargo.toml](../Cargo.toml). `serde` and `serde_json` are optional native-only dependencies for debugger JSON-RPC and are intentionally excluded from the web build tiers.
+- Package dependencies, feature definitions, binary targets, and metadata are managed in [Cargo.toml](../Cargo.toml).
+- The native feature currently uses `cpal` 0.17, `egui` 0.31, `eframe` 0.31, `zip` 2, `png` 0.17, and native debugger JSON support through `serde`/`serde_json`.
+- `serde` and `serde_json` are optional native-only dependencies and are intentionally excluded from the web targets.
 - License: MIT for emulator code. ROMs, cassette/disk images, snapshots, screenshots, manuals, and other historical or third-party machine materials may be present for preservation, compatibility testing, or convenience, but are outside the project license unless explicitly stated.
