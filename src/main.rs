@@ -1,5 +1,5 @@
 use eframe::egui::ViewportBuilder;
-use rtvc::{app_state, emu, ui};
+use rtvc_core::{app_state, emu, ui};
 
 const APP_ICON_PNG: &[u8] = include_bytes!("../assets/rtvc-app-icon.png");
 
@@ -147,11 +147,11 @@ fn main() -> eframe::Result<()> {
         }
     }
     if headless {
-        rtvc::debugger::run_headless(emu, port);
+        rtvc_core::debugger::run_headless(emu, port);
         return Ok(());
     }
 
-    let debugger = Some(rtvc::debugger::start_debugger_server(port));
+    let debugger = Some(rtvc_core::debugger::start_debugger_server(port));
     let app = ui::EmuApp::new(emu, app_state_file, debugger);
     let app_icon =
         eframe::icon_data::from_png_bytes(APP_ICON_PNG).expect("invalid embedded RTVC app icon");

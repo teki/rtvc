@@ -3,7 +3,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use rtvc::cas::TapeBitstreamGenerator;
+use rtvc_core::cas::TapeBitstreamGenerator;
 
 const CPU_HZ: u64 = 3_125_000;
 const SAMPLE_RATE: u64 = 44_100;

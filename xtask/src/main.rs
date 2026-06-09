@@ -114,7 +114,7 @@ fn bundle_web_full(out_dir: Option<&Path>) -> Result<(), String> {
         .join("target")
         .join("wasm32-unknown-unknown")
         .join("release")
-        .join("rtvc.wasm");
+        .join("rtvc_core.wasm");
     if !wasm_in.is_file() {
         return Err(format!("WASM output not found: {}", wasm_in.display()));
     }
@@ -168,7 +168,7 @@ fn write_web_bundle(workspace: &Path, bundle_dir: &Path) -> Result<(), String> {
         .join("target")
         .join("wasm32-unknown-unknown")
         .join("release")
-        .join("rtvc.wasm");
+        .join("rtvc_core.wasm");
     if !wasm_in.is_file() {
         return Err(format!("WASM output not found: {}", wasm_in.display()));
     }
