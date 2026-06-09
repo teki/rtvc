@@ -1,14 +1,14 @@
-use std::net::{TcpListener, TcpStream};
-use std::io::{Read, Write};
-use std::time::{Instant, Duration};
-use std::path::Path;
-use std::thread;
-use std::sync::mpsc::{channel, Sender, Receiver};
-use std::sync::{Arc, Mutex};
-use serde::Deserialize;
-use crate::emu::Emu;
 use crate::bus::CpuBus;
+use crate::emu::Emu;
 use eframe::egui;
+use serde::Deserialize;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::path::Path;
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
 
 #[derive(Deserialize, Debug)]
 #[serde(tag = "cmd")]
@@ -84,8 +84,8 @@ pub fn start_debugger_server(port: u16) -> DebuggerInterface {
     let ctx_clone = Arc::clone(&ctx);
 
     thread::spawn(move || {
-        let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
-            .expect("Failed to bind TCP port");
+        let listener =
+            TcpListener::bind(format!("127.0.0.1:{}", port)).expect("Failed to bind TCP port");
         listener.set_nonblocking(true).unwrap();
         println!("Debugger server listening on 127.0.0.1:{}", port);
 
@@ -119,7 +119,13 @@ pub fn start_debugger_server(port: u16) -> DebuggerInterface {
                                 command_buffer = command_buffer[pos + 1..].to_string();
                                 if !line.is_empty() {
                                     let (reply_tx, reply_rx) = channel();
-                                    if cmd_tx.send(DebuggerMessage { cmd_line: line, reply_tx }).is_ok() {
+                                    if cmd_tx
+                                        .send(DebuggerMessage {
+                                            cmd_line: line,
+                                            reply_tx,
+                                        })
+                                        .is_ok()
+                                    {
                                         if let Ok(guard) = ctx_clone.lock() {
                                             if let Some(ref c) = *guard {
                                                 c.request_repaint();
@@ -127,7 +133,8 @@ pub fn start_debugger_server(port: u16) -> DebuggerInterface {
                                         }
                                         // Wait for response from main thread
                                         if let Ok(response) = reply_rx.recv() {
-                                            let _ = s.write_all(format!("{}\n", response).as_bytes());
+                                            let _ =
+                                                s.write_all(format!("{}\n", response).as_bytes());
                                         }
                                     }
                                 }
@@ -163,7 +170,11 @@ pub fn start_debugger_server(port: u16) -> DebuggerInterface {
         }
     });
 
-    DebuggerInterface { cmd_rx, event_tx, ctx }
+    DebuggerInterface {
+        cmd_rx,
+        event_tx,
+        ctx,
+    }
 }
 
 pub fn run_headless(mut emu: Emu, port: u16) {
@@ -266,7 +277,9 @@ pub fn handle_command(emu: &mut Emu, line: &str) -> String {
                 if let Some(b) = bank {
                     match emu.read_raw_bank(&b, addr as usize, len) {
                         Some(data) => serde_json::json!({ "status": "ok", "data": data }),
-                        None => serde_json::json!({ "status": "error", "message": format!("Unknown or uninitialized memory bank: {}", b) })
+                        None => {
+                            serde_json::json!({ "status": "error", "message": format!("Unknown or uninitialized memory bank: {}", b) })
+                        }
                     }
                 } else {
                     let mut data = Vec::with_capacity(len);
@@ -279,14 +292,17 @@ pub fn handle_command(emu: &mut Emu, line: &str) -> String {
             }
             DebuggerCommand::Disassemble { addr, len } => {
                 let insts = crate::disasm::disassemble_block(&mut emu.tvc.bus, addr, len);
-                let mapped: Vec<_> = insts.iter().map(|inst| {
-                    serde_json::json!({
-                        "addr": inst.addr,
-                        "len": inst.len,
-                        "bytes": inst.bytes,
-                        "text": inst.text
+                let mapped: Vec<_> = insts
+                    .iter()
+                    .map(|inst| {
+                        serde_json::json!({
+                            "addr": inst.addr,
+                            "len": inst.len,
+                            "bytes": inst.bytes,
+                            "text": inst.text
+                        })
                     })
-                }).collect();
+                    .collect();
                 serde_json::json!({
                     "status": "ok",
                     "instructions": mapped
@@ -295,52 +311,60 @@ pub fn handle_command(emu: &mut Emu, line: &str) -> String {
             DebuggerCommand::SaveSnapshot { path } => {
                 match emu.save_snapshot_file(Path::new(&path)) {
                     Ok(()) => serde_json::json!({ "status": "ok" }),
-                    Err(err) => serde_json::json!({ "status": "error", "message": format!("Failed to save snapshot: {}", err) })
+                    Err(err) => {
+                        serde_json::json!({ "status": "error", "message": format!("Failed to save snapshot: {}", err) })
+                    }
                 }
             }
             DebuggerCommand::LoadSnapshot { path } => {
                 match emu.load_snapshot_file(Path::new(&path)) {
                     Ok(()) => serde_json::json!({ "status": "ok" }),
-                    Err(err) => serde_json::json!({ "status": "error", "message": format!("Failed to load snapshot: {}", err) })
+                    Err(err) => {
+                        serde_json::json!({ "status": "error", "message": format!("Failed to load snapshot: {}", err) })
+                    }
                 }
             }
             DebuggerCommand::SaveScreenshot { path } => {
                 match emu.save_screenshot(Path::new(&path)) {
                     Ok(()) => serde_json::json!({ "status": "ok" }),
-                    Err(err) => serde_json::json!({ "status": "error", "message": format!("Failed to save screenshot: {}", err) })
+                    Err(err) => {
+                        serde_json::json!({ "status": "error", "message": format!("Failed to save screenshot: {}", err) })
+                    }
                 }
             }
-            DebuggerCommand::Key { action, code, character } => {
-                match action.as_str() {
-                    "down" => {
-                        if let Some(c) = code {
-                            emu.tvc.key_down(c);
-                            serde_json::json!({ "status": "ok" })
-                        } else {
-                            serde_json::json!({ "status": "error", "message": "Missing key code for key_down" })
-                        }
+            DebuggerCommand::Key {
+                action,
+                code,
+                character,
+            } => match action.as_str() {
+                "down" => {
+                    if let Some(c) = code {
+                        emu.tvc.key_down(c);
+                        serde_json::json!({ "status": "ok" })
+                    } else {
+                        serde_json::json!({ "status": "error", "message": "Missing key code for key_down" })
                     }
-                    "up" => {
-                        if let Some(c) = code {
-                            emu.tvc.key_up(c);
-                            serde_json::json!({ "status": "ok" })
-                        } else {
-                            serde_json::json!({ "status": "error", "message": "Missing key code for key_up" })
-                        }
-                    }
-                    "press" => {
-                        if let Some(ch_str) = character {
-                            for ch in ch_str.chars() {
-                                emu.tvc.key_press(ch);
-                            }
-                            serde_json::json!({ "status": "ok" })
-                        } else {
-                            serde_json::json!({ "status": "error", "message": "Missing char for key_press" })
-                        }
-                    }
-                    _ => serde_json::json!({ "status": "error", "message": "Unknown key action" }),
                 }
-            }
+                "up" => {
+                    if let Some(c) = code {
+                        emu.tvc.key_up(c);
+                        serde_json::json!({ "status": "ok" })
+                    } else {
+                        serde_json::json!({ "status": "error", "message": "Missing key code for key_up" })
+                    }
+                }
+                "press" => {
+                    if let Some(ch_str) = character {
+                        for ch in ch_str.chars() {
+                            emu.tvc.key_press(ch);
+                        }
+                        serde_json::json!({ "status": "ok" })
+                    } else {
+                        serde_json::json!({ "status": "error", "message": "Missing char for key_press" })
+                    }
+                }
+                _ => serde_json::json!({ "status": "error", "message": "Unknown key action" }),
+            },
         },
         Err(err) => {
             serde_json::json!({

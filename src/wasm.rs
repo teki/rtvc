@@ -1,6 +1,6 @@
-use wasm_bindgen::prelude::*;
 #[cfg(feature = "wasm-full")]
 use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::*;
 
 use crate::tvc::Tvc;
 use crate::vid::VidModel;
@@ -239,8 +239,13 @@ fn startup_storage_error() -> Option<String> {
 }
 
 #[cfg(feature = "wasm-full")]
-fn load_recent_media(
-) -> Result<(Vec<crate::emu::WasmRecentFile>, Vec<crate::emu::WasmRecentFile>), JsValue> {
+fn load_recent_media() -> Result<
+    (
+        Vec<crate::emu::WasmRecentFile>,
+        Vec<crate::emu::WasmRecentFile>,
+    ),
+    JsValue,
+> {
     let records = web_startup_recent_media()
         .dyn_into::<js_sys::Array>()
         .map_err(|_| JsValue::from_str("recent media result is not an array"))?;
@@ -254,11 +259,9 @@ fn load_recent_media(
         let name = js_sys::Reflect::get(&record, &JsValue::from_str("name"))?
             .as_string()
             .unwrap_or_default();
-        let bytes = js_sys::Uint8Array::new(&js_sys::Reflect::get(
-            &record,
-            &JsValue::from_str("bytes"),
-        )?)
-        .to_vec();
+        let bytes =
+            js_sys::Uint8Array::new(&js_sys::Reflect::get(&record, &JsValue::from_str("bytes"))?)
+                .to_vec();
         let recent = crate::emu::WasmRecentFile { name, bytes };
         match kind.as_str() {
             "tape" => tapes.push(recent),

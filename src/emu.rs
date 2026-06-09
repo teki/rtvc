@@ -71,6 +71,65 @@ mod tests {
     }
 
     #[test]
+    fn game_archive_uses_exact_requested_media() {
+        let archive = game_archive(&[
+            ("OTHER.CAS", b"wrong"),
+            ("folder/TARGET.CAS", b"correct"),
+            ("disk.dsk", b"disk"),
+        ]);
+
+        assert_eq!(
+            extract_game_archive_member("TARGET.CAS", &archive).unwrap(),
+            b"correct"
+        );
+        assert_eq!(
+            extract_game_archive_member("folder\\target.cas", &archive).unwrap(),
+            b"correct"
+        );
+    }
+
+    #[test]
+    fn game_archive_reports_missing_media() {
+        let archive = game_archive(&[("OTHER.CAS", b"wrong")]);
+        let error = extract_game_archive_member("MISSING.CAS", &archive)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("MISSING.CAS"));
+    }
+
+    #[test]
+    fn recent_media_replaces_same_display_name() {
+        let mut emu = Emu::new(MachineType {
+            is_plus: false,
+            rom_version: RomVersion::V1_2,
+            has_dos: false,
+        });
+        emu.recent_tapes = vec![
+            "progs/TVBALL.CAS".to_string(),
+            "old-cache/TVBALL.CAS".to_string(),
+        ];
+
+        emu.add_recent_tape("rtvc-media/tapes/tvball/TVBALL.CAS".to_string());
+
+        assert_eq!(
+            emu.recent_tapes,
+            vec!["rtvc-media/tapes/tvball/TVBALL.CAS".to_string()]
+        );
+    }
+
+    fn game_archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let cursor = std::io::Cursor::new(Vec::new());
+        let mut archive = zip::ZipWriter::new(cursor);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        for (name, bytes) in entries {
+            archive.start_file(*name, options).unwrap();
+            archive.write_all(bytes).unwrap();
+        }
+        archive.finish().unwrap().into_inner()
+    }
+
+    #[test]
     fn load_tape_snapshot_restores_selection_and_can_play() {
         let snapshot_path = std::path::Path::new("snapshots/load_tape.rtvcsnap.zip");
         if !snapshot_path.exists() {
@@ -795,13 +854,17 @@ impl Emu {
     }
 
     pub fn add_recent_tape(&mut self, path_str: String) {
-        self.recent_tapes.retain(|x| x != &path_str);
+        let key = recent_media_key(&path_str);
+        self.recent_tapes
+            .retain(|existing| recent_media_key(existing) != key);
         self.recent_tapes.insert(0, path_str);
         self.recent_tapes.truncate(5);
     }
 
     pub fn add_recent_disk(&mut self, path_str: String) {
-        self.recent_disks.retain(|x| x != &path_str);
+        let key = recent_media_key(&path_str);
+        self.recent_disks
+            .retain(|existing| recent_media_key(existing) != key);
         self.recent_disks.insert(0, path_str);
         self.recent_disks.truncate(5);
     }
@@ -842,7 +905,11 @@ impl Emu {
         Ok(())
     }
 
-    pub fn play_tape_bytes(&mut self, name: &str, bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn play_tape_bytes(
+        &mut self,
+        name: &str,
+        bytes: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let (display_name, buf) = unpack_cas_bytes(name, bytes)?;
         let generator = TapeBitstreamGenerator::new(&buf, &display_name)?;
         self.tvc.bus.play_tape(generator);
@@ -861,7 +928,11 @@ impl Emu {
         Ok(())
     }
 
-    pub fn inject_tape_bytes(&mut self, name: &str, bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn inject_tape_bytes(
+        &mut self,
+        name: &str,
+        bytes: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let (display_name, buf) = unpack_cas_bytes(name, bytes)?;
         if self.tvc.load_cas(&buf) {
             self.loaded_tape = Some(format!("{} (Injected)", display_name));
@@ -882,7 +953,11 @@ impl Emu {
         }
     }
 
-    pub fn insert_disk_bytes(&mut self, name: &str, bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn insert_disk_bytes(
+        &mut self,
+        name: &str,
+        bytes: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let (display_name, buf) = unpack_dsk_bytes(name, bytes)?;
         self.tvc.load_disk(&display_name, &buf);
         self.loaded_disk = Some(display_name);
@@ -899,23 +974,107 @@ impl Emu {
         Ok(())
     }
 
+    pub fn load_game_archive_bytes(
+        &mut self,
+        file_to_run: &str,
+        archive_bytes: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let bytes = extract_game_archive_member(file_to_run, archive_bytes)?;
+        let lower_name = file_to_run.to_ascii_lowercase();
+        if lower_name.ends_with(".cas") {
+            if !self.tvc.load_cas(&bytes) {
+                return Err("Failed to inject CAS data into memory".into());
+            }
+            self.loaded_tape = Some(format!("{file_to_run} (Injected)"));
+            #[cfg(target_arch = "wasm32")]
+            {
+                self.loaded_tape_file_name = Some(file_to_run.to_string());
+                self.loaded_tape_wasm = Some(WasmRecentFile {
+                    name: file_to_run.to_string(),
+                    bytes: bytes.clone(),
+                });
+                self.loaded_tape_was_injected = true;
+                self.add_recent_tape_wasm(file_to_run.to_string(), bytes);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                self.loaded_tape_file_name = None;
+            }
+            Ok(())
+        } else if lower_name.ends_with(".dsk") {
+            self.tvc.load_disk(file_to_run, &bytes);
+            self.loaded_disk = Some(file_to_run.to_string());
+            #[cfg(target_arch = "wasm32")]
+            {
+                self.loaded_disk_file_name = Some(file_to_run.to_string());
+                self.loaded_disk_wasm = Some(WasmRecentFile {
+                    name: file_to_run.to_string(),
+                    bytes: bytes.clone(),
+                });
+                self.add_recent_disk_wasm(file_to_run.to_string(), bytes);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                self.loaded_disk_file_name = None;
+            }
+            Ok(())
+        } else {
+            Err(format!("Unsupported game media: {file_to_run}").into())
+        }
+    }
+
     #[cfg(target_arch = "wasm32")]
     pub fn add_recent_tape_wasm(&mut self, name: String, bytes: Vec<u8>) {
         self.recent_tapes_wasm.retain(|x| x.name != name);
-        self.recent_tapes_wasm.insert(0, WasmRecentFile { name, bytes });
+        self.recent_tapes_wasm
+            .insert(0, WasmRecentFile { name, bytes });
         self.recent_tapes_wasm.truncate(5);
     }
 
     #[cfg(target_arch = "wasm32")]
     pub fn add_recent_disk_wasm(&mut self, name: String, bytes: Vec<u8>) {
         self.recent_disks_wasm.retain(|x| x.name != name);
-        self.recent_disks_wasm.insert(0, WasmRecentFile { name, bytes });
+        self.recent_disks_wasm
+            .insert(0, WasmRecentFile { name, bytes });
         self.recent_disks_wasm.truncate(5);
     }
 
     pub fn read_raw_bank(&self, bank: &str, addr: usize, len: usize) -> Option<Vec<u8>> {
         self.tvc.bus.mmu.read_raw_bank(bank, addr, len)
     }
+}
+
+pub fn extract_game_archive_member(
+    file_to_run: &str,
+    archive_bytes: &[u8],
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let reader = std::io::Cursor::new(archive_bytes);
+    let mut archive = zip::ZipArchive::new(reader)?;
+    let target_name = file_to_run.replace('\\', "/");
+    let target_file_name = target_name.rsplit('/').next().unwrap_or(&target_name);
+
+    for index in 0..archive.len() {
+        let mut file = archive.by_index(index)?;
+        let entry_name = file.name().replace('\\', "/");
+        let entry_file_name = entry_name.rsplit('/').next().unwrap_or(&entry_name);
+        if entry_name.eq_ignore_ascii_case(&target_name)
+            || entry_file_name.eq_ignore_ascii_case(target_file_name)
+        {
+            let mut bytes = Vec::new();
+            file.read_to_end(&mut bytes)?;
+            return Ok(bytes);
+        }
+    }
+
+    Err(format!("{file_to_run} was not found in the game archive").into())
+}
+
+fn recent_media_key(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(path)
+        .to_lowercase()
 }
 
 fn data_dir(name: &str) -> PathBuf {
@@ -989,7 +1148,10 @@ fn read_dsk_data(path: &Path) -> Result<(String, Vec<u8>), Box<dyn std::error::E
     unpack_dsk_bytes(&file_name, &data)
 }
 
-pub fn unpack_cas_bytes(file_name: &str, data: &[u8]) -> Result<(String, Vec<u8>), Box<dyn std::error::Error>> {
+pub fn unpack_cas_bytes(
+    file_name: &str,
+    data: &[u8],
+) -> Result<(String, Vec<u8>), Box<dyn std::error::Error>> {
     if file_name.to_lowercase().ends_with(".cas") {
         Ok((file_name.to_string(), data.to_vec()))
     } else if file_name.to_lowercase().ends_with(".zip") {
@@ -1015,7 +1177,10 @@ pub fn unpack_cas_bytes(file_name: &str, data: &[u8]) -> Result<(String, Vec<u8>
     }
 }
 
-pub fn unpack_dsk_bytes(file_name: &str, data: &[u8]) -> Result<(String, Vec<u8>), Box<dyn std::error::Error>> {
+pub fn unpack_dsk_bytes(
+    file_name: &str,
+    data: &[u8],
+) -> Result<(String, Vec<u8>), Box<dyn std::error::Error>> {
     if file_name.to_lowercase().ends_with(".dsk") {
         Ok((file_name.to_string(), data.to_vec()))
     } else if file_name.to_lowercase().ends_with(".zip") {

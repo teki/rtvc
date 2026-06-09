@@ -17,6 +17,7 @@ This document records intended direction for future changes so implementation wo
 - Default build path: `cargo run --bin rtvc`.
 - Uses the `native` Cargo feature by default.
 - Enables egui/eframe, native audio through `cpal`, and filesystem helpers such as zipped disk loading.
+- Uses worker-thread HTTPS requests for the shared TVC Gamebase browser so catalog, image, and archive downloads do not block egui rendering.
 - Video model must remain a runtime setting in the UI, not a native build feature.
 
 ### Lightweight Web
@@ -30,7 +31,7 @@ This document records intended direction for future changes so implementation wo
 - JavaScript owns browser UI, canvas presentation, Web Audio playback, keyboard event wiring, and file picker plumbing.
 - Default video model is `VidModel::FastFrame` for WASM constructors.
 - Snapshot upload bundles are produced with `cargo bundle-web <snapshot>`.
-- Snapshot player skeletons without an embedded snapshot are produced with `cargo xtask bundle-web-skeleton [out-dir]`.
+- Snapshot player skeletons without an embedded snapshot are produced with `cargo xtask bundle-web-skeleton [out-dir]`. The xtask runner and generated WASM use the optimized Cargo release profile.
 
 ### Full Web
 
@@ -42,11 +43,14 @@ This document records intended direction for future changes so implementation wo
   ```bash
   cargo xtask bundle-web-full [out-dir]
   ```
+  The xtask runner and generated WASM use the optimized Cargo release profile.
 - Release archives and the public `docs/` demo use this full web build.
 - Uses the native egui/eframe application structure with browser-specific audio, storage, file dialogs, downloads, and keyboard plumbing.
 - Uses an `AudioWorklet` for PCM playback. The browser audio context and worklet are initialized from a user gesture.
 - Stores small configuration values in `localStorage`.
 - Stores recent tape and disk bytes in IndexedDB, limited to five entries per media kind. Storage failures must be visible in the UI.
+- The shared File menu may lazily fetch the TVC Gamebase JSON catalog and selected media from `teki.one`. Catalog data is requested only when the Gamebase dialog opens; screenshots are loaded on demand and game ZIPs are fetched only when Load is pressed.
+- Gamebase ZIP loading uses the catalog's `FileToRun` member rather than selecting the first CAS or DSK in an archive. Extracted media joins the existing recent-media persistence path.
 - Uses raw DOM keyboard events because eframe 0.31 does not expose physical keys on web. `KeyboardEvent.code` identifies the host key, `KeyboardEvent.key` supplies the layout-aware character, and `getModifierState("AltGraph")` distinguishes AltGr.
 - Keeps byte-backed mounted media in `Emu` so changing machine type can restore browser-mounted tape and disk content.
 - Must not force the lightweight web build to include egui/eframe, zip, IndexedDB helpers, or full-web UI code.

@@ -72,6 +72,13 @@ impl AppStateFile {
             }
         }
     }
+
+    pub fn media_cache_dir(&self) -> PathBuf {
+        self.path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join("rtvc-media")
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -79,7 +86,8 @@ impl AppStateFile {
     pub fn load() -> Self {
         let state = if let Some(window) = web_sys::window() {
             if let Ok(Some(local_storage)) = window.local_storage() {
-                local_storage.get_item("rtvc_config")
+                local_storage
+                    .get_item("rtvc_config")
                     .ok()
                     .flatten()
                     .map(|s| parse_state(&s))
@@ -98,8 +106,14 @@ impl AppStateFile {
 
     pub fn save(&mut self, state: &AppState) -> std::io::Result<()> {
         let mut text = String::new();
-        text.push_str(&format!("machine_type = \"{}\"\n", machine_type_id(state.machine_type)));
-        text.push_str(&format!("video_model = \"{}\"\n\n", vid_model_id(state.vid_model)));
+        text.push_str(&format!(
+            "machine_type = \"{}\"\n",
+            machine_type_id(state.machine_type)
+        ));
+        text.push_str(&format!(
+            "video_model = \"{}\"\n\n",
+            vid_model_id(state.vid_model)
+        ));
         text.push_str("[tape]\n");
         if let Some(file_name) = &state.tape_file_name {
             text.push_str(&format!("selected = \"{}\"\n", escape_string(file_name)));
@@ -361,7 +375,10 @@ fn vid_model_from_id(id: &str) -> Option<VidModel> {
 fn parse_array_string(value: &str) -> Vec<String> {
     let mut out = Vec::new();
     let trimmed_val = value.trim();
-    let Some(content) = trimmed_val.strip_prefix('[').and_then(|v| v.strip_suffix(']')) else {
+    let Some(content) = trimmed_val
+        .strip_prefix('[')
+        .and_then(|v| v.strip_suffix(']'))
+    else {
         return out;
     };
     for part in content.split(',') {
@@ -410,7 +427,10 @@ recent = ["Games.dsk"]
         assert_eq!(state.vid_model, Some(VidModel::FastFrame));
         assert_eq!(state.tape_file_name.as_deref(), Some("TVBALL.CAS"));
         assert!(state.tape_loaded);
-        assert_eq!(state.recent_tapes, vec!["TVBALL.CAS".to_string(), "TVBALL2.CAS".to_string()]);
+        assert_eq!(
+            state.recent_tapes,
+            vec!["TVBALL.CAS".to_string(), "TVBALL2.CAS".to_string()]
+        );
         assert_eq!(
             state.disk_file_name.as_deref(),
             Some("VT-DOS \"Games\".dsk")

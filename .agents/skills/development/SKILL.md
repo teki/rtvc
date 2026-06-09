@@ -15,6 +15,7 @@ This skill provides step-by-step instructions and references for compiling, exec
   ```bash
   cargo build
   ```
+  - The Windows MSVC `rtvc` executable is linked with an 8 MiB stack by [build.rs](../../../build.rs); keep this setting when changing startup allocation patterns because the emulator state can overflow the platform's default debug-build stack.
   - On Linux, the native audio backend uses `cpal` and may require ALSA development files such as `libasound2-dev` on Debian/Ubuntu or `alsa-lib-devel` on Fedora.
 - **Run the main emulator binary (opens egui window):**
   ```bash
@@ -81,7 +82,7 @@ This skill provides step-by-step instructions and references for compiling, exec
   # or choose an output directory:
   cargo xtask bundle-web-skeleton dist/rtvc-snapshot-player
   ```
-  - Builds the same small `wasm,web-vid-simple` target.
+  - Runs the bundler and builds the small `wasm,web-vid-simple` target with the optimized Cargo release profile.
   - Emits a static snapshot player under `dist/rtvc-web-skeleton/` by default.
   - Users can copy `snapshot.rtvcsnap.zip` or `snapshot.rtvcsnap` beside `index.html` and serve the directory with any static web server.
 
@@ -92,7 +93,7 @@ This skill provides step-by-step instructions and references for compiling, exec
   # or choose an output directory:
   cargo xtask bundle-web-full package/web-full
   ```
-  - Builds the `wasm-full` feature with the complete egui/eframe emulator UI.
+  - Runs the bundler and builds the `wasm-full` feature with the complete egui/eframe emulator UI using the optimized Cargo release profile.
   - Emits a static application under `dist/rtvc-web-full/` by default.
   - Browser audio uses an `AudioWorklet`; the audio context resumes after user interaction.
   - Recent tape and disk bytes are stored in IndexedDB. Small UI preferences remain in `localStorage`.

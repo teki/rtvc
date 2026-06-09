@@ -750,6 +750,22 @@ function ensureAudioSink() {
 
 globalThis.rtvcTakeKeyboardEvents = () => keyboardEvents.splice(0);
 
+globalThis.rtvcFetchText = async (url) => {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} while fetching ${url}`);
+  }
+  return response.text();
+};
+
+globalThis.rtvcFetchBytes = async (url) => {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} while fetching ${url}`);
+  }
+  return new Uint8Array(await response.arrayBuffer());
+};
+
 globalThis.rtvcLoadRecentMedia = async () => {
   const db = await openDatabase();
   const records = await requestResult(

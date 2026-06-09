@@ -82,7 +82,9 @@ fn main() -> eframe::Result<()> {
                 println!("  -t, --tape <path>      Mount a CAS tape for loading");
                 println!("  -i, --inject <path>    Inject a CAS tape directly into memory");
                 println!("  -H, --headless         Enable headless execution mode");
-                println!("  -p, --port <port>      TCP port for the debugger socket (default: 8080)");
+                println!(
+                    "  -p, --port <port>      TCP port for the debugger socket (default: 8080)"
+                );
                 println!("  -h, --help             Display this help message");
                 std::process::exit(0);
             }

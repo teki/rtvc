@@ -1,10 +1,14 @@
-#[cfg(target_arch = "wasm32")]
-use web_time::{Duration, Instant};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
+#[cfg(target_arch = "wasm32")]
+use web_time::{Duration, Instant};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_futures::JsFuture;
+
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::app_state::{AppState, AppStateFile};
 use crate::audio::NativeAudioSink;
@@ -25,6 +29,120 @@ pub enum PendingFile {
     RecentCleared { kind: String },
 }
 
+const GAME_CATALOG_URL: &str = "https://teki.one/tvc_games/tvc_games.json";
+const GAME_BASE_URL: &str = "https://teki.one/tvc_games/Games/";
+const GAME_PICTURE_URL: &str = "https://teki.one/tvc_games/Pictures/";
+
+#[derive(Clone, serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct GameEntry {
+    #[serde(default)]
+    id: u32,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    filename: String,
+    #[serde(default)]
+    file_to_run: String,
+    #[serde(default)]
+    screenshot: String,
+    #[serde(default)]
+    year: String,
+    #[serde(default)]
+    genre: String,
+    #[serde(default)]
+    publisher: String,
+    #[serde(default)]
+    developer: String,
+    #[serde(default)]
+    programmer: String,
+    #[serde(default)]
+    musician: String,
+    #[serde(default)]
+    language: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    comment: String,
+    #[serde(default)]
+    rating: i32,
+    #[serde(default)]
+    control_code: i32,
+    #[serde(default)]
+    sid_file: String,
+}
+
+impl GameEntry {
+    fn is_loadable(&self) -> bool {
+        let lower_name = self.file_to_run.to_ascii_lowercase();
+        lower_name.ends_with(".cas") || lower_name.ends_with(".dsk")
+    }
+
+    fn matches(&self, search: &str) -> bool {
+        if search.is_empty() {
+            return true;
+        }
+        [
+            self.name.as_str(),
+            self.year.as_str(),
+            self.genre.as_str(),
+            self.publisher.as_str(),
+            self.developer.as_str(),
+            self.programmer.as_str(),
+            self.musician.as_str(),
+            self.language.as_str(),
+            self.description.as_str(),
+            self.comment.as_str(),
+        ]
+        .iter()
+        .any(|value| value.to_lowercase().contains(search))
+    }
+}
+
+enum GameEvent {
+    Catalog(Result<Vec<GameEntry>, String>),
+    Image {
+        name: String,
+        result: Result<Vec<u8>, String>,
+    },
+    Archive {
+        game: GameEntry,
+        result: Result<Vec<u8>, String>,
+    },
+}
+
+struct GameLibraryState {
+    open: bool,
+    loading_catalog: bool,
+    catalog_error: Option<String>,
+    entries: Vec<GameEntry>,
+    search: String,
+    selected_id: Option<u32>,
+    loading_game_id: Option<u32>,
+    textures: HashMap<String, TextureHandle>,
+    image_order: VecDeque<String>,
+    pending_images: HashSet<String>,
+    failed_images: HashSet<String>,
+}
+
+impl Default for GameLibraryState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            loading_catalog: false,
+            catalog_error: None,
+            entries: Vec::new(),
+            search: String::new(),
+            selected_id: None,
+            loading_game_id: None,
+            textures: HashMap::new(),
+            image_order: VecDeque::new(),
+            pending_images: HashSet::new(),
+            failed_images: HashSet::new(),
+        }
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 pub fn download_file(name: &str, data: &[u8], mime_type: &str) {
     if let Some(window) = web_sys::window() {
@@ -35,7 +153,9 @@ pub fn download_file(name: &str, data: &[u8], mime_type: &str) {
                 array.push(&uint8_array);
                 let blob_options = web_sys::BlobPropertyBag::new();
                 blob_options.set_type(mime_type);
-                if let Ok(blob) = web_sys::Blob::new_with_u8_array_sequence_and_options(&array, &blob_options) {
+                if let Ok(blob) =
+                    web_sys::Blob::new_with_u8_array_sequence_and_options(&array, &blob_options)
+                {
                     if let Ok(url) = web_sys::Url::create_object_url_with_blob(&blob) {
                         if let Ok(a) = document.create_element("a") {
                             if let Ok(a) = a.dyn_into::<web_sys::HtmlAnchorElement>() {
@@ -79,6 +199,18 @@ extern "C" {
         js_name = rtvcClearRecentMedia
     )]
     fn web_clear_recent_media(kind: &str) -> js_sys::Promise;
+
+    #[wasm_bindgen::prelude::wasm_bindgen(
+        js_namespace = globalThis,
+        js_name = rtvcFetchText
+    )]
+    fn web_fetch_text(url: &str) -> js_sys::Promise;
+
+    #[wasm_bindgen::prelude::wasm_bindgen(
+        js_namespace = globalThis,
+        js_name = rtvcFetchBytes
+    )]
+    fn web_fetch_bytes(url: &str) -> js_sys::Promise;
 }
 
 const TVC_REFRESH_HZ: u32 = 50;
@@ -199,6 +331,9 @@ pub struct EmuApp {
     pub file_tx: std::sync::mpsc::Sender<PendingFile>,
     #[cfg(target_arch = "wasm32")]
     pub file_rx: std::sync::mpsc::Receiver<PendingFile>,
+    game_tx: std::sync::mpsc::Sender<GameEvent>,
+    game_rx: std::sync::mpsc::Receiver<GameEvent>,
+    game_library: Box<GameLibraryState>,
 }
 
 impl EmuApp {
@@ -211,9 +346,10 @@ impl EmuApp {
         };
         #[cfg(target_arch = "wasm32")]
         let (file_tx, file_rx) = std::sync::mpsc::channel();
+        let (game_tx, game_rx) = std::sync::mpsc::channel();
 
-        emu.recent_tapes = app_state_file.state.recent_tapes.clone();
-        emu.recent_disks = app_state_file.state.recent_disks.clone();
+        emu.recent_tapes = dedupe_recent_paths(&app_state_file.state.recent_tapes);
+        emu.recent_disks = dedupe_recent_paths(&app_state_file.state.recent_disks);
         EmuApp {
             emu,
             screen_texture: None,
@@ -238,6 +374,9 @@ impl EmuApp {
             file_tx,
             #[cfg(target_arch = "wasm32")]
             file_rx,
+            game_tx,
+            game_rx,
+            game_library: Box::new(GameLibraryState::default()),
         }
     }
 
@@ -455,6 +594,433 @@ impl EmuApp {
         }
     }
 
+    fn open_game_library(&mut self, ctx: egui::Context) {
+        self.game_library.open = true;
+        if self.game_library.entries.is_empty() && !self.game_library.loading_catalog {
+            self.game_library.loading_catalog = true;
+            self.game_library.catalog_error = None;
+            let tx = self.game_tx.clone();
+            #[cfg(target_arch = "wasm32")]
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = async {
+                    let value = JsFuture::from(web_fetch_text(GAME_CATALOG_URL))
+                        .await
+                        .map_err(js_error_string)?;
+                    let json = value
+                        .as_string()
+                        .ok_or_else(|| "Game catalog response was not text".to_string())?;
+                    serde_json::from_str(&json).map_err(|err| err.to_string())
+                }
+                .await;
+                let _ = tx.send(GameEvent::Catalog(result));
+                ctx.request_repaint();
+            });
+            #[cfg(not(target_arch = "wasm32"))]
+            std::thread::spawn(move || {
+                let result = native_fetch_text(GAME_CATALOG_URL)
+                    .and_then(|json| serde_json::from_str(&json).map_err(|err| err.to_string()));
+                let _ = tx.send(GameEvent::Catalog(result));
+                ctx.request_repaint();
+            });
+        }
+    }
+
+    fn request_game_image(&mut self, name: String, ctx: egui::Context) {
+        if name.is_empty()
+            || self.game_library.textures.contains_key(&name)
+            || self.game_library.pending_images.contains(&name)
+            || self.game_library.failed_images.contains(&name)
+        {
+            return;
+        }
+
+        self.game_library.pending_images.insert(name.clone());
+        let tx = self.game_tx.clone();
+        let url = game_asset_url(GAME_PICTURE_URL, &name);
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(async move {
+            let result = JsFuture::from(web_fetch_bytes(&url))
+                .await
+                .map(|value| js_sys::Uint8Array::new(&value).to_vec())
+                .map_err(js_error_string);
+            let _ = tx.send(GameEvent::Image { name, result });
+            ctx.request_repaint();
+        });
+        #[cfg(not(target_arch = "wasm32"))]
+        std::thread::spawn(move || {
+            let result = native_fetch_bytes(&url);
+            let _ = tx.send(GameEvent::Image { name, result });
+            ctx.request_repaint();
+        });
+    }
+
+    fn request_game_archive(&mut self, game: GameEntry, ctx: egui::Context) {
+        if self.game_library.loading_game_id.is_some() {
+            return;
+        }
+        self.game_library.loading_game_id = Some(game.id);
+        let tx = self.game_tx.clone();
+        let url = game_asset_url(GAME_BASE_URL, &game.filename);
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(async move {
+            let result = JsFuture::from(web_fetch_bytes(&url))
+                .await
+                .map(|value| js_sys::Uint8Array::new(&value).to_vec())
+                .map_err(js_error_string);
+            let _ = tx.send(GameEvent::Archive { game, result });
+            ctx.request_repaint();
+        });
+        #[cfg(not(target_arch = "wasm32"))]
+        std::thread::spawn(move || {
+            let result = native_fetch_bytes(&url);
+            let _ = tx.send(GameEvent::Archive { game, result });
+            ctx.request_repaint();
+        });
+    }
+
+    fn draw_game_library(&mut self, ctx: &egui::Context) {
+        if !self.game_library.open {
+            return;
+        }
+
+        let mut open = self.game_library.open;
+        let dialog_rect = ctx.available_rect().shrink(8.0);
+        egui::Window::new("TVC Gamebase")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .fixed_rect(dialog_rect)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Search:");
+                    ui.add_sized(
+                        [ui.available_width(), 24.0],
+                        egui::TextEdit::singleline(&mut self.game_library.search)
+                            .hint_text("Name, genre, author, description..."),
+                    );
+                });
+                ui.separator();
+
+                if self.game_library.loading_catalog {
+                    ui.centered_and_justified(|ui| {
+                        ui.spinner();
+                        ui.label("Loading game catalog...");
+                    });
+                    return;
+                }
+                if let Some(error) = self.game_library.catalog_error.clone() {
+                    ui.vertical_centered(|ui| {
+                        ui.colored_label(egui::Color32::LIGHT_RED, error);
+                        if ui.button("Retry").clicked() {
+                            self.open_game_library(ctx.clone());
+                        }
+                    });
+                    return;
+                }
+
+                let search = self.game_library.search.trim().to_lowercase();
+                let filtered: Vec<usize> = self
+                    .game_library
+                    .entries
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, game)| game.matches(&search).then_some(index))
+                    .collect();
+                ui.label(format!("{} programs", filtered.len()));
+
+                let available = ui.available_size();
+                let pane_gutter = 24.0;
+                let right_width = (available.x * 0.32)
+                    .clamp(220.0, 360.0)
+                    .min((available.x - pane_gutter) * 0.42);
+                let left_width = (available.x - right_width - pane_gutter).max(240.0);
+                let panel_height = available.y;
+                let mut requested_images = Vec::new();
+                let mut clicked_id = None;
+
+                ui.horizontal(|ui| {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(left_width, panel_height),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            let item_spacing = ui.spacing().item_spacing.x;
+                            let scroll = &ui.spacing().scroll;
+                            let scrollbar_width = if scroll.floating {
+                                scroll.floating_allocated_width.max(6.0)
+                            } else {
+                                scroll.bar_width + scroll.bar_inner_margin + scroll.bar_outer_margin
+                            };
+                            let grid_width =
+                                (ui.available_width() - scrollbar_width - 4.0).max(200.0);
+                            let columns = (((grid_width + item_spacing) / (140.0 + item_spacing))
+                                .floor() as usize)
+                                .clamp(4, 6);
+                            let tile_width = (grid_width
+                                - item_spacing * columns.saturating_sub(1) as f32)
+                                / columns as f32;
+                            let row_height = tile_width * 0.75 + 42.0;
+                            let row_count = filtered.len().div_ceil(columns);
+                            egui::ScrollArea::vertical()
+                                .id_salt("gamebase_grid")
+                                .hscroll(false)
+                                .auto_shrink([false, false])
+                                .show_rows(ui, row_height, row_count, |ui, rows| {
+                                    ui.set_width(grid_width);
+                                    for row in rows {
+                                        ui.push_id(row, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = item_spacing;
+                                                for column in 0..columns {
+                                                    let position = row * columns + column;
+                                                    let Some(&entry_index) = filtered.get(position)
+                                                    else {
+                                                        break;
+                                                    };
+                                                    let game =
+                                                        &self.game_library.entries[entry_index];
+                                                    if !game.screenshot.is_empty()
+                                                        && !self
+                                                            .game_library
+                                                            .textures
+                                                            .contains_key(&game.screenshot)
+                                                    {
+                                                        requested_images
+                                                            .push(game.screenshot.clone());
+                                                    }
+                                                    let response = ui
+                                                        .push_id(game.id, |ui| {
+                                                            draw_game_tile(
+                                                                ui,
+                                                                game,
+                                                                self.game_library
+                                                                    .textures
+                                                                    .get(&game.screenshot),
+                                                                self.game_library.selected_id
+                                                                    == Some(game.id),
+                                                                tile_width,
+                                                            )
+                                                        })
+                                                        .inner;
+                                                    if response.clicked() {
+                                                        clicked_id = Some(game.id);
+                                                    }
+                                                }
+                                            });
+                                        });
+                                    }
+                                });
+                        },
+                    );
+
+                    ui.separator();
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(right_width, panel_height),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            let selected = self
+                                .game_library
+                                .selected_id
+                                .and_then(|id| {
+                                    self.game_library.entries.iter().find(|game| game.id == id)
+                                })
+                                .cloned();
+                            let Some(game) = selected else {
+                                ui.centered_and_justified(|ui| {
+                                    ui.label("Select a program to see its details.");
+                                });
+                                return;
+                            };
+
+                            ui.heading(&game.name);
+                            let detail_height = (panel_height - 48.0).max(180.0);
+                            egui::ScrollArea::vertical()
+                                .id_salt("gamebase_details")
+                                .max_height(detail_height)
+                                .show(ui, |ui| {
+                                    let image_names = game_image_names(&game);
+                                    for name in image_names {
+                                        if let Some(texture) = self.game_library.textures.get(&name)
+                                        {
+                                            draw_detail_image(ui, texture);
+                                            ui.add_space(6.0);
+                                        } else if self.game_library.failed_images.contains(&name) {
+                                            break;
+                                        } else {
+                                            requested_images.push(name);
+                                            break;
+                                        }
+                                    }
+                                    metadata_label(ui, "Year", &game.year);
+                                    metadata_label(ui, "Genre", &game.genre);
+                                    metadata_label(ui, "Publisher", &game.publisher);
+                                    metadata_label(ui, "Developer", &game.developer);
+                                    metadata_label(ui, "Programmer", &game.programmer);
+                                    metadata_label(ui, "Musician", &game.musician);
+                                    metadata_label(ui, "Language", &game.language);
+                                    metadata_label(ui, "Media", &game.file_to_run);
+                                    if game.rating != 0 {
+                                        metadata_label(ui, "Rating", &game.rating.to_string());
+                                    }
+                                    if game.control_code != 0 {
+                                        metadata_label(
+                                            ui,
+                                            "Control",
+                                            &game.control_code.to_string(),
+                                        );
+                                    }
+                                    metadata_label(ui, "SID", &game.sid_file);
+                                    if !game.description.is_empty() {
+                                        ui.separator();
+                                        ui.strong("Description");
+                                        ui.label(&game.description);
+                                    }
+                                    if !game.comment.is_empty() {
+                                        ui.separator();
+                                        ui.strong("Comment");
+                                        ui.label(&game.comment);
+                                    }
+                                });
+
+                            let loading = self.game_library.loading_game_id == Some(game.id);
+                            let button_text = if loading {
+                                "Loading..."
+                            } else if game.is_loadable() {
+                                "Load"
+                            } else {
+                                "Unsupported media"
+                            };
+                            if ui
+                                .push_id("gamebase_load", |ui| {
+                                    ui.add_enabled(
+                                        self.game_library.loading_game_id.is_none()
+                                            && !game.filename.is_empty()
+                                            && game.is_loadable(),
+                                        egui::Button::new(button_text)
+                                            .min_size(egui::vec2(ui.available_width(), 32.0)),
+                                    )
+                                })
+                                .inner
+                                .clicked()
+                            {
+                                self.request_game_archive(game, ctx.clone());
+                            }
+                        },
+                    );
+                });
+
+                if let Some(id) = clicked_id {
+                    self.game_library.selected_id = Some(id);
+                }
+                requested_images.sort();
+                requested_images.dedup();
+                for name in requested_images {
+                    self.request_game_image(name, ctx.clone());
+                }
+            });
+        self.game_library.open = open;
+    }
+
+    fn handle_game_events(&mut self, ctx: &egui::Context) {
+        while let Ok(event) = self.game_rx.try_recv() {
+            match event {
+                GameEvent::Catalog(result) => {
+                    self.game_library.loading_catalog = false;
+                    match result {
+                        Ok(entries) => {
+                            self.game_library.entries = entries;
+                            self.game_library.catalog_error = None;
+                            self.game_library.selected_id = None;
+                        }
+                        Err(err) => {
+                            self.game_library.catalog_error =
+                                Some(format!("Game catalog load failed: {err}"));
+                        }
+                    }
+                }
+                GameEvent::Image { name, result } => {
+                    self.game_library.pending_images.remove(&name);
+                    match result.and_then(|bytes| decode_game_image(&bytes)) {
+                        Ok(image) => {
+                            let texture = ctx.load_texture(
+                                format!("gamebase:{name}"),
+                                image,
+                                egui::TextureOptions::LINEAR,
+                            );
+                            self.game_library.textures.insert(name.clone(), texture);
+                            self.game_library.image_order.push_back(name);
+                            while self.game_library.image_order.len() > 96 {
+                                if let Some(stale) = self.game_library.image_order.pop_front() {
+                                    self.game_library.textures.remove(&stale);
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            self.game_library.failed_images.insert(name);
+                        }
+                    }
+                }
+                GameEvent::Archive { game, result } => {
+                    self.game_library.loading_game_id = None;
+                    match result.and_then(|bytes| self.load_game_archive(&game, &bytes)) {
+                        Ok(()) => {
+                            let kind = if game.file_to_run.to_ascii_lowercase().ends_with(".cas") {
+                                #[cfg(target_arch = "wasm32")]
+                                if let Some(recent) = self.emu.recent_tapes_wasm.first().cloned() {
+                                    self.persist_wasm_recent("tape", recent, ctx.clone());
+                                }
+                                "tape"
+                            } else {
+                                #[cfg(target_arch = "wasm32")]
+                                if let Some(recent) = self.emu.recent_disks_wasm.first().cloned() {
+                                    self.persist_wasm_recent("disk", recent, ctx.clone());
+                                }
+                                "disk"
+                            };
+                            #[cfg(not(target_arch = "wasm32"))]
+                            self.save_app_state();
+                            self.file_status =
+                                Some(format!("Loaded {kind} from Gamebase: {}", game.name));
+                            self.game_library.open = false;
+                        }
+                        Err(err) => {
+                            self.file_status =
+                                Some(format!("Gamebase load failed for {}: {err}", game.name));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn load_game_archive(&mut self, game: &GameEntry, bytes: &[u8]) -> Result<(), String> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.emu
+                .load_game_archive_bytes(&game.file_to_run, bytes)
+                .map_err(|err| err.to_string())
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let media = crate::emu::extract_game_archive_member(&game.file_to_run, bytes)
+                .map_err(|err| err.to_string())?;
+            let path = native_game_media_path(&self.app_state_file, game);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+            }
+            std::fs::write(&path, media).map_err(|err| err.to_string())?;
+
+            if game.file_to_run.to_ascii_lowercase().ends_with(".cas") {
+                self.emu
+                    .inject_tape_file_path(&path)
+                    .map_err(|err| err.to_string())
+            } else {
+                self.emu
+                    .insert_disk_file_path(&path)
+                    .map_err(|err| err.to_string())
+            }
+        }
+    }
+
     fn save_screenshot_dialog(&mut self) {
         #[cfg(target_arch = "wasm32")]
         {
@@ -518,10 +1084,23 @@ impl EmuApp {
                 self.load_disk_dialog(ui.ctx().clone());
                 ui.close_menu();
             }
+            if ui.button("Browse Gamebase...").clicked() {
+                self.open_game_library(ui.ctx().clone());
+                ui.close_menu();
+            }
             ui.separator();
             if ui.button("Save Screenshot...").clicked() {
                 self.save_screenshot_dialog();
                 ui.close_menu();
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                ui.separator();
+                if ui.button("Quit").clicked() {
+                    self.save_app_state();
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                    ui.close_menu();
+                }
             }
         });
     }
@@ -601,7 +1180,8 @@ impl EmuApp {
                     ui.label("Recent Tapes:");
                     for recent in self.emu.recent_tapes_wasm.clone() {
                         if ui.button(&recent.name).clicked() {
-                            if let Err(err) = self.emu.play_tape_bytes(&recent.name, &recent.bytes) {
+                            if let Err(err) = self.emu.play_tape_bytes(&recent.name, &recent.bytes)
+                            {
                                 self.file_status = Some(format!("Tape load failed: {}", err));
                             } else {
                                 self.persist_wasm_recent("tape", recent, ui.ctx().clone());
@@ -715,7 +1295,9 @@ impl EmuApp {
                     ui.label("Recent Disks:");
                     for recent in self.emu.recent_disks_wasm.clone() {
                         if ui.button(&recent.name).clicked() {
-                            if let Err(err) = self.emu.insert_disk_bytes(&recent.name, &recent.bytes) {
+                            if let Err(err) =
+                                self.emu.insert_disk_bytes(&recent.name, &recent.bytes)
+                            {
                                 self.file_status = Some(format!("Disk load failed: {}", err));
                             } else {
                                 self.persist_wasm_recent("disk", recent, ui.ctx().clone());
@@ -902,8 +1484,7 @@ impl EmuApp {
     fn clear_wasm_recents(&self, kind: &'static str, ctx: egui::Context) {
         let tx = self.file_tx.clone();
         wasm_bindgen_futures::spawn_local(async move {
-            let result =
-                wasm_bindgen_futures::JsFuture::from(web_clear_recent_media(kind)).await;
+            let result = wasm_bindgen_futures::JsFuture::from(web_clear_recent_media(kind)).await;
             let event = match result {
                 Ok(_) => PendingFile::RecentCleared {
                     kind: kind.to_string(),
@@ -920,13 +1501,10 @@ impl EmuApp {
     #[cfg(target_arch = "wasm32")]
     fn handle_wasm_keyboard_events(&mut self) {
         for event in web_take_keyboard_events().iter() {
-            let event_type = js_sys::Reflect::get(
-                &event,
-                &wasm_bindgen::JsValue::from_str("type"),
-            )
-            .ok()
-            .and_then(|value| value.as_string())
-            .unwrap_or_default();
+            let event_type = js_sys::Reflect::get(&event, &wasm_bindgen::JsValue::from_str("type"))
+                .ok()
+                .and_then(|value| value.as_string())
+                .unwrap_or_default();
             match event_type.as_str() {
                 "down" => {
                     let code = wasm_event_code(&event);
@@ -985,7 +1563,198 @@ fn wasm_event_text(event: &wasm_bindgen::JsValue) -> String {
 fn js_value_string(value: wasm_bindgen::JsValue) -> String {
     value
         .as_string()
-        .unwrap_or_else(|| "browser storage operation failed".to_string())
+        .unwrap_or_else(|| "browser operation failed".to_string())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn js_error_string(value: wasm_bindgen::JsValue) -> String {
+    js_sys::Reflect::get(&value, &wasm_bindgen::JsValue::from_str("message"))
+        .ok()
+        .and_then(|message| message.as_string())
+        .or_else(|| value.as_string())
+        .unwrap_or_else(|| "browser fetch failed".to_string())
+}
+
+fn game_asset_url(base: &str, name: &str) -> String {
+    let mut encoded = String::with_capacity(name.len());
+    for byte in name.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            use std::fmt::Write;
+            let _ = write!(encoded, "%{byte:02X}");
+        }
+    }
+    format!("{base}{encoded}")
+}
+
+fn dedupe_recent_paths(paths: &[String]) -> Vec<String> {
+    let mut names = HashSet::new();
+    paths
+        .iter()
+        .filter(|path| {
+            let name = std::path::Path::new(path)
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or(path)
+                .to_lowercase();
+            names.insert(name)
+        })
+        .cloned()
+        .take(5)
+        .collect()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn native_game_media_path(app_state_file: &AppStateFile, game: &GameEntry) -> std::path::PathBuf {
+    let kind = if game.file_to_run.to_ascii_lowercase().ends_with(".cas") {
+        "tapes"
+    } else {
+        "disks"
+    };
+    let archive_name = std::path::Path::new(&game.filename)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("game");
+    let media_name = std::path::Path::new(&game.file_to_run)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("media");
+    app_state_file
+        .media_cache_dir()
+        .join(kind)
+        .join(safe_path_component(archive_name))
+        .join(safe_path_component(media_name))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn safe_path_component(value: &str) -> String {
+    let sanitized: String = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if sanitized.is_empty() {
+        "media".to_string()
+    } else {
+        sanitized
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn native_fetch_text(url: &str) -> Result<String, String> {
+    let mut response = ureq::get(url).call().map_err(|err| err.to_string())?;
+    response
+        .body_mut()
+        .read_to_string()
+        .map_err(|err| err.to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn native_fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
+    let mut response = ureq::get(url).call().map_err(|err| err.to_string())?;
+    response
+        .body_mut()
+        .read_to_vec()
+        .map_err(|err| err.to_string())
+}
+
+fn decode_game_image(bytes: &[u8]) -> Result<ColorImage, String> {
+    let image = image::load_from_memory(bytes)
+        .map_err(|err| err.to_string())?
+        .to_rgba8();
+    let size = [image.width() as usize, image.height() as usize];
+    Ok(ColorImage::from_rgba_unmultiplied(size, image.as_raw()))
+}
+
+fn game_image_names(game: &GameEntry) -> Vec<String> {
+    if game.screenshot.is_empty() {
+        return Vec::new();
+    }
+    let path = std::path::Path::new(&game.screenshot);
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or(&game.screenshot);
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("gif");
+    let mut names = vec![game.screenshot.clone()];
+    if !stem
+        .rsplit_once('_')
+        .map(|(_, suffix)| suffix.chars().all(|ch| ch.is_ascii_digit()))
+        .unwrap_or(false)
+    {
+        names.extend((1..=5).map(|index| format!("{stem}_{index}.{extension}")));
+    }
+    names
+}
+
+fn draw_game_tile(
+    ui: &mut egui::Ui,
+    game: &GameEntry,
+    texture: Option<&TextureHandle>,
+    selected: bool,
+    width: f32,
+) -> egui::Response {
+    let image_size = egui::vec2(width, width * 0.75);
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, image_size.y + 38.0),
+        egui::Layout::top_down(egui::Align::Center),
+        |ui| {
+            let response = ui
+                .push_id("image", |ui| {
+                    if let Some(texture) = texture {
+                        let image = egui::Image::new(texture)
+                            .fit_to_exact_size(image_size)
+                            .maintain_aspect_ratio(true);
+                        ui.add(
+                            egui::ImageButton::new(image)
+                                .selected(selected)
+                                .frame(selected),
+                        )
+                    } else {
+                        ui.add_sized(image_size, egui::Button::new("Loading...").frame(false))
+                    }
+                })
+                .inner;
+            ui.add_space(2.0);
+            ui.push_id("label", |ui| {
+                ui.add_sized(
+                    [width, 32.0],
+                    egui::Label::new(egui::RichText::new(&game.name).small())
+                        .wrap()
+                        .halign(egui::Align::Center)
+                        .sense(egui::Sense::click()),
+                )
+            })
+            .inner
+            .union(response)
+        },
+    )
+    .inner
+}
+
+fn draw_detail_image(ui: &mut egui::Ui, texture: &TextureHandle) {
+    let source = texture.size_vec2();
+    let scale = (ui.available_width() / source.x).min(1.0);
+    ui.image((texture.id(), source * scale));
+}
+
+fn metadata_label(ui: &mut egui::Ui, label: &str, value: &str) {
+    if value.is_empty() {
+        return;
+    }
+    ui.horizontal_wrapped(|ui| {
+        ui.strong(format!("{label}:"));
+        ui.label(value);
+    });
 }
 
 fn draw_tape_led(ui: &mut egui::Ui, active: bool, level: f32) {
@@ -1110,6 +1879,8 @@ impl eframe::App for EmuApp {
             }
         }
 
+        self.handle_game_events(ctx);
+
         #[cfg(target_arch = "wasm32")]
         self.handle_wasm_keyboard_events();
 
@@ -1180,7 +1951,9 @@ impl eframe::App for EmuApp {
                 #[cfg(all(feature = "native", not(target_arch = "wasm32")))]
                 if let Some(ref dbg) = self.debugger {
                     let pc = self.emu.tvc.z80.state.r16[11];
-                    let _ = dbg.event_tx.send(crate::debugger::DebuggerEvent::BreakpointHit { pc });
+                    let _ = dbg
+                        .event_tx
+                        .send(crate::debugger::DebuggerEvent::BreakpointHit { pc });
                 }
             }
             self.push_audio_samples();
@@ -1240,6 +2013,8 @@ impl eframe::App for EmuApp {
                 ui.painter().rect_filled(rect, 0.0, egui::Color32::BLACK);
             }
         });
+
+        self.draw_game_library(ctx);
 
         if self.emu.running {
             ctx.request_repaint();

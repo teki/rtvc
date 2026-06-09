@@ -1,5 +1,6 @@
 /target
 /dist
+/rtvc-media
 .antigravitycli/
 .DS_Store
 profile.json.gz
