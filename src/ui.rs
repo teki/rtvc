@@ -1389,11 +1389,13 @@ impl EmuApp {
                         self.emu.tvc.bus.tape_play_active(),
                         self.emu.get_current_tape_level(),
                     );
-                    ui.label(if self.emu.tvc.bus.tape_play_active() {
-                        "Tape active"
-                    } else {
-                        "Tape idle"
-                    });
+                    ui.label(
+                        if let Some(percent) = self.emu.tvc.bus.tape_progress_percent() {
+                            format!("Tape active ({percent}%)")
+                        } else {
+                            "Tape idle".to_string()
+                        },
+                    );
                     ui.separator();
                     ui.label(format!(
                         "Tape: {}",

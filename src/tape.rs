@@ -111,6 +111,16 @@ impl TapeInterface {
         self.state().1
     }
 
+    pub(crate) fn progress_percent(&self) -> Option<u8> {
+        let generator = self.generator.as_ref()?;
+        if !self.play_active || generator.total_cycles == 0 {
+            return None;
+        }
+
+        let elapsed = self.position_cycles.min(generator.total_cycles);
+        Some(((elapsed as u128 * 100) / generator.total_cycles as u128) as u8)
+    }
+
     pub(crate) fn write_snapshot(&self, w: &mut crate::snapshot::Writer) {
         w.u8(self.motor_on as u8);
         w.u8(self.output_flip_flop as u8);
@@ -176,5 +186,25 @@ mod tests {
         tape.advance(50);
         assert_eq!(tape.cycles(), 273);
         assert_eq!(tape.state().0, 123);
+    }
+
+    #[test]
+    fn tape_progress_tracks_position_and_is_clamped() {
+        let mut tape = TapeInterface::new();
+        let generator = generator();
+        let total_cycles = generator.total_cycles;
+        tape.play(generator);
+
+        assert_eq!(tape.progress_percent(), Some(0));
+
+        tape.set_motor_from_port5(0x40);
+        tape.advance(total_cycles.div_ceil(2));
+        assert_eq!(tape.progress_percent(), Some(50));
+
+        tape.advance(total_cycles);
+        assert_eq!(tape.progress_percent(), Some(100));
+
+        tape.stop();
+        assert_eq!(tape.progress_percent(), None);
     }
 }

@@ -67,6 +67,7 @@ The tape recorder's motor is controlled by a 2-bit register driving high-current
 * **I/O Port**: `05H` (Write only).
 * **Bit Position**: Bits 7 and 6.
 * **Operation**: Determines if the cassette motor is running. A low bit means the corresponding motor output is off; a high bit means on. The emulated tape transport position advances only while one of these motor bits is on.
+* **UI Progress**: While tape playback is active, the bottom status bar shows the transport position as a percentage of the generated tape signal. The percentage advances only while the motor is running.
 
 ---
 

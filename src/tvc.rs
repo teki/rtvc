@@ -206,6 +206,10 @@ impl TvcBus {
         self.tape.current_level()
     }
 
+    pub fn tape_progress_percent(&self) -> Option<u8> {
+        self.tape.progress_percent()
+    }
+
     pub(crate) fn tape_motor_on(&self) -> bool {
         self.tape.motor_on()
     }
