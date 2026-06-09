@@ -9,7 +9,7 @@ The emulator is still in active development. It can already run TVC 64K and
 64K+ machines with keyboard input, video, sound, cassette loading, HBF/VT-DOS
 disk images, snapshots, and a native desktop UI.
 
-Try the browser demo: [teki.one/rtvc](http://teki.one/rtvc/)
+Try the browser demo: [teki.one/rtvc](https://teki.one/rtvc/)
 
 ## About the TVC
 

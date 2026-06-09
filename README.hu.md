@@ -10,7 +10,7 @@ Az emulátor aktív fejlesztés alatt áll. Már futtat TVC 64K és 64K+ gépeke
 billentyűzetkezeléssel, videóval, hanggal, kazettabetöltéssel, HBF/VT-DOS
 lemezképekkel, snapshotokkal és natív asztali felülettel.
 
-Próbáld ki a webes demót: [teki.one/rtvc](http://teki.one/rtvc/)
+Próbáld ki a webes demót: [teki.one/rtvc](https://teki.one/rtvc/)
 
 ## A TVC-ről
 
