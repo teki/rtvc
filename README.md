@@ -130,13 +130,16 @@ cd web
 python -m http.server 8000
 ```
 
-Developers can build the same web application with:
+Developers can build the same web application and serve it locally with:
 
 ```bash
 cargo install wasm-bindgen-cli --version 0.2.122
-cargo xtask bundle-web-full
-cd dist/rtvc-web-full
-python -m http.server 8000
+# Build the web bundle into docs/
+cargo xtask bundle-web-full docs
+# Serve the docs/ directory (on macOS/Linux)
+python scripts/serve_docs.py
+# Or serve the docs/ directory (on Windows)
+scripts\serve_docs.bat
 ```
 
 The web emulator can open local CAS, DSK, ZIP, and snapshot files. Small

@@ -44,7 +44,7 @@ This document records intended direction for future changes so implementation wo
   ```
 - Release archives and the public `docs/` demo use this full web build.
 - Uses the native egui/eframe application structure with browser-specific audio, storage, file dialogs, downloads, and keyboard plumbing.
-- Uses an `AudioWorklet` for PCM playback. The browser audio context is created during startup and resumed after a user gesture.
+- Uses an `AudioWorklet` for PCM playback. The browser audio context and worklet are initialized from a user gesture.
 - Stores small configuration values in `localStorage`.
 - Stores recent tape and disk bytes in IndexedDB, limited to five entries per media kind. Storage failures must be visible in the UI.
 - Uses raw DOM keyboard events because eframe 0.31 does not expose physical keys on web. `KeyboardEvent.code` identifies the host key, `KeyboardEvent.key` supplies the layout-aware character, and `getModifierState("AltGraph")` distinguishes AltGr.

@@ -132,13 +132,16 @@ cd web
 python -m http.server 8000
 ```
 
-Fejlesztők ugyanezt a webalkalmazást így építhetik:
+Fejlesztők ugyanezt a webalkalmazást így építhetik és szolgálhatják ki helyben:
 
 ```bash
 cargo install wasm-bindgen-cli --version 0.2.122
-cargo xtask bundle-web-full
-cd dist/rtvc-web-full
-python -m http.server 8000
+# A webes csomag felépítése a docs/ könyvtárba
+cargo xtask bundle-web-full docs
+# A docs/ könyvtár kiszolgálása (macOS/Linux alatt)
+python scripts/serve_docs.py
+# Vagy a docs/ könyvtár kiszolgálása (Windows alatt)
+scripts\serve_docs.bat
 ```
 
 A webes emulátor helyi CAS, DSK, ZIP és snapshot fájlokat is meg tud nyitni. A

@@ -99,6 +99,19 @@ This skill provides step-by-step instructions and references for compiling, exec
   - Browser keyboard input uses DOM `KeyboardEvent.code` for key identity and `KeyboardEvent.key` for layout-aware character mapping, including AltGr.
   - Serve the output directory over HTTP; opening `index.html` directly with `file://` is not supported.
 
+- **Serve the web emulator / docs website locally:**
+  On macOS / Linux:
+  ```bash
+  python scripts/serve_docs.py
+  ```
+  On Windows:
+  ```cmd
+  scripts\serve_docs.bat
+  ```
+  - Serves the `docs/` directory on an available port (defaulting to 8000).
+  - Automatically opens the web emulator in the default web browser.
+  - Automatically handles MIME mapping (crucial for WebAssembly on Windows) and disables browser caching.
+
 - **Build release packages on GitHub Actions:**
   ```bash
   git tag v0.1.0

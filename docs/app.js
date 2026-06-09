@@ -7,6 +7,8 @@ const MAX_RECENT_PER_KIND = 5;
 const keyboardEvents = [];
 const activeKeyCodes = new Map();
 let audioSink;
+let audioSampleRate;
+let audioInitPromise;
 
 globalThis.rtvcStartupAudioError = null;
 globalThis.rtvcStartupStorageError = null;
@@ -16,22 +18,45 @@ globalThis.rtvcGetStartupStorageError = () => globalThis.rtvcStartupStorageError
 globalThis.rtvcGetStartupRecentMedia = () => globalThis.rtvcStartupRecentMedia;
 
 globalThis.rtvcAudioInit = async (sampleRate) => {
-  try {
-    audioSink = await createAudioSink(sampleRate);
-    return null;
-  } catch (error) {
-    audioSink = { push() {}, resume() {} };
-    return error instanceof Error ? error.message : String(error);
+  const AudioContext = globalThis.AudioContext || globalThis.webkitAudioContext;
+  if (!AudioContext || !("AudioWorkletNode" in globalThis)) {
+    return "This browser does not support AudioWorklet";
   }
+  audioSampleRate = sampleRate;
+  return null;
 };
 
 globalThis.rtvcAudioResume = () => {
-  audioSink?.resume();
+  void ensureAudioSink().then((sink) => sink?.resume());
 };
 
 globalThis.rtvcAudioPush = (samples) => {
   audioSink?.push(samples);
 };
+
+function ensureAudioSink() {
+  if (audioSink) {
+    return Promise.resolve(audioSink);
+  }
+  if (!audioSampleRate) {
+    return Promise.resolve(null);
+  }
+  if (!audioInitPromise) {
+    audioInitPromise = createAudioSink(audioSampleRate)
+      .then((sink) => {
+        audioSink = sink;
+        return sink;
+      })
+      .catch((error) => {
+        console.warn("AudioWorklet initialization failed", error);
+        return null;
+      })
+      .finally(() => {
+        audioInitPromise = null;
+      });
+  }
+  return audioInitPromise;
+}
 
 globalThis.rtvcTakeKeyboardEvents = () => keyboardEvents.splice(0);
 
@@ -92,17 +117,18 @@ globalThis.rtvcClearRecentMedia = async (kind) => {
 
 async function createAudioSink(sampleRate) {
   const AudioContext = globalThis.AudioContext || globalThis.webkitAudioContext;
-  if (!AudioContext || !("AudioWorkletNode" in globalThis)) {
-    throw new Error("This browser does not support AudioWorklet");
-  }
-
   let context;
   try {
     context = new AudioContext({ sampleRate });
   } catch {
     context = new AudioContext();
   }
-  await context.audioWorklet.addModule("./audio-worklet.js");
+  try {
+    await context.audioWorklet.addModule("./audio-worklet.js");
+  } catch (error) {
+    void context.close();
+    throw error;
+  }
   const node = new AudioWorkletNode(context, "rtvc-audio", {
     numberOfInputs: 0,
     numberOfOutputs: 1,
@@ -176,7 +202,7 @@ function installKeyboard(canvas) {
   canvas.tabIndex = 0;
   canvas.addEventListener("pointerdown", () => {
     canvas.focus();
-    audioSink?.resume();
+    globalThis.rtvcAudioResume();
   });
   canvas.addEventListener("keydown", (event) => {
     const code = legacyKeyCode(event);
@@ -194,7 +220,7 @@ function installKeyboard(canvas) {
       }
       activeKeyCodes.set(event.code, code);
       keyboardEvents.push({ type: "down", code, text });
-      audioSink?.resume();
+      globalThis.rtvcAudioResume();
       event.preventDefault();
     } else if (text) {
       keyboardEvents.push({ type: "text", text });
