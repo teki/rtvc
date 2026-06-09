@@ -4,6 +4,7 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+- Fixed the browser Tape menu so uploaded CAS files can be injected directly into memory.
 
 ## v0.6.0 - 2026-06-09
 

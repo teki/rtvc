@@ -663,12 +663,24 @@ impl EmuApp {
 
             ui.separator();
             let tape_selected = selected_media_matches(&self.emu, |entry| entry.is_cas);
+            let tape_injectable = self.emu.can_inject_tape();
             if ui
-                .add_enabled(tape_selected, egui::Button::new("Inject"))
+                .add_enabled(tape_injectable, egui::Button::new("Inject"))
                 .clicked()
             {
-                self.emu.inject_selected_tape();
-                self.save_app_state();
+                match self.emu.inject_tape() {
+                    Ok(()) => {
+                        self.file_status = self
+                            .emu
+                            .loaded_tape
+                            .as_ref()
+                            .map(|name| format!("Injected tape: {name}"));
+                        self.save_app_state();
+                    }
+                    Err(err) => {
+                        self.file_status = Some(format!("Tape injection failed: {err}"));
+                    }
+                }
                 ui.close_menu();
             }
 

@@ -654,6 +654,43 @@ impl Emu {
         }
     }
 
+    pub fn can_inject_tape(&self) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        if self.loaded_tape_wasm.is_some() {
+            return true;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.loaded_tape_file_name.is_some() {
+            return true;
+        }
+
+        self.progs
+            .get(self.selected_prog)
+            .map(|entry| entry.is_cas)
+            .unwrap_or(false)
+    }
+
+    pub fn inject_tape(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(media) = self.loaded_tape_wasm.clone() {
+            return self.inject_tape_bytes(&media.name, &media.bytes);
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(file_name) = self.loaded_tape_file_name.clone() {
+            return self.inject_tape_file_path(Path::new(&file_name));
+        }
+
+        let entry = self
+            .progs
+            .get(self.selected_prog)
+            .filter(|entry| entry.is_cas)
+            .ok_or("No cassette tape is selected")?;
+        let path = data_dir("progs").join(&entry.file_name);
+        self.inject_tape_file_path(&path)
+    }
+
     pub fn insert_selected_disk(&mut self) {
         if self.progs.is_empty() || self.selected_prog >= self.progs.len() {
             return;
