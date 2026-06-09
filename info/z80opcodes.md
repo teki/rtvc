@@ -1,6 +1,6 @@
 # Z80 Opcode Reference
 
-This file keeps the one-instruction-per-line layout of [opcodes.txt](opcodes.txt), with metadata merged from [z80href.txt](z80href.txt), [z80inst.txt](z80inst.txt), and the compact disassembler in [src/disasm.rs](../src/disasm.rs).
+This file keeps the historical one-instruction-per-line opcode layout, with timing, flag, and effect metadata aligned with the compact disassembler in [src/disasm.rs](../src/disasm.rs).
 
 Metadata legend:
 
