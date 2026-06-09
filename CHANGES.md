@@ -4,11 +4,14 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+## v0.7.0 - 2026-06-09
+
 - Build lightweight and full web bundles entirely with the optimized Cargo release profile.
 - Added a searchable native/web Gamebase dialog with image tiles, metadata, extra screenshots, and on-demand CAS/DSK ZIP loading.
 - Persisted native Gamebase media beside `rtvc.toml`, deduplicated recent-media names, and added File > Quit to the native app.
-- Increased the Windows native executable stack to avoid debug-build startup overflows.
-- Fixed the browser Tape menu so uploaded CAS files can be injected directly into memory.
+- Added debugger statistics and application-close commands, and improved debugger UI update responsiveness.
+- Added tape playback progress to the emulator UI.
+- Fixed browser audio initialization and Windows audio devices that use unsigned 8-bit PCM.
 
 ## v0.6.0 - 2026-06-09
 
