@@ -1127,7 +1127,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return __wasm_bindgen_func_elem_4288(a, state0.b, arg0, arg1);
+                        return __wasm_bindgen_func_elem_4287(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -1597,7 +1597,7 @@ function __wbg_get_imports() {
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
             // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 831, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_4268);
+            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_4267);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
@@ -1700,10 +1700,10 @@ function __wasm_bindgen_func_elem_1177(arg0, arg1) {
     }
 }
 
-function __wasm_bindgen_func_elem_4268(arg0, arg1, arg2) {
+function __wasm_bindgen_func_elem_4267(arg0, arg1, arg2) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        wasm.__wasm_bindgen_func_elem_4268(retptr, arg0, arg1, addHeapObject(arg2));
+        wasm.__wasm_bindgen_func_elem_4267(retptr, arg0, arg1, addHeapObject(arg2));
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         if (r1) {
@@ -1714,8 +1714,8 @@ function __wasm_bindgen_func_elem_4268(arg0, arg1, arg2) {
     }
 }
 
-function __wasm_bindgen_func_elem_4288(arg0, arg1, arg2, arg3) {
-    wasm.__wasm_bindgen_func_elem_4288(arg0, arg1, addHeapObject(arg2), addHeapObject(arg3));
+function __wasm_bindgen_func_elem_4287(arg0, arg1, arg2, arg3) {
+    wasm.__wasm_bindgen_func_elem_4287(arg0, arg1, addHeapObject(arg2), addHeapObject(arg3));
 }
 
 

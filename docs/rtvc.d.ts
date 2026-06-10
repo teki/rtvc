@@ -63,8 +63,8 @@ export interface InitOutput {
     readonly wasmtvc_vidModel: (a: number, b: number) => void;
     readonly webhandle_new: () => number;
     readonly webhandle_start: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_4268: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_4288: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_4267: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_4287: (a: number, b: number, c: number, d: number) => void;
     readonly __wasm_bindgen_func_elem_1179: (a: number, b: number, c: number) => void;
     readonly __wasm_bindgen_func_elem_1179_2: (a: number, b: number, c: number) => void;
     readonly __wasm_bindgen_func_elem_1177: (a: number, b: number, c: number) => void;
