@@ -79,24 +79,23 @@ impl GameEntry {
     }
 
     fn matches(&self, search: &str) -> bool {
-        if search.is_empty() {
-            return true;
-        }
-        [
-            self.name.as_str(),
-            self.year.as_str(),
-            self.genre.as_str(),
-            self.publisher.as_str(),
-            self.developer.as_str(),
-            self.programmer.as_str(),
-            self.musician.as_str(),
-            self.language.as_str(),
-            self.description.as_str(),
-            self.comment.as_str(),
-        ]
-        .iter()
-        .any(|value| value.to_lowercase().contains(search))
+        search.is_empty() || normalize_game_name(&self.name).contains(search)
     }
+}
+
+fn normalize_game_name(value: &str) -> String {
+    value
+        .chars()
+        .flat_map(char::to_lowercase)
+        .map(|ch| match ch {
+            'á' => 'a',
+            'é' => 'e',
+            'í' => 'i',
+            'ó' | 'ö' | 'ő' => 'o',
+            'ú' | 'ü' | 'ű' => 'u',
+            _ => ch,
+        })
+        .collect()
 }
 
 enum GameEvent {
@@ -692,7 +691,7 @@ impl EmuApp {
                     ui.add_sized(
                         [ui.available_width(), 24.0],
                         egui::TextEdit::singleline(&mut self.game_library.search)
-                            .hint_text("Name, genre, author, description..."),
+                            .hint_text("Program name..."),
                     );
                 });
                 ui.separator();
@@ -714,7 +713,7 @@ impl EmuApp {
                     return;
                 }
 
-                let search = self.game_library.search.trim().to_lowercase();
+                let search = normalize_game_name(self.game_library.search.trim());
                 let filtered: Vec<usize> = self
                     .game_library
                     .entries
@@ -1506,6 +1505,10 @@ impl EmuApp {
             match event_type.as_str() {
                 "down" => {
                     let code = wasm_event_code(&event);
+                    if code == 27 && self.game_library.open {
+                        self.game_library.open = false;
+                        continue;
+                    }
                     let first_press = code == 0 || self.pressed_keys.insert(code);
                     if code != 0 && first_press {
                         self.emu.tvc.key_down(code);
@@ -1767,7 +1770,7 @@ fn metadata_label(ui: &mut egui::Ui, label: &str, value: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::framebuffer_image;
+    use super::{GameEntry, framebuffer_image, normalize_game_name};
     use eframe::egui::Color32;
 
     #[test]
@@ -1781,6 +1784,24 @@ mod tests {
                 Color32::from_rgba_premultiplied(0x10, 0x20, 0x40, 0x80),
             ]
         );
+    }
+
+    #[test]
+    fn game_name_normalization_folds_case_and_hungarian_accents() {
+        assert_eq!(
+            normalize_game_name("ÁÉÍÓÖŐÚÜŰ áéíóöőúüű"),
+            "aeiooouuu aeiooouuu"
+        );
+    }
+
+    #[test]
+    fn game_filter_matches_normalized_name_only() {
+        let game: GameEntry =
+            serde_json::from_str(r#"{"Name":"Árvíztűrő tükörfúrógép","Genre":"Shooter"}"#).unwrap();
+
+        assert!(game.matches(&normalize_game_name("ARVIZTURO")));
+        assert!(game.matches(&normalize_game_name("tukorfurogep")));
+        assert!(!game.matches(&normalize_game_name("shooter")));
     }
 }
 
@@ -1910,6 +1931,13 @@ impl eframe::App for EmuApp {
         }
 
         self.handle_game_events(ctx);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.game_library.open
+            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.game_library.open = false;
+        }
 
         #[cfg(target_arch = "wasm32")]
         self.handle_wasm_keyboard_events();

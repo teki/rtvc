@@ -142,11 +142,13 @@ python scripts/serve_docs.py
 scripts\serve_docs.bat
 ```
 
-The native and web File menus provide a searchable TVC Gamebase browser whose
-catalog, screenshots, and selected game archive are fetched on demand. The web
-emulator can also open local CAS, DSK, ZIP, and snapshot files. Small web
-preferences use `localStorage`; recent tape and disk bytes use IndexedDB. Native
-Gamebase media is cached under `rtvc-media/` beside the active `rtvc.toml`.
+The native and web File menus provide a TVC Gamebase browser whose catalog,
+screenshots, and selected game archive are fetched on demand. Its name filter is
+case-insensitive and treats Hungarian accented vowels as their unaccented
+equivalents; press Escape to close the dialog. The web emulator can also open
+local CAS, DSK, ZIP, and snapshot files. Small web preferences use
+`localStorage`; recent tape and disk bytes use IndexedDB. Native Gamebase media
+is cached under `rtvc-media/` beside the active `rtvc.toml`.
 
 ## Developer Notes
 
