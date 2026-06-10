@@ -9,6 +9,7 @@ Refer to the following resources for detailed documentation on the system:
 - [Project Overview & Architecture](info/project_overview.md) — High-level description of the project structure, supported build targets, Rust toolchain, and core emulator architecture.
 - [User README](README.md) — User-facing run, snapshot, and web bundle commands.
 - [Release Notes](CHANGES.md) — Concise release notes starting with the next release; older releases are intentionally not backfilled.
+- [Open Issues and Planned Work](TODO.md) — Known issues and implementation ideas that are not yet complete.
 - [Snapshot Format and Web Bundles](info/snapshot.md) — Custom TVC snapshot format and `cargo bundle-web` upload workflow.
 - [TVC Machine Core](info/tvc.md) — Machine orchestration, timing, I/O ports, interrupts, ROM loading, and media integration.
 - [Z80 CPU Documentation](info/z80.md) — Detailed specifications, instructions, lookup tables, and execution details for the Z80 CPU emulator.
