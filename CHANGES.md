@@ -5,6 +5,7 @@ Release notes start here. Older release history is intentionally not backfilled.
 ## Unreleased
 
 - Improved the Gamebase dialog with Escape-to-close and case- and Hungarian-accent-insensitive name filtering.
+- Centered the emulator display while preserving responsive 4:3 scaling.
 
 ## v0.7.0 - 2026-06-09
 

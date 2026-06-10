@@ -2057,13 +2057,15 @@ impl eframe::App for EmuApp {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            let avail = ui.available_size();
+            let available_rect = ui.available_rect_before_wrap();
+            let avail = available_rect.size();
             let disp_hw = 3.0 / 4.0;
             let w = avail.x.min(avail.y / disp_hw);
             let h = w * disp_hw;
             let img_size = egui::vec2(w, h);
 
-            let (_, rect) = ui.allocate_space(img_size);
+            let rect = egui::Rect::from_center_size(available_rect.center(), img_size);
+            ui.allocate_rect(rect, egui::Sense::hover());
             if let Some(texture) = &self.screen_texture {
                 ui.painter().image(
                     texture.id(),
