@@ -23,8 +23,11 @@ This skill provides step-by-step instructions and references for compiling, exec
   ```
   To start directly from a snapshot:
   ```bash
-  cargo run --bin rtvc -- snapshots/load_tape.rtvcsnap.zip
+  cargo run --bin rtvc -- snapshots/boot12dos.rtvcsnap.zip
   ```
+  - `snapshots/boot12dos.rtvcsnap.zip` is a clean, fully booted TVC 1.2 VT-DOS
+    fixture. Use it for tests that do not need to exercise boot, avoiding the
+    normal startup wait.
   To mount a disk, mount a tape, or inject a tape directly on startup:
   ```bash
   cargo run --bin rtvc -- -d path/to/disk.dsk

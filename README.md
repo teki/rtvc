@@ -101,8 +101,12 @@ cargo run --bin rtvc
 Start from a snapshot:
 
 ```bash
-cargo run --bin rtvc -- snapshots/load_tape.rtvcsnap.zip
+cargo run --bin rtvc -- snapshots/boot12dos.rtvcsnap.zip
 ```
+
+`snapshots/boot12dos.rtvcsnap.zip` contains a clean, fully booted TVC 1.2
+VT-DOS machine. It is useful for testing when waiting for the normal machine
+boot is unnecessary.
 
 Load media on startup:
 

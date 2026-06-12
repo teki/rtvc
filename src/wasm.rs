@@ -33,6 +33,12 @@ impl WasmTvc {
 
     #[wasm_bindgen(js_name = loadSnapshot)]
     pub fn load_snapshot(&mut self, data: &[u8]) -> Result<(), JsValue> {
+        if let Some((is_plus, rom_version, has_dos)) = snapshot_machine_type(data)? {
+            let fast_boot = self.tvc.fast_boot();
+            self.tvc = Tvc::new_with_vid_model(is_plus, self.tvc.vid_model());
+            load_builtin_roms(&mut self.tvc, rom_version, has_dos);
+            self.tvc.set_fast_boot(fast_boot);
+        }
         self.tvc
             .load_snapshot(data)
             .map_err(|err| JsValue::from_str(&err.to_string()))
@@ -142,6 +148,51 @@ impl WasmTvc {
 
 fn default_web_vid_model() -> VidModel {
     VidModel::FastFrame
+}
+
+fn snapshot_machine_type(data: &[u8]) -> Result<Option<(bool, u8, bool)>, JsValue> {
+    let chunks =
+        crate::snapshot::read_file(data).map_err(|err| JsValue::from_str(&err.to_string()))?;
+    let Some(chunk) = chunks.iter().find(|chunk| chunk.id == *b"EMUT") else {
+        return Ok(None);
+    };
+    let mut reader = crate::snapshot::Reader::new(chunk.data);
+    let is_plus = reader
+        .u8()
+        .map_err(|err| JsValue::from_str(&err.to_string()))?
+        != 0;
+    let rom_version = reader
+        .u8()
+        .map_err(|err| JsValue::from_str(&err.to_string()))?;
+    if rom_version > 1 {
+        return Err(JsValue::from_str("unknown snapshot ROM version"));
+    }
+    let has_dos = reader
+        .u8()
+        .map_err(|err| JsValue::from_str(&err.to_string()))?
+        != 0;
+    Ok(Some((is_plus, rom_version, has_dos)))
+}
+
+fn load_builtin_roms(tvc: &mut Tvc, rom_version: u8, has_dos: bool) {
+    let roms: &[(&str, &[u8])] = match rom_version {
+        1 => &[
+            ("TVC22_D4.64K", include_bytes!("../roms/TVC22_D4.64K")),
+            ("TVC22_D6.64K", include_bytes!("../roms/TVC22_D6.64K")),
+            ("TVC22_D7.64K", include_bytes!("../roms/TVC22_D7.64K")),
+        ],
+        _ => &[
+            ("TVC12_D3.64K", include_bytes!("../roms/TVC12_D3.64K")),
+            ("TVC12_D4.64K", include_bytes!("../roms/TVC12_D4.64K")),
+            ("TVC12_D7.64K", include_bytes!("../roms/TVC12_D7.64K")),
+        ],
+    };
+    for (name, bytes) in roms {
+        tvc.add_rom(name, bytes);
+    }
+    if has_dos {
+        tvc.add_rom("D_TVCDOS.128", include_bytes!("../roms/D_TVCDOS.128"));
+    }
 }
 
 #[cfg(feature = "wasm-full")]

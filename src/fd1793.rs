@@ -162,20 +162,6 @@ impl FDisk {
     }
 
     fn write_snapshot(&self, w: &mut crate::snapshot::Writer) {
-        w.u8(self.log as u8);
-        w.string(&self.name);
-        match &self.dsk {
-            Some(dsk) => {
-                w.u8(1);
-                w.bytes(dsk);
-            }
-            None => w.u8(0),
-        }
-        w.u16(self.sectors_per_track);
-        w.u16(self.sector_size);
-        w.u16(self.tot_sec);
-        w.u16(self.num_heads);
-        w.u16(self.tracks_per_side);
         w.u8(self.data);
         w.u8(self.sector);
         w.u8(self.track);
@@ -191,18 +177,6 @@ impl FDisk {
         &mut self,
         r: &mut crate::snapshot::Reader<'_>,
     ) -> crate::snapshot::Result<()> {
-        self.log = r.u8()? != 0;
-        self.name = r.string()?;
-        self.dsk = if r.u8()? != 0 {
-            Some(r.bytes()?.to_vec())
-        } else {
-            None
-        };
-        self.sectors_per_track = r.u16()?;
-        self.sector_size = r.u16()?;
-        self.tot_sec = r.u16()?;
-        self.num_heads = r.u16()?;
-        self.tracks_per_side = r.u16()?;
         self.data = r.u8()?;
         self.sector = r.u8()?;
         self.track = r.u8()?;
@@ -263,7 +237,6 @@ impl FD1793 {
     }
 
     pub fn write_snapshot(&self, w: &mut crate::snapshot::Writer) {
-        w.u8(self.log as u8);
         for disk in &self.disks {
             disk.write_snapshot(w);
         }
@@ -283,7 +256,6 @@ impl FD1793 {
         &mut self,
         r: &mut crate::snapshot::Reader<'_>,
     ) -> crate::snapshot::Result<()> {
-        self.log = r.u8()? != 0;
         for disk in &mut self.disks {
             disk.read_snapshot(r)?;
         }

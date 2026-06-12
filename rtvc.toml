@@ -1,8 +1,12 @@
 machine_type = "64k-plus-1.2-vtdos"
 video_model = "interleaved"
+fast_boot = false
 
 [tape]
 loaded = false
+recent = ["rtvc-media/tapes/unicum/UNICUM.CAS", "rtvc-media/tapes/atomix/ATOMIX.CAS", "rtvc-media/tapes/tisztalappal/TISZTALA.CAS"]
 
 [disk]
-loaded = false
+selected = "rtvc-media/disks/boulderdash/boulderdash.dsk"
+loaded = true
+recent = ["rtvc-media/disks/boulderdash/boulderdash.dsk"]

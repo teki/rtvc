@@ -113,8 +113,4 @@ impl ExpansionSlots {
     pub(crate) fn slot0_mut(&mut self) -> Option<&mut HBF> {
         self.slots[0].as_mut()
     }
-
-    pub(crate) fn replace_slot0(&mut self, hbf: HBF) {
-        self.attach_hbf(0, hbf);
-    }
 }

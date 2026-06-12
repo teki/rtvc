@@ -361,6 +361,19 @@ impl Tvc {
         crate::tvc_snapshot::load(self, data)
     }
 
+    pub(crate) fn prepare_snapshot_load(
+        &mut self,
+        vid_model: VidModel,
+        clock: u64,
+        frame_complete: bool,
+    ) {
+        self.vid_model = vid_model;
+        self.clock = clock;
+        self.bus.set_tape_cycles(clock);
+        self.frame_complete = frame_complete;
+        self.sync_timeout_frames = 0;
+    }
+
     pub fn sound_sample_rate(&self) -> u32 {
         self.bus.sound_sample_rate()
     }
@@ -580,7 +593,7 @@ mod tests {
         let sound_counter = tvc.bus.sound.counter();
 
         let snapshot = tvc.save_snapshot();
-        let mut restored = Tvc::new(false);
+        let mut restored = Tvc::new(true);
         restored.load_snapshot(&snapshot).unwrap();
 
         assert!(restored.bus.mmu.is_plus());
@@ -597,6 +610,63 @@ mod tests {
         assert_eq!(
             restored.bus.sound.filter_state_bits(),
             tvc.bus.sound.filter_state_bits()
+        );
+    }
+
+    #[test]
+    fn snapshot_stores_only_model_ram_and_mutable_hbf_state() {
+        let tvc = Tvc::new(false);
+        let snapshot = tvc.save_snapshot();
+        let chunks = crate::snapshot::read_file(&snapshot).unwrap();
+        assert_eq!(
+            chunks
+                .iter()
+                .find(|chunk| chunk.id == *b"MMU ")
+                .unwrap()
+                .data
+                .len(),
+            3 + 5 * 0x4000
+        );
+        assert!(chunks.iter().all(|chunk| chunk.id != *b"HBF "));
+
+        let mut plus = Tvc::new(true);
+        plus.add_rom("D_TVCDOS.128", &[0xA5; 0x4000]);
+        plus.load_disk("large.dsk", &[0xE5; 368_640]);
+        let snapshot = plus.save_snapshot();
+        let chunks = crate::snapshot::read_file(&snapshot).unwrap();
+        assert_eq!(
+            chunks
+                .iter()
+                .find(|chunk| chunk.id == *b"MMU ")
+                .unwrap()
+                .data
+                .len(),
+            3 + 8 * 0x4000
+        );
+        assert!(
+            chunks
+                .iter()
+                .find(|chunk| chunk.id == *b"HBF ")
+                .unwrap()
+                .data
+                .len()
+                < 0x1200
+        );
+    }
+
+    #[test]
+    fn snapshot_load_keeps_runtime_roms() {
+        let mut source = Tvc::new(false);
+        source.add_rom("TVC12_D4.64K", &[0x11; 0x4000]);
+        let snapshot = source.save_snapshot();
+
+        let mut restored = Tvc::new(false);
+        restored.add_rom("TVC12_D4.64K", &[0x22; 0x4000]);
+        restored.load_snapshot(&snapshot).unwrap();
+
+        assert_eq!(
+            restored.bus.mmu.read_raw_bank("sys", 0, 1).unwrap(),
+            vec![0x22]
         );
     }
 

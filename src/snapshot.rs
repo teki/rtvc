@@ -3,7 +3,7 @@
 use std::fmt;
 
 pub const MAGIC: &[u8; 8] = b"RTVCSNAP";
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 2;
 
 #[derive(Debug)]
 pub enum SnapshotError {

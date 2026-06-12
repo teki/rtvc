@@ -233,12 +233,11 @@ impl TvcMmu {
         w.raw_bytes(&self.u2);
         w.raw_bytes(&self.u3);
         w.raw_bytes(&self.vid0);
-        write_optional_bank(w, self.vid1.as_ref());
-        write_optional_bank(w, self.vid2.as_ref());
-        write_optional_bank(w, self.vid3.as_ref());
-        w.raw_bytes(&self.sys);
-        w.raw_bytes(&self.cart);
-        w.raw_bytes(&self.exth);
+        if self.is_plus {
+            w.raw_bytes(self.vid1.as_ref().expect("plus video bank 1"));
+            w.raw_bytes(self.vid2.as_ref().expect("plus video bank 2"));
+            w.raw_bytes(self.vid3.as_ref().expect("plus video bank 3"));
+        }
     }
 
     pub fn read_snapshot(
@@ -247,7 +246,9 @@ impl TvcMmu {
     ) -> crate::snapshot::Result<()> {
         let is_plus = r.u8()? != 0;
         if is_plus != self.is_plus {
-            *self = TvcMmu::new(is_plus);
+            return Err(crate::snapshot::SnapshotError::InvalidData(
+                "snapshot machine model does not match loaded ROMs".to_string(),
+            ));
         }
         let map_val = r.u8()?;
         let map_val_vid = r.u8()?;
@@ -256,12 +257,20 @@ impl TvcMmu {
         self.u2.copy_from_slice(r.raw_bytes(0x4000)?);
         self.u3.copy_from_slice(r.raw_bytes(0x4000)?);
         self.vid0.copy_from_slice(r.raw_bytes(0x4000)?);
-        self.vid1 = read_optional_bank(r)?;
-        self.vid2 = read_optional_bank(r)?;
-        self.vid3 = read_optional_bank(r)?;
-        self.sys.copy_from_slice(r.raw_bytes(0x4000)?);
-        self.cart.copy_from_slice(r.raw_bytes(0x4000)?);
-        self.exth.copy_from_slice(r.raw_bytes(0x2000)?);
+        if self.is_plus {
+            self.vid1
+                .as_mut()
+                .expect("plus video bank 1")
+                .copy_from_slice(r.raw_bytes(0x4000)?);
+            self.vid2
+                .as_mut()
+                .expect("plus video bank 2")
+                .copy_from_slice(r.raw_bytes(0x4000)?);
+            self.vid3
+                .as_mut()
+                .expect("plus video bank 3")
+                .copy_from_slice(r.raw_bytes(0x4000)?);
+        }
         self.map_val = 0xFF;
         self.map_val_vid = 0xFF;
         self.set_vid_map(map_val_vid);
@@ -421,26 +430,6 @@ impl TvcMmu {
         let end = (addr + len).min(bank_data.len());
         Some(bank_data[addr..end].to_vec())
     }
-}
-
-fn write_optional_bank(w: &mut crate::snapshot::Writer, bank: Option<&[u8; 0x4000]>) {
-    if let Some(bank) = bank {
-        w.u8(1);
-        w.raw_bytes(bank);
-    } else {
-        w.u8(0);
-    }
-}
-
-fn read_optional_bank(
-    r: &mut crate::snapshot::Reader<'_>,
-) -> crate::snapshot::Result<Option<[u8; 0x4000]>> {
-    if r.u8()? == 0 {
-        return Ok(None);
-    }
-    let mut bank = [0; 0x4000];
-    bank.copy_from_slice(r.raw_bytes(0x4000)?);
-    Ok(Some(bank))
 }
 
 impl TvcMmu {

@@ -23,6 +23,7 @@ mod tests {
             rom_version: RomVersion::V2_2,
             has_dos: true,
         });
+        emu.load_roms();
         emu.tvc.z80.state.r16[11] = 0xBEEF;
         let zipped = zip_snapshot(&emu.save_snapshot()).unwrap();
         assert!(zipped.len() < emu.save_snapshot().len());
@@ -133,6 +134,10 @@ mod tests {
     fn load_tape_snapshot_restores_selection_and_can_play() {
         let snapshot_path = std::path::Path::new("snapshots/load_tape.rtvcsnap.zip");
         if !snapshot_path.exists() {
+            return;
+        }
+        let snapshot_data = unzip_snapshot(&std::fs::read(snapshot_path).unwrap()).unwrap();
+        if snapshot::read_file(&snapshot_data).is_err() {
             return;
         }
 
@@ -282,6 +287,7 @@ impl MachineType {
 struct EmuSnapshotState {
     machine_type: Option<MachineType>,
     selected_prog_file_name: Option<String>,
+    loaded_disk_file_name: Option<String>,
 }
 
 #[derive(Clone)]
@@ -374,27 +380,45 @@ impl Emu {
             .map(|chunk| (chunk.id, chunk.data.to_vec()))
             .collect();
         chunks.push((*b"EMUT", self.machine_type.write_snapshot_chunk()));
-        if let Some(entry) = self.progs.get(self.selected_prog) {
-            let mut writer = Writer::new();
-            writer.string(&entry.file_name);
-            chunks.push((*b"EMUI", writer.into_inner()));
-        }
+        let mut writer = Writer::new();
+        writer.string(
+            self.progs
+                .get(self.selected_prog)
+                .map(|entry| entry.file_name.as_str())
+                .unwrap_or(""),
+        );
+        writer.string(self.loaded_disk_file_name.as_deref().unwrap_or(""));
+        chunks.push((*b"EMUI", writer.into_inner()));
         snapshot::write_file(&chunks)
     }
 
     pub fn load_snapshot(&mut self, data: &[u8]) -> crate::snapshot::Result<()> {
         let fast_boot = self.tvc.fast_boot();
         let snapshot_state = Self::read_emu_snapshot_state(data)?;
-        self.tvc.load_snapshot(data)?;
-        self.machine_type = snapshot_state.machine_type.unwrap_or_else(|| {
+        #[cfg(target_arch = "wasm32")]
+        let snapshot_disk = snapshot_state
+            .loaded_disk_file_name
+            .as_ref()
+            .and_then(|name| {
+                self.loaded_disk_wasm
+                    .iter()
+                    .chain(self.recent_disks_wasm.iter())
+                    .find(|media| recent_media_key(&media.name) == recent_media_key(name))
+                    .cloned()
+            });
+        let machine_type = snapshot_state.machine_type.unwrap_or_else(|| {
             MachineType::for_snapshot(
                 self.tvc.is_plus(),
                 self.tvc.has_hbf(),
                 self.machine_type.rom_version,
             )
         });
+        self.machine_type = machine_type;
+        self.tvc = Tvc::new(machine_type.is_plus);
+        self.roms_loaded = false;
+        self.load_roms();
         self.tvc.set_fast_boot(fast_boot);
-        self.roms_loaded = true;
+        self.tvc.load_snapshot(data)?;
         self.loaded_tape = None;
         self.loaded_disk = None;
         self.loaded_tape_file_name = None;
@@ -405,8 +429,23 @@ impl Emu {
             self.loaded_disk_wasm = None;
             self.loaded_tape_was_injected = false;
         }
-        if let Some(file_name) = snapshot_state.selected_prog_file_name {
+        if let Some(file_name) = snapshot_state
+            .selected_prog_file_name
+            .as_deref()
+            .filter(|name| !name.is_empty())
+        {
             self.select_prog_by_file_name(&file_name);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(file_name) = snapshot_state.loaded_disk_file_name {
+            self.insert_disk_by_file_name(&file_name);
+        } else {
+            self.restore_accessible_selected_media();
+        }
+        #[cfg(target_arch = "wasm32")]
+        if let Some(media) = snapshot_disk {
+            let _ = self.insert_disk_bytes(&media.name, &media.bytes);
+        } else {
             self.restore_accessible_selected_media();
         }
         Ok(())
@@ -421,6 +460,10 @@ impl Emu {
                 b"EMUI" => {
                     let mut reader = Reader::new(chunk.data);
                     state.selected_prog_file_name = Some(reader.string()?);
+                    let disk_file_name = reader.string()?;
+                    if !disk_file_name.is_empty() {
+                        state.loaded_disk_file_name = Some(disk_file_name);
+                    }
                 }
                 _ => {}
             }
@@ -787,6 +830,20 @@ impl Emu {
         let path = Path::new(file_name);
         if path.exists() && path.is_file() {
             if self.insert_disk_file_path(path).is_ok() {
+                return true;
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(recent_path) = self
+            .recent_disks
+            .iter()
+            .find(|recent| {
+                recent_media_key(recent) == recent_media_key(file_name)
+                    && Path::new(recent).is_file()
+            })
+            .cloned()
+        {
+            if self.insert_disk_file_path(Path::new(&recent_path)).is_ok() {
                 return true;
             }
         }

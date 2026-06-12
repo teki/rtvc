@@ -1,4 +1,3 @@
-use crate::hbf::HBF;
 use crate::snapshot::{self, Reader, SnapshotError, Writer};
 use crate::tvc::Tvc;
 use crate::vid::VidModel;
@@ -8,6 +7,7 @@ pub(crate) fn save(tvc: &Tvc) -> Vec<u8> {
 
     let mut meta = Writer::new();
     meta.u8(tvc.bus.mmu.is_plus() as u8);
+    meta.u8(tvc.bus.extensions.slot0().is_some() as u8);
     meta.u8(match tvc.vid_model {
         VidModel::FastFrame => 0,
         VidModel::Interleaved => 1,
@@ -60,6 +60,7 @@ pub(crate) fn load(tvc: &mut Tvc, data: &[u8]) -> snapshot::Result<()> {
         .ok_or(SnapshotError::InvalidChunk("META"))?;
     let mut meta = Reader::new(meta.data);
     let is_plus = meta.u8()? != 0;
+    let has_hbf = meta.u8()? != 0;
     let vid_model = match meta.u8()? {
         0 => VidModel::FastFrame,
         1 => VidModel::Interleaved,
@@ -73,10 +74,12 @@ pub(crate) fn load(tvc: &mut Tvc, data: &[u8]) -> snapshot::Result<()> {
     let clock = meta.u64()?;
     let frame_complete = meta.u8()? != 0;
 
-    *tvc = Tvc::new_with_vid_model(is_plus, vid_model);
-    tvc.clock = clock;
-    tvc.bus.set_tape_cycles(clock);
-    tvc.frame_complete = frame_complete;
+    if tvc.is_plus() != is_plus || tvc.has_hbf() != has_hbf {
+        return Err(SnapshotError::InvalidData(
+            "snapshot machine resources are not loaded".to_string(),
+        ));
+    }
+    tvc.prepare_snapshot_load(vid_model, clock, frame_complete);
 
     for chunk in chunks {
         let mut reader = Reader::new(chunk.data);
@@ -97,7 +100,9 @@ pub(crate) fn load(tvc: &mut Tvc, data: &[u8]) -> snapshot::Result<()> {
             b"HBF " => {
                 tvc.bus
                     .extensions
-                    .replace_slot0(HBF::read_snapshot(&mut reader)?);
+                    .slot0_mut()
+                    .ok_or(SnapshotError::InvalidChunk("HBF "))?
+                    .read_snapshot(&mut reader)?;
             }
             b"BUS " => {
                 tvc.bus.pend_it = reader.u8()?;
