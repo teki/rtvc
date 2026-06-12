@@ -133,6 +133,21 @@ Decodes Z80 instructions into assembly mnemonics.
   }
   ```
 
+#### `assemble`
+Encodes one Z80 instruction without changing emulated memory. The address is
+used to calculate `JR` and `DJNZ` displacements.
+- **Request**: `{"cmd": "assemble", "addr": 32768, "source": "LD A,42"}`
+- **Response**:
+  ```json
+  {
+    "status": "ok",
+    "addr": 32768,
+    "len": 2,
+    "bytes": [62, 42],
+    "next_addr": 32770
+  }
+  ```
+
 #### `save_snapshot` / `load_snapshot`
 Saves or loads a compressed/raw emulator state snapshot.
 - **Request**: `{"cmd": "save_snapshot", "path": "snapshots/save.rtvcsnap.zip"}`
@@ -197,6 +212,7 @@ python3 scripts/rtvc_debug.py --host 127.0.0.1 --port 8089
 | `bp rm <addr>` | | Remove execution breakpoint. |
 | `read <addr> <len> [bank]` | `m` | Hex dump a memory range (with ASCII viewer panel). |
 | `disasm <addr> <len>` | `d` | Disassemble memory instructions. |
+| `asm [addr]` | `a` | Enter interactive single-line assembler mode at `addr`, or at the current PC when omitted, and print encoded bytes. |
 | `save <path>` | | Save snapshot to path. |
 | `load <path>` | | Load snapshot from path. |
 | `screenshot <path>` | | Save 4:3 PNG screenshot of the framebuffer. |

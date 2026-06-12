@@ -45,6 +45,8 @@ enum DebuggerCommand {
     },
     #[serde(rename = "disassemble")]
     Disassemble { addr: u16, len: usize },
+    #[serde(rename = "assemble")]
+    Assemble { addr: u16, source: String },
     #[serde(rename = "save_snapshot")]
     SaveSnapshot { path: String },
     #[serde(rename = "load_snapshot")]
@@ -417,6 +419,20 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                     "status": "ok",
                     "instructions": mapped
                 })
+            }
+            DebuggerCommand::Assemble { addr, source } => {
+                match crate::asm::assemble_line(&source, addr) {
+                    Ok(bytes) => serde_json::json!({
+                        "status": "ok",
+                        "addr": addr,
+                        "len": bytes.len(),
+                        "bytes": bytes,
+                        "next_addr": addr.wrapping_add(bytes.len() as u16)
+                    }),
+                    Err(err) => {
+                        serde_json::json!({ "status": "error", "message": err.to_string() })
+                    }
+                }
             }
             DebuggerCommand::SaveSnapshot { path } => {
                 match emu.save_snapshot_file(Path::new(&path)) {

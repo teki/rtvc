@@ -1,6 +1,7 @@
 #[cfg(all(feature = "web-vid-simple", feature = "web-vid-realistic"))]
 compile_error!("features `web-vid-simple` and `web-vid-realistic` are mutually exclusive");
 
+pub mod asm;
 pub mod bus;
 pub mod cas;
 pub mod disasm;

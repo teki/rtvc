@@ -226,6 +226,45 @@ class RtvcShell(cmd.Cmd):
         elif resp:
             print(f"Error: {resp.get('message')}")
 
+    def do_asm(self, arg):
+        """Enter interactive assembler mode. Usage: asm [start_address]"""
+        try:
+            if arg.strip():
+                addr = self._parse_number(arg)
+            else:
+                resp = self._send_cmd({"cmd": "status"})
+                if not resp or resp.get("status") != "ok":
+                    if resp:
+                        print(f"Error: {resp.get('message')}")
+                    return
+                addr = resp.get("pc", 0)
+        except ValueError:
+            print("Error: Address must be decimal, 0x-prefixed, $-prefixed, or H-suffixed hex.")
+            return
+        if not 0 <= addr <= 0xFFFF:
+            print("Error: Address must be between 0 and 65535.")
+            return
+
+        print("Assembler mode. Enter one Z80 instruction per line; blank line or 'exit' returns.")
+        while True:
+            try:
+                source = input(f"asm {addr:04X}> ")
+            except EOFError:
+                print()
+                break
+
+            if not source.strip() or source.strip().lower() in ("exit", "quit", "q"):
+                break
+
+            resp = self._send_cmd({"cmd": "assemble", "addr": addr, "source": source})
+            if resp and resp.get("status") == "ok":
+                bytes_list = resp.get("bytes", [])
+                bytes_str = " ".join(f"{byte:02X}" for byte in bytes_list)
+                print(f"{addr:04X}: {bytes_str}")
+                addr = resp.get("next_addr", addr + len(bytes_list)) & 0xFFFF
+            elif resp:
+                print(f"Error: {resp.get('message')}")
+
     def do_save(self, arg):
         """Save a snapshot zip file. Usage: save <path>"""
         if not arg:
@@ -314,7 +353,16 @@ class RtvcShell(cmd.Cmd):
     do_p = do_pause
     do_m = do_read
     do_d = do_disasm
+    do_a = do_asm
     do_q = do_exit
+
+    def _parse_number(self, value):
+        value = value.strip().upper().replace("_", "")
+        if value.startswith("$"):
+            return int(value[1:], 16)
+        if value.endswith("H"):
+            return int(value[:-1], 16)
+        return int(value, 0)
 
     def _hex_dump(self, addr_start, data):
         lines = []
