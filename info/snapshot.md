@@ -78,7 +78,8 @@ cargo run --bin rtvc -- snapshots/boot12dos.rtvcsnap.zip
 The checked-in [boot12dos.rtvcsnap.zip](../snapshots/boot12dos.rtvcsnap.zip)
 fixture is a clean, fully booted TVC 1.2 VT-DOS machine. Tests that do not need
 to exercise the boot process can load it to begin immediately from a stable
-post-boot state.
+post-boot state. It is also embedded in native and full-web application builds
+and used as the starting state for Gamebase launches.
 
 Zip compression is intentionally kept out of the lightweight WASM build. Web bundles may include a zipped snapshot, but browser JavaScript decompresses it before calling `WasmTvc::loadSnapshot`.
 

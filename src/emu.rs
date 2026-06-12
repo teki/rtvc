@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::io::Read;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -5,6 +6,8 @@ use std::path::{Path, PathBuf};
 use crate::cas::TapeBitstreamGenerator;
 use crate::snapshot::{self, Reader, SnapshotError, Writer};
 use crate::tvc::Tvc;
+
+const GAMEBASE_BOOT_SNAPSHOT: &[u8] = include_bytes!("../snapshots/boot12dos.rtvcsnap.zip");
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum RomVersion {
@@ -116,6 +119,47 @@ mod tests {
             emu.recent_tapes,
             vec!["rtvc-media/tapes/tvball/TVBALL.CAS".to_string()]
         );
+    }
+
+    #[test]
+    fn gamebase_cas_starts_from_clean_boot_and_queues_run() {
+        let mut emu = Emu::new(MachineType {
+            is_plus: false,
+            rom_version: RomVersion::V2_2,
+            has_dos: false,
+        });
+        let mut cas = vec![0; 145];
+        cas[0] = 0x11;
+
+        emu.start_gamebase_media_bytes("TEST.CAS", &cas).unwrap();
+
+        assert_eq!(
+            emu.machine_type,
+            MachineType {
+                is_plus: true,
+                rom_version: RomVersion::V1_2,
+                has_dos: true,
+            }
+        );
+        assert!(emu.running);
+        assert_eq!(emu.typed_text.iter().collect::<String>(), "RUN\r");
+        assert_eq!(emu.loaded_tape.as_deref(), Some("TEST.CAS (Injected)"));
+    }
+
+    #[test]
+    fn gamebase_disk_starts_from_clean_boot_and_queues_load() {
+        let mut emu = Emu::new(MachineType {
+            is_plus: false,
+            rom_version: RomVersion::V2_2,
+            has_dos: false,
+        });
+        let disk = vec![0; 368_640];
+
+        emu.start_gamebase_media_bytes("TEST.DSK", &disk).unwrap();
+
+        assert!(emu.running);
+        assert_eq!(emu.typed_text.iter().collect::<String>(), "LOAD \"*\"\r");
+        assert_eq!(emu.loaded_disk.as_deref(), Some("TEST.DSK"));
     }
 
     fn game_archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
@@ -327,6 +371,8 @@ pub struct Emu {
     loaded_disk_wasm: Option<WasmRecentFile>,
     #[cfg(target_arch = "wasm32")]
     loaded_tape_was_injected: bool,
+    typed_text: VecDeque<char>,
+    typed_key: Option<u32>,
 }
 
 impl Emu {
@@ -354,6 +400,8 @@ impl Emu {
             loaded_disk_wasm: None,
             #[cfg(target_arch = "wasm32")]
             loaded_tape_was_injected: false,
+            typed_text: VecDeque::new(),
+            typed_key: None,
         };
         emu.scan_progs();
         emu
@@ -363,11 +411,41 @@ impl Emu {
         if !self.running {
             return false;
         }
+        self.advance_typed_text();
         self.tvc.run_for_a_frame()
     }
 
     pub fn reset(&mut self) {
+        self.clear_typed_text();
         self.tvc.reset();
+    }
+
+    fn clear_typed_text(&mut self) {
+        if let Some(code) = self.typed_key.take() {
+            self.tvc.key_up(code);
+        }
+        self.typed_text.clear();
+    }
+
+    fn queue_typed_text(&mut self, text: &str) {
+        self.clear_typed_text();
+        self.typed_text.extend(text.chars());
+    }
+
+    fn advance_typed_text(&mut self) {
+        if let Some(code) = self.typed_key.take() {
+            self.tvc.key_up(code);
+            return;
+        }
+        let Some(ch) = self.typed_text.pop_front() else {
+            return;
+        };
+        let code = ch as u32;
+        self.tvc.key_down(code);
+        if ch != '\r' {
+            self.tvc.key_press(ch);
+        }
+        self.typed_key = Some(code);
     }
 
     pub fn save_snapshot(&self) -> Vec<u8> {
@@ -393,6 +471,7 @@ impl Emu {
     }
 
     pub fn load_snapshot(&mut self, data: &[u8]) -> crate::snapshot::Result<()> {
+        self.clear_typed_text();
         let fast_boot = self.tvc.fast_boot();
         let snapshot_state = Self::read_emu_snapshot_state(data)?;
         #[cfg(target_arch = "wasm32")]
@@ -1041,47 +1120,57 @@ impl Emu {
         archive_bytes: &[u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
         let bytes = extract_game_archive_member(file_to_run, archive_bytes)?;
+        self.start_gamebase_media_bytes(file_to_run, &bytes)
+    }
+
+    pub fn start_gamebase_media_bytes(
+        &mut self,
+        file_to_run: &str,
+        bytes: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.load_gamebase_boot()?;
         let lower_name = file_to_run.to_ascii_lowercase();
         if lower_name.ends_with(".cas") {
-            if !self.tvc.load_cas(&bytes) {
-                return Err("Failed to inject CAS data into memory".into());
-            }
-            self.loaded_tape = Some(format!("{file_to_run} (Injected)"));
-            #[cfg(target_arch = "wasm32")]
-            {
-                self.loaded_tape_file_name = Some(file_to_run.to_string());
-                self.loaded_tape_wasm = Some(WasmRecentFile {
-                    name: file_to_run.to_string(),
-                    bytes: bytes.clone(),
-                });
-                self.loaded_tape_was_injected = true;
-                self.add_recent_tape_wasm(file_to_run.to_string(), bytes);
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                self.loaded_tape_file_name = None;
-            }
-            Ok(())
+            self.inject_tape_bytes(file_to_run, bytes)?;
+            self.finish_gamebase_start("RUN\r");
         } else if lower_name.ends_with(".dsk") {
-            self.tvc.load_disk(file_to_run, &bytes);
-            self.loaded_disk = Some(file_to_run.to_string());
-            #[cfg(target_arch = "wasm32")]
-            {
-                self.loaded_disk_file_name = Some(file_to_run.to_string());
-                self.loaded_disk_wasm = Some(WasmRecentFile {
-                    name: file_to_run.to_string(),
-                    bytes: bytes.clone(),
-                });
-                self.add_recent_disk_wasm(file_to_run.to_string(), bytes);
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                self.loaded_disk_file_name = None;
-            }
-            Ok(())
+            self.insert_disk_bytes(file_to_run, bytes)?;
+            self.finish_gamebase_start("LOAD \"*\"\r");
         } else {
-            Err(format!("Unsupported game media: {file_to_run}").into())
+            return Err(format!("Unsupported game media: {file_to_run}").into());
         }
+        Ok(())
+    }
+
+    pub fn start_gamebase_media_file(
+        &mut self,
+        file_to_run: &str,
+        path: &Path,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.load_gamebase_boot()?;
+        let lower_name = file_to_run.to_ascii_lowercase();
+        if lower_name.ends_with(".cas") {
+            self.inject_tape_file_path(path)?;
+            self.finish_gamebase_start("RUN\r");
+        } else if lower_name.ends_with(".dsk") {
+            self.insert_disk_file_path(path)?;
+            self.finish_gamebase_start("LOAD \"*\"\r");
+        } else {
+            return Err(format!("Unsupported game media: {file_to_run}").into());
+        }
+        Ok(())
+    }
+
+    fn load_gamebase_boot(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        self.running = false;
+        let snapshot = unzip_snapshot(GAMEBASE_BOOT_SNAPSHOT)?;
+        self.load_snapshot(&snapshot)?;
+        Ok(())
+    }
+
+    fn finish_gamebase_start(&mut self, command: &str) {
+        self.queue_typed_text(command);
+        self.running = true;
     }
 
     #[cfg(target_arch = "wasm32")]

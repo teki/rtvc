@@ -152,7 +152,9 @@ case-insensitive and treats Hungarian accented vowels as their unaccented
 equivalents; press Escape to close the dialog. The web emulator can also open
 local CAS, DSK, ZIP, and snapshot files. Small web preferences use
 `localStorage`; recent tape and disk bytes use IndexedDB. Native Gamebase media
-is cached under `rtvc-media/` beside the active `rtvc.toml`.
+is cached under `rtvc-media/` beside the active `rtvc.toml`. Loading a Gamebase
+title automatically starts from the clean, embedded TVC 1.2 VT-DOS snapshot,
+attaches or injects its media, and types `RUN` for CAS or `LOAD "*"` for DSK.
 
 ## Developer Notes
 

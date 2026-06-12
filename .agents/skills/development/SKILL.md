@@ -39,6 +39,7 @@ This skill provides step-by-step instructions and references for compiling, exec
   - Use the View > IO Log menu item to toggle the IO port log panel.
   - Use the File menu to write/read `.rtvcsnap.zip` snapshots, load tape/disk files via open file dialog, and save the current framebuffer as a 4:3 PNG (`768x576`).
   - Use the Tape and Disk menus to load cassette and floppy media (either from local list or by browsing for any file). Selecting an entry immediately loads it.
+  - Gamebase launches use the clean boot snapshot embedded in the app, force the TVC 1.2 VT-DOS machine, attach or inject the selected media, start emulation, and type `RUN` for CAS or `LOAD "*"` for DSK.
   - The bottom status bar shows tape activity and playback percentage, loaded tape/disk media, run state, FPS, ROM state, audio status, and recent file status, plus a Reset button in the bottom right corner.
   - Native app preferences are stored in `rtvc.toml`, checked in the current working directory first and then beside the executable.
   - PAL 4:3 display aspect ratio is applied to the framebuffer.

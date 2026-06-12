@@ -958,6 +958,10 @@ impl EmuApp {
                     self.game_library.loading_game_id = None;
                     match result.and_then(|bytes| self.load_game_archive(&game, &bytes)) {
                         Ok(()) => {
+                            self.selected_machine = Self::selected_machine_index(
+                                &self.machine_types,
+                                self.emu.machine_type,
+                            );
                             let kind = if game.file_to_run.to_ascii_lowercase().ends_with(".cas") {
                                 #[cfg(target_arch = "wasm32")]
                                 if let Some(recent) = self.emu.recent_tapes_wasm.first().cloned() {
@@ -1004,15 +1008,9 @@ impl EmuApp {
             }
             std::fs::write(&path, media).map_err(|err| err.to_string())?;
 
-            if game.file_to_run.to_ascii_lowercase().ends_with(".cas") {
-                self.emu
-                    .inject_tape_file_path(&path)
-                    .map_err(|err| err.to_string())
-            } else {
-                self.emu
-                    .insert_disk_file_path(&path)
-                    .map_err(|err| err.to_string())
-            }
+            self.emu
+                .start_gamebase_media_file(&game.file_to_run, &path)
+                .map_err(|err| err.to_string())
         }
     }
 
