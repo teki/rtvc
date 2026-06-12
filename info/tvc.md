@@ -129,6 +129,19 @@ The system ROM files are loaded at startup from the `roms/` directory:
 The `TvcMmu::add_rom()` method dispatches by filename matching the JS reference behavior.
 Cartridge ROMs use `load_cart_rom()` which maps into the CART bank.
 
+The Machine menu's **Fast boot** option replaces the two-pattern RAM test in
+known TVC ROMs with a single `LDIR` zero-fill. The patched routines begin at ROM
+offset `0x0348` in `TVC12_D4.64K` and `0x0357` in `TVC22_D6.64K`; their paired
+entry points are `C338`/`C33E` and `C347`/`C34D`, respectively. They retain the
+original calling contract by clearing the full 16 KB page, advancing `HL`, and
+returning with the zero flag set, so BASIC still detects all installed RAM.
+For `TVC12_D4.64K`, fast boot also replaces `11 15` with `18 5C` at offset
+`0x1A19` to skip the boot screen. For `TVC22_D6.64K`, it changes the conditional
+`JR NZ,CF96H` at offset `0x0F21` to an unconditional `JR CF96H`, skipping the
+ROM's balanced boot-screen drawing block. Disabling the option restores the
+original bytes. Every patch is guarded by both the ROM filename and expected
+byte sequence.
+
 ## IO Logging
 
 `TvcBus` contains a `log: Log` field (ring buffer, 200 entries). Every port write (`OUT`) and port read (`IN`) is logged with the format:

@@ -345,6 +345,14 @@ impl Tvc {
         self.vid_model = vid_model;
     }
 
+    pub fn fast_boot(&self) -> bool {
+        self.bus.mmu.fast_boot()
+    }
+
+    pub fn set_fast_boot(&mut self, enabled: bool) {
+        self.bus.mmu.set_fast_boot(enabled);
+    }
+
     pub fn save_snapshot(&self) -> Vec<u8> {
         crate::tvc_snapshot::save(self)
     }

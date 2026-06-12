@@ -143,6 +143,17 @@ Bits 4 and 5 of `V` (`V & 0x30`) dictate which Video RAM bank the CRTC reads to 
 
 The Rust `TvcMmu` exposes 8-bit read/write (`r8`, `w8`) for internal memory mapping. The Z80-facing `CpuBus` trait lives in `bus.rs` and owns the complete CPU address space, including I/O and expansion-card routing; the full machine implementation is `TvcBus`.
 
+`TvcMmu::set_fast_boot()` controls reversible convenience patches for the known
+system ROMs. The normal two-pattern RAM test is replaced by a single `LDIR`
+zero-fill at SYS offset `0x033E` for `TVC12_D4.64K` and `0x034D` for
+`TVC22_D6.64K`. The replacement preserves the ROM contract: it clears the
+16 KB page, advances `HL` to the next page boundary, and returns with the zero
+flag set. The 1.2 ROM also changes `11 15` to `18 5C` at offset `0x1A19` to
+skip the boot screen. The 2.2 ROM changes `JR NZ,CF96H` to `JR CF96H` at offset
+`0x0F21`, using the ROM's existing no-drawing path to skip its balanced
+`PUSH AF`/`POP AF` drawing block. Disabling fast boot restores all original
+bytes. Both patch directions verify the current bytes before changing them.
+
 When the CPU accesses an `address` (0x0000 - 0xFFFF):
 1. **Determine the Page:** `page_index = address >> 14` (results in 0, 1, 2, or 3).
 2. **Determine the Local Offset:** `offset = address & 0x3FFF` (0x0000 to 0x3FFF).

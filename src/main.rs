@@ -13,6 +13,7 @@ fn main() -> eframe::Result<()> {
     if let Some(vid_model) = app_state_file.state.vid_model {
         emu.tvc.set_vid_model(vid_model);
     }
+    emu.tvc.set_fast_boot(app_state_file.state.fast_boot);
     emu.load_roms();
     // Command-line arguments parsing
     let args = std::env::args().collect::<Vec<String>>();

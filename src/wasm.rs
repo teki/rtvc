@@ -183,6 +183,7 @@ impl WebHandle {
         if let Some(vid_model) = app_state_file.state.vid_model {
             emu.tvc.set_vid_model(vid_model);
         }
+        emu.tvc.set_fast_boot(app_state_file.state.fast_boot);
         emu.load_roms();
         let audio_error = startup_audio_error();
         let storage_error = startup_storage_error();

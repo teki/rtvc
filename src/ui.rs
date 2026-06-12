@@ -1121,6 +1121,12 @@ impl EmuApp {
                 ui.close_menu();
             }
 
+            let mut fast_boot = self.emu.tvc.fast_boot();
+            if ui.checkbox(&mut fast_boot, "Fast boot").changed() {
+                self.emu.tvc.set_fast_boot(fast_boot);
+                self.save_app_state();
+            }
+
             ui.separator();
             ui.label("Type");
             let machine_types = self.machine_types.clone();
@@ -1439,6 +1445,7 @@ impl EmuApp {
         AppState {
             machine_type: Some(self.emu.machine_type),
             vid_model: Some(self.emu.tvc.vid_model()),
+            fast_boot: self.emu.tvc.fast_boot(),
             tape_file_name: self.emu.loaded_tape_file_name.clone(),
             tape_loaded: self.emu.loaded_tape_file_name.is_some(),
             disk_file_name: self.emu.loaded_disk_file_name.clone(),

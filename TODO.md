@@ -20,10 +20,10 @@ Open issues and planned improvements for the TVC emulator.
 
 ## Machine Startup
 
-- [ ] Add an optional fast-boot setting to speed up restarts.
-  - The main boot delays are the memory test and drawing the TVC boot screen.
-  - When a known ROM is loaded, detect it and skip or accelerate these
-    operations.
+- [x] Complete the optional fast-boot setting.
+  - [x] Skip the RAM test in the known TVC 1.2 and 2.2 system ROMs.
+  - [x] Skip drawing the TVC 1.2 boot screen.
+  - [x] Skip drawing the TVC 2.2 boot screen.
   - Alternatively, restore a prepared boot snapshot. This would require a
     separate snapshot for every machine type, which is less elegant and adds a
     maintenance burden.

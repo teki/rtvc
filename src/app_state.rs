@@ -12,6 +12,7 @@ const CONFIG_FILE_NAME: &str = "rtvc.toml";
 pub struct AppState {
     pub machine_type: Option<MachineType>,
     pub vid_model: Option<VidModel>,
+    pub fast_boot: bool,
     pub tape_file_name: Option<String>,
     pub tape_loaded: bool,
     pub disk_file_name: Option<String>,
@@ -111,9 +112,10 @@ impl AppStateFile {
             machine_type_id(state.machine_type)
         ));
         text.push_str(&format!(
-            "video_model = \"{}\"\n\n",
+            "video_model = \"{}\"\n",
             vid_model_id(state.vid_model)
         ));
+        text.push_str(&format!("fast_boot = {}\n\n", state.fast_boot));
         text.push_str("[tape]\n");
         if let Some(file_name) = &state.tape_file_name {
             text.push_str(&format!("selected = \"{}\"\n", escape_string(file_name)));
@@ -187,6 +189,7 @@ fn write_state_file(path: &std::path::Path, state: &AppState) -> std::io::Result
         machine_type_id(state.machine_type)
     )?;
     writeln!(file, "video_model = \"{}\"", vid_model_id(state.vid_model))?;
+    writeln!(file, "fast_boot = {}", state.fast_boot)?;
     writeln!(file)?;
     writeln!(file, "[tape]")?;
     if let Some(file_name) = &state.tape_file_name {
@@ -263,6 +266,9 @@ fn parse_state(text: &str) -> AppState {
                     if let Some(value) = parse_string(value).and_then(|id| vid_model_from_id(&id)) {
                         state.vid_model = Some(value);
                     }
+                }
+                "fast_boot" => {
+                    state.fast_boot = parse_bool(value).unwrap_or(state.fast_boot);
                 }
                 _ => {}
             },
@@ -403,6 +409,7 @@ mod tests {
             r#"
 machine_type = "64k-plus-2.2-vtdos"
 video_model = "fast-frame"
+fast_boot = true
 
 [tape]
 selected = "TVBALL.CAS"
@@ -425,6 +432,7 @@ recent = ["Games.dsk"]
             })
         );
         assert_eq!(state.vid_model, Some(VidModel::FastFrame));
+        assert!(state.fast_boot);
         assert_eq!(state.tape_file_name.as_deref(), Some("TVBALL.CAS"));
         assert!(state.tape_loaded);
         assert_eq!(

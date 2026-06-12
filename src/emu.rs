@@ -383,6 +383,7 @@ impl Emu {
     }
 
     pub fn load_snapshot(&mut self, data: &[u8]) -> crate::snapshot::Result<()> {
+        let fast_boot = self.tvc.fast_boot();
         let snapshot_state = Self::read_emu_snapshot_state(data)?;
         self.tvc.load_snapshot(data)?;
         self.machine_type = snapshot_state.machine_type.unwrap_or_else(|| {
@@ -392,6 +393,7 @@ impl Emu {
                 self.machine_type.rom_version,
             )
         });
+        self.tvc.set_fast_boot(fast_boot);
         self.roms_loaded = true;
         self.loaded_tape = None;
         self.loaded_disk = None;
@@ -452,6 +454,7 @@ impl Emu {
     }
 
     pub fn reload(&mut self, machine_type: MachineType) -> Result<(), String> {
+        let fast_boot = self.tvc.fast_boot();
         #[cfg(target_arch = "wasm32")]
         let loaded_disk = self.loaded_disk_wasm.clone();
         #[cfg(target_arch = "wasm32")]
@@ -461,6 +464,7 @@ impl Emu {
 
         self.machine_type = machine_type;
         self.tvc = Tvc::new(machine_type.is_plus);
+        self.tvc.set_fast_boot(fast_boot);
         self.roms_loaded = false;
         self.load_roms();
 
