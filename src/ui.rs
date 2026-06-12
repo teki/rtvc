@@ -1062,12 +1062,8 @@ impl EmuApp {
 
     fn draw_file_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("File", |ui| {
-            if ui.button("Load Snapshot...").clicked() {
-                self.load_snapshot_dialog(ui.ctx().clone());
-                ui.close_menu();
-            }
-            if ui.button("Save Snapshot...").clicked() {
-                self.save_snapshot_dialog();
+            if ui.button("Browse Gamebase...").clicked() {
+                self.open_game_library(ui.ctx().clone());
                 ui.close_menu();
             }
             ui.separator();
@@ -1079,8 +1075,13 @@ impl EmuApp {
                 self.load_disk_dialog(ui.ctx().clone());
                 ui.close_menu();
             }
-            if ui.button("Browse Gamebase...").clicked() {
-                self.open_game_library(ui.ctx().clone());
+            ui.separator();
+            if ui.button("Load Snapshot...").clicked() {
+                self.load_snapshot_dialog(ui.ctx().clone());
+                ui.close_menu();
+            }
+            if ui.button("Save Snapshot...").clicked() {
+                self.save_snapshot_dialog();
                 ui.close_menu();
             }
             ui.separator();
