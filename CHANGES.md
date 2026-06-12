@@ -4,7 +4,13 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
-- Improved the Gamebase dialog with Escape-to-close and case- and Hungarian-accent-insensitive name filtering.
+## v0.8.0 - 2026-06-13
+
+- Added a simple built-in Z80 assembler.
+- Added fastboot support to skip long RAM tests on startup.
+- Improved the Gamebase dialog with autostart support, Escape-to-close, and case/Hungarian-accent-insensitive name filtering.
+- Updated the web UI and reorganized the native menu.
+- Decreased snapshot size and added application icons.
 - Centered the emulator display while preserving responsive 4:3 scaling.
 
 ## v0.7.0 - 2026-06-09
