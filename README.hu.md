@@ -103,8 +103,12 @@ cargo run --bin rtvc
 Indítás snapshotból:
 
 ```bash
-cargo run --bin rtvc -- snapshots/load_tape.rtvcsnap.zip
+cargo run --bin rtvc -- snapshots/boot12dos.rtvcsnap.zip
 ```
+
+A `snapshots/boot12dos.rtvcsnap.zip` egy tiszta, teljesen elindított TVC 1.2
+VT-DOS gépállapot. Olyan tesztekhez használható, amelyeknél nem szükséges
+kivárni a gép normál indulását.
 
 Média betöltése indításkor:
 
@@ -144,9 +148,19 @@ python scripts/serve_docs.py
 scripts\serve_docs.bat
 ```
 
-A webes emulátor helyi CAS, DSK, ZIP és snapshot fájlokat is meg tud nyitni. A
-kisebb beállítások `localStorage`-ba kerülnek; a legutóbbi kazetta- és
-lemezadatok IndexedDB-ben tárolódnak.
+A natív és webes **File** menü TVC Gamebase böngészőt is tartalmaz. A katalógus,
+a képernyőképek és a kiválasztott játékarchívum igény szerint töltődik le. A
+névszűrő nem érzékeny a kis- és nagybetűkre, a magyar ékezetes magánhangzókat
+pedig az ékezet nélküli megfelelőikkel azonosként kezeli; az ablak az Escape
+billentyűvel zárható be. A webes emulátor helyi CAS, DSK, ZIP és snapshot
+fájlokat is meg tud nyitni. A kisebb beállítások `localStorage`-ba kerülnek; a
+legutóbbi kazetta- és lemezadatok IndexedDB-ben tárolódnak. A natív Gamebase
+média az aktív `rtvc.toml` melletti `rtvc-media/` könyvtárba kerül.
+
+Gamebase program indításakor az emulátor automatikusan visszaállítja az
+alkalmazásba ágyazott tiszta TVC 1.2 VT-DOS snapshotot, csatlakoztatja vagy
+injektálja a médiát, elindítja az emulációt, majd CAS esetén beírja a `RUN`,
+DSK esetén pedig a `LOAD "*"` parancsot.
 
 ## Fejlesztői jegyzetek
 

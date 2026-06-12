@@ -133,6 +133,21 @@ Visszafejti a Z80 utasításokat assembly mnemonikokká.
   }
   ```
 
+#### `assemble`
+Egyetlen Z80 utasítást kódol anélkül, hogy módosítaná az emulált memóriát. A
+cím a `JR` és `DJNZ` relatív eltolásainak kiszámításához szükséges.
+- **Kérés**: `{"cmd": "assemble", "addr": 32768, "source": "LD A,42"}`
+- **Válasz**:
+  ```json
+  {
+    "status": "ok",
+    "addr": 32768,
+    "len": 2,
+    "bytes": [62, 42],
+    "next_addr": 32770
+  }
+  ```
+
 #### `save_snapshot` / `load_snapshot`
 Ment egy tömörített/nyers emulátorállapot-snapshotot, vagy betölt egyet.
 - **Kérés**: `{"cmd": "save_snapshot", "path": "snapshots/save.rtvcsnap.zip"}`
@@ -197,6 +212,7 @@ python3 scripts/rtvc_debug.py --host 127.0.0.1 --port 8089
 | `bp rm <addr>` | | Eltávolít egy töréspontot. |
 | `read <addr> <len> [bank]` | `m` | Hexadecimális dumpot készít a memóriáról ASCII nézettel. |
 | `disasm <addr> <len>` | `d` | Assembly mnemonikokra bontja a memóriaterületet. |
+| `asm [addr]` | `a` | Interaktív, egysoros assembler módot indít a megadott címen, cím nélkül pedig az aktuális PC-n, és kiírja a kódolt bájtokat. |
 | `save <path>` | | Snapshotot ment a megadott fájlba. |
 | `load <path>` | | Snapshotot tölt be a megadott fájlból. |
 | `screenshot <path>` | | Képernyőmentést készít 4:3-as PNG formátumban. |

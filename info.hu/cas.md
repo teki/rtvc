@@ -28,6 +28,15 @@ if extension == ".cas":
 
 Az `0x19EF` a TVC BASIC programterületének alapértelmezett kezdőcíme (`TXTTAB`).
 
+## Kazettamotor és folyamatjelző
+
+A kazettamotor vezérlése a csak írható `05H` port 6. és 7. bitjén történik. Ha
+valamelyik motorbit magas, az emulált kazettatranszport pozíciója halad; mindkét
+bit alacsony állapotában megáll.
+
+Aktív lejátszáskor az alsó állapotsor százalékosan mutatja a generált
+szalagjelben elfoglalt pozíciót. A százalék csak bekapcsolt motor mellett halad.
+
 ## WAV/kazetta jelgenerálás
 
 A [src/cas.rs](../src/cas.rs) és [src/cas2wav.rs](../src/cas2wav.rs) a CAS képből TVC-kompatibilis hullámformát készít. A kimenet 44,1 kHz-es unsigned 8 bites PCM, a TVC 3,125 MHz-es CPU-órájához igazított impulzushosszokkal.

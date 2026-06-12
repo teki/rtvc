@@ -27,10 +27,17 @@ A TVC ezt saját pixeldekódoló logikával, palettaregiszterekkel és interrupt
 
 ## MC6845 regiszterek
 
-A CPU két portra írja a CRTC-t:
+A TVC a CRTC-t a teljes `0x70-0x7F` I/O tartományban teszi elérhetővé. A CRTC
+csak az `A0` címbitet dekódolja, ezért a két belső port tükröződik:
 
-- `0x70`: címregiszter, kiválasztja az R0-R17 regisztert.
-- `0x71`: adatregiszter, a kiválasztott regiszterbe ír.
+- `0x70`, `0x72`, ..., `0x7E`: címregiszter, kiválasztja az R0-R17 regisztert.
+- `0x71`, `0x73`, ..., `0x7F`: a kiválasztott adatregiszter olvasása vagy írása
+  az adott regiszter hozzáférési szabályai szerint.
+
+Az emulátor megvalósítja a tükrözött portokat és a CPU felől látható
+CRTC-olvasásokat. Az R0-R11 csak írható, az R12-R15 olvasható/írható, az
+R16-R17 csak olvasható. A csak írható címregiszter és adatregiszterek olvasása
+`0xFF`; az R16-R17 CPU-írásai nem módosítják az állapotot.
 
 Fontos TVC alapértékek:
 

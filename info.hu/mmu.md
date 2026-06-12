@@ -76,6 +76,20 @@ Legyen `V` a videó lapozóportra írt bájt. Csak TVC 64K+ gépen van hatása.
 
 A Rust `TvcMmu` 8 bites belső memóriaolvasást és -írást ad (`r8`, `w8`). A teljes Z80 címtérért, beleértve az I/O-t és a bővítőkártyákat, a [src/bus.rs](../src/bus.rs) `CpuBus` traitje és a `TvcBus` felel.
 
+A `TvcMmu::set_fast_boot()` a támogatott rendszer-ROM-ok visszafordítható
+gyorsindítási módosításait vezérli. A normál, két mintával végzett RAM-tesztet
+egyetlen `LDIR` nullázás váltja fel: a `TVC12_D4.64K` ROM-ban a SYS `0x033E`,
+a `TVC22_D6.64K` ROM-ban a `0x034D` offseten. A helyettesítő rutin megtartja az
+eredeti szerződést: törli a teljes 16 KiB-os lapot, `HL`-t a következő
+laphatárra állítja, és beállított zero flaggel tér vissza.
+
+Az 1.2 ROM-ban a `0x1A19` offseten a `11 15` bájtok `18 5C` értékre változnak,
+így kimarad a bootképernyő. A 2.2 ROM-ban a `0x0F21` offseten a
+`JR NZ,CF96H` feltétel nélküli `JR CF96H` lesz; ez a ROM meglévő, rajzolást
+kihagyó útvonalát használja, és átugorja a kiegyensúlyozott
+`PUSH AF`/`POP AF` blokkot. A gyorsindítás kikapcsolása visszaállítja az eredeti
+bájtokat. Mindkét irányú módosítás ellenőrzi az aktuális bájtsorozatot.
+
 CPU cím elérésekor:
 
 1. `page_index = address >> 14`

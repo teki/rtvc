@@ -31,18 +31,31 @@ u8[]  chunk_payload
 
 A chunkok tartalma little-endian. Az ismeretlen chunkokat a betöltő figyelmen kívül hagyja, így későbbi verziók opcionális állapotot adhatnak hozzá.
 
-## 1-es verziójú chunkok
+## 2-es verziójú chunkok
 
 - `META` - géptípus, videomodell, emulátoróra, képkocka-kész jelző.
 - `CPUZ` - Z80 regisztertömbök és interrupt/HALT állapot.
-- `MMU ` - TVC RAM, videó RAM, ROM/cartridge bankok, lapozóregiszterek és plusz modell állapot.
+- `MMU ` - 64 KiB TVC RAM, a géptípusnak megfelelő videó RAM, lapozóregiszterek és plusz modell állapot.
 - `VID ` - kiválasztott videomód, CRTC-regiszterek, paletta és keretszín.
-- `HBF ` - opcionális VT-DOS/HBF bővítőállapot, bővítő RAM-mal és FDC/lemezkép állapottal.
+- `HBF ` - opcionális VT-DOS/HBF módosítható állapot, benne a 4 KiB RAM és az FDC regiszterei.
 - `BUS ` - függő interrupt, bővítőleképezés, kazettatranszport és hangidőzítő állapot.
-- `EMUT` - opcionális natív UI gépválasztás (`64K`/`64K+`, ROM-verzió, VT-DOS jelenlét). A mag és a WASM betöltő ismeretlen chunkként kihagyja.
-- `EMUI` - opcionális natív UI médiaválasztás, jelenleg a kiválasztott `progs/` fájlnév.
+- `EMUT` - opcionális emulátorgép-választás (`64K`/`64K+`, ROM-verzió, VT-DOS jelenlét). A natív és a könnyű WASM burkoló ebből tölti be a szükséges ROM-erőforrásokat.
+- `EMUI` - opcionális UI médiahivatkozások: a kiválasztott `progs/` fájlnév és a csatlakoztatott lemez fájlneve. A mag betöltője figyelmen kívül hagyja.
 
 A billentyűzet és a napló állapota snapshot betöltéskor szándékosan alaphelyzetbe kerül.
+
+A ROM- és lemezképbájtok nem kerülnek a snapshotba. A betöltő a normál
+ROM-erőforrásokból építi fel a kiválasztott gépet, a hozzáférhető lemezt pedig
+fájlnév alapján csatlakoztatja újra, szükség esetén a legutóbbi lemezek között
+is keresve. Egy 64K 1.2 gép egyetlen 16 KiB-os videóbankot tárol; a Plus gépek
+mind a négy videóbankot mentik.
+
+A 2-es formátum szándékosan nem tölti be az 1-es verziójú snapshotokat.
+
+A `BUS ` hangrésze tárolja a frekvencia- és vezérlőregisztereket, az
+időzítőszámlálót, a futási jelzőt, az amplitúdóregisztert, az oszcillátor
+fázisát és a PCM mintavételezés törtállapotát. A frontendben várakozó
+hangminták nem kerülnek mentésre.
 
 ## Futásidejű API-k
 
@@ -51,9 +64,16 @@ A billentyűzet és a napló állapota snapshot betöltéskor szándékosan alap
 - [Emu::save_snapshot](../src/emu.rs) és [Emu::load_snapshot](../src/emu.rs) a natív kódhoz csomagolja a mag API-ját.
 - [WasmTvc::saveSnapshot](../src/wasm.rs) és [WasmTvc::loadSnapshot](../src/wasm.rs) a JavaScript felülethez ad API-t.
 
-A natív snapshotok `EMUT` chunkot tartalmaznak, hogy betöltéskor a pontos UI gépválasztás is visszaálljon. Régebbi, `EMUT` nélküli snapshotoknál a betöltő a magban tárolt gépcsaládból következtet, és megtartja az aktuális ROM-verziót, ha azt a snapshot nem rögzítette.
+A natív snapshotok `EMUT` chunkot tartalmaznak, hogy betöltéskor az öt UI
+géptípus közül pontosan a mentett változat álljon vissza. A csak magállapotot
+tartalmazó, `EMUT` nélküli 2-es snapshotokhoz a hívónak előre létre kell hoznia
+a megfelelő gépet és be kell töltenie a ROM-erőforrásokat.
 
-A natív snapshotok `EMUI` chunkot is tartalmaznak, hogy a programválasztó visszaálljon a kiválasztott kazetta- vagy lemezarchívumra. Ha a média még elérhető a `progs/` alatt, a natív betöltő újracsatolja.
+A natív snapshotok `EMUI` chunkot is tartalmaznak, hogy a programválasztó
+visszaálljon a kiválasztott kazetta- vagy lemezarchívumra. Ha a kiválasztott
+lemez vagy archívum még elérhető a `progs/` alatt vagy a legutóbbi médiák
+között, a natív betöltő újracsatolja. A kazettaválasztás is visszaáll, így a
+Play újra létrehozhatja a szalagjel-generátort az eredeti fájlból.
 
 ## Tömörítés
 
@@ -62,8 +82,15 @@ A natív mentés/betöltés nyers `.rtvcsnap` és `.rtvcsnap.zip` fájlokat tám
 Indítás közvetlenül snapshotból:
 
 ```bash
-cargo run --bin rtvc -- snapshots/load_tape.rtvcsnap.zip
+cargo run --bin rtvc -- snapshots/boot12dos.rtvcsnap.zip
 ```
+
+A repóban található
+[boot12dos.rtvcsnap.zip](../snapshots/boot12dos.rtvcsnap.zip) egy tiszta,
+teljesen elindított TVC 1.2 VT-DOS tesztállapot. Az indulási folyamatot nem
+vizsgáló tesztek stabil, indítás utáni állapotból kezdhetnek vele. A snapshot a
+natív és teljes webes alkalmazásba is be van ágyazva, és a Gamebase programok
+induló állapotaként szolgál.
 
 A zip-tömörítés szándékosan nincs benne a könnyű WASM buildben. Webes csomag tartalmazhat tömörített snapshotot, de a böngészőoldali JavaScript bontja ki, mielőtt meghívja a `WasmTvc::loadSnapshot` függvényt.
 

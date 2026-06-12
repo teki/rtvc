@@ -81,3 +81,26 @@ A driver három platformfüggetlen horgot használ:
 - **`keyUp`**: fizikai billentyű felengedése és takarítás.
 
 Ha a felhasználó előbb engedi fel a host Shiftet, mint a karakterbillentyűt, a felengedéskori lookup rossz módosítótáblába nézne, és a TVC mátrixban beragadhatna a billentyű. Ezért felengedéskor a kód minden módosítótáblán végigmegy, és minden megtalált koordinátát felenged.
+
+A felengedési útvonal minden leképezésre újra alkalmazza a
+`fixState(..., false)` logikát is. Ez felengedi a mesterséges TVC Shiftet
+(`KSADD`), illetve helyreállítja vagy felengedi a kompenzált Shift állapotot
+(`KSDEL`) akkor is, ha a fizikai Shift hamarabb lett felengedve.
+
+## Natív és teljes webes eseménykezelés
+
+- A natív felület az `egui::Event::Key` esemény `physical_key` értékét részesíti
+  előnyben, és csak ennek hiányában használja a logikai billentyűt. A karakterek
+  az `egui::Event::Text` eseményből érkeznek.
+- A teljes webes felület közvetlen DOM billentyűzet-eseményeket használ, mert
+  az eframe 0.31 weben nem ad megbízható fizikai billentyűazonosítót.
+- A `KeyboardEvent.code` stabil fizikai azonosítót, a `KeyboardEvent.key`
+  Unicode karaktert ad a dinamikus leképezéshez.
+- Az ismételt key-down eseményeket a `KeyboardEvent.repeat` és a lenyomott
+  billentyűk táblája szűri.
+- A jobb Alt/AltGr a `getModifierState("AltGraph")` alapján külön, `225` host
+  kódot kap.
+- Canvas- vagy ablakfókusz-vesztés, illetve a dokumentum elrejtése a teljes TVC
+  billentyűzetmátrixot alaphelyzetbe állítja.
+- A böngésző alapértelmezett billentyűműveletei csak akkor vannak letiltva,
+  amikor az emulátor canvas kezeli az eseményt.
