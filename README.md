@@ -73,8 +73,12 @@ curl -L https://github.com/teki/rtvc/releases/latest/download/rtvc-macos-arm64.z
 ## Using the Emulator
 
 The native app provides menus for selecting the machine type, loading cassette
-or disk images, saving and loading snapshots, saving screenshots, and showing
-the I/O log.
+or disk images, saving and loading snapshots, and saving screenshots. The
+default Simple view stays focused on the TVC screen. Enable **View > Developer
+Workspace** to use dockable Screen and IO Log panes; reopen the log through
+**View > Panes > IO Log** or restore the defaults with **Reset Workspace**.
+Click the Screen pane to capture TVC keyboard input and press Escape to release
+it.
 
 Supported user files:
 

@@ -36,12 +36,20 @@ This skill provides step-by-step instructions and references for compiling, exec
   ```
   - Place ROM files (`TVC12_D3.64K`, `TVC12_D4.64K`, `TVC12_D7.64K`) in `roms/` for the TVC to boot.
   - Use the Machine menu to run/pause, reset, select machine type, and select video model.
-  - Use the View > IO Log menu item to toggle the IO port log panel.
+  - Use View > Developer Workspace to enable docking. View > Panes > IO Log
+    reopens or closes the log pane, and Reset Workspace restores Screen above
+    IO Log.
+  - In Developer mode, click the Screen pane to route keyboard input to the TVC;
+    press Escape or click another UI area to release capture. Simple mode keeps
+    the existing direct keyboard behavior.
   - Use the File menu to write/read `.rtvcsnap.zip` snapshots, load tape/disk files via open file dialog, and save the current framebuffer as a 4:3 PNG (`768x576`).
   - Use the Tape and Disk menus to load cassette and floppy media (either from local list or by browsing for any file). Selecting an entry immediately loads it.
   - Gamebase launches use the clean boot snapshot embedded in the app, force the TVC 1.2 VT-DOS machine, attach or inject the selected media, start emulation, and type `RUN` for CAS or `LOAD "*"` for DSK.
   - The bottom status bar shows tape activity and playback percentage, loaded tape/disk media, run state, FPS, ROM state, audio status, and recent file status, plus a Reset button in the bottom right corner.
-  - Native app preferences are stored in `rtvc.toml`, checked in the current working directory first and then beside the executable.
+  - Native emulator preferences are stored in `rtvc.toml`, checked in the
+    current working directory first and then beside the executable. The
+    versioned dock layout is stored separately in `rtvc-workspace.json` beside
+    the active config.
   - PAL 4:3 display aspect ratio is applied to the framebuffer.
 
 - **Profile the native emulator with samply:**
@@ -102,7 +110,9 @@ This skill provides step-by-step instructions and references for compiling, exec
   - Runs the bundler and builds the `wasm-full` feature with the complete egui/eframe emulator UI using the optimized Cargo release profile.
   - Emits a static application under `dist/rtvc-web-full/` by default.
   - Browser audio uses an `AudioWorklet`; the audio context resumes after user interaction.
-  - Recent tape and disk bytes are stored in IndexedDB. Small UI preferences remain in `localStorage`.
+  - Recent tape and disk bytes are stored in IndexedDB. Small UI preferences
+    remain in `localStorage`; the developer workspace uses the
+    `rtvc_workspace_v1` key.
   - Browser keyboard input uses DOM `KeyboardEvent.code` for key identity and `KeyboardEvent.key` for layout-aware character mapping, including AltGr.
   - Serve the output directory over HTTP; opening `index.html` directly with `file://` is not supported.
 

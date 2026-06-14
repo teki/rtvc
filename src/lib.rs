@@ -31,6 +31,9 @@ pub mod emu;
 #[cfg(any(feature = "native", feature = "wasm-full"))]
 pub mod ui;
 
+#[cfg(any(feature = "native", feature = "wasm-full"))]
+pub mod workspace;
+
 #[cfg(all(feature = "native", not(target_arch = "wasm32")))]
 pub mod debugger;
 

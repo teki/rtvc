@@ -148,7 +148,9 @@ byte sequence.
 - `OUT 0xXX <- 0xYY`
 - `IN  0xXX -> 0xYY`
 
-The UI exposes the log via a toggleable bottom panel with a "Clear" button.
+The developer workspace exposes the log as the dockable **IO Log** pane with a
+**Clear** button. Entries remain newest-first in the pane. Closing or moving the
+pane does not change the 200-entry ring buffer.
 
 ---
 

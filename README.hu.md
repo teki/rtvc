@@ -76,7 +76,11 @@ curl -L https://github.com/teki/rtvc/releases/latest/download/rtvc-macos-arm64.z
 
 A natív alkalmazás menüket ad a géptípus kiválasztásához, kazetta- vagy
 lemezképek betöltéséhez, snapshotok mentéséhez és betöltéséhez,
-képernyőmentések mentéséhez, valamint az I/O napló megjelenítéséhez.
+valamint képernyőmentések mentéséhez. Az alapértelmezett egyszerű nézet csak a
+TVC képernyőjét mutatja. A dokkolható Screen és IO Log panelek a **View >
+Developer Workspace** menüponttal kapcsolhatók be; az I/O napló a **View >
+Panes > IO Log** alatt nyitható meg újra. A TVC billentyűzetének használatához
+kattints a Screen panelre, felengedéséhez nyomd meg az Escape billentyűt.
 
 Támogatott felhasználói fájlok:
 

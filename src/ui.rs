@@ -14,6 +14,7 @@ use crate::app_state::{AppState, AppStateFile};
 use crate::audio::NativeAudioSink;
 use crate::emu::{Emu, MachineType, ProgEntry};
 use crate::vid::VidModel;
+use crate::workspace::{self, Workspace, WorkspaceMode, WorkspaceTab};
 use eframe::egui::{self, Color32, ColorImage, TextureHandle};
 
 #[cfg(all(feature = "native", not(target_arch = "wasm32")))]
@@ -317,7 +318,8 @@ pub struct EmuApp {
     prev_shift: bool,
     prev_ctrl: bool,
     prev_alt: bool,
-    show_log: bool,
+    workspace: Workspace,
+    screen_captured: bool,
     file_status: Option<String>,
     machine_types: Vec<MachineType>,
     selected_machine: usize,
@@ -346,6 +348,7 @@ impl EmuApp {
         #[cfg(target_arch = "wasm32")]
         let (file_tx, file_rx) = std::sync::mpsc::channel();
         let (game_tx, game_rx) = std::sync::mpsc::channel();
+        let workspace = Workspace::load(&app_state_file.path);
 
         emu.recent_tapes = dedupe_recent_paths(&app_state_file.state.recent_tapes);
         emu.recent_disks = dedupe_recent_paths(&app_state_file.state.recent_disks);
@@ -360,7 +363,8 @@ impl EmuApp {
             prev_shift: false,
             prev_ctrl: false,
             prev_alt: false,
-            show_log: false,
+            workspace,
+            screen_captured: false,
             file_status: None,
             machine_types,
             selected_machine,
@@ -1092,6 +1096,7 @@ impl EmuApp {
                 ui.separator();
                 if ui.button("Quit").clicked() {
                     self.save_app_state();
+                    self.save_workspace();
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                     ui.close_menu();
                 }
@@ -1372,7 +1377,40 @@ impl EmuApp {
 
     fn draw_view_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("View", |ui| {
-            ui.checkbox(&mut self.show_log, "IO Log");
+            let mut developer = self.workspace.is_developer();
+            if ui.checkbox(&mut developer, "Developer Workspace").changed() {
+                if !developer {
+                    self.release_screen_capture();
+                }
+                self.workspace.set_mode(if developer {
+                    WorkspaceMode::Developer
+                } else {
+                    WorkspaceMode::Simple
+                });
+                self.save_workspace();
+            }
+
+            ui.add_enabled_ui(developer, |ui| {
+                ui.menu_button("Panes", |ui| {
+                    let log_open = self.workspace.has_tab(WorkspaceTab::IoLog);
+                    if ui.selectable_label(log_open, "IO Log").clicked() {
+                        if log_open {
+                            self.workspace.close_tab(WorkspaceTab::IoLog);
+                        } else {
+                            self.workspace.open_tab(WorkspaceTab::IoLog);
+                        }
+                        self.save_workspace();
+                        ui.close_menu();
+                    }
+                });
+
+                if ui.button("Reset Workspace").clicked() {
+                    self.release_screen_capture();
+                    self.workspace.reset_layout();
+                    self.save_workspace();
+                    ui.close_menu();
+                }
+            });
         });
     }
 
@@ -1460,6 +1498,49 @@ impl EmuApp {
         }
     }
 
+    fn save_workspace(&mut self) {
+        if let Err(err) = self.workspace.save(&self.app_state_file.path) {
+            self.file_status = Some(format!("Workspace save failed: {err}"));
+        }
+    }
+
+    fn release_tvc_keys(&mut self) {
+        self.pressed_keys.clear();
+        self.emu.tvc.focus_change(false);
+        self.prev_shift = false;
+        self.prev_ctrl = false;
+        self.prev_alt = false;
+    }
+
+    fn release_screen_capture(&mut self) {
+        self.screen_captured = false;
+        self.release_tvc_keys();
+    }
+
+    fn draw_workspace(&mut self, ctx: &egui::Context) {
+        if self.workspace.is_developer() {
+            let was_captured = self.screen_captured;
+            let workspace = &mut self.workspace;
+            let screen_texture = self.screen_texture.as_ref();
+            let tvc = &mut self.emu.tvc;
+            let screen_captured = &mut self.screen_captured;
+            egui::CentralPanel::default().show(ctx, |ui| {
+                workspace.show(ui, screen_texture, tvc, screen_captured);
+            });
+            if was_captured && !self.screen_captured {
+                self.release_tvc_keys();
+            }
+            if ctx.input(|input| input.pointer.any_released()) {
+                self.workspace.mark_layout_changed();
+                self.save_workspace();
+            }
+        } else {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let _ = workspace::draw_screen(ui, self.screen_texture.as_ref(), None);
+            });
+        }
+    }
+
     #[cfg(target_arch = "wasm32")]
     fn persist_wasm_recent(
         &self,
@@ -1515,6 +1596,13 @@ impl EmuApp {
                         self.game_library.open = false;
                         continue;
                     }
+                    if code == 27 && self.workspace.is_developer() && self.screen_captured {
+                        self.release_screen_capture();
+                        continue;
+                    }
+                    if !self.workspace.accepts_tvc_input(self.screen_captured) {
+                        continue;
+                    }
                     let first_press = code == 0 || self.pressed_keys.insert(code);
                     if code != 0 && first_press {
                         self.emu.tvc.key_down(code);
@@ -1527,22 +1615,19 @@ impl EmuApp {
                 }
                 "up" => {
                     let code = wasm_event_code(&event);
-                    if code != 0 {
-                        self.pressed_keys.remove(&code);
+                    if code != 0 && self.pressed_keys.remove(&code) {
                         self.emu.tvc.key_up(code);
                     }
                 }
                 "text" => {
-                    for ch in wasm_event_text(&event).chars() {
-                        self.emu.tvc.key_press(ch);
+                    if self.workspace.accepts_tvc_input(self.screen_captured) {
+                        for ch in wasm_event_text(&event).chars() {
+                            self.emu.tvc.key_press(ch);
+                        }
                     }
                 }
                 "blur" => {
-                    self.pressed_keys.clear();
-                    self.emu.tvc.focus_change(false);
-                    self.prev_shift = false;
-                    self.prev_ctrl = false;
-                    self.prev_alt = false;
+                    self.release_screen_capture();
                 }
                 _ => {}
             }
@@ -1945,61 +2030,67 @@ impl eframe::App for EmuApp {
             self.game_library.open = false;
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.workspace.is_developer()
+            && self.screen_captured
+            && ctx.input(|input| input.key_pressed(egui::Key::Escape))
+        {
+            self.release_screen_capture();
+        }
+
         #[cfg(target_arch = "wasm32")]
         self.handle_wasm_keyboard_events();
 
         #[cfg(not(target_arch = "wasm32"))]
         let has_focus = ctx.input(|i| i.focused);
         #[cfg(not(target_arch = "wasm32"))]
-        if !has_focus && !self.pressed_keys.is_empty() {
-            self.pressed_keys.clear();
-            self.emu.tvc.focus_change(false);
-            self.prev_shift = false;
-            self.prev_ctrl = false;
-            self.prev_alt = false;
+        if !has_focus && (self.screen_captured || !self.pressed_keys.is_empty()) {
+            self.release_screen_capture();
         }
 
         #[cfg(not(target_arch = "wasm32"))]
-        ctx.input(|i| {
-            let modifiers = i.modifiers;
-            self.handle_modifier(modifiers.shift, modifiers.ctrl, modifiers.alt);
+        if self.workspace.accepts_tvc_input(self.screen_captured) {
+            ctx.input(|i| {
+                let modifiers = i.modifiers;
+                self.handle_modifier(modifiers.shift, modifiers.ctrl, modifiers.alt);
 
-            for event in &i.events {
-                match event {
-                    egui::Event::Key {
-                        key,
-                        physical_key,
-                        pressed: true,
-                        ..
-                    } => {
-                        let key = physical_key.unwrap_or(*key);
-                        if let Some(code) = egui_key_to_js_code(key) {
-                            if self.pressed_keys.insert(code) {
-                                self.emu.tvc.key_down(code);
+                for event in &i.events {
+                    match event {
+                        egui::Event::Key {
+                            key,
+                            physical_key,
+                            pressed: true,
+                            ..
+                        } => {
+                            let key = physical_key.unwrap_or(*key);
+                            if let Some(code) = egui_key_to_js_code(key) {
+                                if self.pressed_keys.insert(code) {
+                                    self.emu.tvc.key_down(code);
+                                }
                             }
                         }
-                    }
-                    egui::Event::Key {
-                        key,
-                        physical_key,
-                        pressed: false,
-                        ..
-                    } => {
-                        let key = physical_key.unwrap_or(*key);
-                        if let Some(code) = egui_key_to_js_code(key) {
-                            self.pressed_keys.remove(&code);
-                            self.emu.tvc.key_up(code);
+                        egui::Event::Key {
+                            key,
+                            physical_key,
+                            pressed: false,
+                            ..
+                        } => {
+                            let key = physical_key.unwrap_or(*key);
+                            if let Some(code) = egui_key_to_js_code(key) {
+                                self.pressed_keys.remove(&code);
+                                self.emu.tvc.key_up(code);
+                            }
                         }
-                    }
-                    egui::Event::Text(text) => {
-                        for ch in text.chars() {
-                            self.emu.tvc.key_press(ch);
+                        egui::Event::Text(text) => {
+                            for ch in text.chars() {
+                                self.emu.tvc.key_press(ch);
+                            }
                         }
+                        _ => {}
                     }
-                    _ => {}
                 }
-            }
-        });
+            });
+        }
 
         let now = Instant::now();
         let dt = now.duration_since(self.last_repaint_time).as_secs_f64();
@@ -2039,50 +2130,7 @@ impl eframe::App for EmuApp {
 
         self.draw_menu_bar(ctx);
         self.draw_status_bar(ctx);
-
-        if self.show_log {
-            egui::TopBottomPanel::bottom("log_panel")
-                .resizable(true)
-                .default_height(140.0)
-                .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.strong("IO Log");
-                        if ui.small_button("Clear").clicked() {
-                            self.emu.tvc.clear_log();
-                        }
-                    });
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false; 2])
-                        .show(ui, |ui| {
-                            let entries = self.emu.tvc.log_entries();
-                            for entry in entries.iter().rev() {
-                                ui.label(entry);
-                            }
-                        });
-                });
-        }
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let available_rect = ui.available_rect_before_wrap();
-            let avail = available_rect.size();
-            let disp_hw = 3.0 / 4.0;
-            let w = avail.x.min(avail.y / disp_hw);
-            let h = w * disp_hw;
-            let img_size = egui::vec2(w, h);
-
-            let rect = egui::Rect::from_center_size(available_rect.center(), img_size);
-            ui.allocate_rect(rect, egui::Sense::hover());
-            if let Some(texture) = &self.screen_texture {
-                ui.painter().image(
-                    texture.id(),
-                    rect,
-                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    egui::Color32::WHITE,
-                );
-            } else {
-                ui.painter().rect_filled(rect, 0.0, egui::Color32::BLACK);
-            }
-        });
+        self.draw_workspace(ctx);
 
         self.draw_game_library(ctx);
 
@@ -2095,6 +2143,7 @@ impl eframe::App for EmuApp {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.save_app_state();
+        self.save_workspace();
     }
 }
 
