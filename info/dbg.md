@@ -4,6 +4,11 @@ The `rtvc` emulator provides a TCP-based debugger interface on `localhost` (127.
 
 The debugger works in both **headless execution mode** (`--headless`) and standard **native GUI mode**.
 
+The native and full-web developer workspace also contains an integrated dock
+debugger. It shares core stepping, breakpoint, memory, and disassembly behavior
+with this protocol but acts directly on the emulator instead of opening a TCP
+connection. See [UI and Developer Workspace](ui.md).
+
 ---
 
 ## Command Line Configuration
@@ -72,7 +77,7 @@ Closes the emulator application. GUI mode performs the normal application shutdo
 - **Response**: `{"status": "ok"}`
 
 #### `step`
-Executes one or more Z80 CPU instructions. This automatically updates system timers, tape playback, sound generation, and clock cycles.
+Executes one or more Z80 CPU instructions. This automatically updates system timers, tape playback, sound generation, video timing, pending shared interrupts, and clock cycles.
 - **Request**: `{"cmd": "step", "count": 5}` (where `"count"` is an optional integer, defaulting to `1`)
 - **Response**: `{"status": "ok"}`
 

@@ -1,6 +1,7 @@
 use std::path::Path;
 
-use crate::tvc::Tvc;
+use crate::debug_ui::DebuggerUi;
+use crate::emu::Emu;
 use eframe::egui::{self, TextureHandle};
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use serde::{Deserialize, Serialize};
@@ -24,6 +25,12 @@ pub enum WorkspaceMode {
 pub enum WorkspaceTab {
     Screen,
     IoLog,
+    Cpu,
+    Disassembly,
+    Memory,
+    Breakpoints,
+    RomSymbols,
+    Events,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -108,6 +115,11 @@ impl Workspace {
         self.dirty = true;
     }
 
+    pub fn debugger_layout(&mut self) {
+        self.dock_state = debugger_dock_state();
+        self.dirty = true;
+    }
+
     pub fn mark_layout_changed(&mut self) {
         self.dirty = true;
     }
@@ -116,15 +128,19 @@ impl Workspace {
         &mut self,
         ui: &mut egui::Ui,
         screen_texture: Option<&TextureHandle>,
-        tvc: &mut Tvc,
+        emu: &mut Emu,
+        debugger: &mut DebuggerUi,
         screen_captured: &mut bool,
     ) {
+        debugger.drain_trace_events(emu);
         let mut viewer = WorkspaceViewer {
             screen_texture,
-            tvc,
+            emu,
+            debugger,
             screen_captured,
             screen_visible: false,
             screen_clicked: false,
+            events_visible: false,
         };
         DockArea::new(&mut self.dock_state)
             .id(egui::Id::new("rtvc_developer_workspace"))
@@ -132,9 +148,13 @@ impl Workspace {
             .show_inside(ui, &mut viewer);
         let clicked_elsewhere =
             ui.input(|input| input.pointer.primary_clicked()) && !viewer.screen_clicked;
-        if !viewer.screen_visible || clicked_elsewhere {
-            *viewer.screen_captured = false;
+        let screen_visible = viewer.screen_visible;
+        let events_visible = viewer.events_visible;
+        drop(viewer);
+        if !screen_visible || clicked_elsewhere {
+            *screen_captured = false;
         }
+        debugger.update_tracing(emu, events_visible);
     }
 
     pub fn save(&mut self, config_path: &Path) -> Result<(), String> {
@@ -259,6 +279,30 @@ fn default_dock_state() -> DockState<WorkspaceTab> {
     dock_state
 }
 
+fn debugger_dock_state() -> DockState<WorkspaceTab> {
+    let mut dock_state = DockState::new(vec![WorkspaceTab::Screen]);
+    let [main, _bottom] = dock_state.main_surface_mut().split_below(
+        NodeIndex::root(),
+        0.75,
+        vec![WorkspaceTab::IoLog, WorkspaceTab::Events],
+    );
+    let [_screen, right] =
+        dock_state
+            .main_surface_mut()
+            .split_right(main, 0.68, vec![WorkspaceTab::Cpu]);
+    dock_state.main_surface_mut().split_below(
+        right,
+        0.38,
+        vec![
+            WorkspaceTab::Disassembly,
+            WorkspaceTab::Memory,
+            WorkspaceTab::Breakpoints,
+            WorkspaceTab::RomSymbols,
+        ],
+    );
+    dock_state
+}
+
 pub fn draw_screen(
     ui: &mut egui::Ui,
     screen_texture: Option<&TextureHandle>,
@@ -313,16 +357,16 @@ pub fn draw_screen(
     response.clicked()
 }
 
-fn draw_io_log(ui: &mut egui::Ui, tvc: &mut Tvc) {
+fn draw_io_log(ui: &mut egui::Ui, emu: &mut Emu) {
     ui.horizontal(|ui| {
         if ui.small_button("Clear").clicked() {
-            tvc.clear_log();
+            emu.tvc.clear_log();
         }
     });
     egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
         .show(ui, |ui| {
-            for entry in tvc.log_entries().iter().rev() {
+            for entry in emu.tvc.log_entries().iter().rev() {
                 ui.label(entry);
             }
         });
@@ -330,10 +374,12 @@ fn draw_io_log(ui: &mut egui::Ui, tvc: &mut Tvc) {
 
 struct WorkspaceViewer<'a> {
     screen_texture: Option<&'a TextureHandle>,
-    tvc: &'a mut Tvc,
+    emu: &'a mut Emu,
+    debugger: &'a mut DebuggerUi,
     screen_captured: &'a mut bool,
     screen_visible: bool,
     screen_clicked: bool,
+    events_visible: bool,
 }
 
 impl TabViewer for WorkspaceViewer<'_> {
@@ -343,6 +389,12 @@ impl TabViewer for WorkspaceViewer<'_> {
         match tab {
             WorkspaceTab::Screen => "Screen".into(),
             WorkspaceTab::IoLog => "IO Log".into(),
+            WorkspaceTab::Cpu => "CPU".into(),
+            WorkspaceTab::Disassembly => "Disassembly".into(),
+            WorkspaceTab::Memory => "Memory".into(),
+            WorkspaceTab::Breakpoints => "Breakpoints".into(),
+            WorkspaceTab::RomSymbols => "ROM Symbols".into(),
+            WorkspaceTab::Events => "Events".into(),
         }
     }
 
@@ -353,7 +405,16 @@ impl TabViewer for WorkspaceViewer<'_> {
                 self.screen_clicked =
                     draw_screen(ui, self.screen_texture, Some(self.screen_captured));
             }
-            WorkspaceTab::IoLog => draw_io_log(ui, self.tvc),
+            WorkspaceTab::IoLog => draw_io_log(ui, self.emu),
+            WorkspaceTab::Cpu => self.debugger.draw_cpu(ui, self.emu),
+            WorkspaceTab::Disassembly => self.debugger.draw_disassembly(ui, self.emu),
+            WorkspaceTab::Memory => self.debugger.draw_memory(ui, self.emu),
+            WorkspaceTab::Breakpoints => self.debugger.draw_breakpoints(ui, self.emu),
+            WorkspaceTab::RomSymbols => self.debugger.draw_rom_symbols(ui, self.emu),
+            WorkspaceTab::Events => {
+                self.events_visible = true;
+                self.debugger.draw_events(ui, self.emu);
+            }
         }
     }
 
@@ -477,6 +538,28 @@ mod tests {
         workspace.open_tab(WorkspaceTab::IoLog);
 
         assert!(workspace.has_tab(WorkspaceTab::IoLog));
+    }
+
+    #[test]
+    fn debugger_layout_contains_all_phase_two_panes() {
+        let mut workspace = Workspace::developer_default();
+        workspace.debugger_layout();
+
+        for tab in [
+            WorkspaceTab::Screen,
+            WorkspaceTab::IoLog,
+            WorkspaceTab::Cpu,
+            WorkspaceTab::Disassembly,
+            WorkspaceTab::Memory,
+            WorkspaceTab::Breakpoints,
+            WorkspaceTab::RomSymbols,
+            WorkspaceTab::Events,
+        ] {
+            assert!(workspace.has_tab(tab));
+        }
+        let restored = Workspace::from_json(&workspace.to_json().unwrap()).unwrap();
+        assert!(restored.has_tab(WorkspaceTab::Disassembly));
+        assert!(restored.has_tab(WorkspaceTab::Events));
     }
 
     #[test]

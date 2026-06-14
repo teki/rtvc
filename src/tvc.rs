@@ -8,7 +8,7 @@ use crate::expansion::ExpansionSlots;
 use crate::hbf::HBF;
 use crate::key::Key;
 use crate::log::{Log, Logger};
-use crate::mmu::TvcMmu;
+use crate::mmu::{RomBank, TvcMmu};
 use crate::snapshot;
 use crate::sound::SoundTimer;
 use crate::tape::TapeInterface;
@@ -20,6 +20,7 @@ const FRAME_RATE_HZ: u64 = 50;
 const FRAME_CLOCKS: u64 = CPU_CLOCK_HZ / FRAME_RATE_HZ;
 const SYNC_TIMEOUT_HOST_FRAMES: u32 = 8;
 const SHARED_CURSOR_SOUND_IT: u8 = 0x10;
+pub const DEBUG_RUN_TO_IRQ_MAX_CYCLES: u32 = FRAME_CLOCKS as u32 * 2;
 
 pub struct TvcBus {
     pub mmu: TvcMmu,
@@ -307,6 +308,20 @@ pub struct Tvc {
     pub(crate) clock: u64,
     sync_timeout_frames: u32,
     breakpoints: HashSet<u16>,
+    tracepoints: HashSet<(RomBank, u16)>,
+    trace_events: Vec<ExecutionTrace>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExecutionTrace {
+    pub bank: RomBank,
+    pub pc: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DebugRunToIrqResult {
+    pub elapsed_cycles: u32,
+    pub interrupt_accepted: bool,
 }
 
 impl Tvc {
@@ -324,6 +339,8 @@ impl Tvc {
             clock: 0,
             sync_timeout_frames: 0,
             breakpoints: HashSet::new(),
+            tracepoints: HashSet::new(),
+            trace_events: Vec::new(),
         };
         tvc.reset();
         tvc
@@ -466,6 +483,101 @@ impl Tvc {
         list
     }
 
+    pub fn set_tracepoints(&mut self, tracepoints: &[(RomBank, u16)]) {
+        self.tracepoints.clear();
+        self.tracepoints.extend(tracepoints.iter().copied());
+        if self.tracepoints.is_empty() {
+            self.trace_events.clear();
+        }
+    }
+
+    pub fn tracepoints_enabled(&self) -> bool {
+        !self.tracepoints.is_empty()
+    }
+
+    pub fn take_trace_events(&mut self) -> Vec<ExecutionTrace> {
+        std::mem::take(&mut self.trace_events)
+    }
+
+    pub fn debug_step_instruction(&mut self) -> u32 {
+        let sync_video = self.vid_model == VidModel::Interleaved;
+        let (elapsed, frame_complete, _) = self.step_instruction(sync_video);
+        self.finish_debug_video(frame_complete);
+        elapsed
+    }
+
+    pub fn debug_run_to_interrupt(&mut self, max_cycles: u32) -> DebugRunToIrqResult {
+        let mut elapsed_cycles = 0u32;
+        let mut frame_complete = false;
+        let mut interrupt_accepted = false;
+
+        while elapsed_cycles < max_cycles && !interrupt_accepted {
+            // Even FastFrame needs CRTC timing here so a video IRQ can end the run.
+            let (elapsed, completed, accepted) = self.step_instruction(true);
+            elapsed_cycles = elapsed_cycles.saturating_add(elapsed);
+            frame_complete |= completed;
+            interrupt_accepted = accepted;
+        }
+
+        self.finish_debug_video(frame_complete);
+        DebugRunToIrqResult {
+            elapsed_cycles,
+            interrupt_accepted,
+        }
+    }
+
+    fn finish_debug_video(&mut self, mut frame_complete: bool) {
+        if self.vid_model == VidModel::FastFrame {
+            let vidmem = self.bus.mmu.get_vid_mem();
+            self.bus.vid.draw_frame(vidmem, &mut self.framebuffer);
+            frame_complete = true;
+        }
+        if frame_complete {
+            self.sync_timeout_frames = 0;
+            self.frame_complete = true;
+        }
+    }
+
+    fn step_instruction(&mut self, sync_video: bool) -> (u32, bool, bool) {
+        self.bus.trace_pc = self.z80.state.r16[11];
+        let cpu_time = self.z80.step(&mut self.bus, 0);
+        self.record_tracepoint();
+
+        self.clock += cpu_time as u64;
+        self.bus.advance_tape(cpu_time as u64);
+        self.bus.advance_sound_timer(cpu_time as u64);
+
+        let mut frame_complete = false;
+        if sync_video {
+            frame_complete = self.advance_video_for(cpu_time);
+        }
+
+        let (irq_time, irq_frame_complete) = self.service_pending_shared_irq();
+        (
+            cpu_time + irq_time,
+            frame_complete || irq_frame_complete,
+            irq_time > 0,
+        )
+    }
+
+    fn record_tracepoint(&mut self) {
+        if self.tracepoints.is_empty() || self.trace_events.len() >= 256 {
+            return;
+        }
+        let pc = self.z80.state.r16[11];
+        let Some(bank) = self.bus.mmu.mapped_rom_bank(pc) else {
+            return;
+        };
+        if self.tracepoints.contains(&(bank, pc))
+            && self
+                .trace_events
+                .last()
+                .is_none_or(|event| event.bank != bank || event.pc != pc)
+        {
+            self.trace_events.push(ExecutionTrace { bank, pc });
+        }
+    }
+
     fn draw_sync_timeout(&mut self) {
         let phase = (self.sync_timeout_frames as usize * 11) % 96;
         for (idx, pixel) in self.framebuffer.iter_mut().enumerate() {
@@ -484,11 +596,11 @@ impl Tvc {
         self.bus.vid.render_stream(&mut self.framebuffer, 608)
     }
 
-    fn service_pending_shared_irq(&mut self) -> u32 {
+    fn service_pending_shared_irq(&mut self) -> (u32, bool) {
         if self.bus.shared_it_pending() {
             self.service_shared_irq()
         } else {
-            0
+            (0, false)
         }
     }
 
@@ -498,23 +610,15 @@ impl Tvc {
         let mut elapsed = 0u32;
 
         while !do_break && elapsed < budget {
-            self.bus.trace_pc = self.z80.state.r16[11];
-            let cpu_time = self.z80.step(&mut self.bus, 0);
+            let (instruction_time, instruction_frame_complete, _) =
+                self.step_instruction(sync_video);
 
             if self.breakpoints.contains(&self.z80.state.r16[11]) {
                 do_break = true;
             }
 
-            self.clock += cpu_time as u64;
-            self.bus.advance_tape(cpu_time as u64);
-            self.bus.advance_sound_timer(cpu_time as u64);
-            elapsed += cpu_time;
-
-            if sync_video {
-                frame_complete |= self.advance_video_for(cpu_time);
-            }
-
-            elapsed += self.service_pending_shared_irq();
+            elapsed += instruction_time;
+            frame_complete |= instruction_frame_complete;
         }
 
         (do_break, frame_complete, elapsed)
@@ -557,8 +661,9 @@ impl Tvc {
         self.bus.request_shared_irq();
     }
 
-    fn service_shared_irq(&mut self) -> u32 {
+    fn service_shared_irq(&mut self) -> (u32, bool) {
         let irq_duration = self.z80.irq(&mut self.bus);
+        let mut frame_complete = false;
         if irq_duration > 0 {
             self.clock += irq_duration as u64;
             let irq_duration = irq_duration as u64;
@@ -568,9 +673,9 @@ impl Tvc {
                 self.bus.mmu.get_vid_mem(),
                 irq_duration.try_into().unwrap_or(u32::MAX),
             );
-            self.bus.vid.render_stream(&mut self.framebuffer, 608);
+            frame_complete = self.bus.vid.render_stream(&mut self.framebuffer, 608);
         }
-        irq_duration
+        (irq_duration, frame_complete)
     }
 }
 
@@ -753,6 +858,113 @@ mod tests {
 
         assert!(!samples.is_empty());
         assert!(samples.iter().all(|sample| *sample == 0.0));
+    }
+
+    #[test]
+    fn execution_tracepoints_are_opt_in_and_bank_aware() {
+        let mut tvc = Tvc::new(false);
+
+        tvc.debug_step_instruction();
+        assert!(tvc.take_trace_events().is_empty());
+
+        tvc.reset();
+        tvc.set_tracepoints(&[(RomBank::Sys, 0x0001)]);
+        tvc.debug_step_instruction();
+
+        assert_eq!(
+            tvc.take_trace_events(),
+            vec![ExecutionTrace {
+                bank: RomBank::Sys,
+                pc: 0x0001,
+            }]
+        );
+    }
+
+    #[test]
+    fn debug_step_advances_interleaved_video() {
+        let mut tvc = Tvc::new_with_vid_model(false, VidModel::Interleaved);
+        for (reg, value) in [(0, 99), (1, 76), (4, 38), (6, 36), (9, 7), (10, 0x20)] {
+            tvc.bus.vid.set_reg_idx(reg);
+            tvc.bus.vid.set_reg(value);
+        }
+        let before = tvc.bus.vid.stream_position();
+
+        let elapsed = tvc.debug_step_instruction();
+
+        assert!(elapsed > 0);
+        assert_ne!(tvc.bus.vid.stream_position(), before);
+        assert_eq!(tvc.clock, elapsed as u64);
+    }
+
+    #[test]
+    fn debug_step_redraws_fast_frame_video() {
+        let mut tvc = Tvc::new_with_vid_model(false, VidModel::FastFrame);
+        tvc.frame_complete = false;
+
+        tvc.debug_step_instruction();
+
+        assert!(tvc.frame_complete);
+    }
+
+    #[test]
+    fn debug_run_to_interrupt_wakes_a_halted_cpu() {
+        let mut tvc = Tvc::new_with_vid_model(false, VidModel::Interleaved);
+        tvc.z80.state.halted = 1;
+        tvc.z80.state.iff1 = 1;
+        tvc.z80.state.iff2 = 1;
+        tvc.z80.state.set_reg16(10, 0x8000);
+        tvc.request_cursor_irq();
+
+        let result = tvc.debug_run_to_interrupt(100);
+
+        assert_eq!(
+            result,
+            DebugRunToIrqResult {
+                elapsed_cycles: 17,
+                interrupt_accepted: true,
+            }
+        );
+        assert_eq!(tvc.z80.state.halted, 0);
+        assert_eq!(tvc.z80.state.get_reg16(11), 0x0038);
+    }
+
+    #[test]
+    fn debug_run_to_interrupt_is_bounded_when_interrupts_are_disabled() {
+        let mut tvc = Tvc::new_with_vid_model(false, VidModel::Interleaved);
+        tvc.z80.state.halted = 1;
+        tvc.z80.state.iff1 = 0;
+        tvc.request_cursor_irq();
+
+        let result = tvc.debug_run_to_interrupt(16);
+
+        assert_eq!(
+            result,
+            DebugRunToIrqResult {
+                elapsed_cycles: 16,
+                interrupt_accepted: false,
+            }
+        );
+        assert_eq!(tvc.z80.state.halted, 1);
+    }
+
+    #[test]
+    fn debug_run_to_interrupt_advances_fast_frame_crtc() {
+        let mut tvc = Tvc::new_with_vid_model(false, VidModel::FastFrame);
+        for (reg, value) in [(0, 99), (1, 76), (4, 38), (6, 36), (9, 7), (10, 0)] {
+            tvc.bus.vid.set_reg_idx(reg);
+            tvc.bus.vid.set_reg(value);
+        }
+        tvc.z80.state.halted = 1;
+        tvc.z80.state.iff1 = 1;
+        tvc.z80.state.iff2 = 1;
+        tvc.z80.state.set_reg16(10, 0x8000);
+
+        let result = tvc.debug_run_to_interrupt(100);
+
+        assert!(result.interrupt_accepted);
+        assert_eq!(tvc.z80.state.halted, 0);
+        assert_eq!(tvc.z80.state.get_reg16(11), 0x0038);
+        assert!(tvc.frame_complete);
     }
 
     #[test]

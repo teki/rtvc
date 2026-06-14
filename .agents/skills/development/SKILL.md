@@ -42,6 +42,12 @@ This skill provides step-by-step instructions and references for compiling, exec
   - In Developer mode, click the Screen pane to route keyboard input to the TVC;
     press Escape or click another UI area to release capture. Simple mode keeps
     the existing direct keyboard behavior.
+  - Use View > Debugger Layout for the integrated CPU, disassembly, memory,
+    breakpoint, ROM-symbol, event, screen, and IO-log arrangement. Individual
+    debugger panes are available under View > Panes.
+  - Debugger addresses are hexadecimal. Disassembly follows PC by default;
+    Memory can read mapped CPU space or raw RAM/video/ROM banks. ROM annotations
+    and trace landmarks currently use the BASIC 1.2 symbol database.
   - Use the File menu to write/read `.rtvcsnap.zip` snapshots, load tape/disk files via open file dialog, and save the current framebuffer as a 4:3 PNG (`768x576`).
   - Use the Tape and Disk menus to load cassette and floppy media (either from local list or by browsing for any file). Selecting an entry immediately loads it.
   - Gamebase launches use the clean boot snapshot embedded in the app, force the TVC 1.2 VT-DOS machine, attach or inject the selected media, start emulation, and type `RUN` for CAS or `LOAD "*"` for DSK.

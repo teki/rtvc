@@ -82,6 +82,11 @@ Developer Workspace** menüponttal kapcsolhatók be; az I/O napló a **View >
 Panes > IO Log** alatt nyitható meg újra. A TVC billentyűzetének használatához
 kattints a Screen panelre, felengedéséhez nyomd meg az Escape billentyűt.
 
+A **View > Debugger Layout** megnyitja a beépített CPU-, disassembly-, memória-,
+töréspont-, BASIC 1.2 ROM-szimbólum-, esemény-, képernyő- és I/O-napló
+paneleket. A hibakereső a natív és a teljes böngészős alkalmazásban is
+elérhető; a panelek külön is megnyithatók a **View > Panes** menüből.
+
 Támogatott felhasználói fájlok:
 
 | Fájltípus | Cél |

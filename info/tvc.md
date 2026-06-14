@@ -57,6 +57,16 @@ The emulation advances frame-by-frame using `run_for_a_frame()` (equivalent to t
 
 The native egui UI does not run one TVC frame for every host repaint. While the emulator is running, the UI requests continuous repaints and gates TVC frame generation from real time at 50 Hz. On displays refreshing faster than 50 Hz, host repaints reuse the latest texture until the next TVC frame is due. If generating a TVC frame takes too long, the UI drops the backlog and generates at most one new TVC frame per repaint callback. The FPS readout reports generated TVC frames only.
 
+The integrated debugger and socket debugger use the same
+`debug_step_instruction()` path, which pauses normal frame execution and
+advances the CPU, machine clock, tape transport, sound timer, video model, and
+pending shared interrupt timing for one instruction. Interleaved video advances
+the CRTC stream by the instruction and interrupt cycles; fast-frame video
+redraws the framebuffer after the instruction. Optional ROM execution
+tracepoints are checked after an instruction only when a non-empty tracepoint
+set is installed. The integrated debugger can also run through the same path
+until the Z80 accepts an interrupt, with a bounded two-frame timeout.
+
 Native builds default to `VidModel::Interleaved` and expose the video model as a runtime setting. WASM builds default to `VidModel::FastFrame`. JavaScript can call `setVidModel()` with `fast-frame` or `interleaved`; legacy `simple` and `realistic` names are still accepted.
 
 ---

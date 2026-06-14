@@ -427,6 +427,11 @@ impl Vid {
         cursor_it
     }
 
+    #[cfg(test)]
+    pub(crate) fn stream_position(&self) -> (i32, u8, u8, u32) {
+        (self.row, self.line, self.char_x, self.run_for)
+    }
+
     fn stream_data(&mut self, data: i16) {
         let next = (self.stream_head + 1) % STREAM_SIZE;
         if next == self.stream_tail {

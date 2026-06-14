@@ -1,0 +1,219 @@
+{
+  "dock_state": {
+    "focused_surface": 0,
+    "surfaces": [
+      {
+        "Main": {
+          "collapsed": false,
+          "collapsed_leaf_count": 0,
+          "focused_node": 4,
+          "nodes": [
+            {
+              "Horizontal": {
+                "collapsed_leaf_count": 0,
+                "fraction": 0.6800000071525574,
+                "fully_collapsed": false,
+                "rect": {
+                  "max": {
+                    "x": 1121.0,
+                    "y": 759.0
+                  },
+                  "min": {
+                    "x": 8.0,
+                    "y": 30.0
+                  }
+                }
+              }
+            },
+            {
+              "Vertical": {
+                "collapsed_leaf_count": 0,
+                "fraction": 0.48352551460266113,
+                "fully_collapsed": false,
+                "rect": {
+                  "max": {
+                    "x": 764.5,
+                    "y": 759.0
+                  },
+                  "min": {
+                    "x": 8.0,
+                    "y": 30.0
+                  }
+                }
+              }
+            },
+            {
+              "Vertical": {
+                "collapsed_leaf_count": 0,
+                "fraction": 0.42332154512405396,
+                "fully_collapsed": false,
+                "rect": {
+                  "max": {
+                    "x": 1121.0,
+                    "y": 759.0
+                  },
+                  "min": {
+                    "x": 765.5,
+                    "y": 30.0
+                  }
+                }
+              }
+            },
+            {
+              "Leaf": {
+                "active": 0,
+                "collapsed": false,
+                "rect": {
+                  "max": {
+                    "x": 764.5,
+                    "y": 382.0
+                  },
+                  "min": {
+                    "x": 8.0,
+                    "y": 30.0
+                  }
+                },
+                "scroll": 0.0,
+                "tabs": [
+                  "screen"
+                ],
+                "viewport": {
+                  "max": {
+                    "x": 764.5,
+                    "y": 382.0
+                  },
+                  "min": {
+                    "x": 8.0,
+                    "y": 54.0
+                  }
+                }
+              }
+            },
+            {
+              "Leaf": {
+                "active": 1,
+                "collapsed": false,
+                "rect": {
+                  "max": {
+                    "x": 764.5,
+                    "y": 759.0
+                  },
+                  "min": {
+                    "x": 8.0,
+                    "y": 383.0
+                  }
+                },
+                "scroll": 0.0,
+                "tabs": [
+                  "io_log",
+                  "events"
+                ],
+                "viewport": {
+                  "max": {
+                    "x": 764.5,
+                    "y": 759.0
+                  },
+                  "min": {
+                    "x": 8.0,
+                    "y": 407.0
+                  }
+                }
+              }
+            },
+            {
+              "Leaf": {
+                "active": 0,
+                "collapsed": false,
+                "rect": {
+                  "max": {
+                    "x": 1121.0,
+                    "y": 338.0
+                  },
+                  "min": {
+                    "x": 765.5,
+                    "y": 30.0
+                  }
+                },
+                "scroll": 0.0,
+                "tabs": [
+                  "cpu"
+                ],
+                "viewport": {
+                  "max": {
+                    "x": 1121.0,
+                    "y": 338.0
+                  },
+                  "min": {
+                    "x": 765.5,
+                    "y": 54.0
+                  }
+                }
+              }
+            },
+            {
+              "Leaf": {
+                "active": 0,
+                "collapsed": false,
+                "rect": {
+                  "max": {
+                    "x": 1121.0,
+                    "y": 759.0
+                  },
+                  "min": {
+                    "x": 765.5,
+                    "y": 339.0
+                  }
+                },
+                "scroll": 0.0,
+                "tabs": [
+                  "disassembly",
+                  "memory",
+                  "breakpoints",
+                  "rom_symbols"
+                ],
+                "viewport": {
+                  "max": {
+                    "x": 1121.0,
+                    "y": 759.0
+                  },
+                  "min": {
+                    "x": 765.5,
+                    "y": 370.5
+                  }
+                }
+              }
+            },
+            "Empty",
+            "Empty",
+            "Empty",
+            "Empty",
+            "Empty",
+            "Empty",
+            "Empty",
+            "Empty"
+          ]
+        }
+      }
+    ],
+    "translations": {
+      "leaf": {
+        "close_all_button": "Close window",
+        "close_all_button_disabled_tooltip": "This window contains non-closable tabs.",
+        "close_all_button_menu_hint": "Right click to close this window.",
+        "close_all_button_modifier_hint": "Press modifier keys (Shift by default) to close this window.",
+        "close_all_button_modifier_menu_hint": "Press modifier keys (Shift by default) or right click to close this window.",
+        "close_button_disabled_tooltip": "This leaf contains non-closable tabs.",
+        "minimize_button": "Minimize window",
+        "minimize_button_menu_hint": "Right click to minimize this window.",
+        "minimize_button_modifier_hint": "Press modifier keys (Shift by default) to minimize this window.",
+        "minimize_button_modifier_menu_hint": "Press modifier keys (Shift by default) or right click to minimize this window."
+      },
+      "tab_context_menu": {
+        "close_button": "Close",
+        "eject_button": "Eject"
+      }
+    }
+  },
+  "mode": "developer",
+  "version": 1
+}

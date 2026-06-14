@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::app_state::{AppState, AppStateFile};
 use crate::audio::NativeAudioSink;
+use crate::debug_ui::DebuggerUi;
 use crate::emu::{Emu, MachineType, ProgEntry};
 use crate::vid::VidModel;
 use crate::workspace::{self, Workspace, WorkspaceMode, WorkspaceTab};
@@ -319,6 +320,7 @@ pub struct EmuApp {
     prev_ctrl: bool,
     prev_alt: bool,
     workspace: Workspace,
+    debugger_ui: DebuggerUi,
     screen_captured: bool,
     file_status: Option<String>,
     machine_types: Vec<MachineType>,
@@ -364,6 +366,7 @@ impl EmuApp {
             prev_ctrl: false,
             prev_alt: false,
             workspace,
+            debugger_ui: DebuggerUi::default(),
             screen_captured: false,
             file_status: None,
             machine_types,
@@ -1392,17 +1395,34 @@ impl EmuApp {
 
             ui.add_enabled_ui(developer, |ui| {
                 ui.menu_button("Panes", |ui| {
-                    let log_open = self.workspace.has_tab(WorkspaceTab::IoLog);
-                    if ui.selectable_label(log_open, "IO Log").clicked() {
-                        if log_open {
-                            self.workspace.close_tab(WorkspaceTab::IoLog);
-                        } else {
-                            self.workspace.open_tab(WorkspaceTab::IoLog);
+                    for (tab, label) in [
+                        (WorkspaceTab::IoLog, "IO Log"),
+                        (WorkspaceTab::Cpu, "CPU"),
+                        (WorkspaceTab::Disassembly, "Disassembly"),
+                        (WorkspaceTab::Memory, "Memory"),
+                        (WorkspaceTab::Breakpoints, "Breakpoints"),
+                        (WorkspaceTab::RomSymbols, "ROM Symbols"),
+                        (WorkspaceTab::Events, "Events"),
+                    ] {
+                        let is_open = self.workspace.has_tab(tab);
+                        if ui.selectable_label(is_open, label).clicked() {
+                            if is_open {
+                                self.workspace.close_tab(tab);
+                            } else {
+                                self.workspace.open_tab(tab);
+                            }
+                            self.save_workspace();
+                            ui.close_menu();
                         }
-                        self.save_workspace();
-                        ui.close_menu();
                     }
                 });
+
+                if ui.button("Debugger Layout").clicked() {
+                    self.release_screen_capture();
+                    self.workspace.debugger_layout();
+                    self.save_workspace();
+                    ui.close_menu();
+                }
 
                 if ui.button("Reset Workspace").clicked() {
                     self.release_screen_capture();
@@ -1522,10 +1542,11 @@ impl EmuApp {
             let was_captured = self.screen_captured;
             let workspace = &mut self.workspace;
             let screen_texture = self.screen_texture.as_ref();
-            let tvc = &mut self.emu.tvc;
+            let emu = &mut self.emu;
+            let debugger_ui = &mut self.debugger_ui;
             let screen_captured = &mut self.screen_captured;
             egui::CentralPanel::default().show(ctx, |ui| {
-                workspace.show(ui, screen_texture, tvc, screen_captured);
+                workspace.show(ui, screen_texture, emu, debugger_ui, screen_captured);
             });
             if was_captured && !self.screen_captured {
                 self.release_tvc_keys();
@@ -1535,6 +1556,7 @@ impl EmuApp {
                 self.save_workspace();
             }
         } else {
+            self.debugger_ui.update_tracing(&mut self.emu, false);
             egui::CentralPanel::default().show(ctx, |ui| {
                 let _ = workspace::draw_screen(ui, self.screen_texture.as_ref(), None);
             });
@@ -2107,19 +2129,20 @@ impl eframe::App for EmuApp {
             }
             if hit_breakpoint {
                 self.emu.running = false;
+                let pc = self.emu.tvc.z80.state.r16[11];
+                self.debugger_ui.record_breakpoint_hit(pc, &self.emu);
                 #[cfg(all(feature = "native", not(target_arch = "wasm32")))]
                 if let Some(ref dbg) = self.debugger {
-                    let pc = self.emu.tvc.z80.state.r16[11];
                     let _ = dbg
                         .event_tx
                         .send(crate::debugger::DebuggerEvent::BreakpointHit { pc });
                 }
             }
             self.push_audio_samples();
-            self.update_screen_texture(ctx);
             self.emu_frame_accumulator %= TVC_FRAME_DT;
             self.frame_count += 1;
         }
+        self.update_screen_texture(ctx);
 
         let elapsed = self.last_frame_time.elapsed();
         if elapsed.as_secs() >= 1 {

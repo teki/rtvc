@@ -6,6 +6,21 @@ enum FastBootRom {
     V2_2,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RomBank {
+    Sys,
+    Exth,
+}
+
+impl RomBank {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Sys => "sys",
+            Self::Exth => "exth",
+        }
+    }
+}
+
 pub struct TvcMmu {
     // RAM banks (16KB each)
     u0: [u8; 0x4000],
@@ -196,6 +211,34 @@ impl TvcMmu {
 
     pub fn get_map_val(&self) -> u8 {
         self.map_val
+    }
+
+    pub fn map_labels(&self) -> [&'static str; 4] {
+        self.map.map(|bank| match bank {
+            Some(0) => "U0",
+            Some(1) => "U1",
+            Some(2) => "U2",
+            Some(3) => "U3",
+            Some(4) if self.is_plus => "V0",
+            Some(4) => "V",
+            Some(5) => "V1",
+            Some(6) => "V2",
+            Some(7) => "V3",
+            Some(8) => "SYS",
+            Some(9) => "CART",
+            Some(10) => "EXT",
+            _ => "?",
+        })
+    }
+
+    pub fn mapped_rom_bank(&self, addr: u16) -> Option<RomBank> {
+        let page = (addr >> 14) as usize;
+        let offset = (addr & 0x3FFF) as usize;
+        match self.map[page] {
+            Some(8) => Some(RomBank::Sys),
+            Some(10) if offset >= 0x2000 => Some(RomBank::Exth),
+            _ => None,
+        }
     }
 
     #[inline]
@@ -566,6 +609,18 @@ mod tests {
         assert_eq!(mmu.read_raw_bank("sys", 0x0352, 1).unwrap(), [0x00]);
         assert_eq!(mmu.read_raw_bank("sys", 0x0357, 12).unwrap(), [0x00; 12]);
         assert_eq!(mmu.read_raw_bank("sys", 0x0F21, 2).unwrap(), [0x00, 0x00]);
+    }
+
+    #[test]
+    fn map_labels_describe_standard_and_plus_video_banks() {
+        let mut standard = TvcMmu::new(false);
+        standard.set_map(0x90);
+        assert_eq!(standard.map_labels(), ["U0", "U1", "V", "U3"]);
+
+        let mut plus = TvcMmu::new(true);
+        plus.set_vid_map(0x08);
+        plus.set_map(0x90);
+        assert_eq!(plus.map_labels(), ["U0", "U1", "V2", "U3"]);
     }
 
     #[test]

@@ -575,6 +575,19 @@ impl Emu {
         self.running = !self.running;
     }
 
+    pub fn debug_step(&mut self, count: u32) {
+        self.running = false;
+        for _ in 0..count {
+            self.tvc.debug_step_instruction();
+        }
+    }
+
+    pub fn debug_run_to_interrupt(&mut self) -> crate::tvc::DebugRunToIrqResult {
+        self.running = false;
+        self.tvc
+            .debug_run_to_interrupt(crate::tvc::DEBUG_RUN_TO_IRQ_MAX_CYCLES)
+    }
+
     pub fn reload(&mut self, machine_type: MachineType) -> Result<(), String> {
         let fast_boot = self.tvc.fast_boot();
         #[cfg(target_arch = "wasm32")]

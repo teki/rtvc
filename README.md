@@ -80,6 +80,11 @@ Workspace** to use dockable Screen and IO Log panes; reopen the log through
 Click the Screen pane to capture TVC keyboard input and press Escape to release
 it.
 
+Choose **View > Debugger Layout** for integrated CPU, disassembly, memory,
+breakpoint, BASIC 1.2 ROM-symbol, event, screen, and IO-log panes. The debugger
+is available in both the native app and full browser app; each pane can also be
+opened individually through **View > Panes**.
+
 Supported user files:
 
 | File type | Purpose |

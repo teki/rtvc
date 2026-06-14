@@ -347,14 +347,7 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
             }
             DebuggerCommand::Step { count } => {
                 let step_count = count.unwrap_or(1);
-                emu.running = false;
-                for _ in 0..step_count {
-                    emu.tvc.bus.trace_pc = emu.tvc.z80.state.r16[11];
-                    let cpu_time = emu.tvc.z80.step(&mut emu.tvc.bus, 0);
-                    emu.tvc.clock += cpu_time as u64;
-                    emu.tvc.bus.advance_tape(cpu_time as u64);
-                    emu.tvc.bus.advance_sound_timer(cpu_time as u64);
-                }
+                emu.debug_step(step_count);
                 serde_json::json!({ "status": "ok" })
             }
             DebuggerCommand::Continue => {

@@ -55,3 +55,9 @@ curated. They must not be interpreted as "no inputs" or "no outputs."
 Future BASIC 2.2 work should use the same schema in a separate JSON file.
 Addresses should be transferred by matching code and data against the 2.2 ROM,
 not by assuming a constant offset from BASIC 1.2.
+
+The integrated debugger loads this JSON at runtime from an embedded string. It
+uses the MMU's currently mapped physical ROM bank when annotating PC and
+disassembly addresses. The Events pane can install only `trace` entries as
+bank-aware execution tracepoints; no tracepoint lookup occurs while that option
+is disabled.

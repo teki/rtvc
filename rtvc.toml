@@ -1,12 +1,12 @@
 machine_type = "64k-plus-1.2-vtdos"
 video_model = "interleaved"
-fast_boot = false
+fast_boot = true
 
 [tape]
 loaded = false
 recent = ["rtvc-media/tapes/unicum/UNICUM.CAS", "rtvc-media/tapes/atomix/ATOMIX.CAS", "rtvc-media/tapes/tisztalappal/TISZTALA.CAS"]
 
 [disk]
-selected = "rtvc-media/disks/boulderdash/boulderdash.dsk"
+selected = "progs/kisertetkastelyv3.zip"
 loaded = true
-recent = ["rtvc-media/disks/boulderdash/boulderdash.dsk"]
+recent = ["progs/kisertetkastelyv3.zip", "rtvc-media/disks/boulderdash/boulderdash.dsk"]
