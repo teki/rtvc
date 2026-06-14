@@ -2,6 +2,29 @@
 
 Open issues and planned improvements for the TVC emulator.
 
+## Multi-System Architecture
+
+- [ ] Generalize the application so it can emulate additional Z80-based
+  computers, not only the TVC.
+  - Introduce a reusable base emulator/application layer for shared scheduling,
+    run/pause/step control, audio delivery, media and file operations,
+    snapshots, debugger infrastructure, developer projects, and UI integration.
+  - Move TVC-specific machine behavior behind a `TvcEmu` implementation.
+  - Allow future machines to provide implementations such as
+    `OtherSystemEmu` without duplicating the common application runtime.
+  - Keep the Z80 CPU core reusable across machine implementations.
+  - Define explicit machine interfaces for memory mapping, video generation,
+    keyboard/input mapping, timers and interrupt sources, extensions, I/O
+    ports, media devices, reset, stepping, frame production, and snapshots.
+  - Make debugger addresses, banks, events, disassembly, and memory views work
+    through machine-provided descriptions rather than TVC-specific assumptions.
+  - Make dock panes, menus, status information, help, and available media
+    actions capability-driven so each machine exposes only relevant features.
+  - Preserve lightweight WASM builds and avoid forcing every machine or device
+    implementation into every build target.
+  - Refactor incrementally, keeping TVC behavior and performance unchanged
+    while extracting shared interfaces.
+
 ## Developer Workspace
 
 - [ ] Add lightweight developer-project management.
@@ -26,6 +49,22 @@ Open issues and planned improvements for the TVC emulator.
   - Start with sequential assembly into mapped writable memory.
 
 ## Debugger
+
+- [ ] Unify debugger infrastructure across the dock UI and TCP interface.
+  - Move event generation and buffering out of the integrated UI into a shared
+    debugger core.
+  - Expose the same breakpoint, control, ROM trace, and future event streams to
+    both dock and TCP clients.
+  - Give each consumer an independent cursor or subscription so one client
+    cannot drain events before another receives them.
+  - Support event-category filters and explicit subscription controls to avoid
+    tracing overhead when no consumer requests a stream.
+  - Keep event records structured and bank-aware, with sequence, address,
+    cycle/timing, and summary fields where applicable.
+  - Make debugger commands and state mutations use shared core operations so
+    dock and TCP behavior remain consistent.
+  - Extend the newline-delimited TCP protocol and Python client with event
+    subscription and structured asynchronous notifications.
 
 - [ ] Improve breakpoint management.
   - Make breakpoint identity bank-aware rather than address-only.
