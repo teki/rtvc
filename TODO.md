@@ -2,33 +2,18 @@
 
 Open issues and planned improvements for the TVC emulator.
 
-## Gamebase
-
-- [ ] Improve Gamebase game loading and user guidance.
-  - Prepare the machine for the selected media type before loading the game.
-  - CAS injection does not require VT-DOS, but the machine must be in a state
-    where direct cassette injection can succeed.
-  - DSK games require a VT-DOS machine configuration. The machine currently
-    needs a full reset and must finish booting before the disk can be used,
-    which takes a long time.
-  - Avoid resetting and waiting for a full VT-DOS boot when loading a CAS game.
-  - Show a clear confirmation after the media has loaded.
-  - Tell the user exactly how to start the loaded game, including any commands,
-    keys, reset, or boot steps required for that media and title.
-  - Report when the machine is still preparing or booting instead of presenting
-    the game as immediately ready.
-
-## Machine Startup
-
-- [x] Complete the optional fast-boot setting.
-  - [x] Skip the RAM test in the known TVC 1.2 and 2.2 system ROMs.
-  - [x] Skip drawing the TVC 1.2 boot screen.
-  - [x] Skip drawing the TVC 2.2 boot screen.
-  - Alternatively, restore a prepared boot snapshot. This would require a
-    separate snapshot for every machine type, which is less elegant and adds a
-    maintenance burden.
-
 ## Developer Workspace
+
+- [ ] Add lightweight developer-project management.
+  - Define a project format and lifecycle for related debugger and editor state.
+  - Decide where projects are stored and how users create, open, save, and
+    switch them.
+  - Store bank-aware breakpoint definitions, including enabled state and
+    user-defined labels.
+  - Store editor files, open buffers, and other editor state without coupling
+    them to the global dock layout.
+  - Keep emulator preferences and general workspace layout independent from
+    project-specific state.
 
 - [ ] Add persistent BASIC and assembly editor panes after the debugger
   interfaces have stabilized.
@@ -43,13 +28,30 @@ Open issues and planned improvements for the TVC emulator.
 ## Debugger
 
 - [ ] Improve breakpoint management.
+  - Make breakpoint identity bank-aware rather than address-only.
   - Allow individual breakpoints to be enabled and disabled without deleting
     them.
-  - Persist breakpoints between sessions.
+  - Save breakpoints as part of a developer project.
   - Allow breakpoints to have user-defined labels.
   - Show active breakpoints as red dots in the disassembly view.
-  - Make the breakpoint dot beside each disassembled instruction toggleable so
-    breakpoints can be added and removed directly from disassembly.
+
+- [ ] Improve address navigation and bank handling across debugger views.
+  - Define a consistent bank-qualified address model because the same CPU
+    address can refer to different physical memory.
+  - Decide how mapped CPU addresses, raw banks, breakpoints, user labels, and
+    editor symbols refer to one another.
+  - Persist user-defined labels as part of the developer project.
+  - Add a jump-target dropdown to memory-interpreting views such as
+    Disassembly and Memory.
+  - Include CPU register values, breakpoints, and user-defined labels as jump
+    targets.
+  - Do not include ROM database labels in this general jump-target dropdown.
+  - Make navigation preserve or explicitly select the intended memory bank.
+
+- [ ] Support multiple independent Disassembly panes for reverse engineering.
+  - Give each pane its own address, bank context, and follow-PC state.
+  - Allow panes to be opened, closed, docked, and persisted independently.
+  - Reuse the shared bank-aware navigation and project labels.
 
 - [ ] Add layered visual debugging overlays to the TVC screen.
   - Render overlays above the TVC framebuffer with configurable translucency,
@@ -59,7 +61,31 @@ Open issues and planned improvements for the TVC emulator.
   - Begin with scanline granularity.
   - Highlight the current CRTC scanline in blue.
   - Highlight scanlines traversed while the CPU is halted in red.
-  - Add a memory-write layer that highlights written video-memory locations in
-    white and the location at which the write occurred in green.
-  - Initially approximate memory-write visualization at scanline granularity,
-    then increase its spatial and timing precision later.
+  - Add a video-memory-write layer that records both the CRTC beam line at the
+    time of each CPU write and the destination video line affected by that
+    write. This should make it visually obvious when drawing code is behind the
+    raster beam.
+  - Initially highlight destination video lines in white and corresponding beam
+    lines in green, using scanline granularity before increasing spatial and
+    timing precision.
+  - Support overlays in both fast-frame and interleaved video modes.
+  - Explore aggregation, decay, sampling, or pause-only presentation so
+    continuous execution remains readable when many video-memory writes occur.
+
+## Storage And Expansion
+
+- [ ] Improve the FD1793 floppy-controller implementation.
+  - Add disk write support.
+  - Support two floppy drives.
+
+- [ ] Add cartridge support.
+  - Support VT-DOS cartridges.
+  - Support UPM cartridges.
+  - Support cartridge-based games.
+
+## Help
+
+- [ ] Add an integrated help system.
+  - Add BASIC language and usage help.
+  - Add disk and disk-command help.
+  - Extend the help system with additional topics later.
