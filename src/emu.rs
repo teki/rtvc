@@ -7,8 +7,7 @@ use crate::cas::TapeBitstreamGenerator;
 use crate::snapshot::{self, Reader, SnapshotError, Writer};
 use crate::tvc::Tvc;
 
-const GAMEBASE_BOOT_SNAPSHOT: &[u8] =
-    include_bytes!("../data/snapshots/boot12dos.rtvcsnap.zip");
+const GAMEBASE_BOOT_SNAPSHOT: &[u8] = include_bytes!("../data/snapshots/boot12dos.rtvcsnap.zip");
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum RomVersion {
