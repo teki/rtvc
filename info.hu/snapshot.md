@@ -82,11 +82,11 @@ A natív mentés/betöltés nyers `.rtvcsnap` és `.rtvcsnap.zip` fájlokat tám
 Indítás közvetlenül snapshotból:
 
 ```bash
-cargo run --bin rtvc -- snapshots/boot12dos.rtvcsnap.zip
+cargo run --bin rtvc -- data/snapshots/boot12dos.rtvcsnap.zip
 ```
 
 A repóban található
-[boot12dos.rtvcsnap.zip](../snapshots/boot12dos.rtvcsnap.zip) egy tiszta,
+[boot12dos.rtvcsnap.zip](../data/snapshots/boot12dos.rtvcsnap.zip) egy tiszta,
 teljesen elindított TVC 1.2 VT-DOS tesztállapot. Az indulási folyamatot nem
 vizsgáló tesztek stabil, indítás utáni állapotból kezdhetnek vele. A snapshot a
 natív és teljes webes alkalmazásba is be van ágyazva, és a Gamebase programok

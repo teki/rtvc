@@ -150,8 +150,8 @@ used to calculate `JR` and `DJNZ` displacements.
 
 #### `save_snapshot` / `load_snapshot`
 Saves or loads a compressed/raw emulator state snapshot.
-- **Request**: `{"cmd": "save_snapshot", "path": "snapshots/save.rtvcsnap.zip"}`
-- **Request**: `{"cmd": "load_snapshot", "path": "snapshots/save.rtvcsnap.zip"}`
+- **Request**: `{"cmd": "save_snapshot", "path": "data/snapshots/save.rtvcsnap.zip"}`
+- **Request**: `{"cmd": "load_snapshot", "path": "data/snapshots/save.rtvcsnap.zip"}`
 - **Response**: `{"status": "ok"}` (or `{"status": "error", "message": "..."}`)
 
 #### `save_screenshot`

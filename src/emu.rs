@@ -7,7 +7,8 @@ use crate::cas::TapeBitstreamGenerator;
 use crate::snapshot::{self, Reader, SnapshotError, Writer};
 use crate::tvc::Tvc;
 
-const GAMEBASE_BOOT_SNAPSHOT: &[u8] = include_bytes!("../snapshots/boot12dos.rtvcsnap.zip");
+const GAMEBASE_BOOT_SNAPSHOT: &[u8] =
+    include_bytes!("../data/snapshots/boot12dos.rtvcsnap.zip");
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum RomVersion {
@@ -176,7 +177,7 @@ mod tests {
 
     #[test]
     fn load_tape_snapshot_restores_selection_and_can_play() {
-        let snapshot_path = std::path::Path::new("snapshots/load_tape.rtvcsnap.zip");
+        let snapshot_path = std::path::Path::new("data/snapshots/load_tape.rtvcsnap.zip");
         if !snapshot_path.exists() {
             return;
         }

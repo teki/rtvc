@@ -72,10 +72,10 @@ Native save/load supports raw `.rtvcsnap` files and `.rtvcsnap.zip` files. Compr
 The native app can also start directly from a snapshot path:
 
 ```bash
-cargo run --bin rtvc -- snapshots/boot12dos.rtvcsnap.zip
+cargo run --bin rtvc -- data/snapshots/boot12dos.rtvcsnap.zip
 ```
 
-The checked-in [boot12dos.rtvcsnap.zip](../snapshots/boot12dos.rtvcsnap.zip)
+The checked-in [boot12dos.rtvcsnap.zip](../data/snapshots/boot12dos.rtvcsnap.zip)
 fixture is a clean, fully booted TVC 1.2 VT-DOS machine. Tests that do not need
 to exercise the boot process can load it to begin immediately from a stable
 post-boot state. It is also embedded in native and full-web application builds

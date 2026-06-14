@@ -21,6 +21,7 @@ Refer to the following resources for detailed documentation on the system:
 - [Cassette Documentation](info/cas.md) — CAS structure, tape signal emulation, loading, and injection behavior.
 - [HBF Floppy Documentation](info/hbf.md) — HBF expansion card, FD1793 controller, and disk image handling.
 - [Socket Debugger Documentation](info/dbg.md) — Protocol specification for the TCP socket debugger and Python REPL client.
+- [ROM Symbol Database](info/rom_symbols.md) — Schema, addressing rules, provenance, and maintenance notes for curated ROM lookup tables.
 - [Development and Testing Skill](.agents/skills/development/SKILL.md) — Essential commands for compiling, running, testing, and benchmarking the emulator.
 - [Release Skill](.agents/skills/release/SKILL.md) — Release workflow for version bumps, concise `CHANGES.md` updates, manual review, commits, tags, and pushes.
 

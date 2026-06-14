@@ -150,8 +150,8 @@ cím a `JR` és `DJNZ` relatív eltolásainak kiszámításához szükséges.
 
 #### `save_snapshot` / `load_snapshot`
 Ment egy tömörített/nyers emulátorállapot-snapshotot, vagy betölt egyet.
-- **Kérés**: `{"cmd": "save_snapshot", "path": "snapshots/save.rtvcsnap.zip"}`
-- **Kérés**: `{"cmd": "load_snapshot", "path": "snapshots/save.rtvcsnap.zip"}`
+- **Kérés**: `{"cmd": "save_snapshot", "path": "data/snapshots/save.rtvcsnap.zip"}`
+- **Kérés**: `{"cmd": "load_snapshot", "path": "data/snapshots/save.rtvcsnap.zip"}`
 - **Válasz**: `{"status": "ok"}` (vagy hiba esetén `{"status": "error", "message": "..."}`)
 
 #### `save_screenshot`

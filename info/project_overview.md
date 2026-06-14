@@ -29,6 +29,9 @@ The project is structured as a Rust library crate with a native desktop binary p
 - [src/emu.rs](../src/emu.rs) — High-level emulator wrapper with run state, native filesystem media, embedded full-web ROMs, and byte-backed browser media.
 - [src/ui.rs](../src/ui.rs) — Shared native/full-web egui application with platform-specific file, storage, audio, and keyboard integration.
 - [src/debugger.rs](../src/debugger.rs) — Native-only TCP socket debugger command handler, supporting both native GUI and headless execution modes.
+- [data/rom_symbols_1_2.json](../data/rom_symbols_1_2.json) — Portable, bank-aware BASIC 1.2 ROM symbol database for debugger annotations, AI traces, developer lookup, and generated help.
+- [data/snapshots/](../data/snapshots/) — Checked-in emulator state fixtures, including the clean BASIC 1.2 VT-DOS boot snapshot embedded for Gamebase launches.
+- [info/rom_symbols.md](rom_symbols.md) — ROM symbol schema, addressing rules, source provenance, and maintenance guidance.
 - [src/wasm.rs](../src/wasm.rs) — Lightweight WASM bindings exposing `Tvc` control, ROM/disk loading, keyboard input, and framebuffer access for a browser canvas UI.
 - [src/snapshot.rs](../src/snapshot.rs) — Chunked snapshot format helpers shared by native and WASM snapshot save/load APIs.
 - [src/tvc_snapshot.rs](../src/tvc_snapshot.rs) — TVC-specific snapshot chunk save/load glue used by `Tvc`.
