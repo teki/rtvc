@@ -6,23 +6,11 @@ This document serves as the entry point for coding agents and developers to find
 
 Refer to the following resources for detailed documentation on the system:
 
-- [Project Overview & Architecture](info/project_overview.md) — High-level description of the project structure, supported build targets, Rust toolchain, and core emulator architecture.
+- [TVC Technical Reference](info/tvc.md) — Detailed, implementation-neutral TVC hardware reference for emulator authors: timing, memory, I/O, interrupts, video, keyboard, sound, cassette, and expansion devices.
+- [rtvc Implementation and Usage Reference](info/rtvc.md) — Rust architecture, emulation choices, media handling, snapshots, debugger, UI, persistence, and build targets.
 - [User README](README.md) — User-facing run, snapshot, and web bundle commands.
 - [Release Notes](CHANGES.md) — Concise release notes starting with the next release; older releases are intentionally not backfilled.
 - [Open Issues and Planned Work](TODO.md) — Known issues and implementation ideas that are not yet complete.
-- [Snapshot Format and Web Bundles](info/snapshot.md) — Custom TVC snapshot format and `cargo bundle-web` upload workflow.
-- [TVC Machine Core](info/tvc.md) — Machine orchestration, timing, I/O ports, interrupts, ROM loading, and media integration.
-- [Z80 CPU Documentation](info/z80.md) — Detailed specifications, instructions, lookup tables, and execution details for the Z80 CPU emulator.
-- [Z80 Opcode Reference](info/z80opcodes.md) — Maintained opcode, timing, flag, and instruction-effect reference.
-- [Memory Management Unit (MMU) Documentation](info/mmu.md) — Architectural reference for TVC bank switching, page layout, and I/O memory mapping.
-- [Video Controller Documentation](info/vid.md) — MC6845 registers, rendering modes, timing, and deferred accuracy work.
-- [Sound Documentation](info/sound.md) — Programmable sound generator, timer interrupt, and PCM output model.
-- [Keyboard Documentation](info/key.md) — TVC keyboard matrix and host-key mapping.
-- [Cassette Documentation](info/cas.md) — CAS structure, tape signal emulation, loading, and injection behavior.
-- [HBF Floppy Documentation](info/hbf.md) — HBF expansion card, FD1793 controller, and disk image handling.
-- [Socket Debugger Documentation](info/dbg.md) — Protocol specification for the TCP socket debugger and Python REPL client.
-- [UI and Developer Workspace](info/ui.md) — Simple/developer modes, dock panes, keyboard capture, and workspace persistence.
-- [ROM Symbol Database](info/rom_symbols.md) — Schema, addressing rules, provenance, and maintenance notes for curated ROM lookup tables.
 - [Development and Testing Skill](.agents/skills/development/SKILL.md) — Essential commands for compiling, running, testing, and benchmarking the emulator.
 - [Release Skill](.agents/skills/release/SKILL.md) — Release workflow for version bumps, concise `CHANGES.md` updates, manual review, commits, tags, and pushes.
 
@@ -30,11 +18,11 @@ Refer to the following resources for detailed documentation on the system:
 
 To prevent documentation rot and ensure all agents have access to accurate information, adhere to the following rules:
 
-1. **Keep Specs Updated**: When you implement new features, rewrite core functionality (e.g., wiring the MMU to the main loop, adding screen rendering, or input devices), update the corresponding file in `info/` or create a new topic-specific markdown file.
+1. **Keep the Hardware Spec Updated**: When verified TVC behavior changes or new hardware details are established, update [info/tvc.md](info/tvc.md). Keep it implementation-neutral and do not reproduce generic Z80, MC6845, or FD1793 specifications.
 2. **Keep Commands and Workflows Updated**: If compilation workflows, test cases, or benchmarks change (e.g., adding a new benchmark tool or migrating test files), immediately update [.agents/skills/development/SKILL.md](.agents/skills/development/SKILL.md).
-3. **Keep Architecture and Build Targets Updated**: If changing `Cargo.toml` dependencies, the Rust edition, binary targets, native/web feature flags, UI strategy, browser storage, or lightweight WASM dependency boundaries, update [info/project_overview.md](info/project_overview.md).
-4. **Keep Subsystem Details Local**: If changing video models, keyboard behavior, sound, media devices, or another subsystem, update its topic-specific document rather than duplicating the details in the project overview.
-5. **Keep Snapshot Specs Updated**: If changing snapshot chunks, save/load coverage, or web bundle behavior, update [info/snapshot.md](info/snapshot.md).
+3. **Keep rtvc Details Updated**: If changing architecture, dependencies, build targets, emulation policy, media handling, snapshots, debugger behavior, UI strategy, browser storage, or WASM boundaries, update [info/rtvc.md](info/rtvc.md).
+4. **Maintain the Boundary**: Put observable TVC hardware behavior in `info/tvc.md`; put repository-specific implementation and usage behavior in `info/rtvc.md`.
+5. **Avoid Topic Fragmentation**: Extend one of the two references rather than creating a new English subsystem document unless the material cannot reasonably fit either scope.
 6. **Use Clickable Links**: When referencing codebase files or documentation, always use clickable Markdown links with the relative path (e.g., `[main.rs](src/main.rs)`) to enable easy navigation.
 
 ## Git and Command Execution Policy

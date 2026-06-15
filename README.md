@@ -190,18 +190,10 @@ For the full development workflow, see
 
 ## Documentation
 
-- [Project overview](info/project_overview.md)
-- [Snapshot format and web bundles](info/snapshot.md)
-- [TVC machine core](info/tvc.md)
-- [Z80 CPU](info/z80.md)
-- [Z80 opcode reference](info/z80opcodes.md)
-- [Memory management unit](info/mmu.md)
-- [Video controller](info/vid.md)
-- [Sound](info/sound.md)
-- [Keyboard matrix](info/key.md)
-- [Cassette support](info/cas.md)
-- [HBF floppy card and FD1793 controller](info/hbf.md)
-- [Socket debugger](info/dbg.md)
+- [TVC Technical Reference](info/tvc.md) — detailed machine specification for
+  emulator authors and low-level developers.
+- [rtvc Implementation and Usage Reference](info/rtvc.md) — emulator
+  architecture, media, snapshots, debugger, UI, and build targets.
 
 ## Contributing
 
@@ -210,8 +202,9 @@ when they include a small reproduction: the machine type, media file, snapshot,
 command typed on the TVC, and any relevant port or interrupt logs.
 
 Please keep emulator behavior changes covered by focused tests where practical,
-and update the documentation in `info/` when changing core architecture,
-snapshot format, media handling, or build workflows.
+and update the appropriate consolidated reference in `info/` when changing TVC
+behavior, core architecture, snapshot format, media handling, or build
+workflows.
 
 ## Acknowledgements
 

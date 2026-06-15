@@ -9,7 +9,7 @@ A `Tvc` típus a rendszerbusz és a hardver-orkesztrátor. Összeköti a fő mod
 - **CPU**: Z80 mag ([z80.md](z80.md))
 - **MMU**: memóriakezelő ([mmu.md](mmu.md))
 - **Videó**: Motorola 6845 CRTC ([vid.md](vid.md))
-- **Hang**: hanggenerátor/időzítő ([sound.md](../info/sound.md))
+- **Hang**: hanggenerátor/időzítő ([angol referencia](../info/tvc.md#sound-and-timer))
 - **Billentyűzet**: sor/oszlop mátrix
 - **Bővítők**: például floppyvezérlő kártyák
 

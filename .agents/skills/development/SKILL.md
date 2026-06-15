@@ -94,7 +94,7 @@ This skill provides step-by-step instructions and references for compiling, exec
   ```
   - Builds the small `wasm,web-vid-simple` target.
   - Emits a static bundle under `dist/<snapshot-name>-web/`.
-  - See [info/snapshot.md](../../../info/snapshot.md) for snapshot format and bundle details.
+  - See [info/rtvc.md](../../../info/rtvc.md#snapshot-format) for snapshot format and bundle details.
 
 - **Bundle a lightweight web skeleton without an embedded snapshot:**
   ```bash

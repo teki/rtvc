@@ -196,14 +196,15 @@ A teljes fejlesztési munkafolyamathoz lásd:
 
 ## Dokumentáció
 
-- [Projektáttekintés](info/project_overview.md)
+- [Az rtvc implementációja és használata (angol)](info/rtvc.md)
+- [Részletes TVC hardverreferencia (angol)](info/tvc.md)
 - [Snapshotformátum és webes csomagok](info.hu/snapshot.md)
 - [TVC gépmag](info.hu/tvc.md)
 - [Z80 CPU](info.hu/z80.md)
 - [Z80 opcode referencia](info.hu/z80opcodes.md)
 - [Memóriakezelő egység](info.hu/mmu.md)
 - [Videovezérlő](info.hu/vid.md)
-- [Hang](info/sound.md)
+- [Hang](info/tvc.md#sound-and-timer)
 - [Billentyűzetmátrix](info.hu/key.md)
 - [Kazettatámogatás](info.hu/cas.md)
 - [HBF floppy kártya és FD1793 vezérlő](info.hu/hbf.md)
