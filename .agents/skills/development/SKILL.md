@@ -80,6 +80,12 @@ This skill provides step-by-step instructions and references for compiling, exec
   - Keyboard input follows the Spectrum layout. In BASIC keyword mode, press
     `P` once for `PRINT`. Host Shift maps to Caps Shift; Ctrl or Alt maps to
     Symbol Shift. Backspace maps to Caps Shift+0.
+  - Load a 48K `.z80` snapshot through the **Load Z80** button or directly:
+    ```bash
+    cargo run --bin zx82 -- path/to/game.z80
+    ```
+  - Z80 snapshot versions 1, 2, and 3 are accepted in compressed or
+    uncompressed form when they describe a plain Spectrum 48K.
   - Generate a boot screenshot without opening a window:
     ```bash
     cargo run --bin zx82 -- --headless --frames 100 --screenshot /tmp/zx82.png

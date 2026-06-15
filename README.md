@@ -94,6 +94,16 @@ Spectrum matrix. For example, press `P` once to enter the `PRINT` keyword in
 BASIC mode. Shift acts as Caps Shift, Ctrl or Alt acts as Symbol Shift, and
 Backspace generates Caps Shift+0.
 
+Load a 48K Z80 snapshot with the **Load Z80** button or from the command line:
+
+```bash
+cargo run --bin zx82 -- path/to/game.z80
+```
+
+Z80 snapshot versions 1, 2, and 3 are supported in compressed or uncompressed
+form for plain Spectrum 48K machines. Snapshots requiring 128K paging or
+peripherals are rejected.
+
 Choose **View > Debugger Layout** for integrated CPU, disassembly, memory,
 breakpoint, BASIC 1.2 ROM-symbol, event, screen, and IO-log panes. The debugger
 is available in both the native app and full browser app; each pane can also be

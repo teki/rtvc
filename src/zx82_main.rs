@@ -13,6 +13,7 @@ fn main() -> eframe::Result<()> {
     let mut frames = 100u64;
     let mut screenshot: Option<PathBuf> = None;
     let mut rom_path = PathBuf::from("roms/48.rom");
+    let mut z80_path: Option<PathBuf> = None;
 
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     let mut index = 0;
@@ -34,14 +35,23 @@ fn main() -> eframe::Result<()> {
                 rom_path = PathBuf::from(&args[index + 1]);
                 index += 2;
             }
+            "--z80" if index + 1 < args.len() => {
+                z80_path = Some(PathBuf::from(&args[index + 1]));
+                index += 2;
+            }
             "-h" | "--help" => {
-                println!("Usage: zx82 [--rom path] [--headless] [--frames count]");
+                println!("Usage: zx82 [game.z80] [--rom path] [--z80 path]");
+                println!("            [--headless] [--frames count]");
                 println!("            [--screenshot path.png]");
                 return Ok(());
             }
             unknown => {
-                eprintln!("unknown option: {unknown}");
-                std::process::exit(2);
+                if unknown.starts_with('-') || z80_path.is_some() {
+                    eprintln!("unknown option or extra input file: {unknown}");
+                    std::process::exit(2);
+                }
+                z80_path = Some(PathBuf::from(unknown));
+                index += 1;
             }
         }
     }
@@ -56,6 +66,14 @@ fn main() -> eframe::Result<()> {
     let mut zx82 = Zx82::new();
     if let Err(error) = zx82.load_rom(&rom) {
         eprintln!("failed to load {}: {error}", rom_path.display());
+        std::process::exit(1);
+    }
+    let loaded_snapshot = z80_path
+        .as_deref()
+        .map(|path| load_z80_path(&mut zx82, path))
+        .transpose();
+    if let Err(error) = loaded_snapshot {
+        eprintln!("{error}");
         std::process::exit(1);
     }
 
@@ -84,6 +102,7 @@ fn main() -> eframe::Result<()> {
         texture: None,
         pressed_bindings: HashMap::new(),
         matrix_key_counts: [[0; 5]; 8],
+        status: z80_path.map(|path| format!("Loaded {}", path.display())),
     };
     let icon =
         eframe::icon_data::from_png_bytes(APP_ICON_PNG).expect("invalid embedded rtvc app icon");
@@ -104,6 +123,7 @@ struct Zx82App {
     texture: Option<TextureHandle>,
     pressed_bindings: HashMap<egui::Key, Vec<MatrixKey>>,
     matrix_key_counts: [[u8; 5]; 8],
+    status: Option<String>,
 }
 
 impl eframe::App for Zx82App {
@@ -133,6 +153,20 @@ impl eframe::App for Zx82App {
                 }
                 if ui.button("Reset").clicked() {
                     self.zx82.hard_reset();
+                    self.release_all_keys();
+                    self.status = Some("Reset to 48K ROM".to_string());
+                }
+                if ui.button("Load Z80").clicked() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("Z80 snapshot", &["z80", "Z80"])
+                        .pick_file()
+                    {
+                        self.release_all_keys();
+                        self.status = Some(match load_z80_path(&mut self.zx82, &path) {
+                            Ok(()) => format!("Loaded {}", path.display()),
+                            Err(error) => error,
+                        });
+                    }
                 }
                 ui.separator();
                 ui.label("Video:");
@@ -162,6 +196,9 @@ impl eframe::App for Zx82App {
                 "Keyboard active: letters and digits use the Spectrum matrix. \
                  Shift = Caps Shift, Ctrl/Alt = Symbol Shift, Backspace = Caps Shift+0.",
             );
+            if let Some(status) = &self.status {
+                ui.label(status);
+            }
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -357,6 +394,13 @@ fn framebuffer_image(framebuffer: &[u32]) -> ColorImage {
         rgba.extend_from_slice(&pixel.to_le_bytes());
     }
     ColorImage::from_rgba_unmultiplied([FRAMEBUFFER_WIDTH, FRAMEBUFFER_HEIGHT], &rgba)
+}
+
+fn load_z80_path(zx82: &mut Zx82, path: &Path) -> Result<(), String> {
+    let data = std::fs::read(path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    zx82.load_z80(&data)
+        .map_err(|error| format!("failed to load {}: {error}", path.display()))
 }
 
 fn save_screenshot(zx82: &Zx82, path: &Path) -> Result<(), Box<dyn std::error::Error>> {

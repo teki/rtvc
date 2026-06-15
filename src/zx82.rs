@@ -11,6 +11,8 @@ pub const FRAMEBUFFER_HEIGHT: usize = 296;
 
 const ROM_SIZE: usize = 0x4000;
 const RAM_SIZE: usize = 0xC000;
+const Z80_BASE_HEADER_SIZE: usize = 30;
+const Z80_PAGE_SIZE: usize = 0x4000;
 const ACTIVE_WIDTH: usize = 256;
 const ACTIVE_HEIGHT: usize = 192;
 const LEFT_BORDER: usize = (FRAMEBUFFER_WIDTH - ACTIVE_WIDTH) / 2;
@@ -78,6 +80,10 @@ impl Zx82Bus {
 
     pub fn set_ear_input(&mut self, high: bool) {
         self.ear_input = high;
+    }
+
+    pub fn set_border_color(&mut self, color: u8) {
+        self.ula_latch = (self.ula_latch & !0x07) | (color & 0x07);
     }
 
     pub fn set_key(&mut self, row: usize, column: usize, pressed: bool) {
@@ -192,6 +198,78 @@ impl Zx82 {
         self.bus.load_rom(data)
     }
 
+    pub fn load_z80(&mut self, data: &[u8]) -> Result<(), String> {
+        if data.len() < Z80_BASE_HEADER_SIZE {
+            return Err(format!(
+                "Z80 snapshot must contain at least {Z80_BASE_HEADER_SIZE} bytes, got {}",
+                data.len()
+            ));
+        }
+        if data[29] & 0x03 > 2 {
+            return Err(format!(
+                "invalid Z80 interrupt mode {} in snapshot",
+                data[29] & 0x03
+            ));
+        }
+
+        let base_pc = read_word(data, 6);
+        let (pc, ram) = if base_pc != 0 {
+            let flags = normalized_z80_flags(data[12]);
+            let memory = &data[Z80_BASE_HEADER_SIZE..];
+            let ram = if flags & 0x20 != 0 {
+                decompress_z80(memory, RAM_SIZE, true)?
+            } else {
+                if memory.len() != RAM_SIZE {
+                    return Err(format!(
+                        "uncompressed Z80 v1 memory must be {RAM_SIZE} bytes, got {}",
+                        memory.len()
+                    ));
+                }
+                memory.to_vec()
+            };
+            (base_pc, ram)
+        } else {
+            load_z80_extended_memory(data)?
+        };
+
+        let flags = normalized_z80_flags(data[12]);
+        self.bus.ram_mut().copy_from_slice(&ram);
+        self.restore_z80_registers(data, pc);
+        self.bus.reset();
+        self.bus.set_border_color((flags >> 1) & 0x07);
+        self.clock = 0;
+        self.next_frame_clock = FRAME_CLOCKS;
+        self.frame_counter = 0;
+        self.last_frame_interrupt_accepted = false;
+        self.frame_complete = false;
+        self.draw_full_frame();
+        Ok(())
+    }
+
+    fn restore_z80_registers(&mut self, data: &[u8], pc: u16) {
+        let state = &mut self.z80.state;
+        state.set_reg16(0, u16::from_be_bytes([data[0], data[1]]));
+        state.set_reg16(1, read_word(data, 2));
+        state.set_reg16(3, read_word(data, 4));
+        state.set_reg16(10, read_word(data, 8));
+        state.set_reg8(20, data[10]);
+
+        let flags = normalized_z80_flags(data[12]);
+        state.set_reg8(21, (data[11] & 0x7F) | ((flags & 0x01) << 7));
+        state.set_reg16(2, read_word(data, 13));
+        state.set_reg16(7, read_word(data, 15));
+        state.set_reg16(8, read_word(data, 17));
+        state.set_reg16(9, read_word(data, 19));
+        state.set_reg16(6, u16::from_be_bytes([data[21], data[22]]));
+        state.set_reg16(5, read_word(data, 23));
+        state.set_reg16(4, read_word(data, 25));
+        state.set_reg16(11, pc);
+        state.iff1 = (data[27] != 0) as u8;
+        state.iff2 = (data[28] != 0) as u8;
+        state.im = data[29] & 0x03;
+        state.halted = 0;
+    }
+
     pub fn vid_model(&self) -> VidModel {
         self.vid_model
     }
@@ -275,6 +353,151 @@ fn spectrum_color(color: u8, bright: bool) -> u32 {
     let g = if color & 0x04 != 0 { level } else { 0 };
     let b = if color & 0x01 != 0 { level } else { 0 };
     0xFF000000 | ((b as u32) << 16) | ((g as u32) << 8) | r as u32
+}
+
+fn read_word(data: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes([data[offset], data[offset + 1]])
+}
+
+fn normalized_z80_flags(flags: u8) -> u8 {
+    if flags == 0xFF { 1 } else { flags }
+}
+
+fn load_z80_extended_memory(data: &[u8]) -> Result<(u16, Vec<u8>), String> {
+    if data.len() < 32 {
+        return Err("Z80 v2/v3 snapshot is missing its extended header".to_string());
+    }
+    let header_len = read_word(data, 30) as usize;
+    if !matches!(header_len, 23 | 54 | 55) {
+        return Err(format!(
+            "unsupported Z80 extended header length {header_len}"
+        ));
+    }
+    let block_start = 32usize
+        .checked_add(header_len)
+        .ok_or_else(|| "Z80 extended header length overflow".to_string())?;
+    if data.len() < block_start {
+        return Err("truncated Z80 extended header".to_string());
+    }
+
+    let hardware_mode = data[34];
+    if hardware_mode != 0 {
+        return Err(format!(
+            "unsupported Z80 hardware mode {hardware_mode}; Zx82 accepts only plain 48K snapshots"
+        ));
+    }
+    if data.get(37).is_some_and(|flags| flags & 0x80 != 0) {
+        return Err("unsupported modified 16K Z80 hardware mode".to_string());
+    }
+
+    let mut ram = vec![0; RAM_SIZE];
+    let mut loaded_pages = 0u8;
+    let mut offset = block_start;
+    while offset < data.len() {
+        if data.len() - offset < 3 {
+            return Err("truncated Z80 memory block header".to_string());
+        }
+        let compressed_len = read_word(data, offset);
+        let page = data[offset + 2];
+        offset += 3;
+
+        let ram_offset = match page {
+            8 => 0,
+            4 => Z80_PAGE_SIZE,
+            5 => Z80_PAGE_SIZE * 2,
+            _ => {
+                return Err(format!("unsupported Z80 page {page} in plain 48K snapshot"));
+            }
+        };
+        let page_bit = match page {
+            8 => 1,
+            4 => 2,
+            5 => 4,
+            _ => unreachable!(),
+        };
+        if loaded_pages & page_bit != 0 {
+            return Err(format!("duplicate Z80 memory page {page}"));
+        }
+
+        let page_data = if compressed_len == 0xFFFF {
+            let end = offset
+                .checked_add(Z80_PAGE_SIZE)
+                .ok_or_else(|| "Z80 page length overflow".to_string())?;
+            if end > data.len() {
+                return Err(format!("truncated uncompressed Z80 page {page}"));
+            }
+            let decoded = data[offset..end].to_vec();
+            offset = end;
+            decoded
+        } else {
+            let compressed_len = compressed_len as usize;
+            let end = offset
+                .checked_add(compressed_len)
+                .ok_or_else(|| "Z80 page length overflow".to_string())?;
+            if end > data.len() {
+                return Err(format!("truncated compressed Z80 page {page}"));
+            }
+            let decoded = decompress_z80(&data[offset..end], Z80_PAGE_SIZE, false)?;
+            offset = end;
+            decoded
+        };
+
+        ram[ram_offset..ram_offset + Z80_PAGE_SIZE].copy_from_slice(&page_data);
+        loaded_pages |= page_bit;
+    }
+
+    if loaded_pages != 0x07 {
+        return Err(format!(
+            "incomplete 48K Z80 snapshot: expected pages 4, 5, and 8, mask is 0x{loaded_pages:02X}"
+        ));
+    }
+    Ok((read_word(data, 32), ram))
+}
+
+fn decompress_z80(data: &[u8], expected_len: usize, v1: bool) -> Result<Vec<u8>, String> {
+    let mut output = Vec::with_capacity(expected_len);
+    let mut offset = 0;
+
+    while output.len() < expected_len {
+        if v1
+            && data
+                .get(offset..offset + 4)
+                .is_some_and(|bytes| bytes == [0x00, 0xED, 0xED, 0x00])
+        {
+            break;
+        }
+        let Some(&byte) = data.get(offset) else {
+            return Err(format!(
+                "truncated Z80 compressed data at {} of {expected_len} output bytes",
+                output.len()
+            ));
+        };
+        if byte == 0xED && data.get(offset + 1) == Some(&0xED) {
+            let count = *data
+                .get(offset + 2)
+                .ok_or_else(|| "truncated Z80 run length".to_string())?;
+            let value = *data
+                .get(offset + 3)
+                .ok_or_else(|| "truncated Z80 run value".to_string())?;
+            let count = if count == 0 { 256 } else { count as usize };
+            if output.len() + count > expected_len {
+                return Err("Z80 compressed run exceeds expected memory size".to_string());
+            }
+            output.resize(output.len() + count, value);
+            offset += 4;
+        } else {
+            output.push(byte);
+            offset += 1;
+        }
+    }
+
+    if output.len() != expected_len {
+        return Err(format!(
+            "Z80 compressed data produced {} bytes, expected {expected_len}",
+            output.len()
+        ));
+    }
+    Ok(output)
 }
 
 #[cfg(test)]
@@ -375,5 +598,150 @@ mod tests {
         }
 
         assert_ne!(&zx82.bus.ram()[..0x1B00], before.as_slice());
+    }
+
+    #[test]
+    fn loads_uncompressed_z80_v1() {
+        let mut snapshot = z80_base_header(0x4567);
+        snapshot[0] = 0x12;
+        snapshot[1] = 0x34;
+        snapshot[2] = 0x78;
+        snapshot[3] = 0x56;
+        snapshot[10] = 0x9A;
+        snapshot[11] = 0x2B;
+        snapshot[12] = 0x0D;
+        snapshot[27] = 1;
+        snapshot[28] = 1;
+        snapshot[29] = 2;
+        let mut ram = vec![0; RAM_SIZE];
+        ram[0] = 0xA5;
+        ram[Z80_PAGE_SIZE] = 0xB6;
+        ram[Z80_PAGE_SIZE * 2] = 0xC7;
+        snapshot.extend_from_slice(&ram);
+
+        let mut zx82 = Zx82::new();
+        zx82.load_z80(&snapshot).unwrap();
+
+        assert_eq!(zx82.z80.state.get_reg16(0), 0x1234);
+        assert_eq!(zx82.z80.state.get_reg16(1), 0x5678);
+        assert_eq!(zx82.z80.state.get_reg16(11), 0x4567);
+        assert_eq!(zx82.z80.state.get_reg8(20), 0x9A);
+        assert_eq!(zx82.z80.state.get_reg8(21), 0xAB);
+        assert_eq!(zx82.z80.state.iff1, 1);
+        assert_eq!(zx82.z80.state.iff2, 1);
+        assert_eq!(zx82.z80.state.im, 2);
+        assert_eq!(zx82.bus.border_color(), 6);
+        assert_eq!(zx82.bus.ram()[0], 0xA5);
+        assert_eq!(zx82.bus.ram()[Z80_PAGE_SIZE], 0xB6);
+        assert_eq!(zx82.bus.ram()[Z80_PAGE_SIZE * 2], 0xC7);
+    }
+
+    #[test]
+    fn loads_compressed_z80_v1() {
+        let mut snapshot = z80_base_header(0x3456);
+        snapshot[12] = 0x20;
+        snapshot.extend(repeated_z80_runs(RAM_SIZE, 0xED));
+        snapshot.extend_from_slice(&[0x00, 0xED, 0xED, 0x00]);
+
+        let mut zx82 = Zx82::new();
+        zx82.load_z80(&snapshot).unwrap();
+
+        assert_eq!(zx82.z80.state.get_reg16(11), 0x3456);
+        assert!(zx82.bus.ram().iter().all(|&byte| byte == 0xED));
+    }
+
+    #[test]
+    fn loads_z80_v2_uncompressed_pages() {
+        let mut snapshot = z80_base_header(0);
+        snapshot.extend_from_slice(&23u16.to_le_bytes());
+        snapshot.extend_from_slice(&0x2468u16.to_le_bytes());
+        snapshot.push(0);
+        snapshot.resize(32 + 23, 0);
+        append_z80_page(&mut snapshot, 8, &[0x18; Z80_PAGE_SIZE], false);
+        append_z80_page(&mut snapshot, 4, &[0x24; Z80_PAGE_SIZE], false);
+        append_z80_page(&mut snapshot, 5, &[0x35; Z80_PAGE_SIZE], false);
+
+        let mut zx82 = Zx82::new();
+        zx82.load_z80(&snapshot).unwrap();
+
+        assert_eq!(zx82.z80.state.get_reg16(11), 0x2468);
+        assert_eq!(zx82.bus.ram()[0], 0x18);
+        assert_eq!(zx82.bus.ram()[Z80_PAGE_SIZE], 0x24);
+        assert_eq!(zx82.bus.ram()[Z80_PAGE_SIZE * 2], 0x35);
+    }
+
+    #[test]
+    fn loads_z80_v3_compressed_pages() {
+        let mut snapshot = z80_base_header(0);
+        snapshot.extend_from_slice(&54u16.to_le_bytes());
+        snapshot.extend_from_slice(&0x1357u16.to_le_bytes());
+        snapshot.push(0);
+        snapshot.resize(32 + 54, 0);
+        append_z80_page(&mut snapshot, 5, &[0x55; Z80_PAGE_SIZE], true);
+        append_z80_page(&mut snapshot, 8, &[0x88; Z80_PAGE_SIZE], true);
+        append_z80_page(&mut snapshot, 4, &[0x44; Z80_PAGE_SIZE], true);
+
+        let mut zx82 = Zx82::new();
+        zx82.load_z80(&snapshot).unwrap();
+
+        assert_eq!(zx82.z80.state.get_reg16(11), 0x1357);
+        assert_eq!(zx82.bus.ram()[0], 0x88);
+        assert_eq!(zx82.bus.ram()[Z80_PAGE_SIZE], 0x44);
+        assert_eq!(zx82.bus.ram()[Z80_PAGE_SIZE * 2], 0x55);
+    }
+
+    #[test]
+    fn rejects_non_48k_and_incomplete_z80_snapshots() {
+        let mut snapshot = z80_base_header(0);
+        snapshot.extend_from_slice(&23u16.to_le_bytes());
+        snapshot.extend_from_slice(&0x1234u16.to_le_bytes());
+        snapshot.push(3);
+        snapshot.resize(32 + 23, 0);
+
+        let mut zx82 = Zx82::new();
+        assert!(zx82.load_z80(&snapshot).is_err());
+
+        snapshot[34] = 0;
+        append_z80_page(&mut snapshot, 8, &[0; Z80_PAGE_SIZE], false);
+        assert!(zx82.load_z80(&snapshot).is_err());
+    }
+
+    fn write_word(data: &mut [u8], offset: usize, value: u16) {
+        data[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn z80_base_header(pc: u16) -> Vec<u8> {
+        let mut header = vec![0; Z80_BASE_HEADER_SIZE];
+        write_word(&mut header, 6, pc);
+        header
+    }
+
+    fn repeated_z80_runs(length: usize, value: u8) -> Vec<u8> {
+        let mut encoded = Vec::new();
+        let mut remaining = length;
+        while remaining > 0 {
+            let count = remaining.min(256);
+            encoded.extend_from_slice(&[
+                0xED,
+                0xED,
+                if count == 256 { 0 } else { count as u8 },
+                value,
+            ]);
+            remaining -= count;
+        }
+        encoded
+    }
+
+    fn append_z80_page(snapshot: &mut Vec<u8>, page: u8, data: &[u8], compressed: bool) {
+        if compressed {
+            let encoded = repeated_z80_runs(data.len(), data[0]);
+            snapshot.extend_from_slice(&(encoded.len() as u16).to_le_bytes());
+            snapshot.push(page);
+            snapshot.extend_from_slice(&encoded);
+        } else {
+            snapshot.extend_from_slice(&0xFFFFu16.to_le_bytes());
+            snapshot.push(page);
+            snapshot.extend_from_slice(data);
+        }
     }
 }

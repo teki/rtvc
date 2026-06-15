@@ -103,7 +103,9 @@ draws a 352 x 296 framebuffer from bitmap and attribute memory. The standalone
 runner maps host keys onto the eight-by-five Spectrum matrix, including
 Spectrum shift chords for editing, arrows, and common punctuation. Both
 `VidModel` values are retained, but Zx82 currently draws a completed frame for
-either selection.
+either selection. The runner restores plain 48K `.z80` snapshots in version 1,
+2, or 3 form, including compressed memory blocks. Expanded-machine and
+peripheral-dependent Z80 snapshots are rejected.
 
 ## Video Emulation
 

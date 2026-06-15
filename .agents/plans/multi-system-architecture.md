@@ -268,8 +268,8 @@ pub fn detect_snapshot(bytes: &[u8]) -> Option<MachineConfig>;
 ```
 
 Preserve TVC snapshot version 2 and `.rtvcsnap(.zip)` behavior. Zx82 and Cpc
-may initially use project-owned deterministic snapshots even if import support
-for historical `.sna` or `.z80` formats is added separately.
+may initially use project-owned deterministic snapshots; historical `.z80`
+import support remains machine-specific.
 
 ## UI And Workspace
 
