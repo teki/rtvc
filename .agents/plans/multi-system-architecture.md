@@ -5,8 +5,8 @@
 Restructure `rtvc` so the application can run three Z80 systems:
 
 - Videoton TV Computer;
-- Zx82 (ZX Spectrum);
-- Amstrad CPC.
+- Zx82 (ZX Spectrum 48K);
+- Cpc (Amstrad CPC 464).
 
 The purpose is to provide agent-friendly source and target emulators for game
 conversion work. The architecture only needs to support these systems cleanly.
@@ -43,9 +43,11 @@ Keep the design deliberately closed and explicit:
    automation, or conversion workflow.
 6. Machine-specific UI is allowed to use a small `match` on the active system.
    Three clear branches are preferable to a descriptor framework.
-7. Start with one useful Zx82 model and one useful Amstrad CPC model.
-   Add further variants only when a conversion requires them.
-8. Existing TVC snapshots and WASM APIs remain compatible during extraction.
+7. Zx82 initially means Spectrum 48K only.
+8. Cpc initially means CPC 464 only.
+9. Zx82 initially loads deterministic injected state; Cpc initially supports
+   tape media only.
+10. Existing TVC snapshots and WASM APIs remain compatible during extraction.
 
 ## Non-Goals
 
@@ -57,6 +59,9 @@ Keep the design deliberately closed and explicit:
 - A universal media-slot abstraction covering hypothetical systems.
 - A universal snapshot format shared by TVC, Zx82, and CPC.
 - Implementing every historical model before the first conversion needs it.
+- Zx82 or Cpc disk-drive emulation in the initial implementation.
+- Raw ROM-bank mapping or bank-aware debugging for Zx82 and Cpc in the initial
+  implementation.
 
 ## Naming And File Layout
 
@@ -199,45 +204,40 @@ Required shared operations:
 
 - read Z80 registers, flags, interrupt state, halt state, and cycle count;
 - mapped CPU-memory read and write;
-- named raw-bank read and write where the machine exposes banks;
 - disassemble and assemble Z80 code;
-- add, remove, enable, disable, and list bank-aware breakpoints;
+- add, remove, enable, disable, and list mapped-address breakpoints;
 - step one or many instructions;
 - continue, pause, reset, and run to interrupt;
 - report structured breakpoint and trace events;
 - send physical-key and text input;
 - save/load snapshots and screenshots.
 
-Use a small bank-aware address:
+Use a simple mapped CPU address initially:
 
 ```rust
 pub struct DebugAddress {
-    pub space: DebugSpace,
     pub address: u16,
-}
-
-pub enum DebugSpace {
-    Cpu,
-    Bank(String),
 }
 ```
 
 Each machine supplies:
 
-- available bank names and sizes;
 - mapped-memory access;
-- raw-bank access;
-- current mapping summary for display;
+- an optional current mapping summary where already useful;
 - optional symbols and trace landmarks;
 - optional I/O log entries.
 
-TVC BASIC symbols remain TVC-specific. Zx82 and CPC symbol maps can be
-added when useful for a conversion.
+TVC may retain its existing raw RAM/video/ROM views as a TVC-only debugger
+extension. Zx82 and Cpc initially expose only the currently mapped 64K CPU
+address space. Add raw ROM/RAM banks or bank-qualified addresses later only
+when a conversion demonstrates a need.
+
+TVC BASIC symbols remain TVC-specific. Zx82 and Cpc symbol maps can be added
+when useful for a conversion.
 
 Both [debug_ui.rs](../../src/debug_ui.rs) and
 [debugger.rs](../../src/debugger.rs) call this shared debugger API. Preserve
-existing TCP command names where possible. Extend addresses with an optional
-`space` field while treating omitted `space` as mapped CPU memory.
+existing TCP command names and mapped-memory address behavior where possible.
 
 The protocol should favor deterministic, structured responses because it is an
 agent interface, not merely an interactive monitor.
@@ -251,8 +251,11 @@ Keep media handling simple:
 - The shared application owns file dialogs, filesystem reads, uploads,
   downloads, recents, and zip extraction where enabled.
 - TVC-specific Play, Stop, and Inject actions remain explicit TVC operations.
-- Zx82 and CPC add only the media actions required by the first conversion
-  targets.
+- Zx82 initially supports debugger/project-state injection. A later limited
+  instant loader may consume TAP or TZX standard-speed blocks through verified
+  Spectrum ROM-loader semantics; general tape waveform playback is deferred.
+- Cpc supports tape load/play only in the initial implementation.
+- Zx82 and Cpc disk support is deferred.
 - Gamebase remains TVC-only.
 
 Each machine owns its snapshot contents and validation. The shared application
@@ -264,7 +267,7 @@ Snapshot selection can use a small probe:
 pub fn detect_snapshot(bytes: &[u8]) -> Option<MachineConfig>;
 ```
 
-Preserve TVC snapshot version 2 and `.rtvcsnap(.zip)` behavior. Zx82 and CPC
+Preserve TVC snapshot version 2 and `.rtvcsnap(.zip)` behavior. Zx82 and Cpc
 may initially use project-owned deterministic snapshots even if import support
 for historical `.sna` or `.z80` formats is added separately.
 
@@ -282,8 +285,8 @@ Keep common UI limited to:
 Use explicit system branches for machine-specific menus:
 
 - TVC: fast boot, video model, tape, disk, Gamebase, ROM symbols, IO log;
-- Zx82: only controls needed by the implemented model and conversion flow;
-- CPC: only controls needed by the implemented model and conversion flow.
+- Zx82: Spectrum 48K state injection and optional standard-block instant load;
+- Cpc: CPC 464 tape controls needed by the conversion flow.
 
 The workspace may keep a fixed common set of debugger panes. Unsupported
 content can show a concise unavailable message or hide the corresponding menu
@@ -357,10 +360,12 @@ Exit gate:
 
 - Add `debug_core.rs`.
 - Move common breakpoint and event ownership out of the dock UI.
-- Adapt TVC mapped memory, raw banks, MMU summary, symbols, IO log, stepping,
-  and run-to-interrupt to the shared API.
+- Adapt TVC mapped memory, MMU summary, symbols, IO log, stepping, and
+  run-to-interrupt to the shared API.
+- Keep TVC raw-bank views as an optional TVC extension rather than a
+  requirement for every machine.
 - Migrate dock and TCP debuggers.
-- Add mapped-memory write and bank-aware breakpoint support needed by
+- Add mapped-memory write and mapped-address breakpoint support needed by
   conversion agents.
 - Keep the protocol backward-compatible for existing TVC scripts.
 
@@ -373,15 +378,19 @@ Exit gate:
 
 ### Phase 4: Add Zx82
 
-- Implement one ZX Spectrum model under `Zx82`, useful for the first
-  source-game conversion,
-  preferably the 48K model unless the selected game requires another.
-- Add Zx82 memory, ULA/video, keyboard, interrupts, and required media or
-  snapshot loading.
+- Implement the ZX Spectrum 48K model under `Zx82`.
+- Use the scoped hardware and implementation boundary in
+  [info/zx82.md](../../info/zx82.md).
+- Add 48K memory, ULA/video, keyboard, interrupts, mapped memory/state
+  injection, and deterministic project snapshots.
 - Reuse the Z80 core and shared debugger.
-- Expose Zx82 RAM/ROM banks and mapping through the debug API.
-- Validate deterministic frame stepping and snapshot round trips before adding
-  optional sound or tape accuracy.
+- Expose only mapped CPU memory through the initial debug API.
+- Defer contention, general tape waveform playback, raw ROM/RAM bank views,
+  disk support, and additional Spectrum models.
+- Optionally add standard ROM-loader acceleration for TAP and TZX ID `0x10`
+  blocks after the injected-state workflow is stable.
+- Validate deterministic frame stepping, memory injection, and snapshot round
+  trips before adding optional instant loading or sound accuracy.
 
 Exit gate:
 
@@ -389,28 +398,29 @@ Exit gate:
   breakpoints, step code, send input, and capture frames through the same TCP
   interface used for TVC.
 
-### Phase 5: Add Amstrad CPC
+### Phase 5: Add Cpc
 
-- Implement the CPC model required by the first conversion target rather than
-  all CPC variants.
-- Add CPC memory banking, Gate Array/video, CRTC integration, keyboard,
-  interrupts, and required disk/tape/snapshot support.
+- Implement the Amstrad CPC 464 model under `Cpc`.
+- Add CPC 464 memory, Gate Array/video, CRTC integration, keyboard, interrupts,
+  tape loading/playback, and deterministic project snapshots.
 - Reuse the Z80 core, shared debugger, and existing MC6845 knowledge where the
   hardware behavior actually overlaps; do not force TVC video code into a
   shared abstraction.
-- Expose CPC banks and mapping through the debug API.
+- Expose only mapped CPU memory through the initial debug API.
+- Defer raw ROM/RAM bank views, disk support, and additional CPC models.
 
 Exit gate:
 
-- an agent can perform the same deterministic inspect/modify/step/input/frame
-  workflow on CPC, Zx82, and TVC.
+- an agent can perform the same deterministic
+  inspect/modify/step/input/frame workflow on Cpc, Zx82, and TVC, with
+  machine-appropriate tape or state-loading operations.
 
 ### Phase 6: Cleanup And Documentation
 
 - Remove temporary TVC compatibility accessors from common paths.
 - Keep explicit system-specific UI branches small and local.
 - Update [rtvc.md](../../info/rtvc.md), [tvc.md](../../info/tvc.md),
-  [README.md](../../README.md), and
+  [zx82.md](../../info/zx82.md), [README.md](../../README.md), and
   [development/SKILL.md](../skills/development/SKILL.md).
 - Add source-system build and debugger examples for conversion agents.
 - Review naming after all three systems exist; only introduce a new shared
@@ -438,20 +448,20 @@ Add per-system tests for:
 - deterministic instruction and frame stepping;
 - snapshot round trips;
 - framebuffer dimensions and stable output;
-- mapped and raw memory access;
+- mapped memory access;
 - breakpoint stop addresses;
 - keyboard/input release;
 - machine-specific interrupt timing used by games;
-- required media or imported snapshot fixtures.
+- media injection, tape where supported, and project snapshot fixtures.
 
 ## Completion Criteria
 
-- `Emu` owns a private `Machine` with explicit TVC, Zx82, and CPC variants.
+- `Emu` owns a private `Machine` with explicit TVC, Zx82, and Cpc variants.
 - TVC-specific modules and types have clear `tvc_` names.
 - Shared scheduling, input, screenshots, snapshots, and debugger code contain
   no TVC hardware assumptions.
 - All three systems use the same structured agent/debugger operations.
-- An agent can load a source-game state on Zx82 or CPC, inspect and modify
+- An agent can load a source-game state on Zx82 or Cpc, inspect and modify
   it deterministically, and perform the equivalent workflow on TVC.
 - Existing TVC behavior, snapshots, native/full-web UI, lightweight WASM API,
   and performance remain intact.

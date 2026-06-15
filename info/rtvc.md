@@ -32,7 +32,8 @@ and full-web frontends.
 | [src/bus.rs](../src/bus.rs) | CPU bus trait and flat test bus |
 | [src/mmu.rs](../src/mmu.rs) | TVC bank switching and ROM placement |
 | [src/vid.rs](../src/vid.rs) | CRTC state, TVC pixel decoding, renderers |
-| [src/tvc.rs](../src/tvc.rs) | machine bus, timing, interrupts, devices |
+| [src/tvc.rs](../src/tvc.rs) | TVC machine bus, timing, interrupts, devices |
+| [src/zx82.rs](../src/zx82.rs) | initial Spectrum 48K memory, ULA, frame timing, and full-frame renderer |
 | [src/key.rs](../src/key.rs) | keyboard matrix and host-key adaptation |
 | [src/sound.rs](../src/sound.rs) | sound divider, timer, DAC, PCM generation |
 | [src/cas.rs](../src/cas.rs) | CAS-to-pulse-interval conversion |
@@ -48,6 +49,7 @@ and full-web frontends.
 | [src/snapshot.rs](../src/snapshot.rs) | generic chunk reader/writer |
 | [src/tvc_snapshot.rs](../src/tvc_snapshot.rs) | TVC snapshot serialization |
 | [src/wasm.rs](../src/wasm.rs) | lightweight and full-web bindings |
+| [src/zx82_main.rs](../src/zx82_main.rs) | experimental native/headless Zx82 runner |
 
 The CPU sees only the `CpuBus` interface. `FakeBus` supplies flat memory for CPU
 tests; `TvcBus` supplies the real TVC memory and I/O behavior. This keeps Z80
@@ -59,6 +61,7 @@ validation independent from machine emulation.
 | --- | --- | --- |
 | Native desktop | default `native` | egui/eframe, cpal audio, filesystem media, zip support, TCP debugger |
 | Native headless | default `native`, `--headless` CLI | machine loop and TCP debugger without GUI |
+| Experimental Zx82 | default `native`, `cargo run --bin zx82` | standalone Spectrum 48K boot runner; not yet part of the shared application |
 | Lightweight web | `wasm,web-vid-simple` | small wasm-bindgen API, JavaScript-owned canvas and audio |
 | Compatibility lightweight web | `wasm,web-vid-realistic` | same API; runtime video selection remains available |
 | Full web | `wasm-full` | complete egui UI, browser files, IndexedDB, AudioWorklet |
@@ -92,6 +95,15 @@ The native UI requests repaints continuously while running but generates TVC
 frames on a 50 Hz real-time gate. Faster host refreshes reuse the current
 texture. When emulation falls behind, the UI drops backlog rather than running
 multiple catch-up frames in one repaint.
+
+The initial `Zx82` core is deliberately separate from `Emu` while the shared
+machine boundary is extracted. It executes the Spectrum ROM against a fixed
+16 KiB ROM and 48 KiB RAM map, offers one interrupt every 69,888 T-states, and
+draws a 352 x 296 framebuffer from bitmap and attribute memory. The standalone
+runner maps host keys onto the eight-by-five Spectrum matrix, including
+Spectrum shift chords for editing, arrows, and common punctuation. Both
+`VidModel` values are retained, but Zx82 currently draws a completed frame for
+either selection.
 
 ## Video Emulation
 

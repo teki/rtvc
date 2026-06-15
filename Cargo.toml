@@ -58,6 +58,11 @@ path = "src/perf_test.rs"
 name = "cas2wav"
 path = "src/cas2wav.rs"
 
+[[bin]]
+name = "zx82"
+path = "src/zx82_main.rs"
+required-features = ["native"]
+
 [profile.release]
 lto = true
 codegen-units = 1

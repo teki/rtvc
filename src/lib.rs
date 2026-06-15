@@ -18,6 +18,7 @@ pub mod tvc;
 pub mod tvc_snapshot;
 pub mod vid;
 pub mod z80;
+pub mod zx82;
 
 #[cfg(any(feature = "native", feature = "wasm-full"))]
 pub mod app_state;

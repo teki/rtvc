@@ -67,6 +67,24 @@ This skill provides step-by-step instructions and references for compiling, exec
   - The `profiling` profile inherits release optimizations, keeps debug info, and disables release symbol stripping so samply can resolve Rust symbols.
   - Keep ROM files in `roms/` as for normal native runs.
 
+- **Run the experimental Zx82 core:**
+  ```bash
+  cargo run --bin zx82
+  ```
+  - Loads `roms/48.rom` as a 16 KiB ZX Spectrum 48K ROM.
+  - The standalone runner currently implements fixed 48K memory, ULA port
+    decode, frame interrupts, the Spectrum keyboard matrix, and full-frame
+    bitmap/attribute rendering.
+  - Both video-model selections remain visible, but Interleaved currently uses
+    the full-frame renderer as a fallback.
+  - Keyboard input follows the Spectrum layout. In BASIC keyword mode, press
+    `P` once for `PRINT`. Host Shift maps to Caps Shift; Ctrl or Alt maps to
+    Symbol Shift. Backspace maps to Caps Shift+0.
+  - Generate a boot screenshot without opening a window:
+    ```bash
+    cargo run --bin zx82 -- --headless --frames 100 --screenshot /tmp/zx82.png
+    ```
+
 - **Check the lightweight WASM library build:**
   ```bash
   rustup target add wasm32-unknown-unknown
