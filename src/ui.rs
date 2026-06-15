@@ -14,6 +14,7 @@ use crate::app_state::{AppState, AppStateFile};
 use crate::audio::NativeAudioSink;
 use crate::debug_ui::DebuggerUi;
 use crate::emu::{Emu, MachineType, ProgEntry};
+use crate::machine::System;
 use crate::vid::VidModel;
 use crate::workspace::{self, Workspace, WorkspaceMode, WorkspaceTab};
 use eframe::egui::{self, Color32, ColorImage, TextureHandle};
@@ -343,7 +344,7 @@ impl EmuApp {
     pub fn new(mut emu: Emu, app_state_file: AppStateFile, debugger: Option<DebuggerType>) -> Self {
         let machine_types = MachineType::all_types();
         let selected_machine = Self::selected_machine_index(&machine_types, emu.machine_type);
-        let (audio, audio_status) = match NativeAudioSink::new(emu.tvc.sound_sample_rate()) {
+        let (audio, audio_status) = match NativeAudioSink::new(emu.sound_sample_rate()) {
             Ok(sink) => (Some(sink), None),
             Err(err) => (None, Some(format!("Audio unavailable: {err}"))),
         };
@@ -407,43 +408,45 @@ impl EmuApp {
     }
 
     fn update_screen_texture(&mut self, ctx: &egui::Context) {
-        if !self.emu.tvc.frame_complete {
+        if !self.emu.frame_complete() {
             return;
         }
 
-        let size = [608usize, 288];
-        let image = framebuffer_image(&self.emu.tvc.framebuffer, size);
+        let frame = self.emu.framebuffer();
+        let size = [frame.width, frame.height];
+        let image = framebuffer_image(frame.pixels, size);
         if let Some(texture) = &mut self.screen_texture {
             texture.set(image, Default::default());
         } else {
-            self.screen_texture = Some(ctx.load_texture("tvc-screen", image, Default::default()));
+            self.screen_texture =
+                Some(ctx.load_texture("machine-screen", image, Default::default()));
         }
-        self.emu.tvc.frame_complete = false;
+        self.emu.clear_frame_complete();
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     fn handle_modifier(&mut self, new_shift: bool, new_ctrl: bool, new_alt: bool) {
         if new_shift != self.prev_shift {
             if new_shift {
-                self.emu.tvc.key_down(16);
+                self.emu.key_down(16);
             } else {
-                self.emu.tvc.key_up(16);
+                self.emu.key_up(16);
             }
             self.prev_shift = new_shift;
         }
         if new_ctrl != self.prev_ctrl {
             if new_ctrl {
-                self.emu.tvc.key_down(17);
+                self.emu.key_down(17);
             } else {
-                self.emu.tvc.key_up(17);
+                self.emu.key_up(17);
             }
             self.prev_ctrl = new_ctrl;
         }
         if new_alt != self.prev_alt {
             if new_alt {
-                self.emu.tvc.key_down(18);
+                self.emu.key_down(18);
             } else {
-                self.emu.tvc.key_up(18);
+                self.emu.key_up(18);
             }
             self.prev_alt = new_alt;
         }
@@ -494,7 +497,7 @@ impl EmuApp {
             let file_tx = self.file_tx.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let file = rfd::AsyncFileDialog::new()
-                    .add_filter("rtvc snapshot", &["rtvcsnap", "zip"])
+                    .add_filter("machine state", &["rtvcsnap", "zip", "z80"])
                     .pick_file()
                     .await;
                 if let Some(file) = file {
@@ -508,7 +511,7 @@ impl EmuApp {
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(path) = rfd::FileDialog::new()
-                .add_filter("rtvc snapshot", &["rtvcsnap", "zip"])
+                .add_filter("machine state", &["rtvcsnap", "zip", "z80"])
                 .pick_file()
             {
                 match self.emu.load_snapshot_file(&path) {
@@ -1081,7 +1084,7 @@ impl EmuApp {
                 ui.close_menu();
             }
             ui.separator();
-            if ui.button("Load Snapshot...").clicked() {
+            if ui.button("Load State...").clicked() {
                 self.load_snapshot_dialog(ui.ctx().clone());
                 ui.close_menu();
             }
@@ -1127,39 +1130,72 @@ impl EmuApp {
                 ui.close_menu();
             }
 
-            let mut fast_boot = self.emu.tvc.fast_boot();
-            if ui.checkbox(&mut fast_boot, "Fast boot").changed() {
-                self.emu.tvc.set_fast_boot(fast_boot);
-                self.save_app_state();
+            if self.emu.system() == System::Tvc {
+                let mut fast_boot = self.emu.fast_boot();
+                if ui.checkbox(&mut fast_boot, "Fast boot").changed() {
+                    self.emu.set_fast_boot(fast_boot);
+                    self.save_app_state();
+                }
             }
 
             ui.separator();
-            ui.label("Type");
-            let machine_types = self.machine_types.clone();
-            for (index, machine_type) in machine_types.into_iter().enumerate() {
+            ui.label("System");
+            if ui
+                .selectable_label(self.emu.system() == System::Tvc, "TVC")
+                .clicked()
+            {
+                let vid_model = self.emu.vid_model();
+                if let Err(err) = self.emu.reload(self.emu.machine_type) {
+                    self.file_status = Some(err);
+                }
+                self.emu.set_vid_model(vid_model);
+                self.save_app_state();
+                ui.close_menu();
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
                 if ui
-                    .selectable_label(self.selected_machine == index, machine_type.label())
+                    .selectable_label(self.emu.system() == System::Zx82, "Zx82 (Spectrum 48K)")
                     .clicked()
                 {
-                    self.selected_machine = index;
-                    let vid_model = self.emu.tvc.vid_model();
-                    if let Err(err) = self.emu.reload(machine_type) {
+                    if let Err(err) = self.emu.switch_to_zx82() {
                         self.file_status = Some(err);
+                    } else {
+                        self.file_status = Some("Booted Zx82 from roms/48.rom".to_string());
                     }
-                    self.emu.tvc.set_vid_model(vid_model);
-                    self.save_app_state();
                     ui.close_menu();
+                }
+            }
+
+            if self.emu.system() == System::Tvc {
+                ui.separator();
+                ui.label("TVC type");
+                let machine_types = self.machine_types.clone();
+                for (index, machine_type) in machine_types.into_iter().enumerate() {
+                    if ui
+                        .selectable_label(self.selected_machine == index, machine_type.label())
+                        .clicked()
+                    {
+                        self.selected_machine = index;
+                        let vid_model = self.emu.vid_model();
+                        if let Err(err) = self.emu.reload(machine_type) {
+                            self.file_status = Some(err);
+                        }
+                        self.emu.set_vid_model(vid_model);
+                        self.save_app_state();
+                        ui.close_menu();
+                    }
                 }
             }
 
             ui.separator();
             ui.label("Video");
-            let vid_model = self.emu.tvc.vid_model();
+            let vid_model = self.emu.vid_model();
             if ui
                 .selectable_label(vid_model == VidModel::FastFrame, "Fast frame")
                 .clicked()
             {
-                self.emu.tvc.set_vid_model(VidModel::FastFrame);
+                self.emu.set_vid_model(VidModel::FastFrame);
                 self.save_app_state();
                 ui.close_menu();
             }
@@ -1167,7 +1203,7 @@ impl EmuApp {
                 .selectable_label(vid_model == VidModel::Interleaved, "Interleaved")
                 .clicked()
             {
-                self.emu.tvc.set_vid_model(VidModel::Interleaved);
+                self.emu.set_vid_model(VidModel::Interleaved);
                 self.save_app_state();
                 ui.close_menu();
             }
@@ -1176,6 +1212,10 @@ impl EmuApp {
 
     fn draw_tape_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Tape", |ui| {
+            if self.emu.system() != System::Tvc {
+                ui.label("Tape controls are not implemented for Zx82.");
+                return;
+            }
             if ui.button("Open Tape File...").clicked() {
                 self.load_tape_dialog(ui.ctx().clone());
                 ui.close_menu();
@@ -1272,7 +1312,7 @@ impl EmuApp {
                 ui.close_menu();
             }
 
-            if self.emu.tvc.bus.tape_play_active() {
+            if self.emu.tvc().is_some_and(|tvc| tvc.bus.tape_play_active()) {
                 if ui.button("Stop").clicked() {
                     self.emu.stop_tape();
                     self.save_app_state();
@@ -1291,6 +1331,10 @@ impl EmuApp {
 
     fn draw_disk_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Disk", |ui| {
+            if self.emu.system() != System::Tvc {
+                ui.label("Disk controls are not implemented for Zx82.");
+                return;
+            }
             if ui.button("Open Disk File...").clicked() {
                 self.load_disk_dialog(ui.ctx().clone());
                 ui.close_menu();
@@ -1446,13 +1490,14 @@ impl EmuApp {
                         self.save_app_state();
                     }
                     ui.separator();
-                    draw_tape_led(
-                        ui,
-                        self.emu.tvc.bus.tape_play_active(),
-                        self.emu.get_current_tape_level(),
-                    );
+                    let tape_active = self.emu.tvc().is_some_and(|tvc| tvc.bus.tape_play_active());
+                    draw_tape_led(ui, tape_active, self.emu.get_current_tape_level());
                     ui.label(
-                        if let Some(percent) = self.emu.tvc.bus.tape_progress_percent() {
+                        if let Some(percent) = self
+                            .emu
+                            .tvc()
+                            .and_then(|tvc| tvc.bus.tape_progress_percent())
+                        {
                             format!("Tape active ({percent}%)")
                         } else {
                             "Tape idle".to_string()
@@ -1477,12 +1522,17 @@ impl EmuApp {
                     ui.separator();
                     ui.label(format!("FPS: {}", self.fps));
                     ui.separator();
+                    let machine_label = if self.emu.system() == System::Tvc {
+                        self.emu.machine_type.label()
+                    } else {
+                        self.emu.system_label().to_string()
+                    };
                     ui.label(format!(
                         "Machine: {}",
                         if self.emu.roms_loaded {
-                            self.emu.machine_type.label()
+                            machine_label
                         } else {
-                            format!("{} (ROMs missing)", self.emu.machine_type.label())
+                            format!("{machine_label} (ROMs missing)")
                         }
                     ));
                     if let Some(status) = &self.audio_status {
@@ -1500,8 +1550,8 @@ impl EmuApp {
     fn current_app_state(&self) -> AppState {
         AppState {
             machine_type: Some(self.emu.machine_type),
-            vid_model: Some(self.emu.tvc.vid_model()),
-            fast_boot: self.emu.tvc.fast_boot(),
+            vid_model: Some(self.emu.vid_model()),
+            fast_boot: self.emu.fast_boot(),
             tape_file_name: self.emu.loaded_tape_file_name.clone(),
             tape_loaded: self.emu.loaded_tape_file_name.is_some(),
             disk_file_name: self.emu.loaded_disk_file_name.clone(),
@@ -1524,9 +1574,9 @@ impl EmuApp {
         }
     }
 
-    fn release_tvc_keys(&mut self) {
+    fn release_machine_keys(&mut self) {
         self.pressed_keys.clear();
-        self.emu.tvc.focus_change(false);
+        self.emu.focus_change(false);
         self.prev_shift = false;
         self.prev_ctrl = false;
         self.prev_alt = false;
@@ -1534,7 +1584,7 @@ impl EmuApp {
 
     fn release_screen_capture(&mut self) {
         self.screen_captured = false;
-        self.release_tvc_keys();
+        self.release_machine_keys();
     }
 
     fn draw_workspace(&mut self, ctx: &egui::Context) {
@@ -1549,7 +1599,7 @@ impl EmuApp {
                 workspace.show(ui, screen_texture, emu, debugger_ui, screen_captured);
             });
             if was_captured && !self.screen_captured {
-                self.release_tvc_keys();
+                self.release_machine_keys();
             }
             if ctx.input(|input| input.pointer.any_released()) {
                 self.workspace.mark_layout_changed();
@@ -1622,29 +1672,29 @@ impl EmuApp {
                         self.release_screen_capture();
                         continue;
                     }
-                    if !self.workspace.accepts_tvc_input(self.screen_captured) {
+                    if !self.workspace.accepts_machine_input(self.screen_captured) {
                         continue;
                     }
                     let first_press = code == 0 || self.pressed_keys.insert(code);
                     if code != 0 && first_press {
-                        self.emu.tvc.key_down(code);
+                        self.emu.key_down(code);
                     }
                     if first_press {
                         for ch in wasm_event_text(&event).chars() {
-                            self.emu.tvc.key_press(ch);
+                            self.emu.key_press(ch);
                         }
                     }
                 }
                 "up" => {
                     let code = wasm_event_code(&event);
                     if code != 0 && self.pressed_keys.remove(&code) {
-                        self.emu.tvc.key_up(code);
+                        self.emu.key_up(code);
                     }
                 }
                 "text" => {
-                    if self.workspace.accepts_tvc_input(self.screen_captured) {
+                    if self.workspace.accepts_machine_input(self.screen_captured) {
                         for ch in wasm_event_text(&event).chars() {
-                            self.emu.tvc.key_press(ch);
+                            self.emu.key_press(ch);
                         }
                     }
                 }
@@ -1947,7 +1997,7 @@ impl eframe::App for EmuApp {
         });
         if user_interacted {
             if self.audio.is_none() {
-                match NativeAudioSink::new(self.emu.tvc.sound_sample_rate()) {
+                match NativeAudioSink::new(self.emu.sound_sample_rate()) {
                     Ok(sink) => {
                         self.audio = Some(sink);
                         self.audio_status = None;
@@ -2004,6 +2054,17 @@ impl eframe::App for EmuApp {
                     }
                 }
                 PendingFile::Snapshot { name, bytes } => {
+                    if name.to_ascii_lowercase().ends_with(".z80") {
+                        match self.emu.load_z80_bytes(&bytes) {
+                            Ok(()) => {
+                                self.file_status = Some(format!("Loaded Zx82 state: {name}"));
+                            }
+                            Err(err) => {
+                                self.file_status = Some(format!("Z80 load failed: {err}"));
+                            }
+                        }
+                        continue;
+                    }
                     let mut data = bytes;
                     if crate::emu::is_zip_data(&data) {
                         match crate::emu::unzip_snapshot(&data) {
@@ -2071,7 +2132,7 @@ impl eframe::App for EmuApp {
         }
 
         #[cfg(not(target_arch = "wasm32"))]
-        if self.workspace.accepts_tvc_input(self.screen_captured) {
+        if self.workspace.accepts_machine_input(self.screen_captured) {
             ctx.input(|i| {
                 let modifiers = i.modifiers;
                 self.handle_modifier(modifiers.shift, modifiers.ctrl, modifiers.alt);
@@ -2087,7 +2148,7 @@ impl eframe::App for EmuApp {
                             let key = physical_key.unwrap_or(*key);
                             if let Some(code) = egui_key_to_js_code(key) {
                                 if self.pressed_keys.insert(code) {
-                                    self.emu.tvc.key_down(code);
+                                    self.emu.key_down(code);
                                 }
                             }
                         }
@@ -2100,12 +2161,12 @@ impl eframe::App for EmuApp {
                             let key = physical_key.unwrap_or(*key);
                             if let Some(code) = egui_key_to_js_code(key) {
                                 self.pressed_keys.remove(&code);
-                                self.emu.tvc.key_up(code);
+                                self.emu.key_up(code);
                             }
                         }
                         egui::Event::Text(text) => {
                             for ch in text.chars() {
-                                self.emu.tvc.key_press(ch);
+                                self.emu.key_press(ch);
                             }
                         }
                         _ => {}
@@ -2129,7 +2190,7 @@ impl eframe::App for EmuApp {
             }
             if hit_breakpoint {
                 self.emu.running = false;
-                let pc = self.emu.tvc.z80.state.r16[11];
+                let pc = self.emu.z80_state().r16[11];
                 self.debugger_ui.record_breakpoint_hit(pc, &self.emu);
                 #[cfg(all(feature = "native", not(target_arch = "wasm32")))]
                 if let Some(ref dbg) = self.debugger {
@@ -2172,7 +2233,7 @@ impl eframe::App for EmuApp {
 
 impl EmuApp {
     fn push_audio_samples(&mut self) {
-        let samples = self.emu.tvc.take_audio_samples();
+        let samples = self.emu.take_audio_samples();
         if let Some(audio) = &mut self.audio {
             audio.push_samples(&samples);
         }

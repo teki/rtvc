@@ -1,4 +1,3 @@
-use crate::bus::CpuBus;
 use crate::emu::Emu;
 use eframe::egui;
 use serde::Deserialize;
@@ -43,6 +42,8 @@ enum DebuggerCommand {
         len: usize,
         bank: Option<String>,
     },
+    #[serde(rename = "write_memory")]
+    WriteMemory { addr: u16, data: Vec<u8> },
     #[serde(rename = "disassemble")]
     Disassemble { addr: u16, len: usize },
     #[serde(rename = "assemble")]
@@ -292,13 +293,13 @@ pub fn run_headless(mut emu: Emu, port: u16) {
             let now = Instant::now();
             let elapsed = now.duration_since(last_frame_time);
             if elapsed >= Duration::from_millis(20) {
-                let hit_breakpoint = emu.tvc.run_for_a_frame();
+                let hit_breakpoint = emu.tick();
                 debugger.record_frame();
                 last_frame_time = now;
 
                 if hit_breakpoint {
                     emu.running = false;
-                    let pc = emu.tvc.z80.state.r16[11];
+                    let pc = emu.z80_state().r16[11];
                     println!("Hit breakpoint at PC = 0x{:04X}", pc);
                     let _ = debugger.event_tx.send(DebuggerEvent::BreakpointHit { pc });
                 }
@@ -317,20 +318,21 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
     let response_val = match parsed {
         Ok(cmd) => match cmd {
             DebuggerCommand::Status => {
-                let z80 = &emu.tvc.z80;
+                let state = emu.z80_state();
                 serde_json::json!({
                     "status": "ok",
+                    "system": emu.system_label(),
                     "running": emu.running,
-                    "pc": z80.state.r16[11],
-                    "sp": z80.state.r16[10],
-                    "af": z80.state.get_reg16(0),
-                    "bc": z80.state.get_reg16(1),
-                    "de": z80.state.get_reg16(2),
-                    "hl": z80.state.get_reg16(3),
-                    "ix": z80.state.get_reg16(8),
-                    "iy": z80.state.get_reg16(9),
-                    "halted": z80.state.halted != 0,
-                    "cycles": emu.tvc.clock,
+                    "pc": state.r16[11],
+                    "sp": state.r16[10],
+                    "af": state.get_reg16(0),
+                    "bc": state.get_reg16(1),
+                    "de": state.get_reg16(2),
+                    "hl": state.get_reg16(3),
+                    "ix": state.get_reg16(4),
+                    "iy": state.get_reg16(5),
+                    "halted": state.halted != 0,
+                    "cycles": emu.clock(),
                 })
             }
             DebuggerCommand::Stats => {
@@ -364,15 +366,15 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                 serde_json::json!({ "status": "ok" })
             }
             DebuggerCommand::BreakpointAdd { addr } => {
-                emu.tvc.set_breakpoint(addr);
+                emu.set_breakpoint(addr);
                 serde_json::json!({ "status": "ok" })
             }
             DebuggerCommand::BreakpointRemove { addr } => {
-                emu.tvc.clear_breakpoint(addr);
+                emu.clear_breakpoint(addr);
                 serde_json::json!({ "status": "ok" })
             }
             DebuggerCommand::BreakpointList => {
-                let list = emu.tvc.get_breakpoints();
+                let list = emu.get_breakpoints();
                 serde_json::json!({
                     "status": "ok",
                     "breakpoints": list
@@ -387,16 +389,20 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                         }
                     }
                 } else {
-                    let mut data = Vec::with_capacity(len);
-                    for offset in 0..len {
-                        let target_addr = addr.wrapping_add(offset as u16);
-                        data.push(emu.tvc.bus.r8(target_addr));
-                    }
+                    let data = emu.read_mapped_memory(addr, len);
                     serde_json::json!({ "status": "ok", "data": data })
                 }
             }
+            DebuggerCommand::WriteMemory { addr, data } => {
+                emu.write_mapped_memory(addr, &data);
+                serde_json::json!({
+                    "status": "ok",
+                    "addr": addr,
+                    "len": data.len()
+                })
+            }
             DebuggerCommand::Disassemble { addr, len } => {
-                let insts = crate::disasm::disassemble_block(&mut emu.tvc.bus, addr, len);
+                let insts = emu.disassemble(addr, len);
                 let mapped: Vec<_> = insts
                     .iter()
                     .map(|inst| {
@@ -458,7 +464,7 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
             } => match action.as_str() {
                 "down" => {
                     if let Some(c) = code {
-                        emu.tvc.key_down(c);
+                        emu.key_down(c);
                         serde_json::json!({ "status": "ok" })
                     } else {
                         serde_json::json!({ "status": "error", "message": "Missing key code for key_down" })
@@ -466,7 +472,7 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                 }
                 "up" => {
                     if let Some(c) = code {
-                        emu.tvc.key_up(c);
+                        emu.key_up(c);
                         serde_json::json!({ "status": "ok" })
                     } else {
                         serde_json::json!({ "status": "error", "message": "Missing key code for key_up" })
@@ -475,7 +481,7 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                 "press" => {
                     if let Some(ch_str) = character {
                         for ch in ch_str.chars() {
-                            emu.tvc.key_press(ch);
+                            emu.key_press(ch);
                         }
                         serde_json::json!({ "status": "ok" })
                     } else {
@@ -498,7 +504,8 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
 
 #[cfg(test)]
 mod tests {
-    use super::{FPS_WINDOW, FrameStats};
+    use super::{FPS_WINDOW, FrameStats, FrameStatsSnapshot, handle_command};
+    use crate::emu::{Emu, MachineType, RomVersion};
     use std::time::{Duration, Instant};
 
     #[test]
@@ -527,5 +534,43 @@ mod tests {
 
         assert_eq!(snapshot.frames, 1);
         assert!((snapshot.average_fps - 0.2).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn tcp_debugger_reads_and_writes_active_zx82_memory() {
+        let mut snapshot = vec![0; 30 + 0xC000];
+        snapshot[6..8].copy_from_slice(&0x4000u16.to_le_bytes());
+        let mut emu = Emu::new(MachineType {
+            is_plus: false,
+            rom_version: RomVersion::V1_2,
+            has_dos: false,
+        });
+        emu.load_z80_bytes(&snapshot).unwrap();
+
+        let response = handle_command(
+            &mut emu,
+            r#"{"cmd":"write_memory","addr":32768,"data":[62,42]}"#,
+            FrameStatsSnapshot::default(),
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&response).unwrap()["status"],
+            "ok"
+        );
+
+        let response = handle_command(
+            &mut emu,
+            r#"{"cmd":"read_memory","addr":32768,"len":2}"#,
+            FrameStatsSnapshot::default(),
+        );
+        let response = serde_json::from_str::<serde_json::Value>(&response).unwrap();
+        assert_eq!(response["data"], serde_json::json!([62, 42]));
+
+        let response = handle_command(
+            &mut emu,
+            r#"{"cmd":"disassemble","addr":32768,"len":2}"#,
+            FrameStatsSnapshot::default(),
+        );
+        let response = serde_json::from_str::<serde_json::Value>(&response).unwrap();
+        assert_eq!(response["instructions"][0]["text"], "LD A,2AH");
     }
 }

@@ -4,8 +4,14 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::cas::TapeBitstreamGenerator;
+use crate::disasm::DisassembledInstruction;
+use crate::machine::{DebugRunToIrqResult, FramebufferRef, Machine, System};
+use crate::mmu::RomBank;
 use crate::snapshot::{self, Reader, SnapshotError, Writer};
-use crate::tvc::Tvc;
+use crate::tvc::{ExecutionTrace, Tvc};
+use crate::vid::VidModel;
+use crate::z80::Z80State;
+use crate::zx82::Zx82;
 
 const GAMEBASE_BOOT_SNAPSHOT: &[u8] = include_bytes!("../data/snapshots/boot12dos.rtvcsnap.zip");
 
@@ -27,7 +33,7 @@ mod tests {
             has_dos: true,
         });
         emu.load_roms();
-        emu.tvc.z80.state.r16[11] = 0xBEEF;
+        emu.tvc_mut().unwrap().z80.state.r16[11] = 0xBEEF;
         let zipped = zip_snapshot(&emu.save_snapshot()).unwrap();
         assert!(zipped.len() < emu.save_snapshot().len());
 
@@ -39,7 +45,7 @@ mod tests {
         });
         restored.load_snapshot(&raw).unwrap();
         assert_eq!(restored.machine_type, emu.machine_type);
-        assert_eq!(restored.tvc.z80.state.r16[11], 0xBEEF);
+        assert_eq!(restored.tvc().unwrap().z80.state.r16[11], 0xBEEF);
     }
 
     #[test]
@@ -198,12 +204,57 @@ mod tests {
             Some("TVBALL.CAS")
         );
 
-        assert!(emu.tvc.bus.tape_motor_on());
+        assert!(emu.tvc().unwrap().bus.tape_motor_on());
         emu.play_tape();
-        assert!(emu.tvc.bus.tape_play_active());
-        let before = emu.tvc.bus.tape_elapsed_cycles();
-        emu.tvc.run_for_a_frame();
-        assert!(emu.tvc.bus.tape_elapsed_cycles() > before);
+        assert!(emu.tvc().unwrap().bus.tape_play_active());
+        let before = emu.tvc().unwrap().bus.tape_elapsed_cycles();
+        emu.tvc_mut().unwrap().run_for_a_frame();
+        assert!(emu.tvc().unwrap().bus.tape_elapsed_cycles() > before);
+    }
+
+    #[test]
+    fn z80_state_switches_system_and_exposes_mapped_debug_memory() {
+        let mut snapshot = vec![0; 30 + 0xC000];
+        snapshot[6..8].copy_from_slice(&0x1234u16.to_le_bytes());
+        snapshot[30 + 0x4000] = 0xA5;
+
+        let mut emu = Emu::new(MachineType {
+            is_plus: false,
+            rom_version: RomVersion::V1_2,
+            has_dos: false,
+        });
+        emu.load_z80_bytes(&snapshot).unwrap();
+
+        assert_eq!(emu.system(), System::Zx82);
+        assert_eq!(emu.z80_state().get_reg16(11), 0x1234);
+        assert_eq!(emu.read_mapped_memory(0x8000, 1), vec![0xA5]);
+
+        emu.write_mapped_memory(0x8000, &[0x5A]);
+        assert_eq!(emu.read_mapped_memory(0x8000, 1), vec![0x5A]);
+    }
+
+    #[test]
+    fn zx82_switch_and_state_load_preserve_running_state() {
+        let machine_type = MachineType {
+            is_plus: false,
+            rom_version: RomVersion::V1_2,
+            has_dos: false,
+        };
+        let mut snapshot = vec![0; 30 + 0xC000];
+        snapshot[6..8].copy_from_slice(&0x1234u16.to_le_bytes());
+
+        let mut running = Emu::new(machine_type);
+        running.switch_to_zx82().unwrap();
+        assert!(running.running);
+        running.load_z80_bytes(&snapshot).unwrap();
+        assert!(running.running);
+
+        let mut paused = Emu::new(machine_type);
+        paused.running = false;
+        paused.switch_to_zx82().unwrap();
+        assert!(!paused.running);
+        paused.load_z80_bytes(&snapshot).unwrap();
+        assert!(!paused.running);
     }
 }
 
@@ -349,7 +400,7 @@ pub struct ProgEntry {
 }
 
 pub struct Emu {
-    pub tvc: Tvc,
+    machine: Machine,
     pub running: bool,
     pub roms_loaded: bool,
     pub machine_type: MachineType,
@@ -373,12 +424,13 @@ pub struct Emu {
     loaded_tape_was_injected: bool,
     typed_text: VecDeque<char>,
     typed_key: Option<u32>,
+    tvc_fast_boot: bool,
 }
 
 impl Emu {
     pub fn new(machine_type: MachineType) -> Self {
         let mut emu = Emu {
-            tvc: Tvc::new(machine_type.is_plus),
+            machine: Machine::Tvc(Tvc::new(machine_type.is_plus)),
             running: true,
             roms_loaded: false,
             machine_type,
@@ -402,9 +454,190 @@ impl Emu {
             loaded_tape_was_injected: false,
             typed_text: VecDeque::new(),
             typed_key: None,
+            tvc_fast_boot: false,
         };
         emu.scan_progs();
         emu
+    }
+
+    pub fn system(&self) -> System {
+        self.machine.system()
+    }
+
+    pub fn system_label(&self) -> &'static str {
+        self.system().label()
+    }
+
+    pub fn tvc(&self) -> Option<&Tvc> {
+        self.machine.tvc()
+    }
+
+    pub fn tvc_mut(&mut self) -> Option<&mut Tvc> {
+        self.machine.tvc_mut()
+    }
+
+    pub fn z80_state(&self) -> &Z80State {
+        self.machine.z80_state()
+    }
+
+    pub fn clock(&self) -> u64 {
+        self.machine.clock()
+    }
+
+    pub fn framebuffer(&self) -> FramebufferRef<'_> {
+        self.machine.framebuffer()
+    }
+
+    pub fn frame_complete(&self) -> bool {
+        self.machine.frame_complete()
+    }
+
+    pub fn clear_frame_complete(&mut self) {
+        self.machine.clear_frame_complete();
+    }
+
+    pub fn vid_model(&self) -> VidModel {
+        self.machine.vid_model()
+    }
+
+    pub fn set_vid_model(&mut self, model: VidModel) {
+        self.machine.set_vid_model(model);
+    }
+
+    pub fn fast_boot(&self) -> bool {
+        self.tvc().map_or(self.tvc_fast_boot, Tvc::fast_boot)
+    }
+
+    pub fn set_fast_boot(&mut self, enabled: bool) {
+        self.tvc_fast_boot = enabled;
+        if let Some(tvc) = self.tvc_mut() {
+            tvc.set_fast_boot(enabled);
+        }
+    }
+
+    pub fn key_down(&mut self, code: u32) -> bool {
+        self.machine.key_down(code)
+    }
+
+    pub fn key_up(&mut self, code: u32) {
+        self.machine.key_up(code);
+    }
+
+    pub fn key_press(&mut self, ch: char) {
+        self.machine.key_press(ch);
+    }
+
+    pub fn focus_change(&mut self, has_focus: bool) {
+        self.machine.focus_change(has_focus);
+    }
+
+    pub fn sound_sample_rate(&self) -> u32 {
+        self.machine.sound_sample_rate()
+    }
+
+    pub fn take_audio_samples(&mut self) -> Vec<f32> {
+        self.machine.take_audio_samples()
+    }
+
+    pub fn set_breakpoint(&mut self, addr: u16) {
+        self.machine.set_breakpoint(addr);
+    }
+
+    pub fn clear_breakpoint(&mut self, addr: u16) {
+        self.machine.clear_breakpoint(addr);
+    }
+
+    pub fn clear_all_breakpoints(&mut self) {
+        self.machine.clear_all_breakpoints();
+    }
+
+    pub fn get_breakpoints(&self) -> Vec<u16> {
+        self.machine.get_breakpoints()
+    }
+
+    pub fn read_mapped_memory(&mut self, addr: u16, len: usize) -> Vec<u8> {
+        self.machine.read_mapped(addr, len)
+    }
+
+    pub fn write_mapped_memory(&mut self, addr: u16, bytes: &[u8]) {
+        self.machine.write_mapped(addr, bytes);
+    }
+
+    pub fn disassemble(&mut self, addr: u16, len: usize) -> Vec<DisassembledInstruction> {
+        self.machine.disassemble(addr, len)
+    }
+
+    pub fn mapping_summary(&self) -> Option<String> {
+        let tvc = self.tvc()?;
+        let map = tvc.bus.mmu.map_labels();
+        Some(format!(
+            "MMU {},{},{},{}  paging {:02X}",
+            map[0],
+            map[1],
+            map[2],
+            map[3],
+            tvc.bus.mmu.get_map_val()
+        ))
+    }
+
+    pub fn set_tracepoints(&mut self, tracepoints: &[(RomBank, u16)]) {
+        if let Some(tvc) = self.tvc_mut() {
+            tvc.set_tracepoints(tracepoints);
+        }
+    }
+
+    pub fn tracepoints_enabled(&self) -> bool {
+        self.tvc().is_some_and(Tvc::tracepoints_enabled)
+    }
+
+    pub fn take_trace_events(&mut self) -> Vec<ExecutionTrace> {
+        self.tvc_mut()
+            .map(Tvc::take_trace_events)
+            .unwrap_or_default()
+    }
+
+    pub fn log_entries(&self) -> &[String] {
+        self.tvc().map(Tvc::log_entries).unwrap_or(&[])
+    }
+
+    pub fn clear_log(&mut self) {
+        if let Some(tvc) = self.tvc_mut() {
+            tvc.clear_log();
+        }
+    }
+
+    pub fn load_z80_bytes(&mut self, data: &[u8]) -> Result<(), String> {
+        self.clear_typed_text();
+        let mut zx82 = Zx82::new_with_vid_model(self.vid_model());
+        load_zx82_rom(&mut zx82)?;
+        zx82.load_z80(data)?;
+        self.activate_zx82(zx82);
+        Ok(())
+    }
+
+    pub fn switch_to_zx82(&mut self) -> Result<(), String> {
+        self.clear_typed_text();
+        let mut zx82 = Zx82::new_with_vid_model(self.vid_model());
+        load_zx82_rom(&mut zx82)?;
+        self.activate_zx82(zx82);
+        Ok(())
+    }
+
+    fn activate_zx82(&mut self, zx82: Zx82) {
+        self.tvc_fast_boot = self.fast_boot();
+        self.machine = Machine::Zx82(zx82);
+        self.roms_loaded = true;
+        self.loaded_tape = None;
+        self.loaded_disk = None;
+        self.loaded_tape_file_name = None;
+        self.loaded_disk_file_name = None;
+    }
+
+    pub fn load_z80_file(&mut self, path: &Path) -> Result<(), String> {
+        let data = std::fs::read(path)
+            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+        self.load_z80_bytes(&data)
+            .map_err(|error| format!("failed to load {}: {error}", path.display()))
     }
 
     pub fn tick(&mut self) -> bool {
@@ -412,17 +645,17 @@ impl Emu {
             return false;
         }
         self.advance_typed_text();
-        self.tvc.run_for_a_frame()
+        self.machine.run_frame()
     }
 
     pub fn reset(&mut self) {
         self.clear_typed_text();
-        self.tvc.reset();
+        self.machine.reset();
     }
 
     fn clear_typed_text(&mut self) {
         if let Some(code) = self.typed_key.take() {
-            self.tvc.key_up(code);
+            self.machine.key_up(code);
         }
         self.typed_text.clear();
     }
@@ -434,22 +667,25 @@ impl Emu {
 
     fn advance_typed_text(&mut self) {
         if let Some(code) = self.typed_key.take() {
-            self.tvc.key_up(code);
+            self.machine.key_up(code);
             return;
         }
         let Some(ch) = self.typed_text.pop_front() else {
             return;
         };
         let code = ch as u32;
-        self.tvc.key_down(code);
+        self.machine.key_down(code);
         if ch != '\r' {
-            self.tvc.key_press(ch);
+            self.machine.key_press(ch);
         }
         self.typed_key = Some(code);
     }
 
     pub fn save_snapshot(&self) -> Vec<u8> {
-        let core_snapshot = self.tvc.save_snapshot();
+        let Some(tvc) = self.machine.tvc() else {
+            return Vec::new();
+        };
+        let core_snapshot = tvc.save_snapshot();
         let Ok(core_chunks) = snapshot::read_file(&core_snapshot) else {
             return core_snapshot;
         };
@@ -472,7 +708,7 @@ impl Emu {
 
     pub fn load_snapshot(&mut self, data: &[u8]) -> crate::snapshot::Result<()> {
         self.clear_typed_text();
-        let fast_boot = self.tvc.fast_boot();
+        let fast_boot = self.fast_boot();
         let snapshot_state = Self::read_emu_snapshot_state(data)?;
         #[cfg(target_arch = "wasm32")]
         let snapshot_disk = snapshot_state
@@ -486,18 +722,22 @@ impl Emu {
                     .cloned()
             });
         let machine_type = snapshot_state.machine_type.unwrap_or_else(|| {
-            MachineType::for_snapshot(
-                self.tvc.is_plus(),
-                self.tvc.has_hbf(),
-                self.machine_type.rom_version,
-            )
+            self.machine.tvc().map_or(self.machine_type, |tvc| {
+                MachineType::for_snapshot(
+                    tvc.is_plus(),
+                    tvc.has_hbf(),
+                    self.machine_type.rom_version,
+                )
+            })
         });
         self.machine_type = machine_type;
-        self.tvc = Tvc::new(machine_type.is_plus);
+        self.machine = Machine::Tvc(Tvc::new(machine_type.is_plus));
         self.roms_loaded = false;
         self.load_roms();
-        self.tvc.set_fast_boot(fast_boot);
-        self.tvc.load_snapshot(data)?;
+        let tvc = self.machine.tvc_mut().expect("new TVC machine");
+        tvc.set_fast_boot(fast_boot);
+        self.tvc_fast_boot = fast_boot;
+        tvc.load_snapshot(data)?;
         self.loaded_tape = None;
         self.loaded_disk = None;
         self.loaded_tape_file_name = None;
@@ -551,6 +791,12 @@ impl Emu {
     }
 
     pub fn save_snapshot_file(&self, path: &std::path::Path) -> std::io::Result<()> {
+        if self.system() != System::Tvc {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "project snapshots are not implemented for Zx82; use the original .z80 file",
+            ));
+        }
         let snapshot = self.save_snapshot();
         if is_zip_path(path) {
             std::fs::write(path, zip_snapshot(&snapshot)?)
@@ -563,6 +809,13 @@ impl Emu {
         &mut self,
         path: &std::path::Path,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        if path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("z80"))
+        {
+            return self.load_z80_file(path).map_err(Into::into);
+        }
         let mut data = std::fs::read(path)?;
         if is_zip_data(&data) {
             data = unzip_snapshot(&data)?;
@@ -578,18 +831,17 @@ impl Emu {
     pub fn debug_step(&mut self, count: u32) {
         self.running = false;
         for _ in 0..count {
-            self.tvc.debug_step_instruction();
+            self.machine.debug_step_instruction();
         }
     }
 
-    pub fn debug_run_to_interrupt(&mut self) -> crate::tvc::DebugRunToIrqResult {
+    pub fn debug_run_to_interrupt(&mut self) -> DebugRunToIrqResult {
         self.running = false;
-        self.tvc
-            .debug_run_to_interrupt(crate::tvc::DEBUG_RUN_TO_IRQ_MAX_CYCLES)
+        self.machine.debug_run_to_interrupt()
     }
 
     pub fn reload(&mut self, machine_type: MachineType) -> Result<(), String> {
-        let fast_boot = self.tvc.fast_boot();
+        let fast_boot = self.fast_boot();
         #[cfg(target_arch = "wasm32")]
         let loaded_disk = self.loaded_disk_wasm.clone();
         #[cfg(target_arch = "wasm32")]
@@ -598,8 +850,12 @@ impl Emu {
         let tape_was_injected = self.loaded_tape_was_injected;
 
         self.machine_type = machine_type;
-        self.tvc = Tvc::new(machine_type.is_plus);
-        self.tvc.set_fast_boot(fast_boot);
+        self.machine = Machine::Tvc(Tvc::new(machine_type.is_plus));
+        self.machine
+            .tvc_mut()
+            .expect("new TVC machine")
+            .set_fast_boot(fast_boot);
+        self.tvc_fast_boot = fast_boot;
         self.roms_loaded = false;
         self.load_roms();
 
@@ -713,7 +969,7 @@ impl Emu {
             ];
             for name in self.machine_type.rom_files() {
                 if let Some((_, data)) = roms.iter().find(|(n, _)| *n == name) {
-                    self.tvc.add_rom(name, data);
+                    self.tvc_mut().expect("TVC ROM loading").add_rom(name, data);
                 }
             }
             self.roms_loaded = true;
@@ -729,7 +985,9 @@ impl Emu {
             for name in self.machine_type.rom_files() {
                 match std::fs::read(roms_dir.join(name)) {
                     Ok(data) => {
-                        self.tvc.add_rom(name, &data);
+                        self.tvc_mut()
+                            .expect("TVC ROM loading")
+                            .add_rom(name, &data);
                         any_loaded = true;
                     }
                     Err(_) => {}
@@ -964,7 +1222,10 @@ impl Emu {
     pub fn play_tape_file_path(&mut self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         let (display_name, buf) = read_cas_data(path)?;
         let generator = TapeBitstreamGenerator::new(&buf, &display_name)?;
-        self.tvc.bus.play_tape(generator);
+        self.tvc_mut()
+            .ok_or("tape playback is available only on TVC")?
+            .bus
+            .play_tape(generator);
         self.loaded_tape = Some(display_name);
         let path_str = path.to_string_lossy().to_string();
         self.loaded_tape_file_name = Some(path_str.clone());
@@ -974,7 +1235,11 @@ impl Emu {
 
     pub fn inject_tape_file_path(&mut self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         let (display_name, buf) = read_cas_data(path)?;
-        if self.tvc.load_cas(&buf) {
+        if self
+            .tvc_mut()
+            .ok_or("tape injection is available only on TVC")?
+            .load_cas(&buf)
+        {
             self.loaded_tape = Some(format!("{} (Injected)", display_name));
             let path_str = path.to_string_lossy().to_string();
             self.loaded_tape_file_name = Some(path_str.clone());
@@ -987,7 +1252,9 @@ impl Emu {
 
     pub fn insert_disk_file_path(&mut self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         let (display_name, buf) = read_dsk_data(path)?;
-        self.tvc.load_disk(&display_name, &buf);
+        self.tvc_mut()
+            .ok_or("disk loading is available only on TVC")?
+            .load_disk(&display_name, &buf);
         self.loaded_disk = Some(display_name);
         let path_str = path.to_string_lossy().to_string();
         self.loaded_disk_file_name = Some(path_str.clone());
@@ -996,12 +1263,16 @@ impl Emu {
     }
 
     pub fn stop_tape(&mut self) {
-        self.tvc.bus.stop_tape();
+        if let Some(tvc) = self.tvc_mut() {
+            tvc.bus.stop_tape();
+        }
     }
 
     pub fn get_current_tape_level(&self) -> f32 {
-        if self.tvc.bus.tape_play_active() {
-            return self.tvc.bus.current_tape_level();
+        if let Some(tvc) = self.tvc()
+            && tvc.bus.tape_play_active()
+        {
+            return tvc.bus.current_tape_level();
         }
         0.5
     }
@@ -1023,26 +1294,27 @@ impl Emu {
     }
 
     pub fn get_screenshot_png(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        const SRC_W: usize = 608;
-        const SRC_H: usize = 288;
-        const OUT_W: usize = 768;
-        const OUT_H: usize = 576;
+        let frame = self.framebuffer();
+        let (out_w, out_h) = match self.system() {
+            System::Tvc => (768, 576),
+            System::Zx82 => (frame.width * 2, frame.height * 2),
+        };
 
         let mut buf = Vec::new();
         {
             let writer = std::io::Cursor::new(&mut buf);
-            let mut encoder = png::Encoder::new(writer, OUT_W as u32, OUT_H as u32);
+            let mut encoder = png::Encoder::new(writer, out_w as u32, out_h as u32);
             encoder.set_color(png::ColorType::Rgba);
             encoder.set_depth(png::BitDepth::Eight);
             let mut png_writer = encoder.write_header()?;
 
-            let mut pixels = vec![0; OUT_W * OUT_H * 4];
-            for y in 0..OUT_H {
-                let src_y = y * SRC_H / OUT_H;
-                for x in 0..OUT_W {
-                    let src_x = x * SRC_W / OUT_W;
-                    let rgba = self.tvc.framebuffer[src_y * SRC_W + src_x].to_ne_bytes();
-                    let offset = (y * OUT_W + x) * 4;
+            let mut pixels = vec![0; out_w * out_h * 4];
+            for y in 0..out_h {
+                let src_y = y * frame.height / out_h;
+                for x in 0..out_w {
+                    let src_x = x * frame.width / out_w;
+                    let rgba = frame.pixels[src_y * frame.width + src_x].to_ne_bytes();
+                    let offset = (y * out_w + x) * 4;
                     pixels[offset..offset + 4].copy_from_slice(&rgba);
                 }
             }
@@ -1065,7 +1337,10 @@ impl Emu {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (display_name, buf) = unpack_cas_bytes(name, bytes)?;
         let generator = TapeBitstreamGenerator::new(&buf, &display_name)?;
-        self.tvc.bus.play_tape(generator);
+        self.tvc_mut()
+            .ok_or("tape playback is available only on TVC")?
+            .bus
+            .play_tape(generator);
         self.loaded_tape = Some(display_name);
         self.loaded_tape_file_name = Some(name.to_string());
         #[cfg(target_arch = "wasm32")]
@@ -1087,7 +1362,11 @@ impl Emu {
         bytes: &[u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (display_name, buf) = unpack_cas_bytes(name, bytes)?;
-        if self.tvc.load_cas(&buf) {
+        if self
+            .tvc_mut()
+            .ok_or("tape injection is available only on TVC")?
+            .load_cas(&buf)
+        {
             self.loaded_tape = Some(format!("{} (Injected)", display_name));
             self.loaded_tape_file_name = Some(name.to_string());
             #[cfg(target_arch = "wasm32")]
@@ -1112,7 +1391,9 @@ impl Emu {
         bytes: &[u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (display_name, buf) = unpack_dsk_bytes(name, bytes)?;
-        self.tvc.load_disk(&display_name, &buf);
+        self.tvc_mut()
+            .ok_or("disk loading is available only on TVC")?
+            .load_disk(&display_name, &buf);
         self.loaded_disk = Some(display_name);
         self.loaded_disk_file_name = Some(name.to_string());
         #[cfg(target_arch = "wasm32")]
@@ -1203,8 +1484,18 @@ impl Emu {
     }
 
     pub fn read_raw_bank(&self, bank: &str, addr: usize, len: usize) -> Option<Vec<u8>> {
-        self.tvc.bus.mmu.read_raw_bank(bank, addr, len)
+        self.tvc()?.bus.mmu.read_raw_bank(bank, addr, len)
     }
+}
+
+fn load_zx82_rom(zx82: &mut Zx82) -> Result<(), String> {
+    #[cfg(target_arch = "wasm32")]
+    let rom = include_bytes!("../roms/48.rom").as_slice();
+    #[cfg(not(target_arch = "wasm32"))]
+    let rom = std::fs::read(data_dir("roms").join("48.rom"))
+        .map_err(|error| format!("failed to read ZX Spectrum ROM roms/48.rom: {error}"))?;
+
+    zx82.load_rom(&rom)
 }
 
 pub fn extract_game_archive_member(

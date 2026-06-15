@@ -33,21 +33,31 @@ This skill provides step-by-step instructions and references for compiling, exec
   cargo run --bin rtvc -- -d path/to/disk.dsk
   cargo run --bin rtvc -- -t path/to/tape.cas
   cargo run --bin rtvc -- -i path/to/tape.cas
+  cargo run --bin rtvc -- path/to/game.z80
   ```
   - Place ROM files (`TVC12_D3.64K`, `TVC12_D4.64K`, `TVC12_D7.64K`) in `roms/` for the TVC to boot.
-  - Use the Machine menu to run/pause, reset, select machine type, and select video model.
+  - Use the Machine menu to run/pause, reset, select TVC or Zx82, choose the
+    TVC profile, and select the video model.
   - Use View > Developer Workspace to enable docking. View > Panes > IO Log
     reopens or closes the log pane, and Reset Workspace restores Screen above
     IO Log.
-  - In Developer mode, click the Screen pane to route keyboard input to the TVC;
+  - In Developer mode, click the Screen pane to route keyboard input to the active machine;
     press Escape or click another UI area to release capture. Simple mode keeps
     the existing direct keyboard behavior.
   - Use View > Debugger Layout for the integrated CPU, disassembly, memory,
     breakpoint, ROM-symbol, event, screen, and IO-log arrangement. Individual
     debugger panes are available under View > Panes.
-  - Debugger addresses are hexadecimal. Disassembly follows PC by default;
-    Memory can read mapped CPU space or raw RAM/video/ROM banks. ROM annotations
-    and trace landmarks currently use the BASIC 1.2 symbol database.
+  - Debugger addresses are hexadecimal. Disassembly follows PC by default.
+    TVC and Zx82 expose mapped CPU memory; TVC additionally exposes raw
+    RAM/video/ROM banks, BASIC 1.2 symbols, trace landmarks, and IO logs.
+  - A `.z80` positional argument or **File > Load State** switches to Zx82 and
+    restores a plain Spectrum 48K state. TCP `read_memory`, `write_memory`,
+    disassembly, breakpoints, stepping, key input, and screenshots operate on
+    the active machine.
+    ```bash
+    cargo run --bin rtvc -- --headless --port 8080 path/to/game.z80
+    python3 scripts/rtvc_debug.py --port 8080
+    ```
   - Use the File menu to write/read `.rtvcsnap.zip` snapshots, load tape/disk files via open file dialog, and save the current framebuffer as a 4:3 PNG (`768x576`).
   - Use the Tape and Disk menus to load cassette and floppy media (either from local list or by browsing for any file). Selecting an entry immediately loads it.
   - Gamebase launches use the clean boot snapshot embedded in the app, force the TVC 1.2 VT-DOS machine, attach or inject the selected media, start emulation, and type `RUN` for CAS or `LOAD "*"` for DSK.

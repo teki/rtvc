@@ -10,6 +10,7 @@ pub mod fd1793;
 pub mod hbf;
 pub mod key;
 pub mod log;
+pub mod machine;
 pub mod mmu;
 pub mod snapshot;
 pub mod sound;

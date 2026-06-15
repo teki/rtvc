@@ -76,7 +76,7 @@ impl Workspace {
         self.mode == WorkspaceMode::Developer
     }
 
-    pub fn accepts_tvc_input(&self, screen_captured: bool) -> bool {
+    pub fn accepts_machine_input(&self, screen_captured: bool) -> bool {
         self.mode == WorkspaceMode::Simple || screen_captured
     }
 
@@ -358,15 +358,19 @@ pub fn draw_screen(
 }
 
 fn draw_io_log(ui: &mut egui::Ui, emu: &mut Emu) {
+    if emu.tvc().is_none() {
+        ui.label("IO logging is currently available only for TVC.");
+        return;
+    }
     ui.horizontal(|ui| {
         if ui.small_button("Clear").clicked() {
-            emu.tvc.clear_log();
+            emu.clear_log();
         }
     });
     egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
         .show(ui, |ui| {
-            for entry in emu.tvc.log_entries().iter().rev() {
+            for entry in emu.log_entries().iter().rev() {
                 ui.label(entry);
             }
         });
@@ -563,13 +567,13 @@ mod tests {
     }
 
     #[test]
-    fn tvc_input_requires_capture_only_in_developer_mode() {
+    fn machine_input_requires_capture_only_in_developer_mode() {
         let simple = Workspace::simple_default();
         let developer = Workspace::developer_default();
 
-        assert!(simple.accepts_tvc_input(false));
-        assert!(!developer.accepts_tvc_input(false));
-        assert!(developer.accepts_tvc_input(true));
+        assert!(simple.accepts_machine_input(false));
+        assert!(!developer.accepts_machine_input(false));
+        assert!(developer.accepts_machine_input(true));
     }
 
     #[cfg(not(target_arch = "wasm32"))]

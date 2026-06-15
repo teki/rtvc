@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use std::collections::{HashMap, HashSet};
+
 use crate::bus::CpuBus;
 use crate::vid::VidModel;
 use crate::z80::Z80;
@@ -17,6 +19,12 @@ const ACTIVE_WIDTH: usize = 256;
 const ACTIVE_HEIGHT: usize = 192;
 const LEFT_BORDER: usize = (FRAMEBUFFER_WIDTH - ACTIVE_WIDTH) / 2;
 const TOP_BORDER: usize = (FRAMEBUFFER_HEIGHT - ACTIVE_HEIGHT) / 2;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct MatrixKey {
+    row: usize,
+    column: usize,
+}
 
 pub struct Zx82Bus {
     rom: [u8; ROM_SIZE],
@@ -155,6 +163,10 @@ pub struct Zx82 {
     next_frame_clock: u64,
     frame_counter: u64,
     last_frame_interrupt_accepted: bool,
+    breakpoints: HashSet<u16>,
+    pressed_bindings: HashMap<u32, Vec<MatrixKey>>,
+    matrix_key_counts: [[u8; 5]; 8],
+    pending_key_release: Vec<MatrixKey>,
 }
 
 impl Zx82 {
@@ -173,6 +185,10 @@ impl Zx82 {
             next_frame_clock: FRAME_CLOCKS,
             frame_counter: 0,
             last_frame_interrupt_accepted: false,
+            breakpoints: HashSet::new(),
+            pressed_bindings: HashMap::new(),
+            matrix_key_counts: [[0; 5]; 8],
+            pending_key_release: Vec::new(),
         };
         machine.reset();
         machine
@@ -185,8 +201,9 @@ impl Zx82 {
         self.next_frame_clock = FRAME_CLOCKS;
         self.frame_counter = 0;
         self.last_frame_interrupt_accepted = false;
-        self.frame_complete = false;
+        self.release_all_keys();
         self.draw_full_frame();
+        self.frame_complete = true;
     }
 
     pub fn hard_reset(&mut self) {
@@ -241,8 +258,8 @@ impl Zx82 {
         self.next_frame_clock = FRAME_CLOCKS;
         self.frame_counter = 0;
         self.last_frame_interrupt_accepted = false;
-        self.frame_complete = false;
         self.draw_full_frame();
+        self.frame_complete = true;
         Ok(())
     }
 
@@ -290,21 +307,154 @@ impl Zx82 {
         self.last_frame_interrupt_accepted
     }
 
-    pub fn run_for_a_frame(&mut self) {
-        while self.clock < self.next_frame_clock {
-            self.clock += self.z80.step(&mut self.bus, 0) as u64;
+    pub fn set_breakpoint(&mut self, addr: u16) {
+        self.breakpoints.insert(addr);
+    }
+
+    pub fn clear_breakpoint(&mut self, addr: u16) {
+        self.breakpoints.remove(&addr);
+    }
+
+    pub fn clear_all_breakpoints(&mut self) {
+        self.breakpoints.clear();
+    }
+
+    pub fn get_breakpoints(&self) -> Vec<u16> {
+        let mut list: Vec<_> = self.breakpoints.iter().copied().collect();
+        list.sort_unstable();
+        list
+    }
+
+    pub fn debug_step_instruction(&mut self) -> u32 {
+        let elapsed = self.step_instruction();
+        self.release_pending_keys();
+        self.draw_full_frame();
+        self.frame_complete = true;
+        elapsed
+    }
+
+    pub fn debug_run_to_interrupt(&mut self, max_cycles: u32) -> (u32, bool) {
+        let mut elapsed = 0;
+        self.last_frame_interrupt_accepted = false;
+        while elapsed < max_cycles && !self.last_frame_interrupt_accepted {
+            elapsed = elapsed.saturating_add(self.step_instruction());
+        }
+        self.release_pending_keys();
+        self.draw_full_frame();
+        self.frame_complete = true;
+        (elapsed, self.last_frame_interrupt_accepted)
+    }
+
+    pub fn run_for_a_frame(&mut self) -> bool {
+        let frame_target = self.next_frame_clock;
+        let mut hit_breakpoint = false;
+        while self.clock < frame_target {
+            self.step_instruction();
+            if self.breakpoints.contains(&self.z80.state.r16[11]) {
+                hit_breakpoint = true;
+                break;
+            }
         }
 
+        self.release_pending_keys();
+        if hit_breakpoint {
+            self.draw_full_frame();
+            self.frame_complete = true;
+        }
+        hit_breakpoint
+    }
+
+    fn step_instruction(&mut self) -> u32 {
+        let cpu_cycles = self.z80.step(&mut self.bus, 0);
+        self.clock += cpu_cycles as u64;
+        cpu_cycles
+            + if self.clock >= self.next_frame_clock {
+                self.finish_frame()
+            } else {
+                0
+            }
+    }
+
+    fn finish_frame(&mut self) -> u32 {
         let irq_cycles = self.z80.irq(&mut self.bus);
         self.last_frame_interrupt_accepted = irq_cycles != 0;
         self.clock += irq_cycles as u64;
         self.next_frame_clock += FRAME_CLOCKS;
         self.frame_counter += 1;
-
         // Interleaved timing remains a selectable model, but initially shares
         // the complete-frame renderer until raster effects are implemented.
         self.draw_full_frame();
         self.frame_complete = true;
+        irq_cycles
+    }
+
+    pub fn key_down(&mut self, code: u32) -> bool {
+        if self.pressed_bindings.contains_key(&code) {
+            return true;
+        }
+        let Some(binding) = binding_for_code(code) else {
+            return false;
+        };
+        for key in &binding {
+            self.press_matrix_key(*key);
+        }
+        self.pressed_bindings.insert(code, binding);
+        true
+    }
+
+    pub fn key_up(&mut self, code: u32) {
+        if let Some(binding) = self.pressed_bindings.remove(&code) {
+            for key in binding {
+                self.release_matrix_key(key);
+            }
+        }
+    }
+
+    pub fn key_press(&mut self, ch: char) {
+        self.release_pending_keys();
+        if let Some(binding) = binding_for_char(ch) {
+            for key in &binding {
+                self.press_matrix_key(*key);
+            }
+            self.pending_key_release = binding;
+        }
+    }
+
+    pub fn focus_change(&mut self, has_focus: bool) {
+        if !has_focus {
+            self.release_all_keys();
+        }
+    }
+
+    fn press_matrix_key(&mut self, key: MatrixKey) {
+        let count = &mut self.matrix_key_counts[key.row][key.column];
+        *count = count.saturating_add(1);
+        self.bus.set_key(key.row, key.column, true);
+    }
+
+    fn release_matrix_key(&mut self, key: MatrixKey) {
+        let count = &mut self.matrix_key_counts[key.row][key.column];
+        *count = count.saturating_sub(1);
+        if *count == 0 {
+            self.bus.set_key(key.row, key.column, false);
+        }
+    }
+
+    fn release_pending_keys(&mut self) {
+        for key in std::mem::take(&mut self.pending_key_release) {
+            self.release_matrix_key(key);
+        }
+    }
+
+    fn release_all_keys(&mut self) {
+        self.pressed_bindings.clear();
+        self.pending_key_release.clear();
+        self.matrix_key_counts = [[0; 5]; 8];
+        for row in 0..8 {
+            for column in 0..5 {
+                self.bus.set_key(row, column, false);
+            }
+        }
     }
 
     pub fn draw_full_frame(&mut self) {
@@ -336,6 +486,86 @@ impl Zx82 {
             }
         }
     }
+}
+
+const fn matrix_key(row: usize, column: usize) -> MatrixKey {
+    MatrixKey { row, column }
+}
+
+const CAPS_SHIFT: MatrixKey = matrix_key(0, 0);
+const SYMBOL_SHIFT: MatrixKey = matrix_key(7, 1);
+
+fn binding_for_code(code: u32) -> Option<Vec<MatrixKey>> {
+    let key = match code {
+        16 => CAPS_SHIFT,
+        17 | 18 | 225 => SYMBOL_SHIFT,
+        8 | 46 => return Some(vec![CAPS_SHIFT, matrix_key(4, 0)]),
+        13 => matrix_key(6, 0),
+        32 => matrix_key(7, 0),
+        37 => return Some(vec![CAPS_SHIFT, matrix_key(3, 4)]),
+        38 => return Some(vec![CAPS_SHIFT, matrix_key(4, 3)]),
+        39 => return Some(vec![CAPS_SHIFT, matrix_key(4, 2)]),
+        40 => return Some(vec![CAPS_SHIFT, matrix_key(4, 4)]),
+        48 => matrix_key(4, 0),
+        49 => matrix_key(3, 0),
+        50 => matrix_key(3, 1),
+        51 => matrix_key(3, 2),
+        52 => matrix_key(3, 3),
+        53 => matrix_key(3, 4),
+        54 => matrix_key(4, 4),
+        55 => matrix_key(4, 3),
+        56 => matrix_key(4, 2),
+        57 => matrix_key(4, 1),
+        65 => matrix_key(1, 0),
+        66 => matrix_key(7, 4),
+        67 => matrix_key(0, 3),
+        68 => matrix_key(1, 2),
+        69 => matrix_key(2, 2),
+        70 => matrix_key(1, 3),
+        71 => matrix_key(1, 4),
+        72 => matrix_key(6, 4),
+        73 => matrix_key(5, 2),
+        74 => matrix_key(6, 3),
+        75 => matrix_key(6, 2),
+        76 => matrix_key(6, 1),
+        77 => matrix_key(7, 2),
+        78 => matrix_key(7, 3),
+        79 => matrix_key(5, 1),
+        80 => matrix_key(5, 0),
+        81 => matrix_key(2, 0),
+        82 => matrix_key(2, 3),
+        83 => matrix_key(1, 1),
+        84 => matrix_key(2, 4),
+        85 => matrix_key(5, 3),
+        86 => matrix_key(0, 4),
+        87 => matrix_key(2, 1),
+        88 => matrix_key(0, 2),
+        89 => matrix_key(5, 4),
+        90 => matrix_key(0, 1),
+        _ => return None,
+    };
+    Some(vec![key])
+}
+
+fn binding_for_char(ch: char) -> Option<Vec<MatrixKey>> {
+    if ch.is_ascii_alphabetic() {
+        return binding_for_code(ch.to_ascii_uppercase() as u32);
+    }
+    if ch.is_ascii_digit() || matches!(ch, '\r' | ' ') {
+        return binding_for_code(ch as u32);
+    }
+    Some(match ch {
+        '"' => vec![SYMBOL_SHIFT, matrix_key(5, 0)],
+        ';' => vec![SYMBOL_SHIFT, matrix_key(5, 1)],
+        ':' => vec![SYMBOL_SHIFT, matrix_key(0, 1)],
+        ',' => vec![SYMBOL_SHIFT, matrix_key(7, 3)],
+        '.' => vec![SYMBOL_SHIFT, matrix_key(7, 2)],
+        '/' => vec![SYMBOL_SHIFT, matrix_key(0, 4)],
+        '-' => vec![SYMBOL_SHIFT, matrix_key(6, 3)],
+        '+' => vec![SYMBOL_SHIFT, matrix_key(6, 2)],
+        '=' => vec![SYMBOL_SHIFT, matrix_key(6, 1)],
+        _ => return None,
+    })
 }
 
 impl Default for Zx82 {
@@ -598,6 +828,39 @@ mod tests {
         }
 
         assert_ne!(&zx82.bus.ram()[..0x1B00], before.as_slice());
+    }
+
+    #[test]
+    fn breakpoint_stops_frame_execution_at_mapped_address() {
+        let mut zx82 = Zx82::new();
+        zx82.load_rom(&[0; ROM_SIZE]).unwrap();
+        zx82.set_breakpoint(1);
+
+        assert!(zx82.run_for_a_frame());
+        assert_eq!(zx82.z80.state.get_reg16(11), 1);
+    }
+
+    #[test]
+    fn debug_run_to_interrupt_advances_to_the_frame_irq() {
+        let mut zx82 = Zx82::new();
+        zx82.load_rom(&[0; ROM_SIZE]).unwrap();
+        zx82.z80.state.iff1 = 1;
+        zx82.z80.state.iff2 = 1;
+
+        let (elapsed, accepted) = zx82.debug_run_to_interrupt(FRAME_CLOCKS as u32 + 32);
+
+        assert!(accepted);
+        assert!(elapsed >= FRAME_CLOCKS as u32);
+    }
+
+    #[test]
+    fn host_key_codes_drive_the_spectrum_matrix() {
+        let mut zx82 = Zx82::new();
+        assert!(zx82.key_down(80));
+        assert_eq!(zx82.bus.in8(0xFE, 0xDF) & 0x01, 0);
+
+        zx82.key_up(80);
+        assert_ne!(zx82.bus.in8(0xFE, 0xDF) & 0x01, 0);
     }
 
     #[test]

@@ -11,9 +11,9 @@ fn main() -> eframe::Result<()> {
         .unwrap_or_else(|| emu::MachineType::all_types()[0]);
     let mut emu = emu::Emu::new(machine_type);
     if let Some(vid_model) = app_state_file.state.vid_model {
-        emu.tvc.set_vid_model(vid_model);
+        emu.set_vid_model(vid_model);
     }
-    emu.tvc.set_fast_boot(app_state_file.state.fast_boot);
+    emu.set_fast_boot(app_state_file.state.fast_boot);
     emu.load_roms();
     // Command-line arguments parsing
     let args = std::env::args().collect::<Vec<String>>();
@@ -73,12 +73,9 @@ fn main() -> eframe::Result<()> {
                 }
             }
             "-h" | "--help" => {
-                println!(
-                    "rtvc v{} - Videoton TV Computer Emulator",
-                    env!("CARGO_PKG_VERSION")
-                );
+                println!("rtvc v{} - Z80 Emulator", env!("CARGO_PKG_VERSION"));
                 println!();
-                println!("Usage: rtvc [options] [snapshot]");
+                println!("Usage: rtvc [options] [snapshot.rtvcsnap.zip|game.z80]");
                 println!();
                 println!("Options:");
                 println!("  -d, --disk <path>      Mount a disk");
@@ -163,7 +160,7 @@ fn main() -> eframe::Result<()> {
             .with_resizable(true)
             .with_icon(app_icon)
             .with_title(format!(
-                "rtvc v{} - Videoton TV Computer Emulator",
+                "rtvc v{} - Z80 Emulator",
                 env!("CARGO_PKG_VERSION")
             )),
         ..Default::default()

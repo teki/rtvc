@@ -1,9 +1,8 @@
 use std::collections::VecDeque;
 use std::sync::OnceLock;
 
-use crate::bus::CpuBus;
-use crate::disasm::disassemble_block;
 use crate::emu::{Emu, RomVersion};
+use crate::machine::System;
 use crate::mmu::RomBank;
 use eframe::egui;
 use serde::Deserialize;
@@ -182,7 +181,7 @@ impl DebuggerUi {
         ui.separator();
 
         egui::ScrollArea::vertical().show(ui, |ui| {
-            let state = &emu.tvc.z80.state;
+            let state = emu.z80_state();
             let registers = [
                 ("AF", state.get_reg16(0)),
                 ("BC", state.get_reg16(1)),
@@ -231,15 +230,10 @@ impl DebuggerUi {
                 state.iff2,
                 u8::from(state.halted != 0)
             ));
-            let map = emu.tvc.bus.mmu.map_labels();
-            ui.monospace(format!(
-                "Clock {}  MMU {},{},{},{}",
-                emu.tvc.clock, map[0], map[1], map[2], map[3]
-            ))
-            .on_hover_text(format!(
-                "Paging register {:02X}\n0000-3FFF, 4000-7FFF, 8000-BFFF, C000-FFFF",
-                emu.tvc.bus.mmu.get_map_val()
-            ));
+            let mapping = emu
+                .mapping_summary()
+                .unwrap_or_else(|| "fixed 16K ROM + 48K RAM".to_string());
+            ui.monospace(format!("Clock {}  {mapping}", emu.clock()));
             if let Some(symbol) = current_symbol(emu) {
                 ui.separator();
                 ui.strong(format!("{} ({})", symbol.name, symbol.bank.name()));
@@ -249,7 +243,7 @@ impl DebuggerUi {
     }
 
     pub fn draw_disassembly(&mut self, ui: &mut egui::Ui, emu: &mut Emu) {
-        let pc = emu.tvc.z80.state.get_reg16(11);
+        let pc = emu.z80_state().get_reg16(11);
         if self.follow_pc {
             self.set_disassembly_address(pc);
         }
@@ -275,12 +269,8 @@ impl DebuggerUi {
             }
         });
 
-        let instructions = disassemble_block(
-            &mut emu.tvc.bus,
-            self.disassembly_address,
-            DISASSEMBLY_BYTES,
-        );
-        let breakpoints = emu.tvc.get_breakpoints();
+        let instructions = emu.disassemble(self.disassembly_address, DISASSEMBLY_BYTES);
+        let breakpoints = emu.get_breakpoints();
         egui::ScrollArea::vertical()
             .auto_shrink([false; 2])
             .show(ui, |ui| {
@@ -300,9 +290,9 @@ impl DebuggerUi {
                                     .clicked()
                                 {
                                     if has_breakpoint {
-                                        emu.tvc.clear_breakpoint(instruction.addr);
+                                        emu.clear_breakpoint(instruction.addr);
                                     } else {
-                                        emu.tvc.set_breakpoint(instruction.addr);
+                                        emu.set_breakpoint(instruction.addr);
                                     }
                                 }
                                 ui.monospace(format!("{:04X}", instruction.addr));
@@ -337,6 +327,9 @@ impl DebuggerUi {
     }
 
     pub fn draw_memory(&mut self, ui: &mut egui::Ui, emu: &mut Emu) {
+        if emu.system() != System::Tvc {
+            self.memory_source = MemorySource::Mapped;
+        }
         ui.horizontal(|ui| {
             egui::ComboBox::from_id_salt("debug_memory_source")
                 .selected_text(self.memory_source.label())
@@ -358,30 +351,19 @@ impl DebuggerUi {
                 self.set_memory_address(address);
             }
             if ui.button("PC").clicked() {
-                self.set_memory_address(emu.tvc.z80.state.get_reg16(11));
+                self.set_memory_address(emu.z80_state().get_reg16(11));
                 self.memory_source = MemorySource::Mapped;
             }
             if ui.button("SP").clicked() {
-                self.set_memory_address(emu.tvc.z80.state.get_reg16(10));
+                self.set_memory_address(emu.z80_state().get_reg16(10));
                 self.memory_source = MemorySource::Mapped;
             }
         });
 
         let bytes = if let Some(bank) = self.memory_source.bank_name() {
-            emu.tvc
-                .bus
-                .mmu
-                .read_raw_bank(bank, self.memory_address as usize, MEMORY_BYTES)
+            emu.read_raw_bank(bank, self.memory_address as usize, MEMORY_BYTES)
         } else {
-            Some(
-                (0..MEMORY_BYTES)
-                    .map(|offset| {
-                        emu.tvc
-                            .bus
-                            .r8(self.memory_address.wrapping_add(offset as u16))
-                    })
-                    .collect(),
-            )
+            Some(emu.read_mapped_memory(self.memory_address, MEMORY_BYTES))
         };
 
         egui::ScrollArea::both()
@@ -431,16 +413,16 @@ impl DebuggerUi {
             if (ui.button("Add").clicked() || submit)
                 && let Some(address) = parse_address(&self.breakpoint_address_text)
             {
-                emu.tvc.set_breakpoint(address);
+                emu.set_breakpoint(address);
                 self.breakpoint_address_text = format!("{address:04X}");
             }
             if ui.button("Clear All").clicked() {
-                emu.tvc.clear_all_breakpoints();
+                emu.clear_all_breakpoints();
             }
         });
         ui.separator();
 
-        let breakpoints = emu.tvc.get_breakpoints();
+        let breakpoints = emu.get_breakpoints();
         if breakpoints.is_empty() {
             ui.label("No execution breakpoints.");
             return;
@@ -449,7 +431,7 @@ impl DebuggerUi {
             for address in breakpoints {
                 ui.horizontal(|ui| {
                     if ui.small_button("×").clicked() {
-                        emu.tvc.clear_breakpoint(address);
+                        emu.clear_breakpoint(address);
                     }
                     if ui
                         .link(format!("{address:04X}"))
@@ -468,6 +450,10 @@ impl DebuggerUi {
     }
 
     pub fn draw_rom_symbols(&mut self, ui: &mut egui::Ui, emu: &mut Emu) {
+        if emu.system() != System::Tvc {
+            ui.label("ROM symbols are currently available only for TVC BASIC 1.2.");
+            return;
+        }
         if emu.machine_type.rom_version != RomVersion::V1_2 {
             ui.label("A ROM symbol database for BASIC 2.2 is not available yet.");
             return;
@@ -499,7 +485,7 @@ impl DebuggerUi {
                             self.set_memory_address(symbol.offset);
                         }
                         if ui.small_button("BP").clicked() {
-                            emu.tvc.set_breakpoint(symbol.address);
+                            emu.set_breakpoint(symbol.address);
                         }
                         ui.monospace(format!("{}:{:04X}", symbol.bank.name(), symbol.address));
                         ui.strong(&symbol.name);
@@ -527,7 +513,9 @@ impl DebuggerUi {
                 self.events.clear();
             }
         });
-        if emu.machine_type.rom_version != RomVersion::V1_2 {
+        if emu.system() != System::Tvc {
+            ui.label("ROM tracing is currently available only for TVC.");
+        } else if emu.machine_type.rom_version != RomVersion::V1_2 {
             ui.label("ROM tracing requires the BASIC 1.2 symbol database.");
         }
         ui.separator();
@@ -554,7 +542,7 @@ impl DebuggerUi {
 
     pub fn record_breakpoint_hit(&mut self, pc: u16, emu: &Emu) {
         let symbol = symbol_at_mapped_address(emu, pc);
-        let bank = emu.tvc.bus.mmu.mapped_rom_bank(pc);
+        let bank = emu.tvc().and_then(|tvc| tvc.bus.mmu.mapped_rom_bank(pc));
         let summary = symbol
             .map(|symbol| format!("Hit {}", symbol.name))
             .unwrap_or_else(|| "Execution breakpoint hit".to_string());
@@ -563,7 +551,7 @@ impl DebuggerUi {
     }
 
     pub fn drain_trace_events(&mut self, emu: &mut Emu) {
-        for event in emu.tvc.take_trace_events() {
+        for event in emu.take_trace_events() {
             let symbol = symbol_at(event.bank, event.pc);
             let summary = symbol
                 .map(|symbol| format!("{}: {}", symbol.name, symbol.summary))
@@ -580,8 +568,9 @@ impl DebuggerUi {
     pub fn update_tracing(&mut self, emu: &mut Emu, events_visible: bool) {
         let should_trace = events_visible
             && self.trace_rom_landmarks
+            && emu.system() == System::Tvc
             && emu.machine_type.rom_version == RomVersion::V1_2;
-        if should_trace == emu.tvc.tracepoints_enabled() {
+        if should_trace == emu.tracepoints_enabled() {
             return;
         }
         if should_trace {
@@ -598,9 +587,9 @@ impl DebuggerUi {
                     )
                 })
                 .collect();
-            emu.tvc.set_tracepoints(&tracepoints);
+            emu.set_tracepoints(&tracepoints);
         } else {
-            emu.tvc.set_tracepoints(&[]);
+            emu.set_tracepoints(&[]);
         }
     }
 
@@ -728,14 +717,14 @@ fn rom_symbols() -> &'static [RomSymbol] {
 }
 
 fn current_symbol(emu: &Emu) -> Option<&'static RomSymbol> {
-    symbol_at_mapped_address(emu, emu.tvc.z80.state.get_reg16(11))
+    symbol_at_mapped_address(emu, emu.z80_state().get_reg16(11))
 }
 
 fn symbol_at_mapped_address(emu: &Emu, address: u16) -> Option<&'static RomSymbol> {
-    if emu.machine_type.rom_version != RomVersion::V1_2 {
+    if emu.system() != System::Tvc || emu.machine_type.rom_version != RomVersion::V1_2 {
         return None;
     }
-    let bank = emu.tvc.bus.mmu.mapped_rom_bank(address)?;
+    let bank = emu.tvc()?.bus.mmu.mapped_rom_bank(address)?;
     symbol_at(bank, address)
 }
 

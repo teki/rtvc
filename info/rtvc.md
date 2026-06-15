@@ -42,6 +42,7 @@ and full-web frontends.
 | [src/hbf.rs](../src/hbf.rs) | HBF card memory and registers |
 | [src/fd1793.rs](../src/fd1793.rs) | current FD1793 and flat-disk model |
 | [src/emu.rs](../src/emu.rs) | machine selection, media, run state |
+| [src/machine.rs](../src/machine.rs) | explicit TVC/Zx82 machine boundary and shared debugger operations |
 | [src/ui.rs](../src/ui.rs) | shared native/full-web egui application |
 | [src/workspace.rs](../src/workspace.rs) | simple/developer layouts |
 | [src/debug_ui.rs](../src/debug_ui.rs) | integrated debugger panes |
@@ -61,7 +62,8 @@ validation independent from machine emulation.
 | --- | --- | --- |
 | Native desktop | default `native` | egui/eframe, cpal audio, filesystem media, zip support, TCP debugger |
 | Native headless | default `native`, `--headless` CLI | machine loop and TCP debugger without GUI |
-| Experimental Zx82 | default `native`, `cargo run --bin zx82` | standalone Spectrum 48K boot runner; not yet part of the shared application |
+| Integrated Zx82 | default `native` and `wasm-full` | Spectrum 48K state loading through the shared application and debugger |
+| Standalone Zx82 | default `native`, `cargo run --bin zx82` | focused Spectrum core runner |
 | Lightweight web | `wasm,web-vid-simple` | small wasm-bindgen API, JavaScript-owned canvas and audio |
 | Compatibility lightweight web | `wasm,web-vid-realistic` | same API; runtime video selection remains available |
 | Full web | `wasm-full` | complete egui UI, browser files, IndexedDB, AudioWorklet |
@@ -74,8 +76,9 @@ Rust edition 2024 is used, requiring Rust 1.85 or newer.
 
 ## Machine Execution
 
-`Tvc` owns the Z80, `TvcBus`, framebuffer, clock, breakpoints, and selected
-`VidModel`.
+`Emu` owns an explicit `Machine` enum. The implemented variants are `Tvc` and
+`Zx82`; common scheduling, framebuffer, input, breakpoint, mapped-memory,
+disassembly, and stepping operations dispatch through this boundary.
 
 The normal scheduler uses a 62,500-cycle host frame budget:
 
@@ -96,16 +99,14 @@ frames on a 50 Hz real-time gate. Faster host refreshes reuse the current
 texture. When emulation falls behind, the UI drops backlog rather than running
 multiple catch-up frames in one repaint.
 
-The initial `Zx82` core is deliberately separate from `Emu` while the shared
-machine boundary is extracted. It executes the Spectrum ROM against a fixed
-16 KiB ROM and 48 KiB RAM map, offers one interrupt every 69,888 T-states, and
-draws a 352 x 296 framebuffer from bitmap and attribute memory. The standalone
-runner maps host keys onto the eight-by-five Spectrum matrix, including
-Spectrum shift chords for editing, arrows, and common punctuation. Both
-`VidModel` values are retained, but Zx82 currently draws a completed frame for
-either selection. The runner restores plain 48K `.z80` snapshots in version 1,
-2, or 3 form, including compressed memory blocks. Expanded-machine and
-peripheral-dependent Z80 snapshots are rejected.
+`Zx82` executes the Spectrum ROM against a fixed 16 KiB ROM and 48 KiB RAM
+map, offers one interrupt every 69,888 T-states, and draws a 352 x 296
+framebuffer from bitmap and attribute memory. The shared application maps host
+keys onto the eight-by-five Spectrum matrix and exposes Zx82 through the dock
+and TCP debuggers. Both `VidModel` values are retained, but Zx82 currently
+draws a completed frame for either selection. Plain 48K `.z80` versions 1, 2,
+and 3 are supported; expanded-machine and peripheral-dependent states are
+rejected.
 
 ## Video Emulation
 
@@ -314,10 +315,10 @@ egui workspace dependency.
 
 ### Integrated debugger
 
-The dock debugger acts directly on `Emu` and is available in native and full
-web. It provides run/pause/reset, instruction stepping, bounded run-to-IRQ,
-mapped and raw-bank memory views, disassembly, breakpoints, ROM symbols, and
-structured events.
+The dock debugger acts on the active `Machine` through `Emu` and is available
+in native and full web. Both TVC and Zx82 provide run/pause/reset, instruction
+stepping, bounded run-to-IRQ, mapped memory, disassembly, and breakpoints. Raw
+banks, ROM symbols, trace landmarks, and IO logs remain TVC-specific.
 
 ### TCP debugger
 
@@ -336,6 +337,7 @@ cargo run --bin rtvc -- --headless --port 8080
 | `continue`, `pause`, `reset` | execution control |
 | `breakpoint_add`, `breakpoint_remove`, `breakpoint_list` | breakpoints |
 | `read_memory` | mapped memory or raw `u0`-`u3`, `vid0`-`vid3`, `sys`, `cart`, `exth` |
+| `write_memory` | write bytes to the active machine's mapped CPU address space |
 | `disassemble`, `assemble` | Z80 developer tools |
 | `save_snapshot`, `load_snapshot` | snapshot files |
 | `save_screenshot` | 4:3 PNG |

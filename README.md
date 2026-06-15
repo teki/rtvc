@@ -34,8 +34,6 @@ More historical background is available on the
 - Full browser-based egui web application, plus lightweight snapshot bundles
   for standalone demos.
 - TCP socket debugger for native GUI and headless use.
-- Experimental standalone Zx82 runner for booting a ZX Spectrum 48K ROM with
-  fixed memory, frame interrupts, and full-frame video.
 
 ## Download
 
@@ -81,28 +79,6 @@ Workspace** to use dockable Screen and IO Log panes; reopen the log through
 **View > Panes > IO Log** or restore the defaults with **Reset Workspace**.
 Click the Screen pane to capture TVC keyboard input and press Escape to release
 it.
-
-The first Zx82 milestone is available as a separate development runner:
-
-```bash
-cargo run --bin zx82
-```
-
-It loads `roms/48.rom`. Zx82 is not yet integrated into the main machine menu,
-debugger, or snapshots. The standalone window accepts keyboard input using the
-Spectrum matrix. For example, press `P` once to enter the `PRINT` keyword in
-BASIC mode. Shift acts as Caps Shift, Ctrl or Alt acts as Symbol Shift, and
-Backspace generates Caps Shift+0.
-
-Load a 48K Z80 snapshot with the **Load Z80** button or from the command line:
-
-```bash
-cargo run --bin zx82 -- path/to/game.z80
-```
-
-Z80 snapshot versions 1, 2, and 3 are supported in compressed or uncompressed
-form for plain Spectrum 48K machines. Snapshots requiring 128K paging or
-peripherals are rejected.
 
 Choose **View > Debugger Layout** for integrated CPU, disassembly, memory,
 breakpoint, BASIC 1.2 ROM-symbol, event, screen, and IO-log panes. The debugger

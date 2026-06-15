@@ -53,6 +53,7 @@ class RtvcShell(cmd.Cmd):
             print(f"Error: {resp.get('message')}")
             return
         
+        print(f"System: {resp.get('system', 'unknown')}")
         print(f"AF: 0x{resp.get('af', 0):04X}   BC: 0x{resp.get('bc', 0):04X}   DE: 0x{resp.get('de', 0):04X}   HL: 0x{resp.get('hl', 0):04X}")
         print(f"IX: 0x{resp.get('ix', 0):04X}   IY: 0x{resp.get('iy', 0):04X}   SP: 0x{resp.get('sp', 0):04X}   PC: 0x{resp.get('pc', 0):04X}")
         print(f"Halted: {resp.get('halted')}   Running: {resp.get('running')}   Cycles: {resp.get('cycles')}")
@@ -226,6 +227,32 @@ class RtvcShell(cmd.Cmd):
         elif resp:
             print(f"Error: {resp.get('message')}")
 
+    def do_write(self, arg):
+        """Write bytes to mapped memory.
+        Usage: write <address> <byte> [byte...]
+        Example:
+          write 0x8000 3E 2A C9
+        """
+        parts = arg.split()
+        if len(parts) < 2:
+            print("Usage: write <addr> <byte> [byte...]")
+            return
+        try:
+            addr = self._parse_number(parts[0])
+            data = [int(value, 16) for value in parts[1:]]
+        except ValueError:
+            print("Error: Address or byte value is invalid.")
+            return
+        if not 0 <= addr <= 0xFFFF or any(not 0 <= value <= 0xFF for value in data):
+            print("Error: Address must be 16-bit and byte values must be 00-FF.")
+            return
+
+        resp = self._send_cmd({"cmd": "write_memory", "addr": addr, "data": data})
+        if resp and resp.get("status") == "ok":
+            print(f"Wrote {len(data)} byte(s) at 0x{addr:04X}.")
+        elif resp:
+            print(f"Error: {resp.get('message')}")
+
     def do_asm(self, arg):
         """Enter interactive assembler mode. Usage: asm [start_address]"""
         try:
@@ -259,9 +286,15 @@ class RtvcShell(cmd.Cmd):
             resp = self._send_cmd({"cmd": "assemble", "addr": addr, "source": source})
             if resp and resp.get("status") == "ok":
                 bytes_list = resp.get("bytes", [])
-                bytes_str = " ".join(f"{byte:02X}" for byte in bytes_list)
-                print(f"{addr:04X}: {bytes_str}")
-                addr = resp.get("next_addr", addr + len(bytes_list)) & 0xFFFF
+                write_resp = self._send_cmd(
+                    {"cmd": "write_memory", "addr": addr, "data": bytes_list}
+                )
+                if write_resp and write_resp.get("status") == "ok":
+                    bytes_str = " ".join(f"{byte:02X}" for byte in bytes_list)
+                    print(f"{addr:04X}: {bytes_str}")
+                    addr = resp.get("next_addr", addr + len(bytes_list)) & 0xFFFF
+                elif write_resp:
+                    print(f"Error: {write_resp.get('message')}")
             elif resp:
                 print(f"Error: {resp.get('message')}")
 
