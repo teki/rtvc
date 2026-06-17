@@ -92,8 +92,8 @@ impl WasmTvc {
     }
 
     #[wasm_bindgen(js_name = loadDisk)]
-    pub fn load_disk(&mut self, name: &str, data: &[u8]) {
-        self.tvc.load_disk(name, data);
+    pub fn load_disk(&mut self, drive: usize, name: &str, data: &[u8]) {
+        self.tvc.load_disk(drive, name, data);
     }
 
     #[wasm_bindgen(js_name = keyDown)]
@@ -191,7 +191,10 @@ fn load_builtin_roms(tvc: &mut Tvc, rom_version: u8, has_dos: bool) {
         tvc.add_rom(name, bytes);
     }
     if has_dos {
-        tvc.add_rom("D_TVCDOS.128", include_bytes!("../roms/D_TVCDOS.128"));
+        tvc.add_rom(
+            "VT-DOS12-DISK.ROM",
+            include_bytes!("../roms/VT-DOS12-DISK.ROM"),
+        );
     }
 }
 

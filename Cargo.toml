@@ -25,6 +25,7 @@ web-sys = { version = "0.3", features = ["Window", "Document", "HtmlElement", "H
 js-sys = { version = "0.3", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 web-time = { version = "1.1", optional = true }
+fatfs = { version = "0.3.6", default-features = false, features = ["std", "alloc"] }
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
@@ -62,6 +63,10 @@ path = "src/cas2wav.rs"
 name = "zx82"
 path = "src/zx82_main.rs"
 required-features = ["native"]
+
+[[bin]]
+name = "rtvc-dsk"
+path = "src/rtvc_dsk.rs"
 
 [profile.release]
 lto = true

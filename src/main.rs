@@ -17,7 +17,7 @@ fn main() -> eframe::Result<()> {
     emu.load_roms();
     // Command-line arguments parsing
     let args = std::env::args().collect::<Vec<String>>();
-    let mut disk_to_mount: Option<String> = None;
+    let mut disks_to_mount: Vec<String> = Vec::new();
     let mut tape_to_mount: Option<String> = None;
     let mut tape_to_inject: Option<String> = None;
     let mut snapshot_to_load: Option<String> = None;
@@ -29,7 +29,12 @@ fn main() -> eframe::Result<()> {
         match args[i].as_str() {
             "-d" | "--disk" => {
                 if i + 1 < args.len() {
-                    disk_to_mount = Some(args[i + 1].clone());
+                    if disks_to_mount.len() < 2 {
+                        disks_to_mount.push(args[i + 1].clone());
+                    } else {
+                        eprintln!("Error: at most two -d/--disk arguments are supported");
+                        std::process::exit(1);
+                    }
                     i += 2;
                 } else {
                     eprintln!("Error: missing value for {}", args[i]);
@@ -78,7 +83,7 @@ fn main() -> eframe::Result<()> {
                 println!("Usage: rtvc [options] [snapshot.rtvcsnap.zip|game.z80]");
                 println!();
                 println!("Options:");
-                println!("  -d, --disk <path>      Mount a disk");
+                println!("  -d, --disk <path>      Mount a disk (first = A:, second = B:)");
                 println!("  -t, --tape <path>      Mount a CAS tape for loading");
                 println!("  -i, --inject <path>    Inject a CAS tape directly into memory");
                 println!("  -H, --headless         Enable headless execution mode");
@@ -113,9 +118,9 @@ fn main() -> eframe::Result<()> {
         }
     }
 
-    if let Some(disk_path) = disk_to_mount {
+    for (drive, disk_path) in disks_to_mount.iter().enumerate() {
         let path = std::path::PathBuf::from(disk_path);
-        if let Err(err) = emu.insert_disk_file_path(&path) {
+        if let Err(err) = emu.insert_disk_file_path_drive(drive, &path) {
             eprintln!("failed to mount disk {}: {err}", path.display());
         }
     }
@@ -133,7 +138,7 @@ fn main() -> eframe::Result<()> {
     }
 
     if !loaded_snapshot {
-        if emu.loaded_disk.is_none() && app_state_file.state.disk_loaded {
+        if emu.loaded_disk[0].is_none() && app_state_file.state.disk_loaded {
             if let Some(file_name) = &app_state_file.state.disk_file_name {
                 emu.insert_disk_by_file_name(file_name);
             }

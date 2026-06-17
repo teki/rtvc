@@ -94,8 +94,24 @@ impl HBF {
         }
     }
 
-    pub fn load_disk(&mut self, name: &str, data: &[u8]) {
-        self.fdc.load_dsk(0, name, data);
+    pub fn load_disk(&mut self, drive: usize, name: &str, data: &[u8]) {
+        self.fdc.load_dsk(drive, name, data);
+    }
+
+    pub fn disk_bytes(&self, drive: usize) -> Option<&[u8]> {
+        self.fdc.disk_bytes(drive)
+    }
+
+    pub fn disk_name(&self, drive: usize) -> Option<&str> {
+        self.fdc.disk_name(drive)
+    }
+
+    pub fn disk_dirty(&self, drive: usize) -> bool {
+        self.fdc.disk_dirty(drive)
+    }
+
+    pub fn clear_disk_dirty(&mut self, drive: usize) {
+        self.fdc.clear_disk_dirty(drive);
     }
 
     pub fn get_fdc_mut(&mut self) -> &mut FD1793 {

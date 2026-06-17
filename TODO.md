@@ -113,14 +113,20 @@ Open issues and planned improvements for the TVC emulator.
 
 ## Storage And Expansion
 
-- [ ] Improve the FD1793 floppy-controller implementation.
-  - Add disk write support.
-  - Support two floppy drives.
+- [x] Improve the FD1793 floppy-controller implementation.
+  - [x] Add disk write support.
+  - [x] Support two floppy drives.
 
 - [ ] Add cartridge support.
   - Support VT-DOS cartridges.
   - Support UPM cartridges.
   - Support cartridge-based games.
+
+- [ ] Allow the user to select a custom media directory.
+  - Let the user point to a directory containing their own CAS and DSK files.
+  - Show files from the selected directory in the Tape and Disk menus alongside
+    or instead of the built-in `progs/` list.
+  - Persist the selected directory path across sessions.
 
 ## Help
 

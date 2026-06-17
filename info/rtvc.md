@@ -40,7 +40,7 @@ and full-web frontends.
 | [src/tape.rs](../src/tape.rs) | cassette transport and signal sampling |
 | [src/expansion.rs](../src/expansion.rs) | four-slot expansion routing |
 | [src/hbf.rs](../src/hbf.rs) | HBF card memory and registers |
-| [src/fd1793.rs](../src/fd1793.rs) | current FD1793 and flat-disk model |
+| [src/fd1793.rs](../src/fd1793.rs) | FD1793 floppy controller with two-drive read/write support |
 | [src/emu.rs](../src/emu.rs) | machine selection, media, run state |
 | [src/machine.rs](../src/machine.rs) | explicit TVC/Zx82 machine boundary and shared debugger operations |
 | [src/ui.rs](../src/ui.rs) | shared native/full-web egui application |
@@ -217,10 +217,23 @@ small BASIC loader that calls code near `0x1B00`.
 
 ### Floppy and archives
 
-DSK bytes are attached to drive 0 of an HBF card. The current disk model parses
-FAT12 boot-sector geometry and supports the controller paths needed by the
-included software, including restore, seek, read sector, and read address.
-FD1793 behavior is not yet a complete cycle-accurate implementation.
+DSK bytes can be attached to drives A: (0) and B: (1) of an HBF card. The disk
+model parses FAT12 boot-sector geometry and supports the controller paths
+needed by the included software, including restore, seek, step in, step out,
+read sector, write sector, read address, and force interrupt. FD1793 behavior
+is not yet a complete cycle-accurate implementation.
+
+The `rtvc-dsk` utility can inspect legacy TVC/MSX-DOS style FAT12 images whose
+boot sectors omit the PC `55 AA` signature and reuse later BPB bytes for boot
+code.
+
+The CLI accepts up to two `-d` arguments: the first mounts on drive A:, the
+second on drive B:. The Disk menu provides Drive A: and Drive B: sub-menus
+with Open, New 360K Disk, New 720K Disk, Save, and Eject actions per drive.
+New disks are formatted as FAT12 images with TVC-compatible boot-sector bytes.
+Native `.dsk` files loaded from an existing host path are written back
+automatically after emulated sector writes. Browser-loaded disks, ZIP members,
+and unsaved empty disks remain in memory until the user chooses Save Disk.
 
 Native builds can open ZIP archives and recursively select CAS or DSK members.
 The lightweight WASM core excludes zip support.

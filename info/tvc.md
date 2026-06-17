@@ -804,6 +804,7 @@ from a FAT12-compatible boot sector:
 ```text
 offset 11-12  bytes per sector
 offset 19-20  total sectors
+offset 21     media descriptor (`F8` for 360 KiB, `F9` for 720 KiB)
 offset 24-25  sectors per track
 offset 26-27  number of heads
 ```
@@ -841,7 +842,7 @@ Common dumped filenames used by rtvc are included only to clarify placement:
 | `TVC22_D6.64K` | SYS low 16 KiB image |
 | `TVC22_D4.64K` | SYS upper 8 KiB overlay at bank offset `0x2000` |
 | `TVC22_D7.64K` | EXTH |
-| `D_TVCDOS.128` | HBF card ROM |
+| `VT-DOS12-DISK.ROM` | HBF card ROM |
 
 These names are preservation conventions, not hardware identifiers.
 

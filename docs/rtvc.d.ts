@@ -13,7 +13,7 @@ export class WasmTvc {
     keyPressText(text: string): void;
     keyUp(code: number): void;
     loadCartRom(data: Uint8Array): void;
-    loadDisk(name: string, data: Uint8Array): void;
+    loadDisk(drive: number, name: string, data: Uint8Array): void;
     loadSnapshot(data: Uint8Array): void;
     constructor(is_plus: boolean);
     reset(): void;
@@ -49,7 +49,7 @@ export interface InitOutput {
     readonly wasmtvc_keyPressText: (a: number, b: number, c: number) => void;
     readonly wasmtvc_keyUp: (a: number, b: number) => void;
     readonly wasmtvc_loadCartRom: (a: number, b: number, c: number) => void;
-    readonly wasmtvc_loadDisk: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly wasmtvc_loadDisk: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly wasmtvc_loadSnapshot: (a: number, b: number, c: number, d: number) => void;
     readonly wasmtvc_new: (a: number) => number;
     readonly wasmtvc_reset: (a: number) => void;
@@ -63,12 +63,12 @@ export interface InitOutput {
     readonly wasmtvc_vidModel: (a: number, b: number) => void;
     readonly webhandle_new: () => number;
     readonly webhandle_start: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_4661: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_4666: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_1496: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_1496_2: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_1498: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_1238: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_4698: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_4718: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_1540: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_1540_2: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_1542: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_1267: (a: number, b: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

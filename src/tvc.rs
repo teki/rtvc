@@ -116,6 +116,51 @@ impl TvcBus {
             0x5B => {}
 
             _ => {
+                if addr >= 0x10 && addr <= 0x14 {
+                    match addr & 0x0F {
+                        0x00 => {
+                            let cmd_name = match val >> 4 {
+                                0x00 => "Restore",
+                                0x01 => "Seek",
+                                0x02 | 0x03 => "Step In",
+                                0x04 | 0x05 => "Step Out",
+                                0x06 | 0x07 => "Step",
+                                0x08 | 0x09 => "Read Sector",
+                                0x0A | 0x0B => "Write Sector",
+                                0x0C => "Read Address",
+                                0x0D => "Force Interrupt",
+                                0x0E => "Read Track",
+                                0x0F => "Write Track",
+                                _ => "Unknown",
+                            };
+                            self.log.log(&format!(
+                                "FDC command: 0x{:02X} [{}] (pc 0x{:04X})",
+                                val, cmd_name, self.trace_pc
+                            ));
+                        }
+                        0x01 => self
+                            .log
+                            .log(&format!("FDC track: {} (pc 0x{:04X})", val, self.trace_pc)),
+                        0x02 => self
+                            .log
+                            .log(&format!("FDC sector: {} (pc 0x{:04X})", val, self.trace_pc)),
+                        0x04 => {
+                            let drive = if (val & 1) != 0 {
+                                "A:"
+                            } else if (val & 2) != 0 {
+                                "B:"
+                            } else {
+                                "none"
+                            };
+                            let side = (val & 0x80) >> 7;
+                            self.log.log(&format!(
+                                "FDC select: drive {}, side {} (pc 0x{:04X})",
+                                drive, side, self.trace_pc
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
                 self.extensions.write_port(addr, val);
             }
         }
@@ -433,9 +478,22 @@ impl Tvc {
         self.bus.mmu.load_cart_rom(data);
     }
 
-    pub fn load_disk(&mut self, name: &str, data: &[u8]) {
+    pub fn load_disk(&mut self, drive: usize, name: &str, data: &[u8]) {
         if let Some(ext) = self.bus.extensions.slot0_mut() {
-            ext.load_disk(name, data);
+            ext.load_disk(drive, name, data);
+        }
+    }
+
+    pub fn disk_dirty(&self, drive: usize) -> bool {
+        self.bus
+            .extensions
+            .slot0()
+            .is_some_and(|ext| ext.disk_dirty(drive))
+    }
+
+    pub fn clear_disk_dirty(&mut self, drive: usize) {
+        if let Some(ext) = self.bus.extensions.slot0_mut() {
+            ext.clear_disk_dirty(drive);
         }
     }
 
@@ -735,8 +793,8 @@ mod tests {
         assert!(chunks.iter().all(|chunk| chunk.id != *b"HBF "));
 
         let mut plus = Tvc::new(true);
-        plus.add_rom("D_TVCDOS.128", &[0xA5; 0x4000]);
-        plus.load_disk("large.dsk", &[0xE5; 368_640]);
+        plus.add_rom("VT-DOS12-DISK.ROM", &[0xA5; 0x4000]);
+        plus.load_disk(0, "large.dsk", &[0xE5; 368_640]);
         let snapshot = plus.save_snapshot();
         let chunks = crate::snapshot::read_file(&snapshot).unwrap();
         assert_eq!(

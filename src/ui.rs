@@ -13,7 +13,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use crate::app_state::{AppState, AppStateFile};
 use crate::audio::NativeAudioSink;
 use crate::debug_ui::DebuggerUi;
-use crate::emu::{Emu, MachineType, ProgEntry};
+use crate::emu::{DiskGeometry, Emu, MachineType, ProgEntry};
 use crate::machine::System;
 use crate::vid::VidModel;
 use crate::workspace::{self, Workspace, WorkspaceMode, WorkspaceTab};
@@ -25,11 +25,25 @@ pub type DebuggerType = crate::debugger::DebuggerInterface;
 pub type DebuggerType = ();
 
 pub enum PendingFile {
-    Tape { name: String, bytes: Vec<u8> },
-    Disk { name: String, bytes: Vec<u8> },
-    Snapshot { name: String, bytes: Vec<u8> },
-    StorageResult { error: Option<String> },
-    RecentCleared { kind: String },
+    Tape {
+        name: String,
+        bytes: Vec<u8>,
+    },
+    Disk {
+        drive: usize,
+        name: String,
+        bytes: Vec<u8>,
+    },
+    Snapshot {
+        name: String,
+        bytes: Vec<u8>,
+    },
+    StorageResult {
+        error: Option<String>,
+    },
+    RecentCleared {
+        kind: String,
+    },
 }
 
 const GAME_CATALOG_URL: &str = "https://teki.one/tvc_games/tvc_games.json";
@@ -563,7 +577,7 @@ impl EmuApp {
         }
     }
 
-    fn load_disk_dialog(&mut self, _ctx: egui::Context) {
+    fn load_disk_dialog(&mut self, drive: usize, _ctx: egui::Context) {
         #[cfg(target_arch = "wasm32")]
         {
             let file_tx = self.file_tx.clone();
@@ -575,7 +589,7 @@ impl EmuApp {
                 if let Some(file) = file {
                     let name = file.file_name();
                     let bytes = file.read().await;
-                    let _ = file_tx.send(PendingFile::Disk { name, bytes });
+                    let _ = file_tx.send(PendingFile::Disk { drive, name, bytes });
                     _ctx.request_repaint();
                 }
             });
@@ -586,13 +600,48 @@ impl EmuApp {
                 .add_filter("disk image", &["dsk", "zip"])
                 .pick_file()
             {
-                match self.emu.insert_disk_file_path(&path) {
+                match self.emu.insert_disk_file_path_drive(drive, &path) {
                     Ok(()) => {
                         self.save_app_state();
                         self.file_status = Some(format!("Loaded disk: {}", path.display()));
                     }
                     Err(err) => {
                         self.file_status = Some(format!("Disk load failed: {}", err));
+                    }
+                }
+            }
+        }
+    }
+
+    fn save_disk_dialog(&mut self, drive: usize) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some(bytes) = self.emu.save_disk_bytes(drive) {
+                let default_name = self.emu.loaded_disk[drive]
+                    .as_deref()
+                    .unwrap_or("disk.dsk")
+                    .to_string();
+                download_file(&default_name, &bytes, "application/octet-stream");
+                self.file_status = Some(format!("Disk download started: {default_name}"));
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let default_name = self.emu.loaded_disk[drive]
+                .as_deref()
+                .unwrap_or("disk.dsk")
+                .to_string();
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("disk image", &["dsk"])
+                .set_file_name(&default_name)
+                .save_file()
+            {
+                match self.emu.save_disk_file(drive, &path) {
+                    Ok(()) => {
+                        self.file_status = Some(format!("Saved disk: {}", path.display()));
+                    }
+                    Err(err) => {
+                        self.file_status = Some(format!("Disk save failed: {}", err));
                     }
                 }
             }
@@ -1080,7 +1129,7 @@ impl EmuApp {
                 ui.close_menu();
             }
             if ui.button("Load Disk...").clicked() {
-                self.load_disk_dialog(ui.ctx().clone());
+                self.load_disk_dialog(0, ui.ctx().clone());
                 ui.close_menu();
             }
             ui.separator();
@@ -1335,67 +1384,112 @@ impl EmuApp {
                 ui.label("Disk controls are not implemented for Zx82.");
                 return;
             }
-            if ui.button("Open Disk File...").clicked() {
-                self.load_disk_dialog(ui.ctx().clone());
-                ui.close_menu();
-            }
 
-            #[cfg(target_arch = "wasm32")]
-            {
-                if !self.emu.recent_disks_wasm.is_empty() {
-                    ui.separator();
-                    ui.label("Recent Disks:");
-                    for recent in self.emu.recent_disks_wasm.clone() {
-                        if ui.button(&recent.name).clicked() {
-                            if let Err(err) =
-                                self.emu.insert_disk_bytes(&recent.name, &recent.bytes)
-                            {
-                                self.file_status = Some(format!("Disk load failed: {}", err));
-                            } else {
-                                self.persist_wasm_recent("disk", recent, ui.ctx().clone());
-                            }
-                            ui.close_menu();
-                        }
-                    }
-                }
-                if !self.emu.recent_disks_wasm.is_empty() {
-                    if ui.button("Clear Recent Disks").clicked() {
-                        self.clear_wasm_recents("disk", ui.ctx().clone());
+            let drive_labels = ["Drive A:", "Drive B:"];
+            for drive in 0..2 {
+                ui.menu_button(drive_labels[drive], |ui| {
+                    if ui.button("Open Disk File...").clicked() {
+                        self.load_disk_dialog(drive, ui.ctx().clone());
                         ui.close_menu();
                     }
-                }
-            }
-
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                if !self.emu.recent_disks.is_empty() {
-                    ui.separator();
-                    ui.label("Recent Disks:");
-                    for path_str in self.emu.recent_disks.clone() {
-                        let display_name = std::path::Path::new(&path_str)
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_else(|| path_str.clone());
-
-                        if ui.button(display_name).clicked() {
-                            let path = std::path::Path::new(&path_str);
-                            if let Err(err) = self.emu.insert_disk_file_path(path) {
-                                self.file_status = Some(format!("Disk load failed: {}", err));
+                    for geometry in [DiskGeometry::TVC_360K, DiskGeometry::TVC_720K] {
+                        if ui.button(format!("New {} Disk", geometry.label)).clicked() {
+                            if let Err(err) = self.emu.insert_empty_disk_drive(drive, geometry) {
+                                self.file_status = Some(format!("Failed to create disk: {}", err));
                             } else {
                                 self.save_app_state();
                             }
                             ui.close_menu();
                         }
                     }
-                }
+
+                    let has_disk = self.emu.loaded_disk[drive].is_some();
+                    if ui
+                        .add_enabled(has_disk, egui::Button::new("Save Disk..."))
+                        .clicked()
+                    {
+                        self.save_disk_dialog(drive);
+                        ui.close_menu();
+                    }
+                    if ui
+                        .add_enabled(has_disk, egui::Button::new("Eject"))
+                        .clicked()
+                    {
+                        self.emu.eject_disk(drive);
+                        self.save_app_state();
+                        ui.close_menu();
+                    }
+
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        if !self.emu.recent_disks_wasm.is_empty() {
+                            ui.separator();
+                            ui.label("Recent Disks:");
+                            for recent in self.emu.recent_disks_wasm.clone() {
+                                if ui.button(&recent.name).clicked() {
+                                    if let Err(err) = self.emu.insert_disk_bytes_drive(
+                                        drive,
+                                        &recent.name,
+                                        &recent.bytes,
+                                    ) {
+                                        self.file_status =
+                                            Some(format!("Disk load failed: {}", err));
+                                    } else {
+                                        self.persist_wasm_recent("disk", recent, ui.ctx().clone());
+                                    }
+                                    ui.close_menu();
+                                }
+                            }
+                        }
+                        if !self.emu.recent_disks_wasm.is_empty() {
+                            if ui.button("Clear Recent Disks").clicked() {
+                                self.clear_wasm_recents("disk", ui.ctx().clone());
+                                ui.close_menu();
+                            }
+                        }
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        if !self.emu.recent_disks.is_empty() {
+                            ui.separator();
+                            ui.label("Recent Disks:");
+                            for path_str in self.emu.recent_disks.clone() {
+                                let display_name = std::path::Path::new(&path_str)
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_else(|| path_str.clone());
+
+                                if ui.button(display_name).clicked() {
+                                    let path = std::path::Path::new(&path_str);
+                                    if let Err(err) =
+                                        self.emu.insert_disk_file_path_drive(drive, path)
+                                    {
+                                        self.file_status =
+                                            Some(format!("Disk load failed: {}", err));
+                                    } else {
+                                        self.save_app_state();
+                                    }
+                                    ui.close_menu();
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some(name) = self.emu.loaded_disk[drive].clone() {
+                        ui.separator();
+                        ui.label(format!("Loaded: {name}"));
+                    }
+                });
             }
 
             ui.separator();
 
             let entries = media_entries(&self.emu.progs, |entry| entry.is_disk);
             if entries.is_empty() {
-                ui.add_enabled(false, egui::Label::new("No disk images"));
+                ui.add_enabled(false, egui::Label::new("No built-in disk images"));
             } else {
+                ui.label("Built-in Disks:");
                 for (index, name) in entries {
                     if ui
                         .selectable_label(self.emu.selected_prog == index, name)
@@ -1509,10 +1603,16 @@ impl EmuApp {
                         self.emu.loaded_tape.as_deref().unwrap_or("(none)")
                     ));
                     ui.separator();
-                    ui.label(format!(
-                        "Disk: {}",
-                        self.emu.loaded_disk.as_deref().unwrap_or("(none)")
-                    ));
+                    let disk_label = match (
+                        self.emu.loaded_disk[0].as_deref(),
+                        self.emu.loaded_disk[1].as_deref(),
+                    ) {
+                        (None, None) => "Disk: (none)".to_string(),
+                        (Some(a), None) => format!("A: {a}"),
+                        (None, Some(b)) => format!("B: {b}"),
+                        (Some(a), Some(b)) => format!("A: {a}  B: {b}"),
+                    };
+                    ui.label(disk_label);
                     ui.separator();
                     ui.label(if self.emu.running {
                         "Running"
@@ -1554,8 +1654,8 @@ impl EmuApp {
             fast_boot: self.emu.fast_boot(),
             tape_file_name: self.emu.loaded_tape_file_name.clone(),
             tape_loaded: self.emu.loaded_tape_file_name.is_some(),
-            disk_file_name: self.emu.loaded_disk_file_name.clone(),
-            disk_loaded: self.emu.loaded_disk_file_name.is_some(),
+            disk_file_name: self.emu.loaded_disk_file_name[0].clone(),
+            disk_loaded: self.emu.loaded_disk_file_name[0].is_some(),
             recent_tapes: self.emu.recent_tapes.clone(),
             recent_disks: self.emu.recent_disks.clone(),
         }
@@ -2040,8 +2140,8 @@ impl eframe::App for EmuApp {
                         }
                     }
                 }
-                PendingFile::Disk { name, bytes } => {
-                    match self.emu.insert_disk_bytes(&name, &bytes) {
+                PendingFile::Disk { drive, name, bytes } => {
+                    match self.emu.insert_disk_bytes_drive(drive, &name, &bytes) {
                         Ok(()) => {
                             if let Some(recent) = self.emu.recent_disks_wasm.first().cloned() {
                                 self.persist_wasm_recent("disk", recent, ctx.clone());
@@ -2204,6 +2304,10 @@ impl eframe::App for EmuApp {
             self.frame_count += 1;
         }
         self.update_screen_texture(ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        for error in self.emu.flush_dirty_disk_files() {
+            self.file_status = Some(error);
+        }
 
         let elapsed = self.last_frame_time.elapsed();
         if elapsed.as_secs() >= 1 {
@@ -2226,6 +2330,10 @@ impl eframe::App for EmuApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = self.emu.flush_dirty_disk_files();
+        }
         self.save_app_state();
         self.save_workspace();
     }
