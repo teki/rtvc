@@ -1938,12 +1938,31 @@ fn decode_game_image(bytes: &[u8]) -> Result<ColorImage, String> {
 
 fn framebuffer_image(framebuffer: &[u32], size: [usize; 2]) -> ColorImage {
     assert_eq!(framebuffer.len(), size[0] * size[1]);
-    let mut pixels = Vec::with_capacity(framebuffer.len());
-    for &rgba in framebuffer {
-        let [r, g, b, a] = rgba.to_le_bytes();
-        pixels.push(Color32::from_rgba_premultiplied(r, g, b, a));
+
+    #[cfg(target_endian = "little")]
+    {
+        // The emulator framebuffer stores premultiplied RGBA bytes in little-endian u32 pixels.
+        debug_assert_eq!(std::mem::size_of::<u32>(), std::mem::size_of::<Color32>());
+        let mut pixels = Vec::with_capacity(framebuffer.len());
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                framebuffer.as_ptr().cast::<Color32>(),
+                pixels.as_mut_ptr(),
+                framebuffer.len(),
+            );
+            pixels.set_len(framebuffer.len());
+        };
+        ColorImage { size, pixels }
     }
-    ColorImage { size, pixels }
+
+    #[cfg(not(target_endian = "little"))]
+    {
+        let mut bytes = Vec::with_capacity(std::mem::size_of_val(framebuffer));
+        for &rgba in framebuffer {
+            bytes.extend_from_slice(&rgba.to_le_bytes());
+        }
+        ColorImage::from_rgba_premultiplied(size, &bytes)
+    }
 }
 
 fn game_image_names(game: &GameEntry) -> Vec<String> {
