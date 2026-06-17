@@ -35,6 +35,17 @@ More historical background is available on the
   for standalone demos.
 - TCP socket debugger for native GUI and headless use.
 
+## Documentation
+
+- [TVC Technical Reference](info/tvc.md) — detailed machine specification for
+  emulator authors and low-level developers.
+- [TVC BASIC Reference](info/basic.md) — TVC BASIC language commands,
+  statements, functions, graphics, sound, and system variables.
+- [VT-DOS Compatible Floppy Disk System](info/vt-dos.md) — user guide for
+  the TVC floppy disk subsystem: setup, BASIC usage, and CLI commands.
+- [rtvc Implementation and Usage Reference](info/rtvc.md) — emulator
+  architecture, media, snapshots, debugger, UI, and build targets.
+
 ## Download
 
 Download the latest release from the
@@ -187,13 +198,6 @@ cargo run --bin rtvc -- -H -p 8080
 
 For the full development workflow, see
 [.agents/skills/development/SKILL.md](.agents/skills/development/SKILL.md).
-
-## Documentation
-
-- [TVC Technical Reference](info/tvc.md) — detailed machine specification for
-  emulator authors and low-level developers.
-- [rtvc Implementation and Usage Reference](info/rtvc.md) — emulator
-  architecture, media, snapshots, debugger, UI, and build targets.
 
 ## Contributing
 

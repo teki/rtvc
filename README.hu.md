@@ -198,6 +198,8 @@ A teljes fejlesztési munkafolyamathoz lásd:
 
 - [Az rtvc implementációja és használata (angol)](info/rtvc.md)
 - [Részletes TVC hardverreferencia (angol)](info/tvc.md)
+- [TVC BASIC referencia (magyar)](info.hu/basic.md)
+- [VT-DOS kompatibilis floppy diszkes rendszer (magyar)](info.hu/vt-dos.md)
 - [Snapshotformátum és webes csomagok](info.hu/snapshot.md)
 - [TVC gépmag](info.hu/tvc.md)
 - [Z80 CPU](info.hu/z80.md)

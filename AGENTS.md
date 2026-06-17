@@ -14,6 +14,7 @@ Refer to the following resources for detailed documentation on the system:
 - [Open Issues and Planned Work](TODO.md) — Known issues and implementation ideas that are not yet complete.
 - [Development and Testing Skill](.agents/skills/development/SKILL.md) — Essential commands for compiling, running, testing, and benchmarking the emulator.
 - [Release Skill](.agents/skills/release/SKILL.md) — Release workflow for version bumps, concise `CHANGES.md` updates, manual review, commits, tags, and pushes.
+- [info.hu](info.hu/) — Hungarian-language technical references, translated and adapted from [info/](info/). See [info.hu/README.md](info.hu/README.md) for the file index and the `L10N.md` policy.
 
 ## Documentation Maintenance Policy
 
@@ -25,6 +26,21 @@ To prevent documentation rot and ensure all agents have access to accurate infor
 4. **Maintain the Boundary**: Put observable TVC hardware behavior in `info/tvc.md`, scoped Spectrum 48K behavior in `info/zx82.md`, and repository-specific implementation and usage behavior in `info/rtvc.md`.
 5. **Avoid Topic Fragmentation**: Extend an existing machine or implementation reference rather than creating a new English subsystem document unless the material cannot reasonably fit an existing scope.
 6. **Use Clickable Links**: When referencing codebase files or documentation, always use clickable Markdown links with the relative path (e.g., `[main.rs](src/main.rs)`) to enable easy navigation.
+
+## Session Archive
+
+### 2026-05-23 — Hungarian localization (info.hu/)
+
+Created Hungarian translations of the TVC technical reference documents under `info.hu/`, adapted from `info/tvc.md` and `info/sys/` sources:
+- `info.hu/tvc.md` — Hungarian TVC hardware reference (translated from `info/tvc.md`)
+- `info.hu/README.md` — File index and cross-reference between EN and HU docs
+- `info.hu/sys/vt-dos.md` — Hungarian VT-DOS reference (adapted from `info/sys/vt-dos.md`)
+- `info.hu/sys/basic.md` — Hungarian BASIC reference (adapted from `info/sys/basic.md`, plus original TVC BASIC extensions content not present in EN source)
+- `L10N.md` — Localization policy: target audience, translation principles, UTF-8 with NFC normalization, term glossary, scope, and maintenance rules. Emphasizes original research (not machine translation) and specifies that `basic.md` supersedes the EN version as the authoritative reference.
+
+Fixed encoding issues in `info.hu/sys/basic.md`:
+- Corrupted `Ö` (U+FFFD replacement char → `Ö`)
+- HTML entities (`&plusmn;`, `&minus;`, `&pi;`, `&ge;`, `&ne;`) → proper UTF-8 chars (`±`, `−`, `π`, `≥`, `≠`)
 
 ## Git and Command Execution Policy
 
