@@ -352,6 +352,7 @@ pub struct EmuApp {
     game_tx: std::sync::mpsc::Sender<GameEvent>,
     game_rx: std::sync::mpsc::Receiver<GameEvent>,
     game_library: Box<GameLibraryState>,
+    show_help: bool,
 }
 
 impl EmuApp {
@@ -398,6 +399,7 @@ impl EmuApp {
             game_tx,
             game_rx,
             game_library: Box::new(GameLibraryState::default()),
+            show_help: false,
         }
     }
 
@@ -1113,6 +1115,7 @@ impl EmuApp {
                 self.draw_tape_menu(ui);
                 self.draw_disk_menu(ui);
                 self.draw_view_menu(ui);
+                self.draw_help_menu(ui);
             });
         });
     }
@@ -1570,6 +1573,143 @@ impl EmuApp {
                 }
             });
         });
+    }
+
+    fn draw_help_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("Help", |ui| {
+            if ui.button("Help Contents...").clicked() {
+                self.show_help = true;
+                ui.close_menu();
+            }
+        });
+    }
+
+    fn draw_help_window(&mut self, ctx: &egui::Context) {
+        if !self.show_help {
+            return;
+        }
+
+        let mut open = self.show_help;
+        egui::Window::new("Help")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_size([560.0, 400.0])
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.heading("VT-DOS Reference");
+                    ui.separator();
+                    ui.label(
+                        "The VT-DOS compatible floppy controller provides disk storage
+from BASIC without requiring a separate DOS cartridge.
+
+Use standard BASIC commands with drive prefixes for loading
+and saving (see TVC BASIC Reference below):
+
+  LOAD \"*\"       load first file from current drive
+  LOAD \"B:CYRUS\"       load CYRUS from drive B
+  SAVE \"PROG\"           save to PROG.CAS on current drive
+  LOAD \"B:\\BOOT\\GAME\"   load from \\BOOT directory on B
+",
+                    );
+                    ui.label(
+                        "Type EXT2 at the BASIC prompt to enter the BASIC CLI (Command
+Line Interpreter).  Your BASIC program and variables are
+preserved.  Press ESC to return to BASIC.
+
+  CLI commands (after EXT2):
+  DIR [d:] [path] [name] [/W] [/H] [/T] [/S]  list directory
+  COPY src [/H] [dest]                         copy files
+  DEL filespec [/H]                            delete files
+  REN filespec [/H] name                       rename files
+  FORMAT [d:] [volname] [/1] [/H] [/8]         format a disk
+  CD [d:] [path]               change/display current directory
+  MD [d:] path                 create subdirectory
+  RD [d:] path [/H]            remove empty subdirectory
+  MOVE filespec [/H] [path]    move files
+  RNDIR filespec [/H] name     rename subdirectory
+  TYPE filespec [/H]           display file contents on screen
+  DATE [date]                  display/set system date
+  TIME [time]                  display/set system time
+  VOL [d:] [label]             display/set volume label
+  VAR n [value]                display/set system variable
+  CLS                          clear screen
+  HELP                         list all CLI commands
+  DOS                          switch to VT-DOS cartridge
+",
+                    );
+
+                    ui.heading("TVC BASIC Reference");
+                    ui.separator();
+                    ui.label(
+                        "LET [var = expr]            — Assign value (LET is optional)
+PRINT [expr]                 — Output to screen
+INPUT [prompt;] var          — Read from keyboard
+READ var [,var...]           — Read from DATA
+DATA val [,val...]           — Store constants for READ
+RESTORE [line]               — Reset DATA pointer
+GOTO line                    — Jump to line
+GOSUB line                   — Call subroutine
+RETURN                       — Return from subroutine
+FOR var = start TO end [STEP s] ... NEXT var — Loop
+IF cond THEN line|stmt       — Conditional
+ON expr GOTO/GOSUB line,...  — Computed jump
+DIM var(d1[,d2])             — Dimension array
+REM text                     — Comment
+STOP                         — Stop execution
+END                          — End program
+RUN [\"name\"] [\"dev\"]        — Run program (load from disk if name given)
+LOAD \"name\" [\"dev\"]           — Load program from tape/disk
+SAVE \"name\" [\"dev\"]           — Save program to tape/disk
+VERIFY \"name\" [\"dev\"]         — Verify program on tape/disk
+OPEN \"name\" [FOR OUTPUT]       — Open data file for reading/writing
+CLOSE [#n]                     — Close data file(s)
+POKE addr, val               — Write memory byte
+OUT port, val                — Write I/O port
+PEEK(addr)                   — Read memory byte
+INP(port)                    — Read I/O port
+CALL addr                    — Call machine code
+USR(addr)                    — Call machine code, return value
+WAIT port, mask [,inv]       — Wait for I/O condition
+SOUND freq, dur              — Sound on PSG chip
+PLAY note$                   — Play note string
+CSIZE n                      — Character size (1-8)
+COLOR fg, bg                 — Set color attributes
+SET INK n                    — Set foreground palette
+SET PAPER n                  — Set background palette
+SET BORDER n                 — Set border palette
+SET MODE n                   — Set graphics write mode (0-3)
+SET STYLE n                  — Set PLOT line style (0-3)
+PLOT x, y                    — Plot point in graphics mode
+DRAW x, y                    — Draw line from last point
+CIRCLE x, y, r               — Draw circle
+FILL x, y                    — Flood fill from point
+TAB(n)                       — Tab to column in PRINT
+AT x, y                      — Position cursor in PRINT
+CHR$(n)                      — Character from code
+STR$(n)                      — String from number
+VAL(s)                       — Number from string
+LEN(s)                       — String length
+ASC(s)                       — ASCII code of first char
+LEFT$(s, n) / RIGHT$(s, n) / MID$(s, p, n) — Substring
+INKEY$                       — Read key without waiting
+HEX$(n)                      — Convert to hex string
+BIN$(n)                      — Convert to binary string
+FRE                          — Free memory bytes
+VERNUM                       — BASIC version number
+RND [n]                      — Random number
+INT(x)                       — Floor
+SGN(x)                       — Sign (-1, 0, 1)
+ABS(x)                       — Absolute value
+SQR(x)                       — Square root
+EXP(x) / LOG(x)              — Exponential / natural log
+SIN(x) / COS(x) / TAN(x) / ATN(x) — Trigonometry
+PI                           — π (3.141592654)
+",
+                    );
+                });
+            });
+        self.show_help = open;
     }
 
     fn draw_status_bar(&mut self, ctx: &egui::Context) {
@@ -2200,6 +2340,13 @@ impl eframe::App for EmuApp {
         }
 
         #[cfg(not(target_arch = "wasm32"))]
+        if self.show_help
+            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.show_help = false;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
         if self.workspace.is_developer()
             && self.screen_captured
             && ctx.input(|input| input.key_pressed(egui::Key::Escape))
@@ -2307,6 +2454,7 @@ impl eframe::App for EmuApp {
         self.draw_workspace(ctx);
 
         self.draw_game_library(ctx);
+        self.draw_help_window(ctx);
 
         if self.emu.running {
             ctx.request_repaint();
