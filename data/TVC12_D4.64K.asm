@@ -4,7 +4,9 @@
 ; ORG: C000H
 ; Size: 8192 bytes
 ; Symbols: data/rom_symbols_1_2.json
+; Comments: data/rom_comments_1_2.json
 ; Data ranges: C003H-C228H, C334H-C337H, C4ACH-C4B6H, C545H-C572H, C5B4H-C973H, C974H-C98EH, C9EAH-C9F1H, CB7FH-CBDCH, CF98H-D012H, D170H-D190H, D7BFH-D905H, D92AH-D9C7H, DA84H-DB05H, DBF6H-DC20H
+; Auto labels: branch and call targets are emitted as Lxxxx.
 ; -----------------------------------------------------------------------------
 
 ORG C000H
@@ -13,11 +15,15 @@ ORG C000H
 ; RESET_VECTOR - Reset vector; jumps to BASIC cold start.
 ; usage: trace
 RESET_VECTOR:
+
+; LL: Reset starts with JP 0229H; at power-on the SYS ROM is also visible at page 0, so this is executed as address 0000H.
     JP 0229H
 
 ; BCD_MULTIPLICATION_TABLE - BCD products for decimal digits 0 through 9.
 ; usage: data
 BCD_MULTIPLICATION_TABLE:
+
+; KL: Multiplication table from 00 to 99; each byte is a BCD value.
     DB 00H, 00H, 00H, 00H, 00H, 00H, 00H, 00H, 00H, 00H, 00H, 01H, 02H, 03H, 04H, 05H
     DB 06H, 07H, 08H, 09H, 00H, 02H, 04H, 06H, 08H, 10H, 12H, 14H, 16H, 18H, 00H, 03H
     DB 06H, 09H, 12H, 15H, 18H, 21H, 24H, 27H, 00H, 04H, 08H, 12H, 16H, 20H, 24H, 28H
@@ -29,6 +35,8 @@ BCD_MULTIPLICATION_TABLE:
 ; BASIC_STATEMENT_JUMP_TABLE - Jump table for primary BASIC statement tokens.
 ; usage: trace,data
 BASIC_STATEMENT_JUMP_TABLE:
+
+; KL: BASIC statement jump table; contains routine addresses for tokens FFH down to D0H.
     DB BBH, DBH, BBH, DBH, 80H, DBH, BBH, DBH, F2H, DFH, 9BH, E8H, FCH, DFH, 65H, DDH
     DB 02H, E0H, 93H, DDH, 53H, E0H, 04H, E1H, 0EH, E1H, 5CH, E1H, 10H, E9H, 82H, E3H
     DB B2H, E3H, 33H, E7H, EEH, E2H, CBH, E1H, C1H, E3H, 85H, DDH, 80H, DDH, 51H, E9H
@@ -39,6 +47,8 @@ BASIC_STATEMENT_JUMP_TABLE:
 ; RST18_JUMP_TABLE - Jump table for RST 18H arithmetic operations 0 through 14.
 ; usage: trace,data
 RST18_JUMP_TABLE:
+
+; KL: RST 18H arithmetic routine jump table; contains entries 0 through 14.
     DB 93H, F4H, FBH, F5H, 12H, F5H, 8EH, F4H, 26H, F7H, 82H, EAH, 9FH, EAH, 9AH, EAH
     DB D2H, EAH, CDH, EAH, C3H, EAH, BEH, EAH, 92H, FAH, 28H, FBH, 68H, EAH, 43H, 6FH
     DB 70H, 79H, 72H, 69H, 67H, 68H, 74H, 20H, 28H, 63H, 29H, 20H, 31H, 39H, 38H, 34H
@@ -66,6 +76,8 @@ RST18_JUMP_TABLE:
 ; BASIC_COLD_START - Cold-start entry for BASIC 1.2.
 ; usage: trace
 BASIC_COLD_START:
+
+; LL: Cold-start initialization: sets paging, tests RAM, initializes hardware, and rebuilds RAM-resident system routines.
     DI
     IM 1
     LD A,40H
@@ -75,17 +87,27 @@ BASIC_COLD_START:
     OUT (02H),A
     JP F13DH
     LD A,40H
+
+; KL: Memory paging: S U V S page layout.
     OUT (02H),A
     JP C241H
+
+LC241:
     LD A,50H
+
+; KL: Memory paging: U U V S page layout.
     OUT (02H),A
     XOR A
     LD BC,0460H
+
+LC249:
     OUT (C),A
     INC C
     DJNZ C249H
     LD HL,C545H
     LD B,10H
+
+LC253:
     LD A,B
     DEC A
     OUT (70H),A
@@ -94,28 +116,41 @@ BASIC_COLD_START:
     INC HL
     DJNZ C253H
     LD A,80H
+
+; KL: Send one STROBE pulse.
     OUT (06H),A
     LD A,(0B22H)
     INC A
     JR NZ,C26BH
     LD (0B21H),A
-    LD A,08H
+    DB 3EH
+
+LC26B:
+    EX AF,AF'
     INC A
     JR Z,C2BBH
     LD SP,BFFFH
     LD HL,0000H
     CALL C33EH
     JR Z,C27FH
+
+LC27A:
     DEC A
     OUT (00H),A
     JR C27AH
+
+LC27F:
     LD SP,16ACH
     LD HL,8000H
     CALL C33EH
     JR Z,C28EH
     LD A,88H
     OUT (C),A
+
+LC28E:
     LD A,70H
+
+; KL: Memory paging: U U U S page layout.
     OUT (02H),A
     LD HL,4000H
     CALL C33EH
@@ -133,15 +168,22 @@ BASIC_COLD_START:
     LD A,00H
     JR Z,C2B8H
     DEC A
+
+LC2B8:
     EX AF,AF'
     JR C2C2H
+
+LC2BB:
     LD H,A
     LD L,A
+
+LC2BD:
     DEC HL
     LD A,H
     OR L
     JR NZ,C2BDH
 
+LC2C2:
 ; WARM_RESET - Warm-reset path that attempts to preserve user memory.
 ; usage: trace
 WARM_RESET:
@@ -155,6 +197,8 @@ WARM_RESET:
     XOR A
     LD (0B11H),A
     OUT (03H),A
+
+; KL: Clear cursor/sound interrupt.
     OUT (07H),A
     OUT (58H),A
     OUT (59H),A
@@ -167,6 +211,8 @@ WARM_RESET:
     LD (0B13H),A
     LD HL,C555H
     LD BC,0470H
+
+LC2F5:
     PUSH BC
     LD E,(HL)
     INC HL
@@ -178,20 +224,28 @@ WARM_RESET:
     POP HL
     POP BC
     LD A,C
+
+; KL: Memory paging: U U U S page layout.
     OUT (02H),A
     DJNZ C2F5H
 
 ; CARTRIDGE_AUTOSTART - Checks for the MOSP cartridge signature and transfers control to it.
 ; usage: trace
 CARTRIDGE_AUTOSTART:
+
+; KL: Cartridge autostart check; if the side cartridge begins with the MOPS signature, control passes to its fifth byte.
     LD A,60H
     OUT (02H),A
     JP 030DH
     LD A,20H
+
+; KL: Memory paging: S U U C page layout.
     OUT (02H),A
     LD HL,C000H
     LD DE,0334H
     LD B,04H
+
+LC319:
     LD A,(DE)
     CP (HL)
     JR NZ,C322H
@@ -199,33 +253,48 @@ CARTRIDGE_AUTOSTART:
     INC HL
     DJNZ C319H
 
+LC321:
 ; JUMP_HL - Transfers control to the address in HL.
 ; usage: call
 JUMP_HL:
     JP (HL)
+
+LC322:
     LD A,60H
     OUT (02H),A
     JP C329H
+
+LC329:
     LD A,70H
+
+; KL: Memory paging: U U U S page layout.
     OUT (02H),A
     LD (0003H),A
     EI
     JP D9EFH
+
+; KL: MOSP signature text used to recognize autostart cartridges.
     DB 4DH, 4FH, 50H, 53H
     PUSH HL
     CALL 0348H
     JR C342H
 
+LC33E:
 ; MEMORY_TEST - Memory-test entry used during initialization.
 ; usage: trace
 MEMORY_TEST:
     PUSH HL
     CALL C348H
+
+LC342:
     POP DE
     RET NZ
     EX DE,HL
     LD A,AAH
-    LD BC,553EH
+    DB 01H
+
+LC348:
+    LD A,55H
     PUSH HL
     LD E,L
     LD D,H
@@ -236,6 +305,8 @@ MEMORY_TEST:
     POP HL
     LD B,40H
     DEC A
+
+LC358:
     DEC (HL)
     CPI
     DEC HL
@@ -248,6 +319,8 @@ MEMORY_TEST:
 ; RST30_DISPATCH - Dispatches an operating-system function requested through RST 30H.
 ; usage: trace
 RST30_DISPATCH:
+
+; KL: RST 30H entry point.
     PUSH HL
     PUSH IX
     PUSH IY
@@ -262,6 +335,8 @@ RST30_DISPATCH:
 ; RST30_RETURN - Common return path for RST 30H operating-system calls.
 ; usage: trace
 RST30_RETURN:
+
+; KL: RST 30H return path.
     EXX
     POP HL
     POP DE
@@ -271,6 +346,8 @@ RST30_RETURN:
     POP IX
     POP HL
     JP 0B37H
+
+LC37E:
     PUSH AF
     PUSH BC
     PUSH DE
@@ -282,11 +359,15 @@ RST30_RETURN:
     CP 02H
     JR NZ,C38DH
     DEC (HL)
+
+LC38D:
     LD DE,0B00H
     LD A,C
     RLCA
     JR C,C397H
     LD DE,0B08H
+
+LC397:
     AND E0H
     RLCA
     RLCA
@@ -308,26 +389,40 @@ RST30_RETURN:
     LD A,C
     CP 03H
     JR NC,C3D0H
+
+LC3B3:
     LD A,(HL)
     RES 7,A
     CP 07H
     JR C,C3C0H
     LD A,FEH
+
+LC3BC:
     POP DE
     POP BC
     JR C3FCH
+
+LC3C0:
     BIT 7,(HL)
     JR Z,C3CAH
     LD HL,F166H
+
+LC3C7:
     JP FFF0H
+
+LC3CA:
     LD A,C
     CP 03H
     JR NC,C3D0H
     LD B,(HL)
+
+LC3D0:
     LD A,B
     CP 06H
     LD HL,F16CH
     JR Z,C3C7H
+
+LC3D8:
     LD DE,C55DH
     LD L,B
     LD H,00H
@@ -356,6 +451,8 @@ RST30_RETURN:
     POP DE
     POP BC
     CALL C321H
+
+LC3FC:
     OR A
     POP HL
     RET Z
@@ -370,12 +467,16 @@ RST30_RETURN:
     JR C3C7H
     POP DE
     POP BC
+
+LC410:
     POP AF
     RET
 
 ; IRQ_HANDLER - Main interrupt service routine entered from the RAM RST 38H stub.
 ; usage: trace
 IRQ_HANDLER:
+
+; KL: RST 38H interrupt entry; interrupt mode 1 dispatches here.
     LD A,(0003H)
     PUSH AF
     PUSH HL
@@ -404,20 +505,31 @@ IRQ_HANDLER:
     POP AF
     JP 0B41H
 
+LC437:
 ; IRQ_CORE - Core interrupt dispatch after the entry setup.
 ; usage: trace
 IRQ_CORE:
+
+; KL: Core interrupt handler.
     LD A,FFH
+
+; KL: Set INTFLAG while servicing an interrupt.
     LD (0B20H),A
     LD HL,(0B1DH)
+
+; KL: Increment HL.
     INC HL
     LD (0B1DH),HL
+
+; KL: Load BORDER system variable into A.
     LD A,(0B4FH)
     OUT (00H),A
     IN A,(59H)
     LD C,A
     BIT 4,A
     SET 4,C
+
+; KL: Clear cursor/sound interrupt.
     OUT (07H),A
     CALL Z,C47DH
     LD A,C
@@ -431,24 +543,34 @@ IRQ_CORE:
     LD L,C
     LD BC,0458H
     LD D,A
+
+LC465:
     XOR A
     RRC D
     RRA
     RRC H
     JR C,C46FH
     OUT (C),A
+
+LC46F:
     INC C
     DJNZ C465H
     LD C,L
     LD HL,C478H
     JR C4A3H
+
+LC478:
     XOR A
     LD (0B20H),A
     RET
+
+LC47D:
     PUSH BC
     LD A,(0B10H)
     LD C,A
     LD B,04H
+
+LC484:
     RR C
     PUSH BC
     JR C,C499H
@@ -462,11 +584,15 @@ IRQ_CORE:
     PUSH HL
     PUSH HL
     JP C3D8H
+
+LC499:
     LD A,70H
     OUT (02H),A
     POP BC
     DJNZ C484H
     LD HL,C4AAH
+
+LC4A3:
     PUSH HL
     LD HL,F227H
     JP FFF0H
@@ -476,11 +602,15 @@ IRQ_CORE:
 ; KERNEL_JUMP_TABLE - Counted jump table for kernel functions.
 ; usage: trace,data
 KERNEL_JUMP_TABLE:
+
+; KL: Kernel routine jump table; first byte is the routine count, followed by routine addresses.
     DB 05H, 09H, C5H, B7H, C4H, D0H, C4H, E2H, C4H, 0EH, C5H
 
 ; HI_MEM_SET - Reserves memory above BASIC's usable high-memory limit.
 ; usage: trace,call
 HI_MEM_SET:
+
+; KL: HI_MEM_SET expects the number of bytes to reserve above HI_MEM in DE; on success DE returns the new HI_MEM+1.
     LD HL,(0B19H)
     LD A,FBH
     OR A
@@ -505,6 +635,8 @@ SLOT_ASN:
     INC B
     JR Z,C4D9H
     LD HL,0B0FH
+
+LC4D9:
     PUSH HL
     CALL C50EH
     POP HL
@@ -520,6 +652,8 @@ IO_ASN:
     INC D
     JR Z,C4EBH
     LD HL,0B08H
+
+LC4EB:
     PUSH HL
     LD A,06H
     CP B
@@ -545,22 +679,29 @@ IO_ASN:
     POP HL
     LD (HL),C
     RET
+
+LC50A:
     POP HL
     LD A,FEH
     RET
 
+LC50E:
 ; SLOT_NUM - Finds the slot containing a specified expansion-card unit.
 ; usage: trace,call
 SLOT_NUM:
     PUSH DE
     LD IX,0040H
     LD B,04H
+
+LC515:
     PUSH IX
     POP HL
     PUSH BC
     LD A,(DE)
     INC A
     LD B,A
+
+LC51C:
     LD A,(DE)
     CP (HL)
     JR NZ,C537H
@@ -579,9 +720,15 @@ SLOT_NUM:
     SUB B
     LD C,A
     XOR A
+
+LC535:
     POP DE
     RET
+
+LC537:
     POP BC
+
+LC538:
     LD DE,0030H
     ADD IX,DE
     POP DE
@@ -589,7 +736,11 @@ SLOT_NUM:
     DJNZ C515H
     LD A,FDH
     JR C535H
+
+; KL: Initial values for the 6845 video controller registers after reset.
     DB FFH, 0EH, 00H, 00H, 03H, 03H, 03H, 00H, 42H, 3CH, 02H, 4DH, 32H, 4BH, 40H, 63H
+
+; KL: Startup initialization routine table.
     DB F2H, C9H, ECH, D5H, 60H, D9H, E2H, D9H
 
 ; DEVICE_JUMP_TABLE_POINTERS - Pointers to video, keyboard, editor, sound, printer, cassette, and kernel jump tables.
@@ -616,7 +767,11 @@ DEVICE_JUMP_TABLE_POINTERS:
     CPI
     RET PO
     JR C56EH
+
+LC58E:
     JP (HL)
+
+LC58F:
     PUSH HL
     PUSH DE
     PUSH BC
@@ -646,6 +801,8 @@ DEVICE_JUMP_TABLE_POINTERS:
     EX DE,HL
     RET PO
     JR C58FH
+
+; KL: Built-in character matrix table for character codes 32-127, ten bytes per character.
     DB 00H, 00H, 00H, 00H, 00H, 00H, 00H, 00H, 00H, 00H, 00H, 18H, 18H, 18H, 18H, 18H
     DB 00H, 18H, 00H, 00H, 00H, 36H, 36H, 36H, 00H, 00H, 00H, 00H, 00H, 00H, 00H, 36H
     DB 36H, 7FH, 36H, 7FH, 36H, 36H, 00H, 00H, 00H, 18H, 3EH, 58H, 3CH, 1AH, 7CH, 18H
@@ -710,9 +867,12 @@ DEVICE_JUMP_TABLE_POINTERS:
 ; VIDEO_JUMP_TABLE - Counted jump table for video OS functions.
 ; usage: trace,data
 VIDEO_JUMP_TABLE:
+
+; KL: VIDEO routine jump table; first byte is the routine count, followed by routine addresses.
     DB 0DH, A9H, C9H, 94H, CCH, 86H, CCH, 4BH, CFH, F4H, C9H, 49H, CAH, DAH, CAH, D7H
     DB CAH, F3H, CBH, FFH, CBH, 48H, CDH, 2CH, CFH, 38H, CAH
 
+LC98F:
 ; CALL_WITH_SYS_PAGED - Pages SYS into page 3, invokes the routine in HL, then restores paging.
 ; usage: trace
 CALL_WITH_SYS_PAGED:
@@ -733,6 +893,7 @@ CALL_WITH_SYS_PAGED:
     EX AF,AF'
     RET
 
+LC9AA:
 ; JUMP_TABLE_DISPATCH - Selects a target from a ROM jump table.
 ; usage: trace
 JUMP_TABLE_DISPATCH:
@@ -744,18 +905,25 @@ JUMP_TABLE_DISPATCH:
     INC HL
     LD D,(HL)
     RET
+
+LC9B3:
     LD HL,03FFH
     OR A
     SBC HL,BC
     RET
+
+LC9BA:
     LD HL,03BFH
     OR A
     SBC HL,DE
     RET
+
+LC9C1:
     LD A,(0B73H)
     LD B,A
     INC B
 
+LC9C6:
 ; SHIFT_HL_RIGHT - Divides HL by a power of two.
 ; usage: call
 SHIFT_HL_RIGHT:
@@ -763,17 +931,29 @@ SHIFT_HL_RIGHT:
     RR L
     DJNZ C9C6H
     RET
+
+LC9CD:
     CALL CB6DH
+
+LC9D0:
     CALL CC05H
     LD (0B93H),A
     LD DE,0040H
+
+LC9D9:
     CALL CB8FH
     CALL CC0DH
+
+LC9DF:
     LD (0B94H),A
+
+LC9E2:
     LD A,(0B75H)
     LD C,A
     LD HL,(0B76H)
     RET
+
+; KL: Initial palette bytes when the hardware color switch is on.
     DB 00H, 50H, 44H, 41H, 00H, 55H, 50H, 44H
 
 ; SET_4_COLOR_MODE - Selects the four-color video mode.
@@ -784,6 +964,8 @@ SET_4_COLOR_MODE:
 ; VID_MODE - Sets the video display mode.
 ; usage: trace,call
 VID_MODE:
+
+; KL: VMODE routine.
     LD A,C
     CP 03H
     LD A,F7H
@@ -802,6 +984,8 @@ VID_MODE:
     LD A,0FH
     JR NC,CA15H
     LD A,0CH
+
+LCA15:
     LD (0B4DH),A
     LD A,C
     LD (0B73H),A
@@ -822,9 +1006,12 @@ VID_MODE:
     JR NC,CA38H
     LD DE,C9EAH
 
+LCA38:
 ; PAL_DEF - Defines the active video palette.
 ; usage: trace,call
 PAL_DEF:
+
+; KL: PAL routine.
     LD A,(DE)
     OUT (60H),A
     INC DE
@@ -839,9 +1026,12 @@ PAL_DEF:
     XOR A
     RET
 
+LCA49:
 ; VID_CLS - Clears the video display.
 ; usage: trace,call
 VID_CLS:
+
+; KL: CLS routine.
     CALL C98FH
     CALL CFD4H
     CALL CC05H
@@ -856,10 +1046,13 @@ VID_CLS:
     LD D,A
     LD E,A
 
+LCA65:
 ; PIXEL_ADDRESS - Converts physical pixel coordinates to a video-memory address and bit mask.
 ; usage: call
 PIXEL_ADDRESS:
     LD (0B7EH),DE
+
+LCA69:
     LD (0B7CH),BC
     LD HL,(0B7CH)
     PUSH HL
@@ -876,7 +1069,10 @@ PIXEL_ADDRESS:
     INC A
     LD B,A
     LD A,(HL)
-    LD E,0FH
+    DB 1EH
+
+LCA89:
+    RRCA
     DJNZ CA89H
     LD (0B75H),A
     LD DE,(0B7EH)
@@ -902,15 +1098,25 @@ PIXEL_ADDRESS:
     ADD A,B
     ADC A,B
     XOR D
+
+LCAB7:
     JR NC,CAC5H
     AND 01H
     JR Z,CAC0H
     RET
+
+LCABE:
     JR NC,CAC8H
+
+LCAC0:
     LD A,(0B94H)
     JP (IY)
+
+LCAC5:
     AND 02H
     RET NZ
+
+LCAC8:
     LD A,(0B93H)
     JP (IY)
     AND (HL)
@@ -927,11 +1133,15 @@ PIXEL_ADDRESS:
 ; B_REL - Moves the graphics pen by a relative offset.
 ; usage: trace,call
 B_REL:
+
+; KL: BREL routine.
     CALL CC7AH
 
 ; B_ABS - Moves the graphics pen to an absolute position.
 ; usage: trace,call
 B_ABS:
+
+; KL: BABS routine.
     CALL C98FH
     LD A,F9H
     CALL C9B3H
@@ -974,6 +1184,8 @@ DRAW_LINE:
     POP HL
     JR C,CB28H
     EX DE,HL
+
+LCB28:
     LD B,H
     LD C,L
     PUSH DE
@@ -998,8 +1210,17 @@ DRAW_LINE:
     EX AF,AF'
     POP HL
     JR CB50H
+
+LCB4C:
     EX AF,AF'
-    CALL CBA8H
+
+LCB4D:
+    DB CDH, A8H
+
+LCB4F:
+    DB CBH
+
+LCB50:
     LD A,(0B83H)
     RLCA
     LD (0B83H),A
@@ -1009,13 +1230,19 @@ DRAW_LINE:
     DEC A
     JR NZ,CB4CH
     RET
+
+LCB61:
     SBC HL,DE
     JR NC,CB6BH
     EX DE,HL
     LD HL,0001H
     SBC HL,DE
+
+LCB6B:
     RLA
     RET
+
+LCB6D:
     LD A,(0B4CH)
     DEC A
     AND 0FH
@@ -1026,6 +1253,8 @@ DRAW_LINE:
     LD A,(HL)
     LD (0B83H),A
     RET
+
+; KL: Line style bit-pattern table.
     DB FFH, AAH, CCH, EEH, 88H, DAH, E4H, F6H, FAH, FEH, FCH, F8H, F0H, EAH, FFH, FFH
     DB D5H, 3AH, 4BH, 0BH, E6H, 03H, 21H, A0H, CBH, CDH, AAH, C9H, D5H, FDH, E1H, D1H
     DB C9H, CEH, CAH, D3H, CAH, CDH, CAH, CFH, CAH, D9H, CBH, 7CH, 28H, 08H, 09H, D9H
@@ -1048,24 +1277,35 @@ DRAW_LINE:
 ; B_ON - Lowers the graphics pen.
 ; usage: trace,call
 B_ON:
+
+; KL: BON routine.
     CALL C98FH
     CALL C9D9H
     CALL CAC0H
     LD A,FFH
     DB 26H
 
+LCBFF:
 ; B_OFF - Raises the graphics pen.
 ; usage: trace,call
 B_OFF:
+
+; KL: BOFF routine.
     XOR A
     LD (0B74H),A
     XOR A
     RET
+
+LCC05:
     LD A,(0B4EH)
     CALL CC10H
     LD B,A
     RET
+
+LCC0D:
     LD A,(0B4DH)
+
+LCC10:
     LD HL,(0B73H)
     SRL L
     JR C,CC20H
@@ -1075,6 +1315,8 @@ B_OFF:
     RRA
     SBC A,A
     RET
+
+LCC20:
     AND 03H
     RRA
     RL L
@@ -1086,8 +1328,12 @@ B_OFF:
     SRA A
     SRA A
     RET
+
+LCC31:
     AND 0FH
     LD H,04H
+
+LCC35:
     RRA
     RR L
     SRA L
@@ -1096,6 +1342,7 @@ B_OFF:
     LD A,L
     RET
 
+LCC3F:
 ; READ_PIXEL_COLOR - Reads the color code of the most recently addressed pixel.
 ; usage: call
 READ_PIXEL_COLOR:
@@ -1112,6 +1359,8 @@ READ_PIXEL_COLOR:
     RLA
     AND 01H
     RET
+
+LCC56:
     ADD A,F0H
     RL C
     AND 0FH
@@ -1121,6 +1370,8 @@ READ_PIXEL_COLOR:
     RLA
     AND 03H
     RET
+
+LCC65:
     ADD A,C0H
     RLA
     AND 7FH
@@ -1134,6 +1385,8 @@ READ_PIXEL_COLOR:
     RLA
     AND 0FH
     RET
+
+LCC7A:
     LD HL,(0B7CH)
     ADD HL,BC
     LD B,H
@@ -1147,6 +1400,8 @@ READ_PIXEL_COLOR:
 ; usage: trace,call
 VID_BKOUT:
     EX DE,HL
+
+LCC87:
     PUSH HL
     PUSH BC
     LD C,(HL)
@@ -1157,6 +1412,7 @@ VID_BKOUT:
     RET PO
     JR CC87H
 
+LCC94:
 ; VID_CHOUT - Writes one character to the video device.
 ; usage: trace,call
 VID_CHOUT:
@@ -1170,6 +1426,8 @@ VID_CHOUT:
     JP Z,CD2BH
     XOR A
     RET
+
+LCCA8:
     CP E0H
     LD A,00H
     RET NC
@@ -1179,6 +1437,8 @@ VID_CHOUT:
     LD B,A
     LD A,01H
     INC B
+
+LCCB8:
     ADD A,A
     DJNZ CCB8H
     LD (0B82H),A
@@ -1197,6 +1457,7 @@ VID_CHOUT:
     CALL CD2BH
     CALL CD31H
 
+LCCD7:
 ; VID_CHOUT_AT - Writes character C at the supplied pixel position without validation.
 ; usage: call
 VID_CHOUT_AT:
@@ -1206,6 +1467,8 @@ VID_CHOUT_AT:
     BIT 7,C
     JR Z,CCE5H
     LD DE,0740H
+
+LCCE5:
     RES 7,C
     LD B,00H
     LD H,B
@@ -1219,12 +1482,18 @@ VID_CHOUT_AT:
     LD A,(0B50H)
     LD E,A
     DEC HL
+
+LCCF7:
     INC HL
     LD C,(HL)
     EXX
     LD B,08H
     JR CD01H
+
+LCCFE:
     CALL CBD6H
+
+LCD01:
     EXX
     RL C
     LD A,E
@@ -1233,6 +1502,8 @@ VID_CHOUT_AT:
     DJNZ CCFEH
     CALL CBD3H
     LD B,07H
+
+LCD10:
     CALL CBC0H
     DJNZ CD10H
     EXX
@@ -1247,8 +1518,14 @@ VID_CHOUT_AT:
     JR NC,CD2EH
     LD BC,CD31H
     PUSH BC
+
+LCD2B:
     LD BC,0000H
+
+LCD2E:
     JP CA69H
+
+LCD31:
     LD DE,FFB4H
     CALL CC7AH
     XOR A
@@ -1262,6 +1539,8 @@ VID_CHOUT_AT:
 ; PAINT - Fills a closed graphics region.
 ; usage: trace,call
 PAINT:
+
+; KL: FILL routine.
     CALL C98FH
     LD (0B88H),SP
     LD IY,CACFH
@@ -1288,6 +1567,8 @@ PAINT:
     LD (0B8BH),BC
     LD B,01H
     JR CDA3H
+
+LCD85:
     POP HL
     LD A,H
     OR L
@@ -1303,7 +1584,11 @@ PAINT:
     LD DE,BC00H
     SBC HL,DE
     JP NC,CE63H
+
+LCDA3:
     EXX
+
+LCDA4:
     CALL CE92H
     JR C,CD85H
     LD HL,(0B91H)
@@ -1320,6 +1605,8 @@ PAINT:
     EXX
     AND 01H
     JP NZ,CE62H
+
+LCDC2:
     LD HL,(0B8DH)
     LD BC,(0B8BH)
     LD A,(0B8AH)
@@ -1332,16 +1619,22 @@ PAINT:
     LD B,A
     LD DE,0000H
     JR CDE5H
+
+LCDDA:
     LD A,(0B8AH)
     XOR (HL)
     AND C
     JR NZ,CDECH
     CALL CAC0H
     INC DE
+
+LCDE5:
     RLC C
     JR NC,CDDAH
     DEC L
     DJNZ CDDAH
+
+LCDEC:
     LD A,40H
     SUB B
     INC A
@@ -1350,6 +1643,8 @@ PAINT:
     JR NC,CDF7H
     INC L
     DEC B
+
+LCDF7:
     PUSH HL
     PUSH BC
     PUSH DE
@@ -1361,8 +1656,12 @@ PAINT:
     OR L
     JR Z,CE0BH
     SET 7,H
+
+LCE0B:
     ADD HL,DE
     EX (SP),HL
+
+LCE0D:
     PUSH HL
     LD HL,(0B8FH)
     OR A
@@ -1379,34 +1678,48 @@ PAINT:
     RLC B
     EXX
     RRA
+
+LCE26:
     XOR H
     LD H,A
+
+LCE28:
     POP AF
     EX (SP),HL
     JR C,CE62H
     JR Z,CE62H
     EX DE,HL
+
+LCE2F:
     CALL CE92H
     JP C,CD85H
     LD A,E
     OR A
     JR NZ,CE3AH
     DEC D
+
+LCE3A:
     LD A,(0B8AH)
     XOR (HL)
     AND C
     JR Z,CE4CH
     DEC E
     JR Z,CE5EH
+
+LCE44:
     RRC C
     JR NC,CE3AH
     INC L
     DEC B
     JR CE3AH
+
+LCE4C:
     LD A,E
     OR A
     JR NZ,CE51H
     INC D
+
+LCE51:
     LD (0B8FH),DE
     PUSH HL
     EX (SP),HL
@@ -1414,9 +1727,15 @@ PAINT:
     CALL CE7AH
     PUSH DE
     JR CE0DH
+
+LCE5E:
     DEC D
     JP P,CE44H
+
+LCE62:
     EXX
+
+LCE63:
     DEC B
     JP Z,CD85H
     EXX
@@ -1427,7 +1746,11 @@ PAINT:
     BIT 7,H
     JP Z,CD85H
     JP CDA4H
+
+LCE7A:
     LD DE,0000H
+
+LCE7D:
     LD A,(0B8AH)
     XOR (HL)
     AND C
@@ -1442,6 +1765,8 @@ PAINT:
     INC L
     DJNZ CE7DH
     RET
+
+LCE92:
     PUSH HL
     PUSH DE
     LD HL,FFEAH
@@ -1458,6 +1783,8 @@ PAINT:
     DEC HL
     LD D,H
     LD E,L
+
+LCEAC:
     LD C,L
     LD B,H
     LD HL,0009H
@@ -1479,9 +1806,13 @@ PAINT:
     POP BC
     EXX
     POP BC
+
+LCEC9:
     POP DE
     POP HL
     RET
+
+LCECC:
     CALL CEFEH
     ADD HL,BC
     LD BC,BC00H
@@ -1490,6 +1821,8 @@ PAINT:
     ADD HL,BC
     CALL CF14H
     JR Z,CEECH
+
+LCEDD:
     CALL CEFDH
     OR A
     SBC HL,BC
@@ -1497,15 +1830,23 @@ PAINT:
     SBC HL,BC
     ADD HL,BC
     CALL NC,CF14H
+
+LCEEC:
     EXX
     LD BC,0006H
     JR NZ,CEF7H
     LDDR
     JP CEACH
+
+LCEF7:
     OR A
     SBC HL,BC
     JP CEACH
+
+LCEFD:
     EXX
+
+LCEFE:
     PUSH HL
     EXX
     POP HL
@@ -1525,19 +1866,27 @@ PAINT:
     LD BC,0040H
     EX DE,HL
     RET
+
+LCF14:
     LD C,A
     LD A,(0B8AH)
     LD B,A
+
+LCF19:
     LD A,B
     XOR (HL)
     AND C
     RET Z
     DEC E
     JR Z,CF27H
+
+LCF20:
     RRC C
     JR NC,CF19H
     INC HL
     JR CF19H
+
+LCF27:
     DEC D
     JP P,CF20H
     RET
@@ -1545,10 +1894,14 @@ PAINT:
 ; CH_DEF - Defines a programmable character glyph.
 ; usage: trace,call
 CH_DEF:
+
+; KL: DEFC routine.
     LD A,C
     CP E0H
     JR NC,CF32H
     OR A
+
+LCF32:
     LD A,F8H
     RET P
     RES 7,C
@@ -1570,14 +1923,20 @@ CH_DEF:
 ; CH_POS - Rounds the graphics pen position to a normal character position.
 ; usage: trace,call
 CH_POS:
+
+; KL: BTEXT routine.
     PUSH BC
     LD HL,0000H
     DEC B
     JP M,CF54H
     LD L,B
+
+LCF54:
     LD A,(0B73H)
     ADD A,04H
     LD B,A
+
+LCF5A:
     ADD HL,HL
     DJNZ CF5AH
     PUSH HL
@@ -1587,8 +1946,12 @@ CH_POS:
     DEC B
     JP M,CF6EH
     JR Z,CF6EH
+
+LCF6B:
     ADD HL,DE
     DJNZ CF6BH
+
+LCF6E:
     EX DE,HL
     POP BC
     EXX
@@ -1603,6 +1966,8 @@ CH_POS:
     PUSH DE
     EXX
     POP DE
+
+LCF83:
     LD A,H
     OR A
     JR NZ,CF8BH
@@ -1610,6 +1975,8 @@ CH_POS:
     PUSH BC
     EXX
     POP BC
+
+LCF8B:
     LD A,F9H
     CALL C9B3H
     RET C
@@ -1620,6 +1987,8 @@ CH_POS:
 ; EDITOR_JUMP_TABLE - Counted jump table for editor OS functions.
 ; usage: trace,data
 EDITOR_JUMP_TABLE:
+
+; KL: EDITOR routine jump table; first byte is the routine count, followed by routine addresses.
     DB 05H, A3H, CFH, 52H, D0H, 41H, D0H, 1DH, D0H, 13H, D0H
 
 ; ED_INT - Editor interrupt routine that manages cursor blinking.
@@ -1641,6 +2010,8 @@ EDITOR_INIT:
 ; CU_FIX - Stores the current cursor position.
 ; usage: trace,call
 CU_FIX:
+
+; KL: CFIX routine.
     LD HL,(0E49H)
     LD (0E4EH),HL
     LD A,80H
@@ -1657,6 +2028,8 @@ CU_POS:
     CP B
     JR C,D03EH
     LD H,B
+
+LD02B:
     LD A,C
     OR A
     JR Z,D035H
@@ -1664,11 +2037,19 @@ CU_POS:
     CP C
     JR C,D03EH
     LD L,C
+
+LD035:
     LD (0E49H),HL
+
+LD038:
     XOR A
+
+LD039:
     LD (0E4DH),A
     XOR A
     RET
+
+LD03E:
     LD A,F6H
     RET
 
@@ -1694,10 +2075,14 @@ ED_CHIN_OUT:
     LD A,(0E4DH)
     RRCA
     JP C,D0FAH
+
+LD066:
     CALL D39CH
     LD BC,(0E49H)
     PUSH BC
     LD DE,(0E4EH)
+
+LD072:
     LD A,C
     CP E
     JR C,D07CH
@@ -1705,14 +2090,20 @@ ED_CHIN_OUT:
     LD A,B
     CP D
     JR NC,D08BH
+
+LD07C:
     CALL D038H
     JR D08BH
+
+LD081:
     DEC C
     JR Z,D07CH
     DEC HL
     BIT 7,(HL)
     LD D,01H
     JR NZ,D072H
+
+LD08B:
     POP BC
     CALL D477H
     LD A,13H
@@ -1736,6 +2127,8 @@ ED_CHIN_OUT:
     JR Z,D0EBH
     CALL D124H
     JR D066H
+
+LD0B7:
     LD A,50H
     LD (0003H),A
     OUT (02H),A
@@ -1747,9 +2140,13 @@ ED_CHIN_OUT:
     LD A,01H
     LD (0E4AH),A
     RET
+
+LD0CD:
     CP 0AH
     JR NZ,D0E6H
     LD BC,(0E49H)
+
+LD0D5:
     LD A,C
     CALL D39FH
     INC C
@@ -1760,14 +2157,20 @@ ED_CHIN_OUT:
     POP AF
     LD (0E4AH),A
     RET
+
+LD0E6:
     CALL D124H
     XOR A
     RET
+
+LD0EB:
     LD A,(0E4DH)
     RLCA
     LD BC,(0E4EH)
     CALL NC,D370H
     LD (0E49H),BC
+
+LD0FA:
     LD BC,(0E49H)
     LD A,C
     CALL D39FH
@@ -1780,14 +2183,19 @@ ED_CHIN_OUT:
     JR NC,D112H
     LD B,01H
     INC C
+
+LD112:
     LD (0E49H),BC
     LD C,(HL)
     LD A,01H
     JP D039H
+
+LD11C:
     CALL D363H
     LD C,0DH
     JP D038H
 
+LD124:
 ; EDITOR_CHAR_DISPATCH - Processes a printable or editor control character.
 ; usage: trace
 EDITOR_CHAR_DISPATCH:
@@ -1808,6 +2216,8 @@ EDITOR_CHAR_DISPATCH:
     CP B
     JR NC,D143H
     LD (HL),B
+
+LD143:
     INC B
     LD A,(0E6BH)
     CP B
@@ -1816,10 +2226,16 @@ EDITOR_CHAR_DISPATCH:
     INC C
     BIT 7,(HL)
     CALL Z,D2CBH
+
+LD152:
     LD (0E49H),BC
     RET
+
+LD157:
     LD HL,D170H
     LD B,0BH
+
+LD15C:
     CP (HL)
     INC HL
     LD E,(HL)
@@ -1829,10 +2245,14 @@ EDITOR_CHAR_DISPATCH:
     JR Z,D167H
     DJNZ D15CH
     RET
+
+LD167:
     LD BC,(0E49H)
     LD A,(0E6BH)
     EX DE,HL
     JP (HL)
+
+; KL: Built-in editor function jump table; entries contain control character and routine address.
     DB 13H, 91H, D1H, 04H, 98H, D1H, 05H, 95H, D1H, 18H, 9EH, D1H, 16H, 05H, D2H, 07H
     DB 87H, D2H, 08H, 78H, D2H, 19H, FDH, D1H, 0EH, F7H, D1H, 0BH, A8H, D1H, 09H, CDH
     DB D1H
@@ -1848,7 +2268,11 @@ EDITOR_CHAR_DISPATCH:
     INC C
     LD A,C
     CP 19H
+
+LD1A2:
     RET Z
+
+LD1A3:
     LD (0E49H),BC
     RET
     PUSH BC
@@ -1858,6 +2282,8 @@ EDITOR_CHAR_DISPATCH:
     DEC B
     LD A,(0E6BH)
     SUB B
+
+LD1B5:
     LD (HL),20H
     INC HL
     DEC A
@@ -1866,7 +2292,11 @@ EDITOR_CHAR_DISPATCH:
     LD (HL),B
     INC C
     INC HL
+
+LD1C1:
     RET NC
+
+LD1C2:
     LD B,(HL)
     LD A,C
     EXX
@@ -1890,12 +2320,16 @@ EDITOR_CHAR_DISPATCH:
     INC C
     EX AF,AF'
     CALL NC,D2CBH
+
+LD1E8:
     LD A,C
     CALL D39FH
     DEC B
     CP B
     JR NC,D1F1H
     LD (HL),B
+
+LD1F1:
     INC B
     LD (0E49H),BC
     RET
@@ -1909,8 +2343,12 @@ EDITOR_CHAR_DISPATCH:
     RET C
     LD E,01H
     JR D210H
+
+LD20E:
     INC HL
     INC E
+
+LD210:
     LD A,(HL)
     RLCA
     INC C
@@ -1926,6 +2364,8 @@ EDITOR_CHAR_DISPATCH:
     DEC (HL)
     SCF
     JR D234H
+
+LD226:
     PUSH DE
     PUSH BC
     CALL D2CBH
@@ -1935,7 +2375,11 @@ EDITOR_CHAR_DISPATCH:
     LD A,C
     DEC A
     CALL D39FH
+
+LD233:
     OR A
+
+LD234:
     EX AF,AF'
     OR A
     DEC C
@@ -1946,6 +2390,8 @@ EDITOR_CHAR_DISPATCH:
     PUSH AF
     JR Z,D240H
     LD B,01H
+
+LD240:
     PUSH BC
     CALL D592H
     POP BC
@@ -1955,10 +2401,14 @@ EDITOR_CHAR_DISPATCH:
     LD L,C
     CALL D387H
     PUSH HL
+
+LD24F:
     EX AF,AF'
     JR NC,D254H
     DEC HL
     INC B
+
+LD254:
     LD A,(DE)
     SUB B
     LD C,A
@@ -1968,6 +2418,8 @@ EDITOR_CHAR_DISPATCH:
     DEC HL
     JR Z,D260H
     LDDR
+
+LD260:
     POP HL
     LD BC,FFC0H
     ADD HL,BC
@@ -1975,6 +2427,8 @@ EDITOR_CHAR_DISPATCH:
     POP AF
     JR NZ,D26BH
     LD B,20H
+
+LD26B:
     LD A,B
     LD (DE),A
     POP HL
@@ -1992,10 +2446,14 @@ EDITOR_CHAR_DISPATCH:
     CALL D39FH
     RET NC
     LD B,A
+
+LD283:
     LD (0E49H),BC
     CALL D39CH
     CP B
     RET C
+
+LD28C:
     EX AF,AF'
     LD A,(HL)
     AND 7FH
@@ -2015,6 +2473,8 @@ EDITOR_CHAR_DISPATCH:
     LD A,(HL)
     JR NC,D2A6H
     LD (DE),A
+
+LD2A6:
     LD D,H
     LD E,L
     INC HL
@@ -2024,6 +2484,8 @@ EDITOR_CHAR_DISPATCH:
     LD C,A
     LD B,00H
     LDIR
+
+LD2B2:
     LD A,20H
     LD (DE),A
     POP BC
@@ -2037,11 +2499,15 @@ EDITOR_CHAR_DISPATCH:
     DEC HL
     DEC (HL)
     RET
+
+LD2C3:
     DEC HL
     DEC (HL)
     RES 7,(HL)
     LD A,C
     JP D31EH
+
+LD2CB:
     SET 7,(HL)
     LD A,C
     CP 19H
@@ -2050,6 +2516,8 @@ EDITOR_CHAR_DISPATCH:
     LD A,(HL)
     OR A
     RET Z
+
+LD2D6:
     PUSH BC
     CALL D509H
     POP BC
@@ -2077,6 +2545,8 @@ EDITOR_CHAR_DISPATCH:
     LDDR
     LD B,40H
     LD A,20H
+
+LD304:
     INC DE
     LD (DE),A
     DJNZ D304H
@@ -2087,11 +2557,15 @@ EDITOR_CHAR_DISPATCH:
     RET C
     INC (HL)
     RET
+
+LD311:
     LD A,01H
     CALL D31EH
     LD BC,0118H
     LD (0E49H),BC
     RET
+
+LD31E:
     PUSH AF
     LD C,A
     LD HL,0E4EH
@@ -2099,6 +2573,8 @@ EDITOR_CHAR_DISPATCH:
     CALL Z,D039H
     JR NC,D32AH
     DEC (HL)
+
+LD32A:
     CALL D4E0H
     POP BC
     LD A,B
@@ -2121,7 +2597,11 @@ EDITOR_CHAR_DISPATCH:
     RR C
     LD B,A
     LDIR
+
+LD34F:
     LD B,40H
+
+LD351:
     DEC HL
     LD (HL),20H
     DJNZ D351H
@@ -2133,9 +2613,13 @@ EDITOR_CHAR_DISPATCH:
     INC HL
     JR Z,D360H
     LDIR
+
+LD360:
     XOR A
     LD (DE),A
     RET
+
+LD363:
     LD A,C
     CP 18H
     JR Z,D311H
@@ -2143,7 +2627,11 @@ EDITOR_CHAR_DISPATCH:
     LD B,01H
     LD (0E49H),BC
     RET
+
+LD370:
     LD BC,(0E49H)
+
+LD374:
     OR A
     DEC C
     LD A,C
@@ -2153,7 +2641,11 @@ EDITOR_CHAR_DISPATCH:
     LD B,01H
     LD (0E49H),BC
     RET
+
+LD384:
     LD HL,(0E49H)
+
+LD387:
     DEC H
     DEC L
     LD A,H
@@ -2170,7 +2662,11 @@ EDITOR_CHAR_DISPATCH:
     LD H,A
     LD (0E4BH),HL
     RET
+
+LD39C:
     LD A,(0E49H)
+
+LD39F:
     ADD A,4FH
     LD L,A
     LD A,0EH
@@ -2183,6 +2679,8 @@ EDITOR_CHAR_DISPATCH:
     RET
     LD DE,0040H
     EXX
+
+LD3B1:
     LD A,(HL)
     EXX
     AND C
@@ -2194,6 +2692,8 @@ EDITOR_CHAR_DISPATCH:
     DJNZ D3B1H
     RET
     EXX
+
+LD3BD:
     LD A,(HL)
     EXX
     LD D,A
@@ -2219,6 +2719,8 @@ EDITOR_CHAR_DISPATCH:
     DJNZ D3BDH
     RET
     EXX
+
+LD3DA:
     LD A,(HL)
     EXX
     RLA
@@ -2275,6 +2777,8 @@ EDITOR_CHAR_DISPATCH:
     INC HL
     DJNZ D3DAH
     RET
+
+LD420:
     EX AF,AF'
     CALL D459H
     PUSH HL
@@ -2291,6 +2795,8 @@ EDITOR_CHAR_DISPATCH:
     LD BC,C474H
     JR Z,D439H
     LD BC,0240H
+
+LD439:
     ADD HL,BC
     LD B,0AH
     EXX
@@ -2300,6 +2806,8 @@ EDITOR_CHAR_DISPATCH:
     LD C,A
     POP HL
     JP 0E68H
+
+LD449:
     EX AF,AF'
     CALL CC05H
     LD (0E96H),A
@@ -2308,13 +2816,19 @@ EDITOR_CHAR_DISPATCH:
     LD (0E95H),A
     EX AF,AF'
     RET
+
+LD459:
     DEC B
     LD A,(0B73H)
     OR A
     JR Z,D465H
+
+LD460:
     SLA B
     DEC A
     JR NZ,D460H
+
+LD465:
     DEC C
     LD A,C
     ADD A,A
@@ -2331,11 +2845,15 @@ EDITOR_CHAR_DISPATCH:
     OR B
     LD L,A
     RET
+
+LD477:
     CALL D459H
     LD DE,0E6DH
     LD A,(0E6CH)
     LD C,A
     LD B,0AH
+
+LD483:
     PUSH BC
     PUSH HL
     LD B,00H
@@ -2346,11 +2864,15 @@ EDITOR_CHAR_DISPATCH:
     POP BC
     DJNZ D483H
     RET
+
+LD491:
     CALL D459H
     LD DE,0E6DH
     LD A,(0E6CH)
     LD C,A
     LD B,0AH
+
+LD49D:
     EX DE,HL
     PUSH BC
     PUSH DE
@@ -2363,6 +2885,8 @@ EDITOR_CHAR_DISPATCH:
     POP BC
     DJNZ D49DH
     RET
+
+LD4AD:
     CALL D459H
     LD A,(0E96H)
     EX AF,AF'
@@ -2373,6 +2897,8 @@ EDITOR_CHAR_DISPATCH:
     LD C,A
     LD A,L
     LD B,0AH
+
+LD4BF:
     AND 3FH
     OR L
     LD L,A
@@ -2389,13 +2915,19 @@ EDITOR_CHAR_DISPATCH:
     EX AF,AF'
     DJNZ D4BFH
     RET
+
+LD4D3:
     LD DE,0040H
     LD B,0AH
     LD A,(0E96H)
+
+LD4DB:
     LD (HL),A
     ADD HL,DE
     DJNZ D4DBH
     RET
+
+LD4E0:
     LD A,C
     CP 18H
     JR Z,D4F9H
@@ -2410,13 +2942,19 @@ EDITOR_CHAR_DISPATCH:
     LD HL,0280H
     ADD HL,DE
     LDIR
+
+LD4F9:
     LD HL,B980H
     LD DE,B981H
+
+LD4FF:
     LD BC,027FH
     LD A,(0E96H)
     LD (HL),A
     LDIR
     RET
+
+LD509:
     LD A,18H
     SUB C
     JR Z,D4F9H
@@ -2440,9 +2978,15 @@ EDITOR_CHAR_DISPATCH:
     LD E,L
     INC DE
     JR D4FFH
+
+LD52A:
     LD A,(0E6CH)
     LD C,A
+
+LD52E:
     LD B,0AH
+
+LD530:
     PUSH BC
     PUSH HL
     PUSH DE
@@ -2457,6 +3001,8 @@ EDITOR_CHAR_DISPATCH:
     POP BC
     DJNZ D530H
     RET
+
+LD542:
     JR Z,D562H
     PUSH HL
     PUSH BC
@@ -2464,9 +3010,13 @@ EDITOR_CHAR_DISPATCH:
     LD A,(0B73H)
     OR A
     JR Z,D552H
+
+LD54D:
     SLA E
     DEC A
     JR NZ,D54DH
+
+LD552:
     CALL D459H
     LD C,E
     LD D,H
@@ -2477,6 +3027,8 @@ EDITOR_CHAR_DISPATCH:
     CALL D52EH
     POP BC
     POP HL
+
+LD562:
     LD B,(HL)
     BIT 7,B
     JR Z,D578H
@@ -2489,13 +3041,19 @@ EDITOR_CHAR_DISPATCH:
     LD B,01H
     CALL D459H
     JP D52AH
+
+LD578:
     CALL D459H
     LD C,0AH
     LD DE,0040H
+
+LD580:
     LD A,(0E6CH)
     LD B,A
     LD A,(0E96H)
     PUSH HL
+
+LD588:
     LD (HL),A
     INC HL
     DJNZ D588H
@@ -2504,6 +3062,8 @@ EDITOR_CHAR_DISPATCH:
     DEC C
     JR NZ,D580H
     RET
+
+LD592:
     PUSH AF
     LD A,(HL)
     AND 7FH
@@ -2513,9 +3073,13 @@ EDITOR_CHAR_DISPATCH:
     LD A,(0B73H)
     OR A
     JR Z,D5A5H
+
+LD5A0:
     SLA E
     DEC A
     JR NZ,D5A0H
+
+LD5A5:
     PUSH HL
     PUSH BC
     LD B,(HL)
@@ -2531,6 +3095,8 @@ EDITOR_CHAR_DISPATCH:
     ADD HL,DE
     EX DE,HL
     LD B,0AH
+
+LD5BB:
     PUSH BC
     PUSH HL
     PUSH DE
@@ -2546,6 +3112,8 @@ EDITOR_CHAR_DISPATCH:
     DJNZ D5BBH
     POP BC
     POP HL
+
+LD5CE:
     POP AF
     JR Z,D578H
     EX DE,HL
@@ -2563,6 +3131,8 @@ EDITOR_CHAR_DISPATCH:
 ; KEYBOARD_JUMP_TABLE - Counted jump table for keyboard OS functions.
 ; usage: trace,data
 KEYBOARD_JUMP_TABLE:
+
+; KL: KEYBOARD routine jump table; first byte is the routine count, followed by routine addresses.
     INC B
     DEC L
     SUB 18H
@@ -2594,6 +3164,8 @@ KEYBOARD_INIT:
 ; KB_STATUS - Reports whether a key is available.
 ; usage: trace,call
 KB_STATUS:
+
+; KL: KB STATUS routine.
     LD A,(0BE5H)
     LD C,A
     XOR A
@@ -2602,7 +3174,11 @@ KB_STATUS:
 ; KB_CHIN - Reads a character from the keyboard device.
 ; usage: trace,call
 KB_CHIN:
+
+; KL: KB CHIN routine.
     LD HL,0BE5H
+
+LD61B:
     LD A,(HL)
     OR A
     JR Z,D61BH
@@ -2636,11 +3212,17 @@ KB_INT:
     CALL D790H
     LD (0B66H),A
     RET NZ
+
+LD652:
     LD (HL),B
     LD A,04H
     CALL D790H
     LD (0BE8H),A
+
+LD65B:
     XOR A
+
+LD65C:
     CALL D6C7H
     INC E
     JR Z,D672H
@@ -2651,6 +3233,8 @@ KB_INT:
     LD A,(0B65H)
     LD (0BEAH),A
     RET
+
+LD672:
     LD A,(HL)
     OR A
     JR NZ,D65CH
@@ -2672,28 +3256,38 @@ KB_INT:
     SBC HL,DE
     EX DE,HL
     JR NZ,D6A4H
+
+LD69B:
     LD D,66H
     AND D
     JR Z,D6A4H
     XOR D
     AND (HL)
     JR NZ,D6B5H
+
+LD6A4:
     LD A,C
     AND (HL)
     JR NZ,D6B5H
     LD HL,0B5BH
     LD B,0AH
+
+LD6AD:
     LD (HL),A
     INC HL
     DJNZ D6ADH
     LD (0BEBH),A
     RET
+
+LD6B5:
     CPL
     AND (HL)
     LD (HL),A
     LD A,(0B67H)
     LD (0BEBH),A
     JR D65BH
+
+LD6C0:
     LD A,(HL)
     OR A
     RET Z
@@ -2702,6 +3296,7 @@ KB_INT:
     SCF
     RET
 
+LD6C7:
 ; KEY_MATRIX_DECODE - Decodes the scanned keyboard matrix into a key code.
 ; usage: trace
 KEY_MATRIX_DECODE:
@@ -2715,6 +3310,8 @@ KEY_MATRIX_DECODE:
     EXX
     LD HL,0B65H
     LD DE,0B5BH
+
+LD6E7:
     DEC DE
     DEC HL
     EXX
@@ -2739,6 +3336,8 @@ KEY_MATRIX_DECODE:
     LD (0BECH),HL
     LD (0BEEH),A
     LD A,50H
+
+LD706:
     SUB 0AH
     SRL B
     JR NC,D706H
@@ -2770,13 +3369,21 @@ KEY_MATRIX_DECODE:
     XOR A
     LD (0B16H),A
     JR D740H
+
+LD73C:
     CP 10H
     JR Z,D743H
+
+LD740:
     LD (HL),00H
     RET
+
+LD743:
     DEC (HL)
     LD E,FFH
     RET
+
+LD747:
     LD HL,D784H
     PUSH HL
     LD HL,D85FH
@@ -2795,11 +3402,15 @@ KEY_MATRIX_DECODE:
     JR C,D774H
     CP 99H
     JR NC,D774H
+
+LD76A:
     LD HL,D80FH
     BIT 1,B
     RET Z
     LD HL,D7BFH
     RET
+
+LD774:
     LD HL,D80FH
     BIT 1,B
     RET NZ
@@ -2816,6 +3427,8 @@ KEY_MATRIX_DECODE:
     LD (0B16H),A
     LD C,1BH
     RET
+
+LD790:
     BIT 4,(IY+07H)
     RET NZ
     LD A,02H
@@ -2827,6 +3440,7 @@ KEY_MATRIX_DECODE:
     XOR A
     RET
 
+LD7A5:
 ; KEY_MATRIX_READ - Performs the physical keyboard-matrix scan.
 ; usage: trace
 KEY_MATRIX_READ:
@@ -2837,6 +3451,8 @@ KEY_MATRIX_READ:
     PUSH HL
     POP IY
     LD B,0AH
+
+LD7B3:
     LD A,C
     OUT (03H),A
     IN A,(58H)
@@ -2846,6 +3462,8 @@ KEY_MATRIX_READ:
     INC HL
     DJNZ D7B3H
     RET
+
+; KL: Keyboard matrix decode tables for normal, SHIFT, CTRL, and ALT modes.
     DB 34H, 37H, 72H, 75H, 66H, 6AH, 76H, 6DH, 2AH, 2AH, 31H, 94H, 71H, 70H, 61H, 91H
     DB 79H, 2DH, 13H, F3H, 92H, 93H, 40H, 96H, 3CH, 98H, 2AH, 20H, 04H, E4H, 36H, 2AH
     DB 7AH, 5BH, 68H, 0DH, 6EH, 2AH, 01H, E1H, 30H, 97H, 3BH, 95H, 5CH, 90H, 2AH, 1BH
@@ -2866,6 +3484,8 @@ KEY_MATRIX_READ:
     DB CAH, CBH, B8H, 0DH, BEH, 2AH, 01H, E1H, A0H, D7H, ABH, D5H, CCH, D0H, 2AH, 1BH
     DB 06H, E6H, A2H, A9H, C7H, BFH, C3H, BCH, C8H, AEH, 18H, F8H, A3H, A8H, B5H, B9H
     DB B4H, BBH, B3H, AFH, 05H, E5H, A5H, CEH, C4H, CDH, B7H, 08H, B2H, 2AH, 16H, 4CH
+
+; KL: PRINTER routine jump table.
     DB 03H, 29H, D9H, 0CH, D9H, 06H, D9H
 
 ; PAR_BKOUT - Writes a block to the parallel printer.
@@ -2874,6 +3494,7 @@ PAR_BKOUT:
     LD HL,D90CH
     JP C56DH
 
+LD90C:
 ; PAR_CHOUT - Writes one character to the parallel printer.
 ; usage: trace,call
 PAR_CHOUT:
@@ -2899,6 +3520,8 @@ PAR_CHOUT:
 ; SOUND_JUMP_TABLE - Counted jump table for sound OS functions.
 ; usage: trace,data
 SOUND_JUMP_TABLE:
+
+; KL: SOUND routine jump table.
     DB 04H, 33H, D9H, 60H, D9H, 60H, D9H, 61H, D9H
 
 ; TONE_INT - Sound interrupt routine that advances timed sound generation.
@@ -2921,6 +3544,8 @@ TONE_SET:
 ; CASSETTE_JUMP_TABLE - Counted jump table for cassette OS functions.
 ; usage: trace,data
 CASSETTE_JUMP_TABLE:
+
+; KL: CASSETTE routine jump table.
     DB 06H, E7H, D9H, D2H, D9H, D7H, D9H, C8H, D9H, CDH, D9H, DCH, D9H
 
 ; CAS_OPEN_CREATE - Cassette open/create device entry.
@@ -2950,7 +3575,11 @@ CAS_BKIN_OUT:
 ; CAS_VERIFY - Cassette verify device entry.
 ; usage: trace,call
 CAS_VERIFY:
+
+; KL: CAS VERIFY routine.
     LD HL,F3ECH
+
+LD9DF:
     JP FFF0H
 
 ; CAS_INIT - Initializes cassette device work variables.
@@ -2965,6 +3594,7 @@ CAS_INIT:
     LD D,E
     LD C,H
 
+LD9EF:
 ; BASIC_INIT - Performs full BASIC initialization.
 ; usage: trace
 BASIC_INIT:
@@ -2975,6 +3605,8 @@ BASIC_INIT:
     OR A
     JP NZ,DAD3H
     LD BC,02EFH
+
+LD9FF:
     LD (HL),A
     CPI
     JP PE,D9FFH
@@ -2997,6 +3629,8 @@ STARTUP_SCREEN:
     LD (IX+05H),00H
     LD BC,0303H
     LD A,0CH
+
+LDA2C:
     PUSH BC
     PUSH AF
     RST 30H
@@ -3004,10 +3638,14 @@ STARTUP_SCREEN:
     CALL DBF2H
     POP AF
     PUSH AF
-    CALL DC0CH
-    CALL DBF2H
-    CALL FE93H
-    POP AF
+    DB CDH
+
+LDA36:
+    INC C
+    CALL C,F2CDH
+    IN A,(CDH)
+    SUB E
+    CP F1H
     POP BC
     INC B
     INC C
@@ -3017,23 +3655,34 @@ STARTUP_SCREEN:
     LD BC,0D15H
     RST 30H
     INC BC
-    CALL DBF2H
+    DB CDH
+
+LDA4D:
+    DB F2H, DBH
+
+LDA4F:
     LD BC,0B12H
     RST 30H
     INC BC
     LD HL,DBFFH
     LD B,(HL)
+
+LDA58:
     INC HL
     LD A,(HL)
     CALL FE9AH
     PUSH HL
     PUSH BC
+
+LDA5F:
     CALL E6D8H
     AND 03H
     JR Z,DA5FH
     POP BC
     POP HL
     LD (0B4DH),A
+
+LDA6B:
     DEC C
     JR NZ,DA6BH
     DJNZ DA58H
@@ -3049,6 +3698,8 @@ STARTUP_SCREEN:
     LD (0B4FH),A
     CALL FC18H
     CALL FE79H
+
+; KL: TVC BASIC 1.2 copyright sign-on text.
     DB 32H, 54H, 56H, 20H, 43H, 4FH, 4DH, 50H, 55H, 54H, 45H, 52H, 20H, 42H, 41H, 53H
     DB 49H, 43H, 20H, 31H, 2EH, 32H, 0DH, 0AH, 43H, 6FH, 70H, 79H, 72H, 69H, 67H, 68H
     DB 74H, 20H, 31H, 39H, 38H, 35H, 20H, 56H, 49H, 44H, 45H, 4FH, 54H, 4FH, 4EH, 0DH
@@ -3059,6 +3710,7 @@ STARTUP_SCREEN:
     DB 0AH, CDH, 18H, FCH, CDH, 79H, FEH, 03H, 6FH, 6BH, 0BH, DDH, CBH, 00H, 8EH, CDH
     DB 93H, FEH
 
+LDB06:
 ; BASIC_COMMAND_LOOP - Displays OK and waits for a BASIC command or program line.
 ; usage: trace
 BASIC_COMMAND_LOOP:
@@ -3078,8 +3730,12 @@ BASIC_COMMAND_LOOP:
     JR Z,DB25H
     INC A
     JR NZ,DB61H
+
+LDB25:
     CALL FA1BH
     JR DB06H
+
+LDB2A:
     RLA
     JR C,DB61H
     LD B,(HL)
@@ -3091,6 +3747,8 @@ BASIC_COMMAND_LOOP:
     LD A,(IY+06H)
     OR A
     JR Z,DB61H
+
+LDB3F:
     LD A,(HL)
     INC HL
     CP 20H
@@ -3114,6 +3772,8 @@ BASIC_COMMAND_LOOP:
     LD (170CH),HL
     CALL DCAFH
     JR DB06H
+
+LDB61:
     EX DE,HL
     CALL FA1BH
     LD C,(HL)
@@ -3125,6 +3785,8 @@ BASIC_COMMAND_LOOP:
     INC C
     INC C
     LD (HL),C
+
+LDB6E:
     LD (170CH),HL
     INC HL
     BIT 0,(IX+00H)
@@ -3134,12 +3796,17 @@ BASIC_COMMAND_LOOP:
     INC HL
     EXX
 
+LDB80:
 ; BASIC_NEXT_STATEMENT - Interprets the next statement in the current BASIC line.
 ; usage: trace
 BASIC_NEXT_STATEMENT:
     EXX
+
+LDB81:
     CALL FF9DH
     LD (171AH),IY
+
+LDB88:
     LD A,(HL)
     CP FEH
     JR NC,DBBBH
@@ -3164,28 +3831,44 @@ BASIC_NEXT_STATEMENT:
     CALL C,FC43H
     LD SP,16ACH
     JP (HL)
+
+LDBAE:
     CALL FC43H
+
+LDBB1:
     EXX
     LD A,B
     EXX
     CP FDH
     JR Z,DB80H
     JP C,FD5AH
+
+LDBBB:
+
+; KL: REM routine.
     LD HL,(170CH)
     LD C,(HL)
     XOR A
     LD B,A
     ADD HL,BC
+
+LDBC2:
     OR (HL)
     JR NZ,DB6EH
+
+LDBC5:
     LD A,(IY+00H)
     CP 2BH
     JR Z,DBDAH
     CP 06H
     JR Z,DBDAH
+
+LDBD0:
     BIT 2,(IX+00H)
     JP Z,DADAH
     JP E10EH
+
+LDBDA:
     LD E,(IY+03H)
     LD D,(IY+04H)
     LD HL,1831H
@@ -3196,8 +3879,12 @@ BASIC_NEXT_STATEMENT:
     ADD IY,BC
     LD (171AH),IY
     JR DBC5H
+
+LDBF2:
     CALL FE79H
     EX AF,AF'
+
+; KL: "VIDEOTON" sign-on text.
     DB 56H, 49H, 44H, 45H, 4FH, 54H, 4FH, 4EH, C9H, 0CH, 54H, 56H, 20H, 20H, 43H, 4FH
     DB 4DH, 50H, 55H, 54H, 45H, 52H, 3DH, F8H, F5H, CDH, C7H, FEH, F1H, 18H, F7H, 01H
     DB 44H, 54H, 51H
@@ -3208,10 +3895,16 @@ TOKENIZE_BASIC_LINE:
     DB FDH, E5H, EBH, FDH, 21H, 35H, 17H, 01H
     NOP
     NOP
+
+LDC23:
     INC DE
+
+LDC24:
     LD HL,DE6EH
     LD A,FEH
     EX AF,AF'
+
+LDC2A:
     INC IY
     LD (171CH),DE
     CALL FBBFH
@@ -3223,6 +3916,8 @@ TOKENIZE_BASIC_LINE:
     JR Z,DC41H
     CP 3AH
     JR NZ,DC4BH
+
+LDC41:
     LD A,(DE)
     CP 22H
     JR NZ,DC4BH
@@ -3230,6 +3925,8 @@ TOKENIZE_BASIC_LINE:
     LD B,A
     INC DE
     JR DC2AH
+
+LDC4B:
     CALL FBBFH
     INC DE
     OR A
@@ -3242,6 +3939,8 @@ TOKENIZE_BASIC_LINE:
     JR Z,DC24H
     LD A,FDH
     JR DC88H
+
+LDC60:
     INC B
     DEC B
     JR NZ,DC2AH
@@ -3258,7 +3957,11 @@ TOKENIZE_BASIC_LINE:
     JR Z,DC79H
     CP A3H
     JR NZ,DC7BH
+
+LDC79:
     SUB 08H
+
+LDC7B:
     CP FDH
     JR Z,DC88H
     CP FBH
@@ -3266,9 +3969,15 @@ TOKENIZE_BASIC_LINE:
     LD B,A
     JR NZ,DC88H
     LD B,3AH
+
+LDC88:
     LD (IY+00H),A
     JR DC24H
+
+LDC8D:
     LD DE,(171CH)
+
+LDC91:
     BIT 7,(HL)
     INC HL
     JR Z,DC91H
@@ -3279,6 +3988,8 @@ TOKENIZE_BASIC_LINE:
     INC A
     JR Z,DC23H
     JR DC4BH
+
+LDC9F:
     PUSH IY
     POP HL
     INC HL
@@ -3290,6 +4001,8 @@ TOKENIZE_BASIC_LINE:
     LD (HL),E
     POP IY
     RET
+
+LDCAF:
     LD (171CH),HL
     PUSH BC
     CALL DD45H
@@ -3303,6 +4016,8 @@ TOKENIZE_BASIC_LINE:
     LD HL,(171CH)
     LDIR
     JR DCFCH
+
+LDCC9:
     CALL DCFCH
     CALL FC8EH
     PUSH BC
@@ -3324,6 +4039,8 @@ TOKENIZE_BASIC_LINE:
     INC HL
     POP BC
     RET
+
+LDCE6:
     LD C,(HL)
     LD B,00H
     PUSH HL
@@ -3341,6 +4058,8 @@ TOKENIZE_BASIC_LINE:
     INC BC
     LDIR
     POP HL
+
+LDCFC:
     PUSH HL
     PUSH DE
     PUSH BC
@@ -3363,6 +4082,8 @@ TOKENIZE_BASIC_LINE:
     POP DE
     POP HL
     RET
+
+LDD2D:
     PUSH AF
     INC HL
     LD E,(HL)
@@ -3377,14 +4098,21 @@ TOKENIZE_BASIC_LINE:
     POP AF
     RET NC
     JP FE8EH
+
+LDD41:
     LD HL,FFFFH
+
+LDD44:
     EX DE,HL
 
+LDD45:
 ; FIND_BASIC_LINE - Finds a BASIC program line by line number.
 ; usage: call
 FIND_BASIC_LINE:
     LD HL,(1722H)
     LD BC,0000H
+
+LDD4B:
     ADD HL,BC
     LD C,(HL)
     INC C
@@ -3407,12 +4135,16 @@ FIND_BASIC_LINE:
     RET Z
     JR NC,DD4BH
     RET
+
+LDD63:
     RST 08H
     LD A,(BC)
 
 ; BASIC_CONTINUE - Implements the BASIC CONTINUE statement.
 ; usage: trace
 BASIC_CONTINUE:
+
+; KL: CONTINUE routine.
     BIT 2,(IX+00H)
     JP NZ,DBB1H
     SET 2,(IX+00H)
@@ -3423,6 +4155,8 @@ BASIC_CONTINUE:
     LD (170CH),HL
     LD HL,(1710H)
     JP DB81H
+
+; KL: LLIST routine.
     LD C,40H
     OR C
     JR DD88H
@@ -3430,8 +4164,12 @@ BASIC_CONTINUE:
 ; BASIC_LIST - Implements the BASIC LIST statement.
 ; usage: trace
 BASIC_LIST:
+
+; KL: LIST routine.
     LD C,20H
     XOR A
+
+LDD88:
     PUSH AF
     CALL FBEEH
     POP AF
@@ -3439,6 +4177,8 @@ BASIC_LIST:
     LD A,C
     CP 20H
     LD D,F6H
+
+LDD94:
     SCF
     EX AF,AF'
     EXX
@@ -3449,6 +4189,8 @@ BASIC_LIST:
     CP FDH
     JR NC,DDD1H
     JR DDB6H
+
+LDDA5:
     EXX
     LD A,B
     EXX
@@ -3457,23 +4199,35 @@ BASIC_LIST:
     EX AF,AF'
     JP C,DBB1H
     JP DADAH
+
+LDDB3:
     CALL FC43H
+
+LDDB6:
     CALL DDFBH
     INC D
     JR NZ,DDC4H
     CP A2H
     JP NZ,FD5AH
     LD DE,0100H
+
+LDDC4:
     DEC D
     PUSH DE
     CP A2H
     JR NZ,DDD0H
     CALL FC43H
     CALL DDFBH
+
+LDDD0:
     POP HL
+
+LDDD1:
     PUSH DE
     CALL DD44H
     POP DE
+
+LDDD6:
     LD A,(HL)
     OR A
     JR Z,DDA5H
@@ -3493,12 +4247,18 @@ BASIC_LIST:
     JR NC,DDF0H
     CALL DD2DH
     JR DDF4H
+
+LDDF0:
     CALL DCE6H
     OR A
+
+LDDF4:
     EX AF,AF'
     CALL FF9DH
     POP DE
     JR DDD6H
+
+LDDFB:
     LD DE,FFFFH
     CP 02H
     RET NZ
@@ -3509,9 +4269,13 @@ BASIC_LIST:
 ; BASIC_NEW - Implements the BASIC NEW statement.
 ; usage: trace
 BASIC_NEW:
+
+; KL: NEW routine.
     LD HL,DADAH
     PUSH HL
     RES 0,(IX+00H)
+
+LDE10:
     LD HL,(1720H)
     LD (1722H),HL
     LD (HL),00H
@@ -3520,6 +4284,8 @@ BASIC_NEW:
 ; BASIC_RUN - Implements the BASIC RUN statement.
 ; usage: trace
 BASIC_RUN:
+
+; KL: RUN routine.
     LD HL,(1722H)
     CP 02H
     CALL Z,FBDEH
@@ -3538,10 +4304,20 @@ BASIC_TRACE:
     JR Z,DE46H
     CP C1H
     JP NZ,FD5AH
+
+; KL: TRACE OFF routine.
     RES 0,(IX+00H)
     JR DE4AH
+
+LDE46:
+
+; KL: TRACE ON routine.
     SET 0,(IX+00H)
+
+LDE4A:
     JP DBAEH
+
+LDE4D:
     BIT 2,(IX+00H)
     RET Z
     LD A,(1706H)
@@ -3562,6 +4338,8 @@ BASIC_TRACE:
 ; BASIC_KEYWORD_TABLE - BASIC keywords ordered by descending token value.
 ; usage: data
 BASIC_KEYWORD_TABLE:
+
+; KL: BASIC keyword table ordered by descending token value; the high bit marks the last byte of each keyword.
     RST 38H
     AND C
     CP D
@@ -3867,7 +4645,11 @@ BASIC_KEYWORD_TABLE:
     LD L,A
     LD (HL),H
     AND B
+
+; KL: DATA routine.
     EXX
+
+LDFF3:
     LD A,(HL)
     CP FDH
     JP NC,DB81H
@@ -3877,6 +4659,8 @@ BASIC_KEYWORD_TABLE:
 ; BASIC_CLS - Implements the BASIC CLS statement.
 ; usage: trace
 BASIC_CLS:
+
+; KL: CLS BASIC routine.
     RST 30H
     DEC B
     RST 10H

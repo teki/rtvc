@@ -64,7 +64,9 @@ tables as `DB` statements while emitting instructions for code:
 ```bash
 cargo run --bin rtvc-disasm -- \
   --origin C000H \
-  --symbols data/rom_symbols_1_2.json --bank sys --bank-offset 0000H \
+  --symbols data/rom_symbols_1_2.json \
+  --comments data/rom_comments_1_2.json \
+  --bank sys --bank-offset 0000H \
   --data-range C003H-C228H \
   roms/TVC12_D4.64K -o data/TVC12_D4.64K.asm
 ```
@@ -77,6 +79,7 @@ Options:
 | `-o <path>`, `--output <path>` | Write assembly source to a file; omitted means stdout. |
 | `--title <text>` | Add a listing title comment. |
 | `--symbols <path>` | Load ROM labels and comments from a ROM symbol JSON document. |
+| `--comments <path>` | Load address-keyed comments from a JSON document; may be repeated. |
 | `--bank <name>` | Select a symbol bank such as `sys` or `exth`; required with `--symbols`. |
 | `--bank-offset <addr>` | Physical bank offset corresponding to the first input byte. |
 | `--data-range <start-end>` | Emit an inclusive CPU-address range as `DB`; may be repeated. |
@@ -84,7 +87,12 @@ Options:
 
 `rtvc-disasm` uses the emulator's own Z80 disassembler and checks each emitted
 instruction against `assemble_line()`. Unsupported or boundary-crossing forms
-fall back to `DB`, so generated files remain byte-exact assembler input.
+fall back to `DB`, so generated files remain byte-exact assembler input. Branch
+and call targets inside the input byte range are emitted as simple `Lxxxx`
+labels, including targets that intentionally enter the middle of a linear
+instruction.
+Address comments are emitted as normal semicolon comments and do not affect
+round-tripping.
 
 ### Debugger Client
 

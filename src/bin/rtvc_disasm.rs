@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::io::{self, Read, Write};
@@ -16,6 +16,7 @@ struct Options {
     origin: u16,
     title: Option<String>,
     symbols: Option<PathBuf>,
+    comments: Vec<PathBuf>,
     bank: Option<String>,
     bank_offset: u16,
     data_ranges: Vec<Range>,
@@ -40,6 +41,12 @@ struct Symbol {
     usage: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+struct Comment {
+    source: String,
+    text: String,
+}
+
 fn main() {
     if let Err(err) = run() {
         eprintln!("rtvc-disasm: {err}");
@@ -60,7 +67,8 @@ fn run() -> Result<(), String> {
     let options = parse_args(program, &args[1..])?;
     let (source_name, bytes) = read_input(&options.input)?;
     let symbols = load_symbols(&options)?;
-    let asm = render_listing(&source_name, &bytes, &options, &symbols)?;
+    let comments = load_comments(&options)?;
+    let asm = render_listing(&source_name, &bytes, &options, &symbols, &comments)?;
     write_output(options.output.as_deref(), &asm)
 }
 
@@ -70,6 +78,7 @@ fn parse_args(program: &str, args: &[String]) -> Result<Options, String> {
     let mut origin = 0u16;
     let mut title = None;
     let mut symbols = None;
+    let mut comments = Vec::new();
     let mut bank = None;
     let mut bank_offset = 0u16;
     let mut data_ranges = Vec::new();
@@ -106,6 +115,13 @@ fn parse_args(program: &str, args: &[String]) -> Result<Options, String> {
                         .ok_or_else(|| "--symbols requires a path".to_string())?,
                 ));
             }
+            "--comments" => {
+                index += 1;
+                comments.push(PathBuf::from(
+                    args.get(index)
+                        .ok_or_else(|| "--comments requires a path".to_string())?,
+                ));
+            }
             "--bank" => {
                 index += 1;
                 bank = Some(
@@ -139,6 +155,9 @@ fn parse_args(program: &str, args: &[String]) -> Result<Options, String> {
             }
             value if value.starts_with("--symbols=") => {
                 symbols = Some(PathBuf::from(&value["--symbols=".len()..]));
+            }
+            value if value.starts_with("--comments=") => {
+                comments.push(PathBuf::from(&value["--comments=".len()..]));
             }
             value if value.starts_with("--bank=") => {
                 bank = Some(value["--bank=".len()..].to_ascii_lowercase());
@@ -175,6 +194,7 @@ fn parse_args(program: &str, args: &[String]) -> Result<Options, String> {
         origin,
         title,
         symbols,
+        comments,
         bank,
         bank_offset,
         data_ranges,
@@ -187,6 +207,7 @@ fn usage(program: &str) -> String {
          options:\n\
            --title <text>             listing title comment\n\
            --symbols <rom_symbols.json>\n\
+           --comments <comments.json>  address-keyed comments; may repeat\n\
            --bank <sys|exth>          select symbols from a ROM symbol file\n\
            --bank-offset <addr>       physical bank offset of input bytes\n\
            --data-range <start-end>   CPU-address range to emit as DB; may repeat\n\
@@ -288,16 +309,52 @@ fn load_symbols(options: &Options) -> Result<BTreeMap<u16, Vec<Symbol>>, String>
     Ok(out)
 }
 
+fn load_comments(options: &Options) -> Result<BTreeMap<u16, Vec<Comment>>, String> {
+    let mut out: BTreeMap<u16, Vec<Comment>> = BTreeMap::new();
+    for path in &options.comments {
+        let document: Value = serde_json::from_str(
+            &fs::read_to_string(path)
+                .map_err(|err| format!("failed to read {}: {err}", path.display()))?,
+        )
+        .map_err(|err| format!("failed to parse {}: {err}", path.display()))?;
+        let raw_comments = document
+            .get("comments")
+            .and_then(Value::as_array)
+            .ok_or_else(|| format!("{} has no comments array", path.display()))?;
+        for comment in raw_comments {
+            let address = comment
+                .get("address")
+                .and_then(Value::as_str)
+                .and_then(|value| parse_number(value).ok())
+                .ok_or_else(|| "comment has invalid address".to_string())?;
+            let text = comment
+                .get("text")
+                .and_then(Value::as_str)
+                .map(ascii_comment)
+                .ok_or_else(|| "comment has no text".to_string())?;
+            let source = comment
+                .get("source")
+                .and_then(Value::as_str)
+                .map(ascii_comment)
+                .unwrap_or_else(|| "comment".to_string());
+            out.entry(address).or_default().push(Comment { source, text });
+        }
+    }
+    Ok(out)
+}
+
 fn render_listing(
     source_name: &str,
     bytes: &[u8],
     options: &Options,
     symbols: &BTreeMap<u16, Vec<Symbol>>,
+    comments: &BTreeMap<u16, Vec<Comment>>,
 ) -> Result<String, String> {
     let mut bus = FakeBus::new();
     for (i, byte) in bytes.iter().enumerate() {
         bus.w8(options.origin.wrapping_add(i as u16), *byte);
     }
+    let auto_labels = discover_auto_labels(bytes, options)?;
 
     let mut out = Vec::new();
     out.push(
@@ -315,6 +372,15 @@ fn render_listing(
     if let Some(symbols) = &options.symbols {
         out.push(format!("; Symbols: {}", symbols.display()));
     }
+    if !options.comments.is_empty() {
+        let comments = options
+            .comments
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push(format!("; Comments: {comments}"));
+    }
     if !options.data_ranges.is_empty() {
         let ranges = options
             .data_ranges
@@ -324,6 +390,7 @@ fn render_listing(
             .join(", ");
         out.push(format!("; Data ranges: {ranges}"));
     }
+    out.push("; Auto labels: branch and call targets are emitted as Lxxxx.".to_string());
     out.push(
         "; -----------------------------------------------------------------------------"
             .to_string(),
@@ -335,9 +402,10 @@ fn render_listing(
     let mut offset = 0usize;
     while offset < bytes.len() {
         let addr = options.origin.wrapping_add(offset as u16);
-        emit_labels(&mut out, addr, symbols);
+        emit_labels(&mut out, addr, symbols, &auto_labels);
+        emit_comments(&mut out, addr, comments);
         if in_data_range(addr, &options.data_ranges) {
-            let chunk_len = data_chunk_len(addr, bytes.len() - offset, options, symbols);
+            let chunk_len = data_chunk_len(addr, bytes.len() - offset, options, symbols, &auto_labels);
             emit_db(&mut out, bytes, options.origin, addr, chunk_len);
             offset += chunk_len;
             continue;
@@ -345,7 +413,7 @@ fn render_listing(
 
         let inst = disassemble_at(&mut bus, addr);
         let inst_len = (inst.len as usize).min(bytes.len() - offset);
-        let boundary_len = boundary_len(addr, inst_len, options, symbols);
+        let boundary_len = boundary_len(addr, inst_len, options, symbols, &auto_labels);
         if boundary_len != inst.len as usize {
             emit_db(&mut out, bytes, options.origin, addr, boundary_len);
             offset += boundary_len;
@@ -366,12 +434,75 @@ fn render_listing(
     Ok(out.join("\n"))
 }
 
-fn emit_labels(out: &mut Vec<String>, addr: u16, symbols: &BTreeMap<u16, Vec<Symbol>>) {
-    let Some(symbols) = symbols.get(&addr) else {
+fn discover_auto_labels(bytes: &[u8], options: &Options) -> Result<BTreeSet<u16>, String> {
+    let mut bus = FakeBus::new();
+    for (i, byte) in bytes.iter().enumerate() {
+        bus.w8(options.origin.wrapping_add(i as u16), *byte);
+    }
+    let start = options.origin;
+    let end = options.origin.wrapping_add(bytes.len() as u16);
+    let mut labels = BTreeSet::new();
+    let mut offset = 0usize;
+    while offset < bytes.len() {
+        let addr = options.origin.wrapping_add(offset as u16);
+        if in_data_range(addr, &options.data_ranges) {
+            offset += data_chunk_len(addr, bytes.len() - offset, options, &BTreeMap::new(), &labels);
+            continue;
+        }
+        let inst = disassemble_at(&mut bus, addr);
+        let inst_len = (inst.len as usize).min(bytes.len() - offset);
+        if let Some(target) = instruction_target(&inst.text)
+            && address_in_input(target, start, end)
+            && !in_data_range(target, &options.data_ranges)
+        {
+            labels.insert(target);
+        }
+        offset += inst_len.max(1);
+    }
+    Ok(labels)
+}
+
+fn instruction_target(text: &str) -> Option<u16> {
+    let mut parts = text.split_whitespace();
+    let mnemonic = parts.next()?;
+    if !matches!(mnemonic, "CALL" | "JP" | "JR" | "DJNZ") {
+        return None;
+    }
+    let operands = parts.collect::<Vec<_>>().join(" ");
+    let target = operands
+        .rsplit([',', ' '])
+        .find(|part| !part.trim().is_empty())?
+        .trim();
+    if target.starts_with('(') {
+        return None;
+    }
+    parse_number(target).ok()
+}
+
+fn address_in_input(addr: u16, start: u16, end: u16) -> bool {
+    if start <= end {
+        start <= addr && addr < end
+    } else {
+        addr >= start || addr < end
+    }
+}
+
+fn emit_labels(
+    out: &mut Vec<String>,
+    addr: u16,
+    symbols: &BTreeMap<u16, Vec<Symbol>>,
+    auto_labels: &BTreeSet<u16>,
+) {
+    let symbols = symbols.get(&addr);
+    let has_auto_label = auto_labels.contains(&addr);
+    if symbols.is_none() && !has_auto_label {
         return;
     };
     out.push(String::new());
-    for symbol in symbols {
+    if has_auto_label {
+        out.push(format!("L{:04X}:", addr));
+    }
+    for symbol in symbols.into_iter().flatten() {
         if !symbol.summary.is_empty() {
             out.push(format!("; {} - {}", symbol.name, symbol.summary));
         }
@@ -379,6 +510,18 @@ fn emit_labels(out: &mut Vec<String>, addr: u16, symbols: &BTreeMap<u16, Vec<Sym
             out.push(format!("; usage: {}", symbol.usage.join(",")));
         }
         out.push(format!("{}:", symbol.name));
+    }
+}
+
+fn emit_comments(out: &mut Vec<String>, addr: u16, comments: &BTreeMap<u16, Vec<Comment>>) {
+    let Some(comments) = comments.get(&addr) else {
+        return;
+    };
+    if !comments.is_empty() {
+        out.push(String::new());
+    }
+    for comment in comments {
+        out.push(format!("; {}: {}", comment.source, comment.text));
     }
 }
 
@@ -397,6 +540,7 @@ fn data_chunk_len(
     remaining: usize,
     options: &Options,
     symbols: &BTreeMap<u16, Vec<Symbol>>,
+    auto_labels: &BTreeSet<u16>,
 ) -> usize {
     let mut len = 16usize.min(remaining);
     if let Some(range) = options
@@ -406,7 +550,7 @@ fn data_chunk_len(
     {
         len = len.min(range.end.wrapping_sub(addr) as usize + 1);
     }
-    boundary_len(addr, len, options, symbols)
+    boundary_len(addr, len, options, symbols, auto_labels)
 }
 
 fn boundary_len(
@@ -414,11 +558,15 @@ fn boundary_len(
     len: usize,
     options: &Options,
     symbols: &BTreeMap<u16, Vec<Symbol>>,
+    auto_labels: &BTreeSet<u16>,
 ) -> usize {
     let mut len = len.max(1);
     for next in 1..len {
         let next_addr = addr.wrapping_add(next as u16);
-        if symbols.contains_key(&next_addr) || data_boundary(next_addr, &options.data_ranges) {
+        if symbols.contains_key(&next_addr)
+            || auto_labels.contains(&next_addr)
+            || data_boundary(next_addr, &options.data_ranges)
+        {
             len = next;
             break;
         }

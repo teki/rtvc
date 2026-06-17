@@ -4,7 +4,9 @@
 ; ORG: E000H
 ; Size: 8192 bytes
 ; Symbols: data/rom_symbols_1_2.json
+; Comments: data/rom_comments_1_2.json
 ; Data ranges: E6BDH-E6C6H, E7E4H-E811H, E87BH-E895H, FB5BH-FD73H, FD74H-FF46H, FF47H-FF4EH, FFB1H-FFE9H, FFEDH-FFFFH
+; Auto labels: branch and call targets are emitted as Lxxxx.
 ; -----------------------------------------------------------------------------
 
 ORG E000H
@@ -38,10 +40,19 @@ ORG E000H
     LD (HL),D
     INC HL
     LD (1726H),HL
+
+LE02E:
     EXX
     LD C,01H
+
+LE031:
     DEC C
-    LD A,0CH
+    DB 3EH
+
+LE033:
+    INC C
+
+LE034:
     LD A,(HL)
     CP FEH
     JP NC,E04BH
@@ -55,10 +66,18 @@ ORG E000H
     INC C
     DEC C
     JR NZ,E034H
+
+LE04B:
     JP DB81H
+
+LE04E:
     RST 08H
     RRCA
+
+LE050:
     CALL FC43H
+
+; KL: DIM routine.
     OR A
     JP M,FD5AH
     BIT 0,A
@@ -96,15 +115,21 @@ ORG E000H
     DEC HL
     RES 0,(HL)
     CALL F3C1H
+
+LE099:
     EXX
     LD A,B
     EXX
     CP A4H
     JR Z,E050H
     JP DBB4H
+
+LE0A3:
     LD A,96H
     CALL FD54H
     SCF
+
+LE0A9:
     CALL NC,FC43H
     CALL FAC4H
     JP M,FB14H
@@ -137,9 +162,13 @@ ORG E000H
     LD A,12H
     CALL Z,FB16H
     INC A
+
+LE0E4:
     JP Z,FB14H
     DEC A
     LD C,A
+
+LE0E9:
     PUSH BC
     RST 18H
     INC C
@@ -149,7 +178,10 @@ ORG E000H
     OR F2H
     OR C
     CALL M,C3CDH
-    JP M,E5C1H
+    DB FAH, C1H
+
+LE0F8:
+    PUSH HL
     CALL F3BBH
     POP HL
     DEC HL
@@ -157,12 +189,18 @@ ORG E000H
     OR H
     JR NZ,E0F8H
     JR E099H
+
+; KL: ELSE routine.
     BIT 0,(IX+02H)
     JP Z,FD5AH
     JP DBBBH
+
+; KL: END routine.
     LD HL,0000H
     LD (170EH),HL
     JP DADAH
+
+; KL: EXT routine.
     CALL FB1BH
     CP 07H
     JP NC,FB14H
@@ -185,6 +223,8 @@ ORG E000H
     LD C,L
     LD B,H
     POP HL
+
+LE13E:
     EX (SP),HL
     PUSH DE
     LD E,H
@@ -207,13 +247,17 @@ ORG E000H
 ; BASIC_FOR - Implements the BASIC FOR statement.
 ; usage: trace
 BASIC_FOR:
+
+; KL: FOR routine.
     CP 03H
     JR Z,E167H
     AND 82H
     JP NZ,FD5AH
     RST 08H
-    LD C,CDH
-    LD L,F4H
+    DB 0EH
+
+LE167:
+    CALL F42EH
     LD A,9AH
     CALL FD54H
     CALL FC8EH
@@ -234,6 +278,8 @@ BASIC_FOR:
     CALL FA2BH
     EX AF,AF'
     SCF
+
+LE195:
     CALL NC,F0A4H
     CP FDH
     JP C,FD5AH
@@ -262,9 +308,13 @@ BASIC_FOR:
     PUSH HL
     POP IY
     JP DBB1H
+
+LE1BE:
     CP F5H
     RST 10H
     EXX
+
+LE1C2:
     DEC HL
     LD A,(HL)
     CP ECH
@@ -274,15 +324,21 @@ BASIC_FOR:
 ; BASIC_INPUT - Implements the BASIC INPUT statement.
 ; usage: trace
 BASIC_INPUT:
+
+; KL: INPUT routine.
     EX AF,AF'
     SCF
     EX AF,AF'
     LD HL,E2EBH
     LD (IX+05H),20H
     SCF
+
+LE1D6:
     CALL NC,FC43H
     CP BAH
     JR NZ,E1FCH
+
+; KL: INPUT PROMPT routine.
     CALL FC43H
     CALL F294H
     PUSH IY
@@ -292,6 +348,8 @@ BASIC_INPUT:
     EXX
     LD A,B
     EXX
+
+LE1ED:
     EX AF,AF'
     OR A
     EX AF,AF'
@@ -300,13 +358,21 @@ BASIC_INPUT:
     CP FDH
     JR Z,E204H
     JR NC,E207H
+
+LE1FA:
     RST 08H
-    LD BC,FBCDH
-    EI
+    DB 01H
+
+LE1FC:
+    CALL FBFBH
     JR Z,E1EDH
     EX AF,AF'
     JR NC,E1FAH
+
+LE204:
     CALL NC,FC43H
+
+LE207:
     LD A,(1705H)
     CP 20H
     CALL Z,FE7FH
@@ -322,6 +388,8 @@ BASIC_INPUT:
     LD A,B
     EXX
     SCF
+
+LE221:
     CALL NC,FC43H
     CP FDH
     JP NC,DBB4H
@@ -334,6 +402,8 @@ BASIC_INPUT:
     LD A,L
     OR H
     JR Z,E268H
+
+LE23A:
     LD A,(HL)
     INC HL
     CP 20H
@@ -343,6 +413,8 @@ BASIC_INPUT:
     JR Z,E25EH
     CP FDH
     JR C,E27CH
+
+LE249:
     EXX
     PUSH HL
     PUSH DE
@@ -354,15 +426,21 @@ BASIC_INPUT:
     POP HL
     EXX
     INC HL
+
+LE256:
     CP FBH
     JR Z,E23AH
     CP FEH
     JR C,E249H
+
+LE25E:
     LD HL,(1712H)
     LD E,(HL)
     LD D,00H
     ADD HL,DE
     LD (1712H),HL
+
+LE268:
     LD HL,(1712H)
     LD A,(HL)
     OR A
@@ -370,13 +448,19 @@ BASIC_INPUT:
     INC HL
     INC HL
     INC HL
+
+LE272:
     LD A,(HL)
     INC HL
     CP 20H
     JR Z,E272H
     JR E256H
+
+LE27A:
     RST 08H
     RLCA
+
+LE27C:
     EX AF,AF'
     PUSH HL
     EXX
@@ -390,8 +474,12 @@ BASIC_INPUT:
     EX (SP),HL
     CALL FB41H
     JR E2B0H
+
+LE292:
     RST 08H
     INC C
+
+LE294:
     CALL FC8EH
     CALL F914H
     EX AF,AF'
@@ -401,16 +489,24 @@ BASIC_INPUT:
     RLA
     JP C,F912H
     JR E2ACH
+
+LE2A6:
     EX AF,AF'
     PUSH HL
     CALL EC7FH
     POP HL
+
+LE2AC:
     EX (SP),HL
     CALL FB28H
+
+LE2B0:
     POP HL
     EX AF,AF'
     JR NC,E2CEH
     EX AF,AF'
+
+LE2B5:
     LD A,(HL)
     INC HL
     CP 20H
@@ -422,9 +518,17 @@ BASIC_INPUT:
     JR Z,E2C9H
     BIT 7,(HL)
     JP Z,E292H
+
+LE2C9:
     LD (1714H),HL
+
+LE2CC:
     JR E2DCH
+
+LE2CE:
     EX AF,AF'
+
+LE2CF:
     LD A,(HL)
     INC HL
     CP 2CH
@@ -432,7 +536,11 @@ BASIC_INPUT:
     INC A
     JR NZ,E2CFH
     DEC HL
+
+LE2D9:
     LD (1716H),HL
+
+LE2DC:
     EXX
     LD A,B
     EXX
@@ -447,6 +555,8 @@ BASIC_INPUT:
 ; BASIC_IF - Implements the BASIC IF statement.
 ; usage: trace
 BASIC_IF:
+
+; KL: IF routine.
     SET 0,(IX+02H)
     CALL F0A7H
     LD A,(IY+06H)
@@ -463,16 +573,24 @@ BASIC_IF:
     JR Z,E31CH
     EX AF,AF'
     JR E314H
+
+LE30C:
     INC HL
     PUSH HL
     EXX
     POP HL
     EXX
     CALL FC43H
+
+LE314:
     CP 02H
     JP Z,E3B2H
     JP DB81H
+
+LE31C:
     LD IY,(171AH)
+
+LE320:
     CALL FCC5H
     CP F4H
     JR Z,E30CH
@@ -483,6 +601,8 @@ BASIC_IF:
     POP HL
     EXX
     JR E320H
+
+; KL: ON routine.
     SET 0,(IX+02H)
     CALL FB1BH
     LD B,A
@@ -501,6 +621,8 @@ BASIC_IF:
     EX DE,HL
     POP HL
     JR E38EH
+
+LE357:
     CALL FC43H
     DEC B
     RET Z
@@ -512,9 +634,16 @@ BASIC_IF:
     JR NC,E36BH
     CP A4H
     JR Z,E357H
+
+LE369:
     RST 08H
-    LD BC,FDD1H
-    LD HL,(171AH)
+    DB 01H
+
+LE36B:
+    POP DE
+    LD IY,(171AH)
+
+LE370:
     EXX
     CALL FCC5H
     CP F4H
@@ -529,6 +658,8 @@ BASIC_IF:
 ; BASIC_GOSUB - Implements the BASIC GOSUB statement.
 ; usage: trace
 BASIC_GOSUB:
+
+; KL: GOSUB routine.
     CALL FBDEH
     CALL FC43H
     JR C,E369H
@@ -536,6 +667,8 @@ BASIC_GOSUB:
     PUSH HL
     EXX
     POP DE
+
+LE38E:
     PUSH HL
     CALL FC8EH
     PUSH IY
@@ -558,13 +691,20 @@ BASIC_GOSUB:
     POP IY
     POP HL
     JR E3B9H
+
+LE3AF:
     CALL E357H
 
+LE3B2:
 ; BASIC_GOTO - Implements the BASIC GOTO statement.
 ; usage: trace
 BASIC_GOTO:
+
+; KL: GOTO routine.
     CALL FBDEH
     LD IY,(171AH)
+
+LE3B9:
     JP DE29H
     DEC HL
     EXX
@@ -573,6 +713,8 @@ BASIC_GOTO:
 ; BASIC_LET - Implements BASIC assignment.
 ; usage: trace
 BASIC_LET:
+
+; KL: LET routine.
     AND FDH
     CP 01H
     JP NZ,FD5AH
@@ -592,6 +734,8 @@ BASIC_LET:
     POP HL
     CALL FB3BH
     JP DBB1H
+
+LE3E8:
     SUB 96H
     JR NZ,E44AH
     BIT 1,C
@@ -606,6 +750,8 @@ BASIC_LET:
     JR NC,E3FEH
     LD A,E
     DEC A
+
+LE3FE:
     LD D,A
     LD A,C
     SUB D
@@ -625,6 +771,8 @@ BASIC_LET:
     INC DE
     PUSH DE
     POP IY
+
+LE417:
     CALL E44AH
     POP BC
     POP DE
@@ -639,11 +787,15 @@ BASIC_LET:
     CP C
     JR NC,E42BH
     LD C,A
+
+LE42B:
     ADD HL,BC
     INC C
     DEC C
     JR Z,E432H
     LDDR
+
+LE432:
     POP HL
     DEC HL
     OR A
@@ -661,9 +813,13 @@ BASIC_LET:
     PUSH HL
     POP IY
     RET
+
+LE44A:
     LD A,9AH
     CALL FD54H
     JP F28DH
+
+; KL: LOMEM routine.
     CALL FAC4H
     LD DE,(1720H)
     OR A
@@ -691,11 +847,15 @@ BASIC_LET:
     POP HL
     ADD HL,BC
     JR E48DH
+
+LE485:
     OR A
     SBC HL,BC
     PUSH HL
     CALL DCE9H
     POP HL
+
+LE48D:
     LD (1722H),HL
     POP BC
     BIT 2,(IX+00H)
@@ -708,10 +868,16 @@ BASIC_LET:
     POP DE
     ADD HL,DE
     EXX
+
+LE4A3:
     CALL DCFCH
     JP DBB1H
+
+LE4A9:
     RST 08H
     EX AF,AF'
+
+LE4AB:
     EXX
     LD A,B
     EXX
@@ -722,6 +888,8 @@ BASIC_LET:
 ; BASIC_NEXT - Implements the BASIC NEXT statement.
 ; usage: trace
 BASIC_NEXT:
+
+; KL: NEXT routine.
     SET 2,(IX+00H)
     JR NC,E4E3H
     CP 03H
@@ -729,10 +897,15 @@ BASIC_NEXT:
     AND 82H
     JP NZ,FD5AH
     RST 08H
-    LD C,CDH
-    LD L,F4H
+    DB 0EH
+
+LE4C7:
+    CALL F42EH
     EX DE,HL
-    LD HL,09FDH
+    DB 21H
+
+LE4CC:
+    ADD IY,BC
     LD A,2BH
     CALL FCE7H
     JR C,E4A9H
@@ -746,6 +919,8 @@ BASIC_NEXT:
     LD A,(HL)
     CP D
     JR NZ,E4CCH
+
+LE4E3:
     LD A,2BH
     CALL FCE7H
     JR C,E4A9H
@@ -796,7 +971,11 @@ BASIC_NEXT:
     JR Z,E536H
     JP P,E4ABH
     XOR A
+
+LE533:
     JP M,E4ABH
+
+LE536:
     LD (170CH),DE
     LD DE,FFD5H
     ADD IY,DE
@@ -805,6 +984,8 @@ BASIC_NEXT:
 ; BASIC_OUT - Implements the BASIC OUT statement.
 ; usage: trace
 BASIC_OUT:
+
+; KL: OUT routine.
     CALL FB1BH
     LD C,A
     LD A,A4H
@@ -816,6 +997,8 @@ BASIC_OUT:
 ; BASIC_POKE - Implements the BASIC POKE statement.
 ; usage: trace
 BASIC_POKE:
+
+; KL: POKE routine.
     CALL FCFFH
     LD A,A4H
     CALL FD54H
@@ -825,11 +1008,15 @@ BASIC_POKE:
     JR C,E567H
     DI
     OUT (02H),A
+
+LE567:
     LD (HL),C
     LD A,70H
     OUT (02H),A
     EI
     JP DBB1H
+
+; KL: LPRINT routine.
     LD C,40H
     DB 11H
 
@@ -842,6 +1029,8 @@ BASIC_PRINT:
     XOR A
     EX AF,AF'
     SCF
+
+LE57C:
     CALL NC,FC43H
     CP AFH
     JR NZ,E5A6H
@@ -864,6 +1053,8 @@ BASIC_PRINT:
     SET 0,A
     EX AF,AF'
     JR E5BAH
+
+LE5A6:
     CP B0H
     JR NZ,E5CCH
     CALL FB16H
@@ -873,28 +1064,44 @@ BASIC_PRINT:
     CALL FB1BH
     LD B,A
     CALL E68BH
+
+LE5BA:
     EXX
     LD A,B
     EXX
     EX AF,AF'
     OR A
     EX AF,AF'
-    CP A4H
+    DB FEH
+
+LE5C1:
+    AND H
     JR Z,E57CH
     CP FDH
     JR Z,E5D6H
     JR NC,E5D9H
+
+LE5CA:
     RST 08H
-    LD BC,00CDH
-    CALL M,EC28H
+    DB 01H
+
+LE5CC:
+    CALL FC00H
+    JR Z,E5BDH
     EX AF,AF'
     JR C,E5CAH
     EX AF,AF'
     SCF
+
+LE5D6:
     CALL NC,FC43H
+
+LE5D9:
     EX AF,AF'
     SCF
     EX AF,AF'
+
+LE5DC:
     EX AF,AF'
     BIT 0,A
     PUSH AF
@@ -908,12 +1115,17 @@ BASIC_PRINT:
     JR NZ,E5F2H
     LD A,09H
     CALL FE9AH
-    JP NZ,A0FEH
+    DB C2H
+
+LE5F2:
+    CP A0H
     JR NZ,E5FEH
     CALL FC43H
     EX AF,AF'
     OR A
     JP E67FH
+
+LE5FE:
     CP B6H
     JR NZ,E617H
     LD A,96H
@@ -925,6 +1137,8 @@ BASIC_PRINT:
     LD C,00H
     CALL E68BH
     JR E67DH
+
+LE617:
     CP FDH
     JR NC,E683H
     EX AF,AF'
@@ -941,7 +1155,11 @@ BASIC_PRINT:
     LD (172EH),HL
     CALL E69CH
     EX AF,AF'
+
+LE638:
     EX AF,AF'
+
+LE639:
     EXX
     LD A,B
     EXX
@@ -960,14 +1178,20 @@ BASIC_PRINT:
     PUSH AF
     CALL FE7FH
     CALL FA21H
+
+LE65A:
     POP AF
     DEC A
     JP M,E67DH
     PUSH AF
     CALL FEC7H
     JR E65AH
+
+LE665:
     CALL F0A7H
     RLA
+
+LE669:
     JP NC,FD5AH
     POP AF
     LD HL,FCB5H
@@ -977,25 +1201,39 @@ BASIC_PRINT:
     INC HL
     CALL FEBAH
     CALL FA1BH
+
+LE67D:
     EX AF,AF'
     SCF
+
+LE67F:
     EX AF,AF'
     JP E5DCH
+
+LE683:
     EX AF,AF'
     CALL C,FE93H
     EX AF,AF'
     JP DBB4H
+
+LE68B:
     LD A,(1705H)
     CP 20H
     JR Z,E695H
     CP 00H
     RET NZ
+
+LE695:
     OR 03H
     CALL 001BH
     RST 10H
     RET
+
+LE69C:
     LD DE,(1730H)
     LD HL,(172EH)
+
+LE6A3:
     LD A,(HL)
     OR A
     SBC HL,DE
@@ -1011,16 +1249,24 @@ BASIC_PRINT:
     INC HL
     LD (172EH),HL
     JR E6A3H
+
+; KL: Special format-control characters used by PRINT USING.
     DB 3CH, 3EH, 23H, 2AH, 25H, 2BH, 2DH, 24H, 5EH, 2EH
+
+; KL: RANDOMIZE routine.
     LD A,R
     LD (1709H),A
     LD HL,(0B1DH)
     LD (170AH),HL
     CALL E6D8H
     JP DBB1H
+
+LE6D8:
     LD B,10H
     LD A,(1709H)
     LD HL,(170AH)
+
+LE6E0:
     LD C,A
     RRCA
     RRCA
@@ -1035,21 +1281,29 @@ BASIC_PRINT:
     LD (170AH),HL
     LD (1709H),A
     RET
+
+; KL: RESTORE routine.
     LD HL,(1722H)
     CP 02H
     JR NZ,E701H
     CALL FBDEH
     CALL FC43H
+
+LE701:
     LD (1712H),HL
     LD HL,0000H
     LD (1714H),HL
     JP DBB4H
+
+LE70D:
     RST 08H
     ADD HL,BC
 
 ; BASIC_RETURN - Implements the BASIC RETURN statement.
 ; usage: trace
 BASIC_RETURN:
+
+; KL: RETURN routine.
     LD A,06H
     CALL FCE7H
     JR C,E70DH
@@ -1075,6 +1329,8 @@ BASIC_RETURN:
 ; BASIC_GRAPHICS - Implements the BASIC GRAPHICS statement.
 ; usage: trace
 BASIC_GRAPHICS:
+
+; KL: GRAPHICS routine.
     CALL FB1BH
     LD C,00H
     CP 02H
@@ -1085,25 +1341,37 @@ BASIC_GRAPHICS:
     INC C
     CP 10H
     JP NZ,FB14H
+
+LE747:
     RST 30H
     INC B
     RST 10H
     JP DBB1H
+
+LE74D:
     RST 30H
     EX AF,AF'
+
+LE74F:
     CALL FC43H
     JR NC,E78DH
 
 ; BASIC_PLOT - Implements the BASIC PLOT statement.
 ; usage: trace
 BASIC_PLOT:
+
+; KL: PLOT routine.
     JR NC,E782H
     CP BEH
     JR NZ,E75FH
+
+; KL: PLOT PAINT routine.
     RST 30H
     LD A,(BC)
     RST 10H
     JR E77AH
+
+LE75F:
     CP A0H
     JR Z,E74DH
     CP A4H
@@ -1119,12 +1387,18 @@ BASIC_PLOT:
     RST 30H
     LD B,D7H
     POP AF
+
+LE77A:
     CP A0H
     JR Z,E74DH
     CP A4H
     JR Z,E784H
+
+LE782:
     RST 30H
     EX AF,AF'
+
+LE784:
     RST 30H
     ADD HL,BC
     EXX
@@ -1132,8 +1406,11 @@ BASIC_PLOT:
     EXX
     CP FDH
     JR C,E74FH
+
+LE78D:
     JP DBB4H
 
+LE790:
 ; BASIC_SET - Dispatches BASIC SET subcommands such as MODE, INK, PAPER, and PALETTE.
 ; usage: trace
 BASIC_SET:
@@ -1141,11 +1418,17 @@ BASIC_SET:
     CALL FD12H
     JR C,E7DAH
     CALL FB1BH
+
+LE79B:
     LD E,00H
+
+LE79D:
     LD (001FH),A
     LD HL,1941H
     PUSH HL
     LD B,7FH
+
+LE7A6:
     DEC E
     JP P,E7B4H
     EXX
@@ -1154,6 +1437,8 @@ BASIC_SET:
     CP A4H
     JR NZ,E7CDH
     CALL FC43H
+
+LE7B4:
     CP 02H
     JR NC,E7C5H
     CALL F294H
@@ -1161,42 +1446,60 @@ BASIC_SET:
     LD (HL),7FH
     CALL FB41H
     JR E7D2H
+
+LE7C5:
     CALL FB1BH
     LD (HL),A
     INC HL
     DJNZ E7A6H
     INC B
+
+LE7CD:
     LD (HL),00H
     INC HL
     DJNZ E7CDH
+
+LE7D2:
     POP DE
     CALL 001EH
     RST 10H
     EXX
     LD A,B
     EXX
+
+LE7DA:
     CP A0H
     JP NZ,DBB4H
     CALL FC43H
     JR E790H
+
+; KL: SET subcommand dispatch table; token plus relative routine selector.
     DB C3H, 11H, B7H, 12H, C4H, 13H, BCH, 14H, C7H, 15H, B9H, 16H, C8H, 24H, BDH, 2DH
     DB AEH, 34H, 00H, 1EH, 00H, 21H, 1EH, 01H, 21H, 1EH, 02H, 21H, 1EH, 03H, 21H, 1EH
     DB 1AH, 21H, 1EH, 1CH, 16H, 00H, 21H, 4BH, 0BH, 19H, CDH, 1BH, FBH, 77H
+
+LE812:
     EXX
     LD A,B
     EXX
     RET
+
+; KL: SET CHARACTER routine.
     POP HL
     POP HL
     CALL FB1BH
     LD C,A
     LD A,0BH
     JP E79BH
+
+; KL: SET PALETTE routine.
     POP HL
     POP HL
     LD A,0CH
     LD E,01H
     JP E79DH
+
+; KL: SET BORDER routine.
     CALL FB1BH
     ADD A,A
     LD (0B4FH),A
@@ -1205,6 +1508,8 @@ BASIC_SET:
 ; BASIC_SOUND - Implements the BASIC SOUND statement.
 ; usage: trace
 BASIC_SOUND:
+
+; KL: SOUND routine.
     LD HL,0D15H
     LD (172AH),HL
     LD HL,3207H
@@ -1212,6 +1517,8 @@ BASIC_SOUND:
     LD HL,0B15H
     LD (HL),FFH
     SCF
+
+LE845:
     CALL NC,FC43H
     CP A0H
     JR Z,E86FH
@@ -1231,11 +1538,17 @@ BASIC_SOUND:
     JR NC,E878H
     CP A0H
     JP NZ,FD5AH
+
+LE86F:
     XOR A
     LD (0B15H),A
     CALL FC43H
     JR C,E845H
+
+LE878:
     JP DBB4H
+
+; KL: SOUND subcommand dispatch table; same format as SET table.
     DB BBH, 05H, C6H, 0CH, B3H, 0BH, 00H, CDH, C4H, FAH, 22H, 2AH, 17H, F0H, CFH, 04H
     DB F6H, 37H, 11H, 2CH, 00H, 38H, 01H, 13H, CDH, 1BH, FBH
     LD (DE),A
@@ -1243,6 +1556,8 @@ BASIC_SOUND:
     LD A,B
     EXX
     RET
+
+; KL: BASIC CLOSE routine.
     LD C,50H
     CALL FBEEH
     CP E1H
@@ -1252,24 +1567,34 @@ BASIC_SOUND:
     JR NC,E8B2H
     CP ECH
     JP NZ,FD5AH
+
+LE8AF:
     CALL FC43H
+
+LE8B2:
     LD A,C
     AND 7FH
     CP 50H
     JR Z,E8BDH
     CP 60H
     JR NZ,E8C7H
+
+LE8BD:
     LD A,C
     OR 04H
     CALL 001BH
     RST 10H
     JP DBB1H
+
+LE8C7:
     RST 08H
     RST 38H
 
 ; BASIC_OPEN - Implements the BASIC OPEN statement.
 ; usage: trace
 BASIC_OPEN:
+
+; KL: OPEN BASIC routine.
     LD C,50H
     CALL FBEEH
     EX AF,AF'
@@ -1278,6 +1603,8 @@ BASIC_OPEN:
     JR Z,E8D8H
     CP 60H
     JR NZ,E8C7H
+
+LE8D8:
     OR 03H
     LD C,A
     EX AF,AF'
@@ -1291,9 +1618,13 @@ BASIC_OPEN:
     JR NC,E905H
     CP ECH
     JP NZ,FD5AH
+
+LE8F2:
     CALL FC43H
     CP 02H
     JR NC,E905H
+
+LE8F9:
     PUSH BC
     CALL F294H
     PUSH IY
@@ -1301,11 +1632,15 @@ BASIC_OPEN:
     POP DE
     INC DE
     POP BC
+
+LE905:
     LD A,C
     LD (0B6BH),A
     CALL 001BH
     RST 10H
     JP DBB1H
+
+; KL: GET routine.
     LD C,10H
     CALL FBEEH
     EX AF,AF'
@@ -1321,7 +1656,10 @@ BASIC_OPEN:
     DEC HL
     LD (HL),C
     INC A
-    LD C,AFH
+    DB 0EH
+
+LE929:
+    XOR A
     DEC HL
     LD (HL),A
     DEC HL
@@ -1335,6 +1673,8 @@ BASIC_OPEN:
     JR NZ,E93FH
     EXX
     BIT 2,C
+
+LE93F:
     JP NZ,FD5AH
     BIT 3,C
     CALL NZ,F40BH
@@ -1346,6 +1686,8 @@ BASIC_OPEN:
 ; BASIC_LOAD - Implements the BASIC LOAD statement.
 ; usage: trace
 BASIC_LOAD:
+
+; KL: LOAD routine.
     CALL EA35H
     CALL DE10H
     PUSH HL
@@ -1373,11 +1715,15 @@ BASIC_LOAD:
 ; BASIC_SAVE - Implements the BASIC SAVE statement.
 ; usage: trace
 BASIC_SAVE:
+
+; KL: SAVE routine.
     XOR A
     CALL E9FBH
     LD DE,19EFH
     LD B,10H
     XOR A
+
+LE98C:
     DEC DE
     LD (DE),A
     DJNZ E98CH
@@ -1399,6 +1745,8 @@ BASIC_SAVE:
     LD A,(1705H)
     OR 01H
     LD (001FH),A
+
+LE9B8:
     LD C,(HL)
     INC HL
     PUSH BC
@@ -1414,6 +1762,8 @@ BASIC_SAVE:
     RST 10H
     CALL EA5AH
     JP DBB1H
+
+; KL: VERIFY routine.
     CALL EA35H
     CALL DD41H
     INC HL
@@ -1429,7 +1779,11 @@ BASIC_SAVE:
     RST 10H
     CALL EA5AH
     JP DBB1H
+
+LE9F9:
     LD A,80H
+
+LE9FB:
     SET 3,(IX+00H)
     PUSH AF
     LD C,50H
@@ -1440,6 +1794,8 @@ BASIC_SAVE:
     JR Z,EA10H
     CP 60H
     JP NZ,E8C7H
+
+LEA10:
     POP BC
     OR B
     LD (1705H),A
@@ -1454,11 +1810,15 @@ BASIC_SAVE:
     CALL FA21H
     POP DE
     INC DE
+
+LEA2C:
     XOR A
     LD (0B6BH),A
     CALL 001EH
     RST 10H
     RET
+
+LEA35:
     CALL E9F9H
     LD A,(1705H)
     OR 81H
@@ -1466,6 +1826,8 @@ BASIC_SAVE:
     LD HL,19DFH
     PUSH HL
     LD B,10H
+
+LEA46:
     PUSH BC
     CALL 001EH
     RST 10H
@@ -1480,24 +1842,32 @@ BASIC_SAVE:
     INC A
     SUB (HL)
     RET Z
+
+LEA58:
     RST 08H
-    DJNZ EA95H
-    DEC B
-    RLA
+    DB 10H
+
+LEA5A:
+    LD A,(1705H)
     OR 04H
     CALL 001BH
     RST 10H
     RES 3,(IX+00H)
     RET
 
+LEA68:
 ; EVAL_NUMERIC_ARGUMENT - Evaluates a parenthesized numeric function argument onto the BASIC stack.
 ; usage: trace,call
 EVAL_NUMERIC_ARGUMENT:
     LD A,96H
     CALL FD54H
     CALL F0A7H
+
+LEA70:
     LD A,95H
     JP FD54H
+
+LEA75:
     LD A,96H
     CALL FD54H
     CALL F294H
@@ -1516,12 +1886,20 @@ EVAL_NUMERIC_ARGUMENT:
     ADD HL,HL
     POP DE
     SBC HL,DE
-    LD DE,C111H
-    ADD HL,DE
+    DB 11H
+
+LEA95:
+    LD DE,19C1H
     JR EAA2H
+
+LEA9A:
     LD HL,19C7H
     JR EAA2H
+
+LEA9F:
     LD HL,19C0H
+
+LEAA2:
     CALL FC8EH
     LD DE,0006H
     ADD HL,DE
@@ -1539,16 +1917,28 @@ EVAL_NUMERIC_ARGUMENT:
     PUSH DE
     POP IY
     RET
+
+LEABE:
     LD DE,19C7H
     JR EAC6H
+
+LEAC3:
     LD DE,19C0H
+
+LEAC6:
     CALL EAD5H
     PUSH HL
     POP IY
     RET
+
+LEACD:
     LD DE,19C7H
     JR EAD5H
+
+LEAD2:
     LD DE,19C0H
+
+LEAD5:
     PUSH IY
     POP HL
     INC HL
@@ -1571,6 +1961,8 @@ BASIC_ABS:
     CALL EA68H
     RES 7,(IY+08H)
     RET
+
+LEAF1:
     CALL FC43H
     CALL EA68H
     LD BC,0000H
@@ -1594,6 +1986,8 @@ BASIC_ABS:
     DEC B
     LD BC,0106H
     ADC A,D
+
+LEB1A:
     RST 18H
     LD B,85H
     LD (BC),A
@@ -1617,7 +2011,10 @@ BASIC_ABS:
     DEC B
     INC BC
     LD B,00H
-    LD BC,DF8AH
+    DB 01H, 8AH
+
+LEB3C:
+    RST 18H
     LD B,0CH
     INC C
     INC C
@@ -1651,8 +2048,12 @@ BASIC_ABS:
     LD HL,C20DH
     DEC B
     JR NZ,EB77H
+
+LEB71:
     CALL EAA2H
     CALL F493H
+
+LEB77:
     POP BC
     LD A,C
     XOR (IY+08H)
@@ -1702,6 +2103,8 @@ BASIC_COS:
     LD D,B
     LD A,(BC)
     CALL EA68H
+
+LEBB8:
     RST 18H
     INC C
     DEC B
@@ -1715,8 +2118,12 @@ BASIC_COS:
     JR C,EBD4H
     OR C
     JP P,F912H
+
+LEBCE:
     CALL FA1BH
     JP F9F9H
+
+LEBD4:
     CALL FA92H
     CALL FAC3H
     LD E,L
@@ -1746,6 +2153,8 @@ BASIC_COS:
     EX AF,AF'
     DEC B
     DJNZ EBFFH
+
+LEBFF:
     LD B,02H
     DEC B
     RRCA
@@ -1777,8 +2186,12 @@ BASIC_COS:
     RST 18H
     LD B,05H
     JR NZ,EC2AH
+
+LEC28:
     ADC A,D
     POP DE
+
+LEC2A:
     INC D
     DEC D
     INC DE
@@ -1787,6 +2200,8 @@ BASIC_COS:
     LD HL,19C6H
     INC (HL)
     DEC DE
+
+LEC37:
     LD HL,19C6H
     XOR A
     OR E
@@ -1831,6 +2246,8 @@ BASIC_IN:
     IN L,(C)
     LD H,00H
     JP FA2BH
+
+LEC7F:
     RET NC
     RLA
     RET NC
@@ -1839,6 +2256,8 @@ BASIC_IN:
     ADD A,L
     DAA
     RET
+
+LEC89:
     CALL FC43H
     RST 30H
     SUB E
@@ -1855,6 +2274,8 @@ BASIC_IN:
     LD (HL),C
     DEC HL
     INC A
+
+LEC9D:
     LD (HL),A
     DEC HL
     LD (HL),01H
@@ -1867,6 +2288,8 @@ BASIC_IN:
     LD D,H
     LD A,(BC)
     CALL EA68H
+
+LECAF:
     LD A,(IY+08H)
     AND 7FH
     SUB 40H
@@ -1878,6 +2301,8 @@ BASIC_IN:
     POP AF
     ADD A,03H
     LD B,A
+
+LECC4:
     LD A,00H
     CALL C,F7E3H
     INC B
@@ -1887,6 +2312,8 @@ BASIC_IN:
     CALL F707H
     CALL F9DFH
     JP F734H
+
+LECD8:
     LD A,(IY+08H)
     OR A
     JP P,F9F9H
@@ -1914,11 +2341,17 @@ BASIC_IN:
     LD C,(HL)
     LD A,(BC)
     CALL EA75H
+
+LED0A:
     PUSH IY
     CALL FA21H
     POP HL
+
+LED10:
     INC HL
     LD L,(HL)
+
+LED12:
     LD H,00H
     JP FA2BH
     NOP
@@ -1928,6 +2361,8 @@ BASIC_IN:
     LD B,A
     LD A,(BC)
     CALL EA68H
+
+LED21:
     CALL EAC3H
     LD HL,19C5H
     XOR A
@@ -1949,10 +2384,14 @@ BASIC_IN:
     OR E1H
     JR Z,ED45H
     JP P,ED49H
+
+LED45:
     POP DE
     DEC DE
     INC (HL)
     PUSH DE
+
+LED49:
     RST 18H
     LD B,05H
     NOP
@@ -2000,6 +2439,8 @@ BASIC_IN:
     NOP
     DEC B
     LD DE,C982H
+
+LED8B:
     CALL FAA6H
     CALL EAD2H
     CALL F5FBH
@@ -2013,6 +2454,8 @@ BASIC_IN:
     CALL F693H
     RET M
     JP F9F9H
+
+LEDA9:
     CALL FC43H
     CALL EA75H
     PUSH IY
@@ -2039,7 +2482,11 @@ BASIC_PEEK:
     CALL FFE7H
     JR C,EDD4H
     DI
+
+; KL: Memory paging: U U V S page layout.
     OUT (02H),A
+
+LEDD4:
     LD L,(HL)
     LD A,70H
     OUT (02H),A
@@ -2070,6 +2517,8 @@ BASIC_PEEK:
     NOP
     ADD A,C
     RET
+
+LEE02:
     CALL EA68H
     CALL FAC3H
     BIT 7,H
@@ -2079,17 +2528,23 @@ BASIC_PEEK:
     JP Z,FB14H
     PUSH HL
     XOR A
+
+LEE14:
     INC A
     ADD HL,HL
     JR NC,EE14H
     DEC A
     POP HL
     DEC HL
+
+LEE1B:
     PUSH HL
     PUSH AF
     CALL E6D8H
     POP AF
     LD B,A
+
+LEE22:
     SRL H
     RR L
     DJNZ EE22H
@@ -2130,6 +2585,8 @@ BASIC_PEEK:
 ; usage: trace
 BASIC_SIN:
     CALL EA68H
+
+LEE5E:
     RST 18H
     DEC B
     LD (2205H),HL
@@ -2141,6 +2598,8 @@ BASIC_SIN:
     PUSH AF
     RST 18H
     ADC A,D
+
+LEE6F:
     RST 18H
     LD B,85H
     INC HL
@@ -2163,10 +2622,14 @@ BASIC_SIN:
     NOP
     ADC A,D
     JR EE6FH
+
+LEE93:
     POP AF
     XOR 80H
     PUSH AF
     JP M,EE6FH
+
+LEE9A:
     RST 18H
     LD B,0CH
     INC C
@@ -2228,6 +2691,8 @@ BASIC_SQR:
     LD E,00H
     ADC A,E
     LD B,04H
+
+LEEED:
     PUSH BC
     RST 18H
     RLCA
@@ -2250,18 +2715,26 @@ BASIC_SQR:
     JR NZ,EF0AH
     ADC A,E
     POP AF
+
+LEF0A:
     INC A
+
+LEF0B:
     SRL A
     LD HL,19CDH
     ADD A,(HL)
     AND 7FH
     LD (HL),A
     JP EA9AH
+
+LEF17:
     LD A,(IY+06H)
     OR A
     JR NZ,EF23H
     CALL FA1BH
     JP FA08H
+
+LEF23:
     LD A,(IY+0FH)
     OR A
     JP Z,FA1BH
@@ -2288,11 +2761,17 @@ BASIC_SQR:
     LD A,(BC)
     LD A,(BC)
     ADD A,L
-    LD BC,E5E1H
+    DB 01H
+
+LEF57:
+    POP HL
+    PUSH HL
     BIT 0,L
     JR Z,EF63H
     CALL EA9FH
     CALL F512H
+
+LEF63:
     POP HL
     SRL H
     RR L
@@ -2305,6 +2784,8 @@ BASIC_SQR:
     LD (BC),A
     ADC A,D
     JR EF57H
+
+LEF74:
     POP AF
     RET Z
     RST 18H
@@ -2312,6 +2793,8 @@ BASIC_SQR:
     DEC B
     LD BC,8107H
     RET
+
+LEF7D:
     CALL EABEH
     CALL ED21H
     CALL EA9AH
@@ -2353,8 +2836,14 @@ BASIC_SQR:
     JR Z,EFCDH
     LD A,(IY+02H)
     CALL FA21H
-    LD BC,F5C1H
+    DB 01H
+
+LEFCD:
+    POP BC
+    PUSH AF
     SCF
+
+LEFD0:
     CALL NC,FB1BH
     PUSH AF
     CALL EA70H
@@ -2368,9 +2857,13 @@ BASIC_SQR:
     DEC A
     JR Z,EFE9H
     LD B,A
+
+LEFE5:
     LD (HL),D
     DEC HL
     DJNZ EFE5H
+
+LEFE9:
     LD (HL),A
     DEC HL
     LD (HL),01H
@@ -2414,6 +2907,8 @@ BASIC_USR:
     CALL FD54H
     CALL FAC4H
     LD A,95H
+
+LF029:
     CALL FD54H
     LD DE,FA2BH
     PUSH DE
@@ -2471,6 +2966,8 @@ BASIC_USR:
     CALL FD54H
     AND FDH
     CP 01H
+
+LF07C:
     JP NZ,FB14H
     EXX
     LD A,C
@@ -2493,11 +2990,17 @@ BASIC_USR:
     LD A,(BC)
     LD HL,000CH
     JP FA2BH
+
+LF0A4:
     CALL FC43H
+
+LF0A7:
     EXX
     LD A,B
     EXX
     CALL F0D7H
+
+LF0AD:
     EXX
     LD A,B
     EXX
@@ -2506,6 +3009,8 @@ BASIC_USR:
     CP B2H
     RET NZ
     SCF
+
+LF0B8:
     PUSH AF
     CALL FC43H
     CALL F0D7H
@@ -2518,15 +3023,23 @@ BASIC_USR:
     LD A,H
     OR D
     JR F0D1H
+
+LF0CC:
     LD A,L
     XOR E
     LD L,A
     LD A,H
     OR D
+
+LF0D1:
     LD H,A
     CALL FA2BH
     JR F0ADH
+
+LF0D7:
     CALL F0F4H
+
+LF0DA:
     EXX
     LD A,B
     EXX
@@ -2543,6 +3056,8 @@ BASIC_USR:
     LD H,A
     CALL FA2BH
     JR F0DAH
+
+LF0F4:
     CP C2H
     JR NZ,F10AH
     CALL FC43H
@@ -2555,6 +3070,8 @@ BASIC_USR:
     CPL
     LD H,A
     JP FA2BH
+
+LF10A:
     CP 02H
     JR C,F123H
     CALL F155H
@@ -2567,42 +3084,64 @@ BASIC_USR:
     CALL F155H
     CALL F693H
     JR F13AH
+
+LF123:
     CALL F294H
     CP 99H
     JP C,F35DH
+
+; KL: Memory paging: U U U E page layout.
     CP 9FH
     JP NC,F35DH
     PUSH AF
     CALL FC43H
     CALL F294H
     CALL F6D7H
+
+LF13A:
     POP HL
     LD A,H
     CALL F142H
     JP FA2BH
+
+LF142:
     LD HL,FFFFH
     RRCA
     JR NC,F149H
     RET M
+
+LF149:
     RRCA
     JR NC,F14DH
     RET Z
+
+LF14D:
     RRCA
     JR NC,F153H
     JR Z,F153H
     RET P
+
+LF153:
     INC HL
     RET
+
+LF155:
     CALL F16CH
     CALL NZ,F181H
     INC E
     CALL NZ,F726H
+
+LF15F:
     CALL F16CH
     RET NZ
     INC E
     CALL Z,F493H
     CALL NZ,F48EH
     JR F15FH
+
+LF16C:
+
+; KL: Expansion output dispatch.
     EXX
     LD A,B
     EXX
@@ -2612,11 +3151,17 @@ BASIC_USR:
     CP A2H
     RET NZ
     INC E
+
+LF179:
     CALL FC43H
     CALL F181H
     XOR A
     RET
+
+LF181:
     CALL F1A2H
+
+LF184:
     EXX
     LD A,B
     EXX
@@ -2624,6 +3169,8 @@ BASIC_USR:
     JR Z,F18EH
     CP A1H
     RET NZ
+
+LF18E:
     LD D,A
     CALL FC43H
     CALL F1A2H
@@ -2634,8 +3181,12 @@ BASIC_USR:
     CALL NZ,F5FBH
     POP DE
     JR F184H
+
+LF1A2:
     PUSH DE
     CALL F1BBH
+
+LF1A6:
     POP DE
     EXX
     LD A,B
@@ -2647,8 +3198,12 @@ BASIC_USR:
     CALL F1BBH
     CALL EF17H
     JR F1A6H
+
+LF1B9:
     RST 08H
     INC BC
+
+LF1BB:
     PUSH AF
     CALL FC8EH
     POP AF
@@ -2666,6 +3221,8 @@ BASIC_USR:
     CALL F0A4H
     CP 95H
     JP Z,FC43H
+
+LF1E2:
     CP 03H
     JP NZ,FD5AH
     CALL F42EH
@@ -2673,6 +3230,8 @@ BASIC_USR:
     JP NZ,DBADH
     BIT 2,C
     JP Z,FA63H
+
+LF1F4:
     LD D,(IX+01H)
     PUSH DE
     PUSH HL
@@ -2691,6 +3250,8 @@ BASIC_USR:
     LD A,95H
     CALL FD54H
     EX AF,AF'
+
+LF216:
     EX AF,AF'
     POP AF
     LD HL,(1726H)
@@ -2702,6 +3263,8 @@ BASIC_USR:
     PUSH HL
     LD HL,(170CH)
     PUSH HL
+
+; KL: Expansion-card interrupt dispatch.
     PUSH BC
     EXX
     LD E,(HL)
@@ -2741,6 +3304,8 @@ BASIC_USR:
     CALL FC43H
     LD A,95H
     CALL FD54H
+
+LF26D:
     LD A,9AH
     CALL FD54H
     EX AF,AF'
@@ -2758,12 +3323,20 @@ BASIC_USR:
     POP AF
     LD (1701H),A
     RET
+
+LF28D:
     BIT 1,(IX+01H)
+
+; KL: Serial-line routine jump table; first byte is the routine count, followed by routine addresses.
     JP NZ,F0A7H
+
+LF294:
     EXX
     LD A,B
     EXX
     CALL F2E0H
+
+LF29A:
     EXX
     LD A,B
     EXX
@@ -2792,6 +3365,8 @@ BASIC_USR:
     LD A,(DE)
     JR Z,F2C2H
     LDDR
+
+LF2C2:
     POP HL
     ADD A,(HL)
     LD (DE),A
@@ -2813,7 +3388,11 @@ BASIC_USR:
     PUSH HL
     POP IY
     JR F29AH
+
+LF2E0:
     CALL F32DH
+
+LF2E3:
     EXX
     LD A,B
     EXX
@@ -2829,6 +3408,8 @@ BASIC_USR:
     CP D
     JR C,F2F8H
     LD A,D
+
+LF2F8:
     LD D,A
     OR A
     JR Z,F309H
@@ -2839,12 +3420,18 @@ BASIC_USR:
     DEC E
     JR NZ,F305H
     INC E
+
+LF305:
     LD A,D
     SUB E
     JR NC,F30DH
+
+LF309:
     ADD HL,BC
     XOR A
     JR F318H
+
+LF30D:
     INC A
     PUSH HL
     ADD HL,BC
@@ -2855,6 +3442,8 @@ BASIC_USR:
     LD C,A
     LDDR
     EX DE,HL
+
+LF318:
     LD (HL),A
     DEC HL
     LD (HL),01H
@@ -2870,6 +3459,8 @@ BASIC_USR:
     RET NZ
     LD D,L
     RET
+
+LF32D:
     CALL FC8EH
     EXX
     PUSH BC
@@ -2885,6 +3476,8 @@ BASIC_USR:
     JP C,FD5AH
     RST 08H
     INC BC
+
+LF347:
     LD A,C
     CP C5H
     JP Z,EC89H
@@ -2894,12 +3487,14 @@ BASIC_USR:
     BIT 2,C
     JP NZ,F1F4H
     JP FA7CH
+
+LF35D:
     RST 08H
-    LD C,CDH
-    ADC A,(HL)
-    CALL M,5BEDH
-    INC H
-    RLA
+    DB 0EH
+
+LF35F:
+    CALL FC8EH
+    LD DE,(1724H)
     LD HL,(1726H)
     LD (1724H),HL
     LD (HL),E
@@ -2909,6 +3504,8 @@ BASIC_USR:
     LD C,00H
     PUSH HL
     LD DE,(1728H)
+
+LF377:
     LD A,(DE)
     CP FDH
     JR NC,F3A3H
@@ -2928,12 +3525,18 @@ BASIC_USR:
     JR C,F39CH
     CP A9H
     JR C,F3A3H
+
+LF39C:
     SCF
+
+LF39D:
     INC DE
     INC C
     INC HL
     LD (HL),A
     JR C,F377H
+
+LF3A3:
     LD A,(HL)
     INC HL
     LD (1726H),HL
@@ -2941,16 +3544,24 @@ BASIC_USR:
     LD (HL),C
     POP HL
     RET
+
+LF3AC:
     CALL FC8EH
     LD HL,(1726H)
     LD B,06H
     XOR A
+
+LF3B5:
     LD (HL),A
     INC HL
     DJNZ F3B5H
     JR F3CEH
+
+LF3BB:
     BIT 1,(IX+01H)
     JR NZ,F3ACH
+
+LF3C1:
     CALL FC8EH
     LD HL,(1726H)
     LD (HL),C
@@ -2959,11 +3570,16 @@ BASIC_USR:
     LD (HL),B
     ADD HL,BC
     INC HL
+
+LF3CE:
     LD (1726H),HL
     RET
     LD (1728H),HL
     LD HL,1725H
-    LD A,E1H
+    DB 3EH
+
+LF3D9:
+    POP HL
     LD D,(HL)
     DEC HL
     LD E,(HL)
@@ -2976,6 +3592,8 @@ BASIC_USR:
     PUSH HL
     INC HL
     LD B,(HL)
+
+LF3E8:
     LD A,(DE)
     INC DE
     INC HL
@@ -2993,15 +3611,21 @@ BASIC_USR:
     JR NC,F3D9H
     RLA
     JR NC,F3D9H
+
+LF404:
     POP AF
     INC HL
     RES 7,(HL)
     SCF
     JR F428H
+
+LF40B:
     CALL F35FH
     SUB 24H
     JR Z,F414H
     LD A,02H
+
+LF414:
     LD (HL),A
     PUSH HL
     INC HL
@@ -3010,16 +3634,26 @@ BASIC_USR:
     LD C,12H
     CALL F3C1H
     XOR A
+
+LF422:
     CALL NZ,F3ACH
     POP HL
     SET 7,(HL)
+
+LF428:
     LD C,(HL)
     INC HL
     EX DE,HL
     RET
+
+LF42C:
     RST 08H
     DEC B
+
+LF42E:
     EXX
+
+LF42F:
     PUSH DE
     BIT 0,C
     LD A,C
@@ -3036,6 +3670,8 @@ BASIC_USR:
     INC HL
     EX DE,HL
     PUSH BC
+
+LF445:
     PUSH HL
     PUSH AF
     LD A,A4H
@@ -3054,6 +3690,8 @@ BASIC_USR:
     POP AF
     PUSH AF
     PUSH DE
+
+LF45E:
     DEC A
     JR Z,F46FH
     EX DE,HL
@@ -3067,6 +3705,8 @@ BASIC_USR:
     POP AF
     POP DE
     JR F45EH
+
+LF46F:
     POP DE
     POP AF
     POP BC
@@ -3083,12 +3723,15 @@ BASIC_USR:
     LD C,(HL)
     INC BC
     INC BC
+
+LF487:
     PUSH HL
     CALL FCB3H
     POP DE
     ADD HL,DE
     RET
 
+LF48E:
 ; FP_SUB - Subtracts the top two numeric values on the BASIC stack.
 ; usage: trace,call
 FP_SUB:
@@ -3096,6 +3739,7 @@ FP_SUB:
     CALL F726H
     POP AF
 
+LF493:
 ; FP_ADD - Adds the top two numeric values on the BASIC stack.
 ; usage: trace,call
 FP_ADD:
@@ -3121,6 +3765,8 @@ FP_ADD:
     SUB B
     LD (IY+11H),A
     XOR A
+
+LF4BF:
     CALL NZ,F790H
     LD A,(IY+08H)
     XOR (IY+11H)
@@ -3140,16 +3786,24 @@ FP_ADD:
     LD A,80H
     XOR (IY+08H)
     LD (IY+08H),A
+
+LF4EE:
     POP AF
+
+LF4EF:
     CALL F734H
     POP AF
     RET
+
+LF4F4:
     PUSH AF
     PUSH IY
     POP DE
     LD HL,0009H
     ADD HL,DE
     LD B,07H
+
+LF4FE:
     INC HL
     INC DE
     LD A,(DE)
@@ -3159,12 +3813,15 @@ FP_ADD:
     DJNZ F4FEH
     POP AF
     RET
+
+LF508:
     LD DE,0009H
     ADD IY,DE
     CALL F9F9H
     POP AF
     RET
 
+LF512:
 ; FP_MUL - Multiplies the top two numeric values on the BASIC stack.
 ; usage: trace,call
 FP_MUL:
@@ -3225,6 +3882,8 @@ FP_MUL:
     EXX
     LD C,0CH
     EXX
+
+LF56C:
     POP HL
     PUSH HL
     PUSH BC
@@ -3244,13 +3903,19 @@ FP_MUL:
     LD E,00H
     LD B,10H
     EX AF,AF'
+
+LF583:
     JP P,F58EH
     INC E
     DEC E
     JR Z,F5B0H
+
+LF58A:
     EX AF,AF'
     XOR A
     JR F59BH
+
+LF58E:
     CP 0CH
     JR NC,F58AH
     EX AF,AF'
@@ -3261,6 +3926,8 @@ FP_MUL:
     ADD A,03H
     LD L,A
     LD A,(HL)
+
+LF59B:
     ADD A,E
     DAA
     EXX
@@ -3279,6 +3946,8 @@ FP_MUL:
     EX AF,AF'
     DEC A
     DJNZ F583H
+
+LF5B0:
     POP AF
     INC A
     EX AF,AF'
@@ -3302,12 +3971,18 @@ FP_MUL:
     OR L
     LD (IY+08H),A
     LD (IY+00H),09H
+
+LF5D3:
     POP BC
     POP DE
     POP HL
     EXX
     JP F4EFH
+
+LF5DA:
     LD B,07H
+
+LF5DC:
     LD A,(DE)
     DEC DE
     RLD
@@ -3317,7 +3992,11 @@ FP_MUL:
     DEC HL
     DJNZ F5DCH
     RET
+
+LF5E8:
     LD B,07H
+
+LF5EA:
     XOR A
     RLD
     LD (DE),A
@@ -3330,9 +4009,12 @@ FP_MUL:
     DJNZ F5EAH
     XOR A
     RET
+
+LF5F9:
     RST 08H
     DEC BC
 
+LF5FB:
 ; FP_DIV - Divides the top two numeric values on the BASIC stack.
 ; usage: trace,call
 FP_DIV:
@@ -3358,6 +4040,8 @@ FP_DIV:
     EX (SP),IY
     CALL F9F1H
     LD B,04H
+
+LF626:
     LD HL,(171CH)
     EXX
     LD BC,FFF7H
@@ -3369,8 +4053,12 @@ FP_DIV:
     EX DE,HL
     ADD HL,BC
     ADD HL,BC
+
+LF638:
     LD B,07H
     OR A
+
+LF63B:
     INC DE
     LD A,(DE)
     EXX
@@ -3392,6 +4080,8 @@ FP_DIV:
     LD BC,0007H
     LDDR
     JR F638H
+
+LF65D:
     EX (SP),IY
     CALL F784H
     EX (SP),IY
@@ -3420,9 +4110,13 @@ FP_DIV:
     XOR C
     LD (IY+08H),A
     XOR C
+
+LF68B:
     JP P,F5D3H
     CALL F9F9H
     JR F68BH
+
+LF693:
     PUSH IY
     POP HL
     LD BC,0009H
@@ -3446,6 +4140,8 @@ FP_DIV:
     ADD A,C
     JR Z,F6B1H
     EX DE,HL
+
+LF6B1:
     LD A,(DE)
     DEC DE
     AND 7FH
@@ -3456,6 +4152,8 @@ FP_DIV:
     SUB C
     RET NZ
     LD B,07H
+
+LF6BE:
     LD A,(DE)
     AND F0H
     RRCA
@@ -3476,6 +4174,8 @@ FP_DIV:
     DEC HL
     DJNZ F6BEH
     RET
+
+LF6D7:
     PUSH IY
     POP HL
     INC HL
@@ -3490,6 +4190,8 @@ FP_DIV:
     CP C
     JR C,F6E8H
     LD A,C
+
+LF6E8:
     LD C,(HL)
     ADD HL,BC
     INC HL
@@ -3499,11 +4201,15 @@ FP_DIV:
     INC BC
     POP DE
     POP HL
+
+LF6F2:
     LD A,(DE)
     INC DE
     CPI
     JP PO,F6FBH
     JR Z,F6F2H
+
+LF6FB:
     DEC HL
     LD C,(HL)
     LD L,A
@@ -3514,12 +4220,18 @@ FP_DIV:
     RET M
     LD A,01H
     RET
+
+LF707:
     BIT 7,(IY+08H)
     RET Z
+
+LF70C:
     PUSH IY
     POP HL
     LD DE,0007H
     OR A
+
+LF713:
     INC HL
     LD A,D
     SBC A,(HL)
@@ -3528,17 +4240,27 @@ FP_DIV:
     DEC E
     JR NZ,F713H
     RET
+
+LF71C:
     BIT 7,(IY+08H)
     RET Z
     CALL F70CH
     JR F72BH
+
+LF726:
+
+; KL: Arithmetic routine 4: a BASIC Stack-ben levo 9 byte-os szam elojelet az ellenkezojere valtoztatja.
     LD A,(IY+06H)
     OR A
     RET Z
+
+LF72B:
     LD A,80H
     XOR (IY+08H)
     LD (IY+08H),A
     RET
+
+LF734:
     CALL F9DFH
     RET Z
     LD A,(IY+07H)
@@ -3552,6 +4274,8 @@ FP_DIV:
     JP Z,F912H
     INC (IY+08H)
     RET
+
+LF751:
     LD A,(IY+06H)
     AND F0H
     RET NZ
@@ -3561,6 +4285,8 @@ FP_DIV:
     AND 7FH
     JR NZ,F751H
     JP F9F9H
+
+LF767:
     PUSH HL
     PUSH IY
     POP HL
@@ -3570,6 +4296,8 @@ FP_DIV:
     LD (HL),00H
     JR C,F782H
     LD B,06H
+
+LF775:
     INC HL
     LD A,(HL)
     ADD A,01H
@@ -3577,17 +4305,27 @@ FP_DIV:
     LD (HL),A
     JR NC,F77FH
     DJNZ F775H
+
+LF77F:
     CALL F734H
+
+LF782:
     POP HL
     RET
+
+LF784:
     PUSH IY
     POP HL
     LD B,07H
     XOR A
+
+LF78A:
     INC HL
     RLD
     DJNZ F78AH
     RET
+
+LF790:
     CP 0EH
     JR NC,F7C4H
     LD BC,00FFH
@@ -3596,6 +4334,8 @@ FP_DIV:
     PUSH HL
     LD E,L
     LD D,H
+
+LF79D:
     INC HL
     SUB 02H
     INC C
@@ -3610,27 +4350,37 @@ FP_DIV:
     EX DE,HL
     SUB 08H
     CPL
+
+LF7B1:
     LD (HL),B
     INC HL
     DEC A
     JR NZ,F7B1H
     POP AF
+
+LF7B7:
     POP HL
     INC A
     RET NZ
     LD C,07H
     ADD HL,BC
     LD B,C
+
+LF7BE:
     RRD
     DEC HL
     DJNZ F7BEH
     RET
+
+LF7C4:
     LD C,(IY+08H)
     CALL F9F9H
     LD (IY+08H),C
     RET
     LD HL,FEB6H
     PUSH HL
+
+LF7D2:
     PUSH HL
     PUSH BC
     CALL F7FDH
@@ -3640,10 +4390,14 @@ FP_DIV:
     RLCA
     RLCA
     RLCA
+
+LF7DE:
     AND 0FH
     POP BC
     POP HL
     RET
+
+LF7E3:
     PUSH HL
     PUSH BC
     CALL F7FDH
@@ -3655,12 +4409,16 @@ FP_DIV:
     SLA C
     LD A,(HL)
     LD B,0FH
+
+LF7F7:
     AND B
     OR C
     LD (HL),A
     POP BC
     POP HL
     RET
+
+LF7FD:
     PUSH IY
     POP HL
     SRL B
@@ -3675,6 +4433,7 @@ FP_DIV:
     LD A,(HL)
     RET
 
+LF80E:
 ; FP_TO_ASCII - Converts a BASIC numeric value to ASCII text.
 ; usage: trace,call
 FP_TO_ASCII:
@@ -3688,8 +4447,12 @@ FP_TO_ASCII:
     LD (HL),2DH
     INC HL
     CALL F726H
+
+LF825:
     CALL F767H
     LD B,0EH
+
+LF82A:
     DEC B
     LD A,B
     CP 04H
@@ -3712,21 +4475,35 @@ FP_TO_ASCII:
     JR C,F859H
     LD B,D
     JR F85BH
+
+LF850:
     LD A,C
     CP D
     JR NC,F85BH
     LD C,D
     OR A
     JR F85CH
+
+LF858:
     SCF
+
+LF859:
     LD D,05H
+
+LF85B:
     INC C
+
+LF85C:
     PUSH AF
     LD A,B
+
+LF85E:
     CP D
     JR NZ,F864H
     LD (HL),2EH
     INC HL
+
+LF864:
     LD A,B
     SUB 04H
     LD A,00H
@@ -3748,8 +4525,12 @@ FP_TO_ASCII:
     JR NC,F886H
     LD (HL),2DH
     NEG
+
+LF886:
     INC HL
     LD B,FFH
+
+LF889:
     INC B
     LD C,A
     SUB 0AH
@@ -3761,17 +4542,25 @@ FP_TO_ASCII:
     SUB B
     ADD A,C
     LD (HL),A
+
+LF897:
     INC HL
+
+LF898:
     LD DE,1930H
     SCF
     SBC HL,DE
     EX DE,HL
     LD (HL),E
     RET
+
+LF8A1:
     PUSH DE
     PUSH BC
     LD E,FFH
     LD C,00H
+
+LF8A7:
     LD A,(HL)
     INC HL
     CP 20H
@@ -3779,8 +4568,12 @@ FP_TO_ASCII:
     CP 22H
     JR NZ,F8B4H
     INC C
+
+LF8B2:
     LD A,(HL)
     INC HL
+
+LF8B4:
     INC E
     INC C
     DEC C
@@ -3793,12 +4586,16 @@ FP_TO_ASCII:
     INC HL
     JR Z,F8B2H
     JR F8D3H
+
+LF8C7:
     CP 2CH
     JR Z,F8D3H
     CP 21H
     JR Z,F8D3H
     CP FDH
     JR C,F8B2H
+
+LF8D3:
     DEC HL
     PUSH HL
     PUSH DE
@@ -3807,6 +4604,8 @@ FP_TO_ASCII:
     POP DE
     CALL FC8EH
     INC B
+
+LF8DE:
     DEC B
     DEC DE
     JR Z,F8F8H
@@ -3819,12 +4618,16 @@ FP_TO_ASCII:
     JR Z,F8EEH
     DEC HL
     LD A,(HL)
+
+LF8EE:
     LD (DE),A
     CP 20H
     JR NC,F8DEH
     OR 80H
     LD (DE),A
     JR F8DEH
+
+LF8F8:
     EX DE,HL
     POP DE
     LD (HL),E
@@ -3843,8 +4646,12 @@ FP_TO_ASCII:
     JP NC,FD5AH
     RLA
     RET NC
+
+LF912:
     RST 08H
     DEC C
+
+LF914:
     PUSH BC
     PUSH DE
     CALL F9F4H
@@ -3856,6 +4663,8 @@ FP_TO_ASCII:
     EX (SP),HL
     LD E,3FH
     LD B,0BH
+
+LF926:
     LD A,(HL)
     INC HL
     CP 20H
@@ -3865,8 +4674,12 @@ FP_TO_ASCII:
     CP 2DH
     JR NZ,F938H
     SET 1,D
+
+LF936:
     LD A,(HL)
     INC HL
+
+LF938:
     CP 2EH
     JR Z,F969H
     SUB 3AH
@@ -3883,9 +4696,15 @@ FP_TO_ASCII:
     JR NC,F936H
     DEC E
     JR F936H
+
+LF954:
     SET 2,D
+
+LF956:
     JR C,F959H
     INC E
+
+LF959:
     LD A,B
     DEC A
     JR Z,F936H
@@ -3894,20 +4713,28 @@ FP_TO_ASCII:
     RRCA
     JR C,F963H
     DEC HL
+
+LF963:
     LD A,C
     RLD
     EX (SP),HL
     JR F936H
+
+LF969:
     SET 7,D
     BIT 0,D
     SET 0,D
     JR Z,F936H
+
+LF971:
     EX (SP),HL
     DEC B
     BIT 0,B
     JR Z,F97AH
     XOR A
     RLD
+
+LF97A:
     POP HL
     DEC HL
     LD A,(HL)
@@ -3926,10 +4753,18 @@ FP_TO_ASCII:
     JR Z,F999H
     CP 2DH
     JR NZ,F99CH
+
+LF999:
     SET 5,D
+
+LF99B:
     INC HL
+
+LF99C:
     LD B,00H
     DEC HL
+
+LF99F:
     INC HL
     LD A,(HL)
     SUB 3AH
@@ -3947,14 +4782,20 @@ FP_TO_ASCII:
     LD B,A
     JP P,F99FH
     SET 6,D
+
+LF9B7:
     LD A,B
     BIT 5,D
     JR Z,F9BEH
     NEG
+
+LF9BE:
     ADD A,E
     CP 7FH
     JR C,F9C5H
     SET 6,D
+
+LF9C5:
     PUSH DE
     LD (IY+08H),A
     BIT 1,D
@@ -3971,32 +4812,48 @@ FP_TO_ASCII:
     POP DE
     POP BC
     RET
+
+LF9DF:
     PUSH HL
     PUSH IY
     POP HL
     LD B,07H
     XOR A
+
+LF9E6:
     INC HL
     OR (HL)
     JR NZ,F9EFH
     DJNZ F9E6H
     LD (IY+08H),A
+
+LF9EF:
     POP HL
     RET
+
+LF9F1:
     CALL FC8EH
+
+LF9F4:
     LD DE,FFF7H
     ADD IY,DE
+
+LF9F9:
     PUSH IY
     EX (SP),HL
     LD (HL),09H
     LD B,08H
     XOR A
+
+LFA01:
     INC HL
     LD (HL),A
     DJNZ FA01H
     POP HL
     SCF
     RET
+
+LFA08:
     CALL F9F9H
     LD (IY+08H),40H
     LD (IY+06H),10H
@@ -4004,16 +4861,24 @@ FP_TO_ASCII:
     LD HL,FEB6H
     PUSH HL
     JR F9F9H
+
+LFA1A:
     POP AF
+
+LFA1B:
     LD DE,0009H
     ADD IY,DE
     RET
+
+LFA21:
     LD E,(IY+01H)
     LD D,00H
     INC DE
     INC DE
     ADD IY,DE
     RET
+
+LFA2B:
     CALL F9F1H
     INC IY
     LD (171CH),IY
@@ -4021,13 +4886,22 @@ FP_TO_ASCII:
     PUSH HL
     CALL FC83H
     SCF
+
+LFA3B:
     ADC HL,HL
     JR NC,FA3BH
     LD C,01H
     JR FA52H
+
+LFA43:
     INC B
     INC C
-    LD A,41H
+    DB 3EH
+
+LFA46:
+    LD B,C
+
+LFA47:
     INC DE
     LD A,(DE)
     ADC A,A
@@ -4036,6 +4910,8 @@ FP_TO_ASCII:
     DJNZ FA47H
     JR C,FA43H
     ADC HL,HL
+
+LFA52:
     LD DE,(171CH)
     JR NZ,FA46H
     POP AF
@@ -4043,6 +4919,8 @@ FP_TO_ASCII:
     OR 49H
     LD (IY+08H),A
     JP F734H
+
+LFA63:
     CALL FC8EH
     LD BC,0005H
     ADD HL,BC
@@ -4059,7 +4937,11 @@ FP_TO_ASCII:
     LD A,09H
     DEC DE
     JR FA8DH
+
+LFA7C:
     INC HL
+
+LFA7D:
     LD C,(HL)
     LD B,00H
     CALL FC8EH
@@ -4070,10 +4952,14 @@ FP_TO_ASCII:
     DEC DE
     LDDR
     LD A,01H
+
+LFA8D:
     LD (DE),A
     PUSH DE
     POP IY
     RET
+
+LFA92:
     CALL FC8EH
     PUSH IY
     POP DE
@@ -4087,6 +4973,8 @@ FP_TO_ASCII:
     PUSH DE
     POP IY
     RET
+
+LFAA6:
     CALL FC8EH
     PUSH IY
     POP HL
@@ -4100,11 +4988,22 @@ FP_TO_ASCII:
     PUSH DE
     POP IY
     RET
+
+LFABA:
     CALL FC43H
     JR FAC4H
+
+LFABF:
     CALL FAC3H
     EX DE,HL
-    OR 37H
+
+LFAC3:
+    DB F6H
+
+LFAC4:
+    SCF
+
+LFAC5:
     PUSH BC
     PUSH DE
     CALL C,F0A7H
@@ -4119,6 +5018,8 @@ FP_TO_ASCII:
     ADD A,05H
     LD C,A
     LD B,04H
+
+LFADF:
     LD A,H
     AND E0H
     JR NZ,FB14H
@@ -4133,6 +5034,8 @@ FP_TO_ASCII:
     LD E,A
     LD D,00H
     ADD HL,DE
+
+; KL: Cassette work bytes used by cassette routines.
     JR C,FB14H
     INC B
     LD A,C
@@ -4145,21 +5048,35 @@ FP_TO_ASCII:
     POP AF
     XOR H
     JP M,FB14H
-    LD A,F1H
+    DB 3EH
+
+LFB06:
+    POP AF
     LD DE,0009H
     ADD IY,DE
     LD A,H
     OR A
+
+; KL: Initialization bytes copied to RAM addresses 0B00H-0B48H.
     EXX
     LD A,B
     EXX
     POP DE
     POP BC
     RET
+
+LFB14:
     RST 08H
     INC B
+
+LFB16:
     CALL FC43H
-    LD A,F6H
+    DB 3EH
+
+LFB1A:
+    DB F6H
+
+LFB1B:
     SCF
     PUSH HL
     CALL FAC5H
@@ -4169,6 +5086,10 @@ FP_TO_ASCII:
     LD A,L
     POP HL
     RET
+
+LFB28:
+
+; KL: Arithmetic routine 13: a BASIC Stack-bol a HL regiszter altal mutatott helyre mozgat. A Stackbol felszabadul 9 byte.
     CALL F767H
     EX DE,HL
     PUSH IY
@@ -4180,8 +5101,12 @@ FP_TO_ASCII:
     INC HL
     LDI
     JR FB57H
+
+LFB3B:
     BIT 1,(IX+01H)
     JR NZ,FB28H
+
+LFB41:
     LD C,(HL)
     INC HL
     PUSH IY
@@ -4191,17 +5116,29 @@ FP_TO_ASCII:
     INC C
     JR NZ,FB4CH
     DEC C
+
+LFB4C:
     CP C
     JP NC,F912H
     LD C,A
     LD B,00H
     INC BC
+
+; KL: "MOPS" cartridge signature text.
     EX DE,HL
     LDIR
+
+LFB57:
     PUSH HL
+
+; KL: "VGB" device identifier.
     POP IY
     RET
+
+; KL: Bytes copied into RAM at initialization, including RST and system entry stubs.
     DB E1H, 7EH, B7H, E5H, 00H, 00H, 00H, 00H, C8H, E1H, C3H, 5CH, FDH, C3H, 00H, 00H
+
+; KL: Character matrix table for character codes 128-160, ten bytes per character.
     DB C3H, 82H, FBH, 32H, 1FH, 00H, F7H, 00H, C9H, 00H, 00H, 00H, 00H, 00H, 00H, 00H
     DB 00H, 00H, 00H, 00H, 00H, 00H, 00H
 
@@ -4244,6 +5181,8 @@ RST18_DISPATCH:
 BASIC_ERROR:
     DB FDH, 2AH, 1AH, 17H, FEH, F5H, CAH, A3H, FFH, F5H, FEH, 06H, CCH, FCH, DCH, CDH
     DB 35H, FCH, CDH, 18H, FCH, CDH, 79H, FEH
+
+; KL: " " text prefix for BASIC error messages.
     DB 06H, 0DH, 0AH, 2AH, 2AH, 2AH, 20H, F1H, CBH, 7FH, 20H, 18H, 21H, C6H, FDH, 01H
     DB FFH, FFH, 03H, 09H, 4EH, 23H, 0CH, 0DH, 28H, 04H, B9H, 4EH, 20H, F4H, 23H, CDH
     DB DDH, FEH, 18H, 18H, 6FH, CDH, 79H, FEH, 0DH, 53H, 79H, 73H, 74H, 65H, 6DH, 20H
@@ -4282,21 +5221,30 @@ PRINT_LENGTH_TEXT:
     DB CBH, BFH, CDH, 9AH, FEH, 28H, F5H, E1H, 18H, C6H, 06H, FFH, 9FH, E6H, 20H, 4FH
     DB E5H, 21H, 47H, FFH, 5EH, 23H, 56H, 23H, E3H, AFH, EDH, 52H, 3CH, 30H, FBH, 19H
     DB 3DH, 28H, 07H, 0EH, 30H, 81H, CDH, 9AH, FEH, 79H, A9H, C4H, 9AH, FEH, E3H, 1DH
+
+; KL: PRINT special-character dispatch table.
     DB 20H, E2H, E1H, 79H, A0H, 20H, 81H, C9H
+
+; KL: Binary constants 1000, 100, 10, and 1 for decimal conversion.
     DB E8H, 03H, 64H, 00H, 0AH, 00H, 01H, 00H
 
+LFF4F:
 ; BASIC_LINE_INPUT - Reads and stores an edited BASIC command or program line.
 ; usage: trace
 BASIC_LINE_INPUT:
     LD HL,1831H
     PUSH HL
     LD B,00H
+
+LFF55:
     PUSH BC
     LD DE,80FFH
     CALL FEA9H
     POP DE
     LD B,D
     JR Z,FF72H
+
+LFF60:
     POP HL
     LD B,00H
     LD (HL),B
@@ -4309,6 +5257,8 @@ BASIC_LINE_INPUT:
     JR Z,FF9BH
     OR A
     RST 10H
+
+LFF72:
     LD A,(0B16H)
     OR A
     LD A,F5H
@@ -4323,10 +5273,14 @@ BASIC_LINE_INPUT:
     CP 20H
     JR NC,FF8CH
     LD C,A
+
+LFF8C:
     LD A,B
     CP FBH
     JR NC,FF55H
     INC B
+
+LFF92:
     INC HL
     LD (HL),C
     JR NZ,FF55H
@@ -4334,6 +5288,8 @@ BASIC_LINE_INPUT:
     XOR A
     POP HL
     LD (HL),B
+
+LFF9B:
     OR A
     RET
 
@@ -4344,12 +5300,18 @@ CHECK_STOP_FLAG:
     OR A
     RET Z
     EXX
+
+; KL: STOP routine.
     EXX
+
+LFFA4:
     XOR A
     LD (0B16H),A
     CALL FC35H
     CALL FC18H
     CALL FE79H
+
+; KL: "STOP" message text.
     DB 06H, 0DH, 0AH, 53H, 54H, 4FH, 50H, DDH, CBH, 00H, 56H, 28H, 22H, 22H, 10H, 17H
     DB 2AH, 0CH, 17H, 22H, 0EH, 17H, CDH, 79H, FEH, 09H, 20H, 61H, 74H, 20H, 6CH, 69H
     DB 6EH, 65H, 20H, 2AH, 0CH, 17H, 23H, 5EH, 23H, 56H, EBH, B7H, CDH, 19H, FFH, AFH

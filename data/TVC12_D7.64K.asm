@@ -4,7 +4,9 @@
 ; ORG: E000H
 ; Size: 8192 bytes
 ; Symbols: data/rom_symbols_1_2.json
+; Comments: data/rom_comments_1_2.json
 ; Data ranges: E000H-EFFFH, F291H-F29BH, F3C6H-F3D7H, F741H-F77AH
+; Auto labels: branch and call targets are emitted as Lxxxx.
 ; -----------------------------------------------------------------------------
 
 ORG E000H
@@ -96,6 +98,8 @@ ORG E000H
     DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH
     DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH
     DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH
+
+; KL: LPRINT routine.
     DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH
     DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH
     DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH
@@ -137,6 +141,8 @@ ORG E000H
     DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH
     DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH
     DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH
+
+; KL: SET PAPER routine.
     DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH
     DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH
     DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH
@@ -154,6 +160,8 @@ ORG E000H
     DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH
     DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH
     DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH
+
+; KL: GET routine.
     DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH
     DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH
     DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH
@@ -269,6 +277,8 @@ ORG E000H
 ; EXT_INIT - Initializes extension-ROM tables and expansion devices during startup.
 ; usage: trace
 EXT_INIT:
+
+; KL: Extension ROM initialization; copies tables to RAM, initializes expansion devices, then returns to the main ROM.
     LD A,D0H
     OUT (02H),A
     LD A,(0B21H)
@@ -276,11 +286,15 @@ EXT_INIT:
     JR NZ,F00EH
     EX AF,AF'
     LD (0B1BH),A
+
+LF00E:
     LD HL,FB6BH
     LD DE,0740H
     LD BC,0140H
     LDIR
     LD A,40H
+
+LF01B:
     PUSH HL
     LD C,0AH
     LDIR
@@ -308,6 +322,8 @@ EXT_INIT:
     IN A,(5AH)
     LD BC,0403H
     LD HL,0040H
+
+LF058:
     LD D,A
     LD A,04H
     SUB B
@@ -328,23 +344,33 @@ EXT_INIT:
     JR Z,F089H
     LD HL,FB62H
     JR F089H
+
+LF079:
     LD HL,C000H
     LD DE,FB54H
     LD B,04H
+
+LF081:
     LD A,(DE)
     CP (HL)
     JR NZ,F092H
     INC DE
     INC HL
     DJNZ F081H
+
+LF089:
     LD C,(HL)
     INC C
     LD B,00H
     POP DE
     LDIR
     JR F095H
+
+LF092:
     POP HL
     LD (HL),FFH
+
+LF095:
     EXX
     LD A,D
     RRCA
@@ -353,6 +379,8 @@ EXT_INIT:
     ADD HL,DE
     DJNZ F058H
     LD B,04H
+
+LF0A1:
     LD D,A
     AND C
     JR NZ,F0B0H
@@ -361,16 +389,22 @@ EXT_INIT:
     LD (0B07H),A
     LD (0B0FH),A
     JR F0B7H
+
+LF0B0:
     LD A,D
     RRCA
     RRCA
     DJNZ F0A1H
     LD A,FFH
+
+LF0B7:
     LD (0B1CH),A
     LD HL,0047H
     LD DE,0030H
     LD B,04H
     XOR A
+
+LF0C3:
     LD (HL),A
     ADD HL,DE
     DJNZ F0C3H
@@ -378,10 +412,14 @@ EXT_INIT:
     LD HL,0070H
     PUSH DE
     POP IX
+
+LF0CF:
     PUSH HL
     POP IY
     LD B,(HL)
     INC B
+
+LF0D4:
     LD A,(DE)
     CP (HL)
     JR NZ,F0DFH
@@ -389,6 +427,8 @@ EXT_INIT:
     INC DE
     DJNZ F0D4H
     INC (IY+07H)
+
+LF0DF:
     PUSH IY
     POP HL
     LD DE,0030H
@@ -403,15 +443,23 @@ EXT_INIT:
     PUSH HL
     POP IX
     ADD HL,DE
+
+LF0F6:
     PUSH IX
     POP DE
     JR F0CFH
+
+LF0FB:
     LD A,F0H
+
+; KL: Memory paging: U U U E page layout.
     OUT (02H),A
     CALL FFE8H
     LD IX,0040H
     LD B,04H
     IN A,(5AH)
+
+LF10A:
     LD C,A
     LD A,04H
     SUB B
@@ -431,7 +479,11 @@ EXT_INIT:
     POP IX
     POP BC
     LD A,F0H
+
+; KL: Memory paging: U U U E page layout.
     OUT (02H),A
+
+LF12D:
     LD DE,0030H
     ADD IX,DE
     LD A,C
@@ -444,12 +496,18 @@ EXT_INIT:
 ; RESET_INTEGRITY_CHECK - Checks RAM-resident system routines to choose warm or cold reset.
 ; usage: trace
 RESET_INTEGRITY_CHECK:
+
+; KL: Reset integrity check; decides between warm reset and cold reset.
     EX AF,AF'
     LD A,D0H
+
+; KL: Memory paging: U U V E page layout.
     OUT (02H),A
     LD DE,FB2EH
     LD HL,0B23H
     LD BC,001EH
+
+LF14B:
     LD A,(DE)
     INC DE
     CPI
@@ -459,7 +517,11 @@ RESET_INTEGRITY_CHECK:
     OR A
     LD A,FFH
     JR Z,F15DH
+
+LF15C:
     XOR A
+
+LF15D:
     LD (0B21H),A
     EX AF,AF'
     OUT (02H),A
@@ -468,6 +530,8 @@ RESET_INTEGRITY_CHECK:
 ; EXPANSION_INPUT_DISPATCH - Selects and calls an input routine on an expansion card.
 ; usage: trace
 EXPANSION_INPUT_DISPATCH:
+
+; KL: Expansion input dispatch.
     LD L,B
     LD H,00H
     ADD HL,DE
@@ -476,9 +540,13 @@ EXPANSION_INPUT_DISPATCH:
 ; EXPANSION_OUTPUT_DISPATCH - Selects and calls an output routine on an expansion card.
 ; usage: trace
 EXPANSION_OUTPUT_DISPATCH:
+
+; KL: Expansion output dispatch.
     LD HL,0007H
     ADD HL,DE
     LD A,(HL)
+
+LF171:
     CP 04H
     JR NC,F1D9H
     EXX
@@ -492,14 +560,20 @@ EXPANSION_OUTPUT_DISPATCH:
     LD A,B
     OR A
     JR Z,F18BH
+
+LF188:
     ADD HL,DE
     DJNZ F188H
+
+LF18B:
     LD A,(HL)
     INC A
     JR Z,F1D8H
     LD C,(HL)
     INC HL
     LD DE,FB5DH
+
+LF194:
     LD A,(DE)
     INC DE
     CPI
@@ -508,8 +582,12 @@ EXPANSION_OUTPUT_DISPATCH:
     EXX
     LD HL,F291H
     JR F1A7H
+
+LF1A3:
     EXX
     LD HL,C00DH
+
+LF1A7:
     LD A,(HL)
     DEC A
     CP C
@@ -532,22 +610,37 @@ EXPANSION_OUTPUT_DISPATCH:
     LD DE,0030H
     JR Z,F1CCH
     LD B,A
+
+LF1C8:
     ADD IX,DE
     DJNZ F1C8H
+
+LF1CC:
     EX AF,AF'
     POP DE
     POP BC
     CALL FFF9H
+
+LF1D2:
     LD HL,C3FCH
     JP FFF0H
+
+LF1D8:
     EXX
+
+LF1D9:
     LD A,(0B1CH)
     LD (HL),A
     LD A,FEH
-    LD DE,FF3EH
+    DB 11H
+
+LF1E0:
+    LD A,FFH
     POP DE
     POP BC
     JR F1D2H
+
+; KL: Expansion-call error recovery; restores default device assignments.
     RLCA
     LD HL,0B00H
     LD DE,FB0EH
@@ -556,6 +649,8 @@ EXPANSION_OUTPUT_DISPATCH:
     LD HL,0B08H
     LD DE,FB16H
     LD IX,0B0FH
+
+LF1FD:
     RLCA
     RLCA
     RLCA
@@ -575,8 +670,12 @@ EXPANSION_OUTPUT_DISPATCH:
     JR C,F218H
     LD A,(DE)
     LD (HL),A
+
+LF218:
     LD HL,C40EH
     JP FFF0H
+
+LF21E:
     EX AF,AF'
     LD A,(0B1CH)
     LD (IX+00H),A
@@ -586,7 +685,11 @@ EXPANSION_OUTPUT_DISPATCH:
 ; EXPANSION_IRQ_DISPATCH - Dispatches an interrupt to an expansion-card handler.
 ; usage: trace
 EXPANSION_IRQ_DISPATCH:
+
+; KL: Expansion-card interrupt dispatch.
     LD B,04H
+
+LF229:
     RR C
     JR C,F240H
     PUSH BC
@@ -600,12 +703,18 @@ EXPANSION_IRQ_DISPATCH:
     LD A,F0H
     OUT (02H),A
     POP BC
+
+LF240:
     DJNZ F229H
     LD A,(0B11H)
     OUT (03H),A
     POP HL
     JP FFF0H
+
+LF24B:
     EX DE,HL
+
+LF24C:
     PUSH HL
     PUSH DE
     PUSH BC
@@ -630,6 +739,8 @@ EXPANSION_IRQ_DISPATCH:
     CPI
     RET PO
     JR F24CH
+
+LF26C:
     PUSH HL
     PUSH DE
     PUSH BC
@@ -663,8 +774,11 @@ EXPANSION_IRQ_DISPATCH:
 ; SERIAL_JUMP_TABLE - Counted jump table for serial-line OS functions.
 ; usage: trace,data
 SERIAL_JUMP_TABLE:
+
+; KL: Serial-line routine jump table; first byte is the routine count, followed by routine addresses.
     DB 05H, 05H, F3H, 39H, F3H, B7H, F3H, A4H, F2H, 57H, F3H
 
+LF29C:
 ; SERIAL_INIT - Initializes the serial-line device.
 ; usage: trace,call
 SERIAL_INIT:
@@ -672,6 +786,7 @@ SERIAL_INIT:
     LD A,EEH
     LD (0B6AH),A
 
+LF2A4:
 ; SER_SET - Configures serial-line parameters.
 ; usage: trace,call
 SER_SET:
@@ -685,6 +800,8 @@ SER_SET:
     CP 09H
     JR C,F2B9H
     LD A,08H
+
+LF2B9:
     LD L,A
     LD H,00H
     ADD HL,HL
@@ -711,6 +828,8 @@ SER_SET:
     LD BC,0411H
     LD DE,4003H
     IN A,(5AH)
+
+LF2E8:
     LD L,A
     AND E
     JR NZ,F2F6H
@@ -719,6 +838,8 @@ SER_SET:
     OUT (C),A
     OUT (C),D
     OUT (C),H
+
+LF2F6:
     LD A,10H
     ADD A,C
     LD C,A
@@ -731,8 +852,12 @@ SER_SET:
     POP HL
     POP BC
     RET
+
+LF306:
     CALL F331H
     RET NZ
+
+LF30A:
     LD A,(0B14H)
     OR A
     JR NZ,F306H
@@ -747,8 +872,12 @@ SER_SET:
     CCF
     RET
     NOP
+
+LF31F:
     CALL F30AH
     RET NZ
+
+LF323:
     IN A,(C)
     AND 81H
     CP 81H
@@ -757,6 +886,8 @@ SER_SET:
     CALL F331H
     JR Z,F323H
     RET
+
+LF331:
     LD A,(0B16H)
     OR A
     RET Z
@@ -774,6 +905,8 @@ SER_CHOUT:
     CALL NZ,F2A4H
     LD A,05H
     OUT (C),A
+
+LF34B:
     CALL F331H
     RET NZ
     IN A,(C)
@@ -784,6 +917,7 @@ SER_CHOUT:
     XOR A
     RET
 
+LF359:
 ; SER_CHIN - Reads one character from the serial line.
 ; usage: trace,call
 SER_CHIN:
@@ -801,6 +935,8 @@ SER_CHIN:
     LD C,A
     XOR A
     RET
+
+LF370:
     DI
     LD A,(0B11H)
     AND F0H
@@ -808,6 +944,8 @@ SER_CHIN:
     OUT (03H),A
     LD A,25H
     OUT (C),A
+
+LF37E:
     IN A,(58H)
     AND 18H
     JR NZ,F38DH
@@ -816,6 +954,8 @@ SER_CHIN:
     LD A,F5H
     EI
     RET
+
+LF38D:
     IN A,(C)
     RRCA
     RRCA
@@ -839,6 +979,8 @@ SER_CHIN:
     BIT 4,B
     JR NZ,F3B5H
     LD A,F3H
+
+LF3B5:
     LD C,H
     RET
     JP M,F3C0H
@@ -849,11 +991,14 @@ SER_BKOUT:
     LD HL,F33CH
     JP F24BH
 
+LF3C0:
 ; SER_BKIN - Reads a block from the serial line.
 ; usage: trace,call
 SER_BKIN:
     LD HL,F359H
     JP F26CH
+
+; KL: Serial-line baud-rate divisor table.
     DB 88H, 0CH, 75H, 0DH, BAH, 0EH, 5DH, 0FH, AFH, 0FH, D7H, 0FH, ECH, 0FH, F6H, 0FH
     DB FBH, 0FH
 
@@ -875,8 +1020,12 @@ EXT_CAS_BKIN_OUT:
     CALL F605H
     JR F3F4H
     CALL F707H
+
+LF3F4:
     LD HL,D9E7H
     JP FFF0H
+
+LF3FA:
     JP P,F4CFH
 
 ; CAS_OPEN_READ - Opens a cassette file for reading.
@@ -894,6 +1043,8 @@ CAS_OPEN_READ:
     LD HL,F74EH
     CALL F730H
     CALL F73CH
+
+LF41E:
     LD A,FFH
     LD (0D13H),A
     LD HL,0C05H
@@ -909,11 +1060,15 @@ CAS_OPEN_READ:
     LD A,(0D0BH)
     CP F5H
     JR NZ,F41EH
+
+LF445:
     LD HL,0000H
     LD (0B6FH),HL
     LD HL,0BF3H
     LD (HL),00H
     RET
+
+LF451:
     LD HL,F758H
     EXX
     LD HL,0C05H
@@ -924,14 +1079,20 @@ CAS_OPEN_READ:
     JR Z,F46AH
     LD B,A
     INC B
+
+LF462:
     LD A,(DE)
     SUB (HL)
     JR NZ,F46EH
     INC DE
     INC HL
     DJNZ F462H
+
+LF46A:
     LD HL,F744H
     EXX
+
+LF46E:
     EXX
     EX AF,AF'
     CALL F730H
@@ -955,6 +1116,8 @@ CAS_OPEN_READ:
     LD (HL),A
     LD A,E6H
     JP F445H
+
+LF495:
     LD A,(0BF3H)
     SUB 11H
     LD (0B6BH),A
@@ -966,6 +1129,8 @@ CAS_OPEN_READ:
     CP 11H
     JR C,F4AFH
     LD A,10H
+
+LF4AF:
     INC A
     LD C,A
     LD B,00H
@@ -983,6 +1148,7 @@ CAS_OPEN_READ:
     LD DE,0BF4H
     JP F5B5H
 
+LF4CF:
 ; CAS_CREATE_WRITE - Creates a cassette file for writing.
 ; usage: trace,call
 CAS_CREATE_WRITE:
@@ -1003,6 +1169,8 @@ CAS_CREATE_WRITE:
     LD A,01H
     JR NZ,F4F5H
     LD A,11H
+
+LF4F5:
     LD (0D14H),A
     LD (0E2FH),A
     LD HL,0B6DH
@@ -1023,15 +1191,21 @@ CAS_CREATE_WRITE:
     LD DE,0D15H
     XOR A
     RET
+
+LF526:
     EX DE,HL
     LD A,(HL)
     CP 11H
     JR C,F52EH
     LD A,10H
+
+LF52E:
     LD (DE),A
     OR A
     RET Z
     LD B,A
+
+LF532:
     INC HL
     INC DE
     LD A,(HL)
@@ -1041,15 +1215,20 @@ CAS_CREATE_WRITE:
     JR NC,F541H
     AND DFH
     JR F54BH
+
+LF541:
     CP 90H
     JR C,F54BH
     CP 99H
     JR NC,F54BH
     SUB 10H
+
+LF54B:
     LD (DE),A
     DJNZ F532H
     RET
 
+LF54F:
 ; ZERO_MEMORY - Fills a memory range with zero.
 ; usage: call
 ZERO_MEMORY:
@@ -1060,11 +1239,15 @@ ZERO_MEMORY:
     OR C
     JR NZ,F54FH
     RET
+
+LF558:
     JP M,F585H
     CALL F76BH
     JR Z,F57CH
     LD HL,0D26H
     LD (0E2CH),HL
+
+LF566:
     LD A,FFH
     LD (0E2BH),A
     LD A,(0E2AH)
@@ -1076,16 +1259,24 @@ ZERO_MEMORY:
     CALL F57CH
     EX AF,AF'
     RET
+
+LF57C:
     XOR A
     LD (0D14H),A
     LD (0E2AH),A
     JR F58CH
+
+LF585:
     XOR A
     LD (0BF3H),A
     LD (0D0CH),A
+
+LF58C:
     LD HL,0000H
     LD (0B6FH),HL
     RET
+
+LF593:
     JP P,F653H
 
 ; CAS_CHIN - Reads one character from an open cassette file.
@@ -1095,10 +1286,14 @@ CAS_CHIN:
     RET Z
     CALL F772H
     RET NZ
+
+LF59E:
     LD BC,(0D05H)
     LD A,B
     OR C
     JR Z,F5C1H
+
+LF5A6:
     LD HL,(0D07H)
     LD C,(HL)
     INC HL
@@ -1106,13 +1301,19 @@ CAS_CHIN:
     LD HL,(0D05H)
     DEC HL
     LD (0D05H),HL
+
+LF5B5:
     LD A,H
     OR L
     JR NZ,F5BFH
     LD A,(0D0EH)
     LD (0B6EH),A
+
+LF5BF:
     XOR A
     RET
+
+LF5C1:
     LD A,(0BF3H)
     DEC A
     LD A,E7H
@@ -1122,6 +1323,8 @@ CAS_CHIN:
     LD HL,0C05H
     LD (0D10H),HL
     LD (0D07H),HL
+
+LF5D7:
     LD A,(0D0EH)
     OR A
     LD A,ECH
@@ -1133,10 +1336,16 @@ CAS_CHIN:
     XOR A
     SCF
     RET
+
+LF5EB:
     LD (0D0BH),A
+
+LF5EE:
     LD HL,0D0BH
     LD A,(HL)
     LD (HL),ECH
+
+LF5F4:
     LD HL,0D0EH
     LD (HL),FFH
     LD HL,0000H
@@ -1145,6 +1354,7 @@ CAS_CHIN:
     LD (HL),FFH
     RET
 
+LF605:
 ; CAS_VERIFY_DATA - Verifies cassette data against memory.
 ; usage: trace,call
 CAS_VERIFY_DATA:
@@ -1157,6 +1367,8 @@ CAS_VERIFY_DATA:
     LD A,(0BF3H)
     DEC A
     JR NZ,F63FH
+
+LF618:
     PUSH BC
     PUSH DE
     CALL F59EH
@@ -1175,6 +1387,8 @@ CAS_VERIFY_DATA:
     OR C
     JR NZ,F618H
     RET
+
+LF630:
     JP P,F6ADH
 
 ; CAS_BKIN - Reads a block from cassette.
@@ -1186,6 +1400,8 @@ CAS_BKIN:
     RET NZ
     LD A,(0BF3H)
     DEC A
+
+LF63F:
     LD HL,F59EH
     JP Z,F26CH
     LD (0D10H),DE
@@ -1193,6 +1409,7 @@ CAS_BKIN:
     CALL F5D7H
     JP F5F4H
 
+LF653:
 ; CAS_CHOUT - Writes one character to an open cassette file.
 ; usage: trace,call
 CAS_CHOUT:
@@ -1210,6 +1427,8 @@ CAS_CHOUT:
     JR Z,F66DH
     DEC (HL)
     JP Z,F689H
+
+LF66D:
     LD DE,(0E26H)
     LD HL,0100H
     OR A
@@ -1223,13 +1442,19 @@ CAS_CHOUT:
     LD (0E28H),HL
     XOR A
     RET
+
+LF689:
     LD HL,0D26H
     LD (0E2CH),HL
     CALL F972H
     JR C,F699H
+
+LF694:
     LD HL,0E2AH
     DEC (HL)
     RET
+
+LF699:
     LD HL,0001H
     LD (0E26H),HL
     LD A,(0E2EH)
@@ -1241,6 +1466,7 @@ CAS_CHOUT:
     SCF
     RET
 
+LF6AD:
 ; CAS_BKOUT - Writes a block to cassette.
 ; usage: trace,call
 CAS_BKOUT:
@@ -1269,6 +1495,7 @@ CAS_BKOUT:
     LD (0E2CH),DE
     JP F566H
 
+LF6DE:
 ; CAS_MOTOR_CONTROL - Controls the cassette recorder motor outputs.
 ; usage: trace
 CAS_MOTOR_CONTROL:
@@ -1276,12 +1503,16 @@ CAS_MOTOR_CONTROL:
     OR A
     JR Z,F6E4H
     ADD HL,HL
+
+LF6E4:
     LD A,(0B6CH)
     AND L
     JR Z,F6EEH
     LD A,C0H
     XOR L
     LD L,A
+
+LF6EE:
     DI
     LD A,(0B12H)
     OR L
@@ -1289,15 +1520,20 @@ CAS_MOTOR_CONTROL:
     DEC D
     JR Z,F6F8H
     XOR L
+
+LF6F8:
     OUT (05H),A
     LD (0B12H),A
     EI
     RET
+
+LF6FF:
     DI
     LD A,(0B12H)
     AND 3FH
     JR F6F8H
 
+LF707:
 ; CAS_WORK_INIT - Initializes cassette work variables.
 ; usage: trace
 CAS_WORK_INIT:
@@ -1318,7 +1554,11 @@ CAS_WORK_INIT:
     LD (0B12H),A
     OUT (05H),A
     RET
+
+LF730:
     LD B,(HL)
+
+LF731:
     INC HL
     PUSH BC
     PUSH HL
@@ -1327,13 +1567,18 @@ CAS_WORK_INIT:
     LD HL,C1E1H
     DJNZ F731H
     RET
+
+LF73C:
     LD HL,F741H
     JR F730H
+
+; KL: "Reading:" cassette status text.
     DB 02H, 0DH, 0AH, 09H, 52H, 65H, 61H, 64H, 69H, 6EH, 67H, 3AH, 20H, 09H, 53H, 65H
     DB 61H, 72H, 63H, 68H, 69H, 6EH, 67H, 09H, 46H, 6FH, 75H, 6EH, 64H, 3AH, 20H, 20H
     DB 20H, AFH, 32H, F1H, 0BH, 3AH, F3H, 0BH, 18H, 03H, 3AH, 14H, 0DH, B7H, 3EH, E9H
     DB C9H, 21H, 0BH, 0DH, 7EH, B7H, C8H, 36H, ECH, C9H
 
+LF77B:
 ; CAS_READ_PHYSICAL_BLOCK - Reads a physical cassette block.
 ; usage: trace
 CAS_READ_PHYSICAL_BLOCK:
@@ -1342,6 +1587,8 @@ CAS_READ_PHYSICAL_BLOCK:
     LD D,A
     CALL F6DEH
     CALL FA7CH
+
+LF787:
     XOR A
     LD (0BF0H),A
     EXX
@@ -1355,6 +1602,8 @@ CAS_READ_PHYSICAL_BLOCK:
     LD HL,0000H
     LD B,20H
     LD D,H
+
+LF7A1:
     CALL F938H
     ADD HL,DE
     DJNZ F7A1H
@@ -1366,17 +1615,23 @@ CAS_READ_PHYSICAL_BLOCK:
     ADC A,B
     LD D,A
     LD HL,0400H
+
+LF7B2:
     CALL F938H
     EXX
     ADD A,B
     LD B,A
     JR NC,F7BBH
     INC HL
+
+LF7BB:
     EXX
     LD A,E
     SUB D
     JR NC,F7C2H
     NEG
+
+LF7C2:
     CP 03H
     JR NC,F787H
     DEC HL
@@ -1404,6 +1659,8 @@ CAS_READ_PHYSICAL_BLOCK:
     PUSH HL
     LD B,H
     LD D,H
+
+LF7EB:
     EX (SP),HL
     CALL F92BH
     ADD HL,DE
@@ -1421,6 +1678,8 @@ CAS_READ_PHYSICAL_BLOCK:
     LD L,D
     POP DE
     CALL F92BH
+
+LF803:
     LD A,L
     LD L,H
     LD H,A
@@ -1430,6 +1689,8 @@ CAS_READ_PHYSICAL_BLOCK:
     ADD A,02H
     JR C,F803H
     JP F787H
+
+LF813:
     CP 04H
     JR C,F803H
     LD A,DCH
@@ -1453,6 +1714,8 @@ CAS_READ_PHYSICAL_BLOCK:
     CP FFH
     JP Z,F787H
     JP F8FDH
+
+LF84C:
     LD (0D0FH),A
     CALL F919H
     LD (0BF3H),A
@@ -1462,16 +1725,22 @@ CAS_READ_PHYSICAL_BLOCK:
     LD B,A
     PUSH BC
     JR F868H
+
+LF862:
     PUSH BC
     EXX
     LD HL,(0B6FH)
     EXX
+
+LF868:
     CALL F919H
     LD HL,0D0DH
     CP (HL)
     JP NZ,F8FDH
     CALL F919H
     LD B,A
+
+LF876:
     CALL F919H
     EX AF,AF'
     EXX
@@ -1490,8 +1759,12 @@ CAS_READ_PHYSICAL_BLOCK:
     CP (IX+00H)
     JR Z,F89BH
     JP F909H
+
+LF897:
     EX AF,AF'
     LD (IX+00H),A
+
+LF89B:
     INC IX
     INC IY
     DJNZ F876H
@@ -1531,25 +1804,45 @@ CAS_READ_PHYSICAL_BLOCK:
     LD A,D
     OR E
     JR NZ,F901H
+
+LF8E3:
     JP FABDH
+
+LF8E6:
     LD A,F5H
     LD (0E2AH),A
     JR F8F2H
+
+LF8ED:
     LD A,F5H
     LD (0D0BH),A
+
+LF8F2:
     LD HL,0B62H
     SET 3,(HL)
     LD B,00H
+
+LF8F9:
     DJNZ F8F9H
     JR F90EH
+
+LF8FD:
     LD A,EAH
     JR F90BH
+
+LF901:
     LD A,(0BF1H)
     OR A
     LD A,E7H
     JR Z,F90BH
+
+LF909:
     LD A,E8H
+
+LF90B:
     LD (0D0BH),A
+
+LF90E:
     PUSH AF
     CALL FABDH
     POP AF
@@ -1557,10 +1850,13 @@ CAS_READ_PHYSICAL_BLOCK:
     LD SP,(0E33H)
     RET
 
+LF919:
 ; CAS_READ_BYTE - Reads one byte from the cassette signal.
 ; usage: trace
 CAS_READ_BYTE:
     LD H,80H
+
+LF91B:
     CALL F938H
     CP D
     PUSH AF
@@ -1571,6 +1867,8 @@ CAS_READ_BYTE:
     JR NC,F91BH
     LD A,H
     RET
+
+LF92B:
     IN A,(59H)
     AND 20H
     XOR 20H
@@ -1580,18 +1878,23 @@ CAS_READ_BYTE:
     HALT
     JR F947H
 
+LF938:
 ; CAS_READ_BIT - Decodes one bit from cassette pulse timing.
 ; usage: trace
 CAS_READ_BIT:
     LD E,00H
     EI
     HALT
+
+LF93C:
     INC E
     CALL Z,F969H
     IN A,(59H)
     XOR C
     AND 20H
     JR Z,F93CH
+
+LF947:
     INC E
     CALL Z,F969H
     IN A,(59H)
@@ -1600,6 +1903,8 @@ CAS_READ_BIT:
     JR NZ,F947H
     IN A,(5BH)
     OUT (07H),A
+
+LF956:
     LD A,(0BF0H)
     OR A
     JR Z,F969H
@@ -1607,19 +1912,27 @@ CAS_READ_BIT:
     LD A,A0H
     JR Z,F964H
     LD A,88H
+
+LF964:
     LD (0BF0H),A
     OUT (00H),A
+
+LF969:
     IN A,(58H)
     AND 18H
     JP Z,F8EDH
     LD A,E
     RET
+
+LF972:
     LD (0E33H),SP
     XOR A
     LD D,A
     DEC A
     CALL F6DEH
     LD BC,0000H
+
+LF97F:
     EX (SP),HL
     DEC BC
     LD A,B
@@ -1633,6 +1946,8 @@ CAS_READ_BIT:
     OR A
     JR Z,F999H
     LD BC,0028H
+
+LF999:
     CALL FA31H
     CALL FA62H
     CALL FA62H
@@ -1657,11 +1972,17 @@ CAS_READ_BIT:
     OR A
     JR Z,F9D0H
     INC C
+
+LF9D0:
     CALL FA3DH
     JR F9DAH
+
+LF9D5:
     EXX
     LD HL,(0B6FH)
     EXX
+
+LF9DA:
     LD A,(0E31H)
     LD C,A
     CALL FA3DH
@@ -1671,8 +1992,12 @@ CAS_READ_BIT:
     JR Z,F9E8H
     XOR A
     LD D,A
+
+LF9E8:
     LD C,D
     CALL FA3DH
+
+LF9EC:
     LD C,(IY+00H)
     INC IY
     DEC HL
@@ -1684,6 +2009,8 @@ CAS_READ_BIT:
     LD A,(0E2BH)
     JR Z,FA00H
     XOR A
+
+LFA00:
     LD C,A
     CALL FA3DH
     EX DE,HL
@@ -1709,13 +2036,19 @@ CAS_READ_BIT:
     XOR A
     LD (0E32H),A
     JP FABDH
+
+LFA31:
     CALL FA5DH
     CALL FA5DH
     DJNZ FA31H
     DEC C
     JR NZ,FA31H
     RET
+
+LFA3D:
     LD B,08H
+
+LFA3F:
     RRC C
     CALL FA4FH
     BIT 7,C
@@ -1723,15 +2056,25 @@ CAS_READ_BIT:
     CALL FA4FH
     DJNZ FA3FH
     RET
+
+LFA4F:
     BIT 7,C
     JR Z,FA58H
     LD A,(FAF4H)
     JR FA65H
+
+LFA58:
     LD A,(FAF5H)
     JR FA65H
+
+LFA5D:
     LD A,(FAF3H)
     JR FA65H
+
+LFA62:
     LD A,(FAF6H)
+
+LFA65:
     EX AF,AF'
     IN A,(58H)
     AND 18H
@@ -1745,6 +2088,8 @@ CAS_READ_BIT:
     OUT (07H),A
     CALL F956H
     RET
+
+LFA7C:
     DI
     XOR A
     OUT (58H),A
@@ -1777,6 +2122,8 @@ CAS_READ_BIT:
     LD (HL),C9H
     LD (0BF2H),A
     RET
+
+LFABD:
     DI
     CALL F6FFH
     LD A,(0B11H)
@@ -1791,6 +2138,8 @@ CAS_READ_BIT:
     OUT (70H),A
     LD A,03H
     OUT (71H),A
+
+LFADB:
     LD A,B
     RLCA
     RLCA
@@ -1807,12 +2156,18 @@ CAS_READ_BIT:
     SCF
     EI
     RET
+
+; KL: Cassette work bytes used by cassette routines.
     SUB DEH
     ADC A,BCH
+
+LFAF7:
     EXX
     LD A,80H
     JR NZ,FAFDH
     XOR A
+
+LFAFD:
     XOR H
     RLA
     JR NC,FB0AH
@@ -1823,9 +2178,13 @@ CAS_READ_BIT:
     XOR 10H
     LD L,A
     SCF
+
+LFB0A:
     ADC HL,HL
     EXX
     RET
+
+; KL: Initialization bytes copied to RAM addresses 0B00H-0B48H.
     RST 38H
     LD BC,FF02H
     RST 38H
@@ -1872,27 +2231,41 @@ CAS_READ_BIT:
     POP AF
     EI
     RET
+
+; KL: "MOPS" cartridge signature text.
     LD C,L
     LD C,A
     LD D,B
     LD D,E
+
+; KL: "VGB" device identifier.
     INC BC
     LD D,(HL)
     LD B,A
+
+; KL: Bytes copied into RAM at initialization, including RST and system entry stubs.
     LD B,D
+
+; KL: "RS232" device identifier.
     DEC B
     LD D,D
     LD D,E
     LD (3233H),A
+
+; KL: "DISK" device identifier.
     INC B
     LD B,H
     LD C,C
     LD D,E
     LD C,E
+
+; KL: "CISL" text.
     LD B,E
     LD C,C
     LD D,E
     LD C,H
+
+; KL: Character matrix table for character codes 128-160, ten bytes per character.
     EX AF,AF'
     EX AF,AF'
     LD A,6BH
@@ -1935,8 +2308,12 @@ CAS_READ_BIT:
     LD H,E
     LD H,E
     LD A,00H
+
+LFB9C:
     NOP
     INC D
+
+LFB9E:
     INC D
     LD A,63H
     LD H,E
@@ -1993,10 +2370,18 @@ CAS_READ_BIT:
     JR FBF9H
     JR FBFBH
     JR FBFDH
+
+LFBE5:
     JR FBFFH
+
+LFBE7:
     RRA
     RRA
+
+LFBE9:
     JR FC03H
+
+LFBEB:
     JR FC05H
     NOP
     NOP
@@ -2004,17 +2389,36 @@ CAS_READ_BIT:
     NOP
     RST 38H
     RST 38H
+
+LFBF3:
     JR FC0DH
+
+LFBF5:
     JR FC0FH
+
+LFBF7:
     JR FC11H
+
+LFBF9:
     JR FC13H
+
+LFBFB:
     RST 38H
     RST 38H
+
+LFBFD:
     JR FC17H
+
+LFBFF:
     JR FC19H
     RST 38H
     RST 20H
-    JP 9999H
+
+LFC03:
+    DB C3H, 99H
+
+LFC05:
+    SBC A,C
     ADD A,C
     SBC A,C
     SBC A,C
@@ -2022,16 +2426,29 @@ CAS_READ_BIT:
     RST 38H
     EX AF,AF'
     EX AF,AF'
+
+LFC0D:
     EX AF,AF'
     INC A
+
+LFC0F:
     LD B,3EH
+
+LFC11:
     LD H,(HL)
-    LD A,00H
+    DB 3EH
+
+LFC13:
+    NOP
     NOP
     EX AF,AF'
     EX AF,AF'
+
+LFC17:
     EX AF,AF'
     INC A
+
+LFC19:
     LD H,(HL)
     LD A,(HL)
     LD H,B
@@ -2065,8 +2482,12 @@ CAS_READ_BIT:
     LD H,(HL)
     INC A
     NOP
+
+LFC3C:
     NOP
     INC H
+
+LFC3E:
     INC H
     NOP
     INC A
@@ -2130,10 +2551,18 @@ CAS_READ_BIT:
     NOP
     NOP
     JR FC9DH
+
+LFC85:
     JR FC9FH
+
+LFC87:
     RET M
     RET M
+
+LFC89:
     JR FCA3H
+
+LFC8B:
     JR FCA5H
     JR FCA7H
     JR FCA9H
@@ -2147,12 +2576,31 @@ CAS_READ_BIT:
     JP 9F99H
     SBC A,A
     SBC A,A
+
+LFC9D:
     SBC A,C
-    JP FFFFH
+    DB C3H
+
+LFC9F:
     RST 38H
-    JP 9F99H
-    JP 99F9H
-    JP FFFFH
+    RST 38H
+    RST 38H
+    DB C3H
+
+LFCA3:
+    SBC A,C
+    SBC A,A
+
+LFCA5:
+    DB C3H, F9H
+
+LFCA7:
+    SBC A,C
+    DB C3H
+
+LFCA9:
+    RST 38H
+    RST 38H
     NOP
     NOP
     NOP
@@ -2180,6 +2628,8 @@ CAS_READ_BIT:
     LD E,A
     LD B,A
     LD C,A
+
+LFCC9:
     LD A,(IY+00H)
     INC IY
     PUSH HL
@@ -2200,6 +2650,8 @@ CAS_READ_BIT:
     LD A,L
     OR A
     RET
+
+LFCE9:
     LD A,40H
     JP C,803EH
     JR NZ,FD47H
@@ -2231,9 +2683,13 @@ CAS_READ_BIT:
     JR Z,FCC9H
     LD E,30H
     JR FCC9H
+
+LFD1A:
     LD A,04H
     LD HL,FD5CH
     JP FFF0H
+
+LFD22:
     INC L
     EXX
     LD A,B
@@ -2249,6 +2705,8 @@ CAS_READ_BIT:
     PUSH IY
     POP BC
     DEC BC
+
+LFD35:
     EXX
     INC D
     JR FCC9H
@@ -2261,8 +2719,12 @@ CAS_READ_BIT:
     DEC BC
     EXX
     JR FCC9H
+
+LFD45:
     POP BC
     POP HL
+
+LFD47:
     EXX
     LD A,B
     OR C
@@ -2270,6 +2732,8 @@ CAS_READ_BIT:
     PUSH IY
     POP BC
     DEC BC
+
+LFD50:
     POP IY
     EXX
     LD (171CH),HL
@@ -2283,18 +2747,25 @@ CAS_READ_BIT:
     SUB 3FH
     ADD A,H
     LD L,A
+
+LFD68:
     PUSH BC
     LD A,(IY+06H)
     OR A
     JR Z,FD80H
     LD A,(IY+08H)
     AND 80H
+
+; KL: " " text prefix for BASIC error messages.
     JR Z,FD80H
     XOR (IY+08H)
     LD (IY+08H),A
     POP BC
     SET 0,C
-    LD A,C1H
+    DB 3EH
+
+LFD80:
+    POP BC
     LD A,(IY+08H)
     SUB 3FH
     LD B,A
@@ -2310,18 +2781,26 @@ CAS_READ_BIT:
     OR B
     JP M,FD96H
     LD L,B
+
+LFD96:
     EXX
     DEC DE
     OR A
     SBC HL,DE
     ADD HL,DE
+
+; KL: "System error " text.
     LD A,(DE)
     EXX
     JR Z,FDA2H
     JR NC,FDBBH
+
+LFDA2:
     CP 2CH
     JR Z,FDA7H
     SCF
+
+LFDA7:
     INC D
     DEC D
     JR NZ,FDB6H
@@ -2332,18 +2811,30 @@ CAS_READ_BIT:
     JR NC,FD96H
     DEC L
     OR A
+
+LFDB6:
     JR NC,FD96H
+
+LFDB8:
     INC H
     JR FD96H
+
+LFDBB:
     BIT 1,C
     JR Z,FDC0H
     DEC H
+
+LFDC0:
     BIT 0,C
     JR NZ,FDC9H
     LD A,C
     AND FCH
     JR Z,FDCAH
+
+LFDC9:
     DEC H
+
+LFDCA:
     BIT 7,H
     JP NZ,FD1AH
     LD A,L
@@ -2356,6 +2847,8 @@ CAS_READ_BIT:
     BIT 7,B
     JR NZ,FDDEH
     LD A,B
+
+LFDDE:
     LD L,A
     OR A
     JR NZ,FDF0H
@@ -2365,10 +2858,14 @@ CAS_READ_BIT:
     SET 2,C
     LD L,01H
     JR FDF0H
+
+LFDEC:
     LD L,H
     LD A,B
     SUB H
     LD B,A
+
+LFDF0:
     INC D
     DEC D
     JR NZ,FDFAH
@@ -2376,8 +2873,12 @@ CAS_READ_BIT:
     DEC E
     JR NZ,FDFAH
     LD E,20H
+
+LFDFA:
     CALL NZ,FF62H
     INC H
+
+LFDFE:
     DEC H
     JR Z,FE14H
     INC D
@@ -2388,9 +2889,13 @@ CAS_READ_BIT:
     LD A,H
     DEC A
     CALL Z,FF60H
+
+LFE0E:
     LD A,E
     CALL FF8DH
     JR FDFEH
+
+LFE14:
     LD A,E
     CP 20H
     CALL Z,FF62H
@@ -2402,23 +2907,35 @@ CAS_READ_BIT:
     DEC B
     JR Z,FE25H
     JP P,FE29H
+
+LFE25:
     LD A,L
     DEC A
     JR Z,FE3FH
+
+LFE29:
     INC L
+
+LFE2A:
     DEC L
     JR Z,FE3FH
     EXX
+
+LFE2E:
     DEC DE
     LD A,(DE)
     CP 2CH
     JR Z,FE2EH
     EXX
     JR FE2AH
+
+LFE37:
     CALL FF96H
     LD B,04H
     LD C,B
     JR FE72H
+
+LFE3F:
     PUSH DE
     LD C,B
     PUSH BC
@@ -2436,9 +2953,13 @@ CAS_READ_BIT:
     JR NC,FE5AH
     LD A,H
     LD C,04H
+
+LFE5A:
     ADD A,04H
     LD B,A
     LD L,B
+
+LFE5E:
     DEC B
     LD A,B
     CP 10H
@@ -2451,8 +2972,14 @@ CAS_READ_BIT:
     CP C
     JR NC,FE5EH
     LD L,00H
-    JP NC,0C48H
+    DB D2H
+
+LFE72:
+    LD C,B
+    INC C
     LD B,04H
+
+LFE76:
     EXX
     EX DE,HL
     OR A
@@ -2471,11 +2998,17 @@ CAS_READ_BIT:
     CALL C,FF87H
     ADD A,30H
     INC B
+
+LFE91:
     CALL FF8DH
     JR FE76H
+
+LFE96:
     LD A,(BC)
     CP 2EH
     JR NZ,FEE0H
+
+LFE9B:
     CALL FF8DH
     INC BC
     LD A,(BC)
@@ -2492,6 +3025,8 @@ CAS_READ_BIT:
     XOR A
     INC E
     JP M,FEDBH
+
+LFEB5:
     EXX
     LD A,(BC)
     CP 2AH
@@ -2502,6 +3037,8 @@ CAS_READ_BIT:
     JR NZ,FEE0H
     EXX
     JR FED2H
+
+LFEC6:
     EXX
     LD A,B
     SUB C
@@ -2510,14 +3047,22 @@ CAS_READ_BIT:
     JR Z,FEDAH
     LD A,F0H
     JR FEDAH
+
+LFED2:
     LD A,B
     CP 10H
     LD A,00H
     CALL C,FF87H
+
+LFEDA:
     INC B
+
+LFEDB:
     EXX
     ADD A,30H
     JR FE9BH
+
+LFEE0:
     LD A,(BC)
     CP 5EH
     EXX
@@ -2529,6 +3074,8 @@ CAS_READ_BIT:
     OR A
     JR NZ,FEF0H
     LD B,A
+
+LFEF0:
     LD A,45H
     CALL FF8DH
     BIT 7,B
@@ -2538,7 +3085,11 @@ CAS_READ_BIT:
     NEG
     LD B,A
     LD A,2DH
+
+LFF01:
     CALL FF8DH
+
+LFF04:
     DEC D
     LD A,D
     CP 04H
@@ -2549,8 +3100,12 @@ CAS_READ_BIT:
     INC BC
     EXX
     JR FF04H
+
+LFF14:
     LD A,B
     LD BC,0AFFH
+
+LFF18:
     SUB B
     INC C
     JR NC,FF18H
@@ -2568,6 +3123,8 @@ CAS_READ_BIT:
     INC BC
     INC BC
     EXX
+
+LFF30:
     EXX
     LD (172EH),BC
     POP HL
@@ -2576,6 +3133,8 @@ CAS_READ_BIT:
     EXX
     LD HL,E67AH
     JP FFF0H
+
+; KL: PRINT special-character dispatch table.
     DEC HL
     DEC L
     INC H
@@ -2583,6 +3142,8 @@ CAS_READ_BIT:
     LD A,2AH
     DEC H
     INC HL
+
+; KL: Binary constants 1000, 100, 10, and 1 for decimal conversion.
     INC L
     LD E,(HL)
     LD L,39H
@@ -2595,7 +3156,11 @@ CAS_READ_BIT:
     DB FDH, 00H
     DB FDH, FAH, FCH, ECH
     CALL M,FCE9H
+
+LFF60:
     LD E,30H
+
+LFF62:
     BIT 1,C
     LD A,24H
     CALL NZ,FF8DH
@@ -2610,6 +3175,8 @@ CAS_READ_BIT:
     RET P
     LD A,2BH
     JR FF8DH
+
+LFF7C:
     DEC A
     RET M
     PUSH AF
@@ -2617,28 +3184,42 @@ CAS_READ_BIT:
     CALL FF8DH
     POP AF
     JR FF7CH
+
+LFF87:
     PUSH HL
     LD HL,F7CEH
     JR FF91H
+
+LFF8D:
     PUSH HL
     LD HL,FEB3H
+
+LFF91:
     CALL FFF0H
     POP HL
     RET
+
+LFF96:
     LD HL,FA14H
     JP FFF0H
     LD HL,(172EH)
     LD A,(HL)
     LD DE,0000H
+
+; KL: STOP routine.
     CP 3CH
     JR Z,FFADH
     INC E
     CP 3EH
     JR NZ,FFB2H
     INC E
+
+LFFAD:
     INC D
     INC HL
     LD (172EH),HL
+
+LFFB2:
     LD A,(HL)
     CP 23H
     JR Z,FFADH
@@ -2655,13 +3236,19 @@ CAS_READ_BIT:
     LD C,A
     JR NZ,FFD1H
     SRL C
+
+LFFD1:
     SUB C
+
+LFFD2:
     PUSH AF
     LD A,C
     CALL P,FF7CH
     POP AF
     LD HL,E64FH
     JP FFF0H
+
+; KL: "(c)1985ISL" text.
     JR Z,0023H
     ADD HL,HL
     LD SP,3839H
@@ -2669,18 +3256,27 @@ CAS_READ_BIT:
     LD C,C
     LD D,E
     LD C,H
+
+LFFE8:
     LD A,04H
     JP F29CH
     NOP
     NOP
     NOP
+
+LFFF0:
     PUSH AF
     LD A,70H
     LD (0003H),A
     OUT (02H),A
     POP AF
+
+LFFF9:
     JP (HL)
     LD A,E
     AND 1FH
     DEC DE
-    CP 04H
+    DB FEH
+
+LFFFF:
+    INC B
