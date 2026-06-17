@@ -61,6 +61,14 @@ name = "cas2wav"
 path = "src/bin/cas2wav.rs"
 
 [[bin]]
+name = "rtvc-asm"
+path = "src/bin/rtvc_asm.rs"
+
+[[bin]]
+name = "rtvc-disasm"
+path = "src/bin/rtvc_disasm.rs"
+
+[[bin]]
 name = "zx82"
 path = "src/bin/zx82_main.rs"
 required-features = ["native"]
