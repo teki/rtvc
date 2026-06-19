@@ -1,4 +1,3 @@
-
 use super::{FPS_WINDOW, FrameStats, FrameStatsSnapshot, handle_command};
 use crate::emu::{Emu, MachineType, RomVersion};
 use std::time::{Duration, Instant};

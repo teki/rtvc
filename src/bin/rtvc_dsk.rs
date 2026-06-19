@@ -133,6 +133,8 @@ fn print_usage() {
     println!("  rtvc-dsk format720 <diskfile>    - Format an existing file as 720K TVC DOS disk");
     println!("  rtvc-dsk dir <diskfile:path>     - List directory contents (path defaults to /)");
     println!("  rtvc-dsk cat <diskfile:path>     - Print file contents to stdout");
+    println!("  rtvc-dsk get <diskfile:path> [hostfile] - Copy a file out of the disk image");
+    println!("  rtvc-dsk put <diskfile:path> <hostfile> - Copy a host file into the disk image");
 }
 
 fn parse_target(target: &str) -> (PathBuf, String) {
@@ -195,6 +197,37 @@ fn open_filesystem(path: &PathBuf) -> io::Result<FileSystem<TvcDiskImage<std::fs
     let file = OpenOptions::new().read(true).write(true).open(path)?;
     let disk = TvcDiskImage::new(file)?;
     FileSystem::new(disk, FsOptions::new())
+}
+
+fn read_disk_file(path: &PathBuf, inner_path: &str) -> Vec<u8> {
+    let fs = open_filesystem(path).unwrap_or_else(|err| {
+        eprintln!("Failed to open filesystem: {err}");
+        process::exit(1);
+    });
+    let root_dir = fs.root_dir();
+
+    if inner_path == "/" {
+        eprintln!("Target must be a file inside the disk image");
+        process::exit(1);
+    }
+
+    let mut f = root_dir.open_file(&inner_path[1..]).unwrap_or_else(|err| {
+        eprintln!("Failed to open {inner_path}: {err}");
+        process::exit(1);
+    });
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).unwrap_or_else(|err| {
+        eprintln!("Failed to read {inner_path}: {err}");
+        process::exit(1);
+    });
+    buf
+}
+
+fn default_host_path_for_get(inner_path: &str) -> Option<PathBuf> {
+    inner_path
+        .rsplit('/')
+        .find(|part| !part.is_empty())
+        .map(PathBuf::from)
 }
 
 fn main() {
@@ -286,25 +319,76 @@ fn main() {
         }
         "cat" => {
             let (path, inner_path) = parse_target(target);
+            let buf = read_disk_file(&path, &inner_path);
+            std::io::stdout()
+                .write_all(&buf)
+                .expect("Failed to write to stdout");
+        }
+        "get" => {
+            let (path, inner_path) = parse_target(target);
+            let host_path = if args.len() >= 4 {
+                PathBuf::from(&args[3])
+            } else {
+                default_host_path_for_get(&inner_path).unwrap_or_else(|| {
+                    eprintln!("get target must include a file name inside the disk image");
+                    process::exit(1);
+                })
+            };
+            let data = read_disk_file(&path, &inner_path);
+            std::fs::write(&host_path, &data).unwrap_or_else(|err| {
+                eprintln!("Failed to write {}: {err}", host_path.display());
+                process::exit(1);
+            });
+            println!(
+                "Copied {} byte(s) from {} to {}",
+                data.len(),
+                inner_path,
+                host_path.display()
+            );
+        }
+        "put" => {
+            if args.len() < 4 {
+                eprintln!("put requires a host file path");
+                print_usage();
+                process::exit(1);
+            }
+            let (path, inner_path) = parse_target(target);
+            if inner_path == "/" {
+                eprintln!("put target must include a file name inside the disk image");
+                process::exit(1);
+            }
+            let host_path = PathBuf::from(&args[3]);
+            let data = std::fs::read(&host_path).unwrap_or_else(|err| {
+                eprintln!("Failed to read {}: {err}", host_path.display());
+                process::exit(1);
+            });
+
             let fs = open_filesystem(&path).unwrap_or_else(|err| {
                 eprintln!("Failed to open filesystem: {err}");
                 process::exit(1);
             });
             let root_dir = fs.root_dir();
-
-            if inner_path == "/" {
-                eprintln!("Cannot cat a directory");
-                process::exit(1);
+            let inner_name = &inner_path[1..];
+            if root_dir.open_file(inner_name).is_ok() {
+                root_dir.remove(inner_name).unwrap_or_else(|err| {
+                    eprintln!("Failed to replace {inner_path}: {err}");
+                    process::exit(1);
+                });
             }
-
-            let mut f = root_dir
-                .open_file(&inner_path[1..])
-                .expect("Failed to open file");
-            let mut buf = Vec::new();
-            f.read_to_end(&mut buf).expect("Failed to read file");
-            std::io::stdout()
-                .write_all(&buf)
-                .expect("Failed to write to stdout");
+            let mut file = root_dir.create_file(inner_name).unwrap_or_else(|err| {
+                eprintln!("Failed to create {inner_path}: {err}");
+                process::exit(1);
+            });
+            file.write_all(&data).unwrap_or_else(|err| {
+                eprintln!("Failed to write {inner_path}: {err}");
+                process::exit(1);
+            });
+            println!(
+                "Copied {} byte(s) from {} to {}",
+                data.len(),
+                host_path.display(),
+                inner_path
+            );
         }
         _ => {
             eprintln!("Unknown command: {}", cmd);

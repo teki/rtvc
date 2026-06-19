@@ -1,4 +1,3 @@
-
 use super::*;
 use fatfs::{FileSystem, FormatVolumeOptions, FsOptions};
 use std::io::{Cursor, Read};

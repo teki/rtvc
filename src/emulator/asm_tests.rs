@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::bus::FakeBus;
 use crate::disasm::disassemble_at;
@@ -63,10 +62,15 @@ fn assembles_ed_and_data_directives() {
     round_trip("IM 2", 0, &[0xED, 0x5E], "IM 2");
     round_trip("IN A,(C)", 0, &[0xED, 0x78], "IN A,(C)");
     round_trip("OUT (C),A", 0, &[0xED, 0x79], "OUT (C),A");
+    round_trip("EX AF,AF'", 0, &[0x08], "EX AF,AF'");
     round_trip("LDIR", 0, &[0xED, 0xB0], "LDIR");
     assert_eq!(
         assemble_line("DB 12H, 34, 0x56 ; bytes", 0).unwrap(),
         [0x12, 34, 0x56]
+    );
+    assert_eq!(
+        assemble_program("DB 'A,B;C' ; string", 0).unwrap().bytes,
+        [b'A', b',', b'B', b';', b'C']
     );
 }
 
@@ -78,4 +82,135 @@ fn reports_bad_input() {
     );
     assert!(assemble_line("LD A,300", 0).is_err());
     assert!(assemble_line("WAT A,B", 0).is_err());
+}
+
+#[test]
+fn assembles_program_with_labels_and_expressions() {
+    let program = assemble_program(
+        r#"
+                ORG 8000H
+start:          LD HL,message
+                LD B,message_end-message
+loop:           DJNZ loop
+                JP start
+message:        DB "OK", 0
+message_end:
+            "#,
+        0,
+    )
+    .unwrap();
+
+    assert_eq!(program.origin, 0x8000);
+    assert_eq!(program.next_addr, 0x800D);
+    assert_eq!(program.symbols["START"], 0x8000);
+    assert_eq!(program.symbols["LOOP"], 0x8005);
+    assert_eq!(program.symbols["MESSAGE"], 0x800A);
+    assert_eq!(program.symbols["MESSAGE_END"], 0x800D);
+    assert_eq!(
+        program.bytes,
+        vec![
+            0x21, 0x0A, 0x80, // LD HL,message
+            0x06, 0x03, // LD B,message_end-message
+            0x10, 0xFE, // DJNZ loop
+            0xC3, 0x00, 0x80, // JP start
+            b'O', b'K', 0,
+        ]
+    );
+    assert_eq!(program.segments.len(), 1);
+    assert_eq!(program.segments[0].addr, 0x8000);
+}
+
+#[test]
+fn assembles_program_directives_and_segments() {
+    let program = assemble_program(
+        r#"
+base EQU 4000H
+            ORG base
+first:      DB 1, 2
+            DW first, $+2
+            DS 3, 0FFH
+            ORG base+10H
+second:     NOP
+            "#,
+        0x2000,
+    )
+    .unwrap();
+
+    assert_eq!(program.origin, 0x4000);
+    assert_eq!(program.symbols["BASE"], 0x4000);
+    assert_eq!(program.symbols["FIRST"], 0x4000);
+    assert_eq!(program.symbols["SECOND"], 0x4010);
+    assert_eq!(
+        program.bytes,
+        vec![1, 2, 0x00, 0x40, 0x04, 0x40, 0xFF, 0xFF, 0xFF, 0x00]
+    );
+    assert_eq!(program.segments.len(), 2);
+    assert_eq!(program.segments[0].addr, 0x4000);
+    assert_eq!(
+        program.segments[0].bytes,
+        vec![1, 2, 0x00, 0x40, 0x04, 0x40, 0xFF, 0xFF, 0xFF]
+    );
+    assert_eq!(program.segments[1].addr, 0x4010);
+    assert_eq!(program.segments[1].bytes, vec![0x00]);
+}
+
+#[test]
+fn assembles_basic_start_program() {
+    let program = assemble_program(
+        r#"
+            BASIC_START
+entry:      LD A,02H
+            OUT (00H),A
+            JP BASIC_START
+            "#,
+        0,
+    )
+    .unwrap();
+
+    assert_eq!(program.origin, 0x19EF);
+    assert_eq!(program.symbols["BASIC_START"], 0x1A30);
+    assert_eq!(program.symbols["ENTRY"], 0x1A30);
+    assert_eq!(program.segments.len(), 1);
+    assert_eq!(program.segments[0].addr, 0x19EF);
+    assert_eq!(
+        program.segments[0].bytes[0..16],
+        [
+            0x0F, 0x0A, 0x00, 0x43, 0x9A, b'U', b'S', b'R', 0x96, b'6', b'7', b'0', b'4', 0x95,
+            0xFF, 0x00,
+        ]
+    );
+    assert_eq!(
+        &program.segments[0].bytes[0x41..],
+        &[0x3E, 0x02, 0xD3, 0x00, 0xC3, 0x30, 0x1A]
+    );
+    assert_eq!(program.next_addr, 0x1A37);
+}
+
+#[test]
+fn assembles_program_compatibility_edges() {
+    let program = assemble_program(
+        r#"
+                OUT (C),0
+                DB "A\"B"
+            "#,
+        0x9000,
+    )
+    .unwrap();
+
+    assert_eq!(program.bytes, vec![0xED, 0x71, b'A', b'"', b'B']);
+}
+
+#[test]
+fn reports_program_errors_with_line_numbers() {
+    let err = assemble_program(
+        r#"
+                JR missing
+            "#,
+        0x1000,
+    )
+    .unwrap_err();
+    assert_eq!(err.to_string(), "line 2: unknown symbol 'MISSING'");
+
+    let err = assemble_program("again: NOP\nagain: RET", 0).unwrap_err();
+    assert_eq!(err.to_string(), "line 2: duplicate label 'AGAIN'");
 }

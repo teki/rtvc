@@ -4,3 +4,4 @@
 .antigravitycli/
 .DS_Store
 profile.json.gz
+__pycache__/

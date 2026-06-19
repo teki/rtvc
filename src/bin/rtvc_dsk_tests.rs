@@ -1,4 +1,3 @@
-
 use super::*;
 use std::io::Cursor;
 
@@ -33,4 +32,13 @@ fn presents_legacy_tvc_boot_sector_as_fat_compatible() {
 
     assert_eq!(&boot[32..36], &[0, 0, 0, 0]);
     assert_eq!(&boot[510..512], &[0x55, 0xAA]);
+}
+
+#[test]
+fn get_default_output_path_uses_disk_file_name() {
+    assert_eq!(
+        default_host_path_for_get("/DIR/HELLO.TXT"),
+        Some(PathBuf::from("HELLO.TXT"))
+    );
+    assert_eq!(default_host_path_for_get("/"), None);
 }

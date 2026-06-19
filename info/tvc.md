@@ -339,29 +339,59 @@ read-only light-pen latches. Reads of write-only registers should return an
 open-bus value such as `0xFF`. High address-register values are not valid CRTC
 register selections.
 
-### Normal firmware programming
+### Normal firmware CRTC programming
 
-The following values explain the normal TVC display and are useful as a
-reference trace. They are not immutable hardware constants.
+The operating system initializes the MC6845 through ports `0x70` and `0x71`.
+The following values explain the normal TVC display geometry and cursor
+interrupt setup. They are useful as a reference trace, not immutable hardware
+constants.
 
-| Register | Normal value | TVC use |
-| --- | ---: | --- |
-| R0 | 99 | 100 character clocks per line |
-| R1 | 64 | 64 displayed bytes, 512 source pixels |
-| R2 | 75 | horizontal sync position |
-| R3 | `0x32` | sync-width programming used by TVC firmware |
-| R4 | 77 | vertical character-row total minus one |
-| R5 | 2 | vertical total adjustment |
-| R6 | 60 | 60 displayed character rows |
-| R7 | 66 | vertical sync position |
-| R8 | 0 | non-interlaced operation |
-| R9 | 3 | four raster lines per character row |
-| R10 | 3 | cursor interrupt raster line |
-| R11 | 3 | cursor end value; visible hardware cursor is not normally used |
-| R12-R13 | 0 | display start address |
-| R14-R15 | `0x0EFF` | final displayed character, used for frame interrupt |
+| Register | TVC value | MC6845 meaning | TVC use/comment |
+| --- | ---: | --- | --- |
+| R0 | 99 | Horizontal total, in character clocks, minus one | 100 character clocks per line |
+| R1 | 64 | Horizontal displayed character count | 64 displayed bytes, 512 source pixels |
+| R2 | 75 | Horizontal sync position | Places TVC horizontal timing relative to the displayed area |
+| R3 | `0x32` | Sync width register | TVC uses the horizontal field for blanking/sync timing; vertical sync width is not taken directly from the CRTC |
+| R4 | 77 | Vertical total, in character rows, minus one | 78 character rows per generated frame before vertical adjust |
+| R5 | 2 | Vertical total adjust, in scanlines | Adds 2 scanlines to the frame |
+| R6 | 60 | Vertical displayed character-row count | 60 displayed character rows, 240 active scanlines |
+| R7 | 66 | Vertical sync position | Places vertical sync after the active display |
+| R8 | 0 | Interlace mode and display/cursor skew | Non-interlaced operation; skew features are not used |
+| R9 | 3 | Maximum raster address within a character row | Four scanlines per displayed character row |
+| R10 | 3 | Cursor start raster address plus cursor mode bits | Cursor starts on raster line 3; cursor output is used as a timing interrupt source |
+| R11 | 3 | Cursor end raster address | Same as R10 so the cursor pulse is one scanline high |
+| R12-R13 | 0 | Start address: first CRTC refresh-memory address after vertical blanking | Display begins at TVC video memory address 0 |
+| R14-R15 | `0x0EFF` | Cursor address: CRTC refresh-memory address compared against MA | Startup firmware uses this address with R10/R11 to request the normal frame interrupt |
+| R16-R17 | read-only | Light pen address latch | Routed to the expansion connector; not used by normal TVC firmware |
 
 These values yield `(77 + 1) * (3 + 1) + 2 = 314` generated scanlines.
+
+With the normal 64-byte line width, the final displayed character address is:
+
+```text
+(60 displayed character rows * 64 characters per row) - 1 = 3839 = 0x0EFF
+```
+
+Splitting this CRTC memory address into cursor registers gives `R14=0x0E` and
+`R15=0xFF`. Since `R9=3` and `R10=3`, this cursor position requests the normal
+shared interrupt on raster line 3 of the last displayed character row: the last
+active scanline.
+
+Do not assume all running software keeps this cursor address. For example, the
+checked-in clean VT-DOS boot snapshot (`data/snapshots/boot12dos.rtvcsnap.zip`)
+currently contains `R14-R15 = 0x0AFF` with the same `R10=3`, which places the
+cursor interrupt at character row 43, column 63, raster line 3. This value is
+programmed by the VT-DOS disk ROM while it is temporarily mapped at `0xC000`;
+the routine writes CRTC registers from a DOS table rather than leaving the
+startup firmware's `0x0EFF` cursor address intact.
+
+The difference is visible to raster-timed code. A program that changes the
+border or palette from the cursor interrupt and expects the interrupt on the
+last active paper line behaves correctly after the plain firmware setup, but
+will trigger much earlier after VT-DOS has changed R14-R15 unless the program
+reprograms the CRTC itself. Games and ports that inherit the current CRTC state
+must either tolerate the live cursor position or explicitly restore the
+expected CRTC cursor registers.
 
 ### VRAM address wiring
 
@@ -393,8 +423,8 @@ row 1 raster 0: offsets 0x0100-0x013F
 ...
 ```
 
-At the normal cursor position, `MA=0x0EFF` and `RA=3` produce VRAM offset
-`0x3BFF`, the final byte of the 512 x 240 picture.
+At the published normal cursor position, `MA=0x0EFF` and `RA=3` produce VRAM
+offset `0x3BFF`, the final byte of the 512 x 240 picture.
 
 ### Video mode, port `0x06` bits 0-1
 
@@ -449,19 +479,28 @@ The unused alternating bits are ignored for palette colors. Intensity clear
 means the dim level; intensity set means the bright level. A digital renderer
 may use `0x7F` and `0xFF` for the two nonzero channel levels.
 
-Port `0x00` sets the border color. Its significant color bits are duplicated
-onto both serializer pixels:
+Port `0x00` sets the border color. Bits 7, 5, 3, and 1 of the written value are
+the significant intensity, green, red, and blue bits; each is duplicated into
+the adjacent low bit in the internal border register:
 
 ```text
-border_byte = (value & 0xAA) | ((value & 0xAA) >> 1)
+value written         = IxGxRxB
+border register value = IIGGRRBB
 ```
 
 ### Cursor interrupt
 
 The hardware cursor is primarily used as a timing signal. Normal software
 draws its text and visible cursor into bitmap memory itself. R14-R15 and the
-cursor raster setting place CURSOR at the final byte of the active display,
-creating the frame interrupt described above.
+cursor raster setting define where CURSOR requests the shared interrupt.
+Startup firmware documents the cursor at the final byte of the active display,
+but software may move it; an emulator must derive the interrupt position from
+the live CRTC registers rather than from a fixed frame boundary.
+
+VT-DOS is a normal example of such software-visible state: it may leave
+R14-R15 at `0x0AFF`, moving the shared cursor/sound interrupt from the last
+active paper line to row 43. Programs that do not reprogram the CRTC inherit
+that timing.
 
 An emulator that only raises an interrupt at a fixed host-frame boundary will
 miss programs that change CRTC geometry or time raster work from the cursor

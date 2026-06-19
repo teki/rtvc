@@ -2,7 +2,7 @@ use crate::bus::CpuBus;
 use crate::disasm::{DisassembledInstruction, disassemble_block};
 use crate::tvc::{DEBUG_RUN_TO_IRQ_MAX_CYCLES, Tvc};
 use crate::vid::VidModel;
-use crate::z80::Z80State;
+use crate::z80::{Z80, Z80State};
 use crate::zx82::{FRAMEBUFFER_HEIGHT as ZX82_HEIGHT, FRAMEBUFFER_WIDTH as ZX82_WIDTH, Zx82};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -121,6 +121,13 @@ impl Machine {
         }
     }
 
+    pub fn z80_mut(&mut self) -> &mut Z80 {
+        match self {
+            Self::Tvc(tvc) => &mut tvc.z80,
+            Self::Zx82(zx82) => &mut zx82.z80,
+        }
+    }
+
     pub fn clock(&self) -> u64 {
         match self {
             Self::Tvc(tvc) => tvc.clock,
@@ -224,6 +231,13 @@ impl Machine {
                 zx82.draw_full_frame();
                 zx82.frame_complete = true;
             }
+        }
+    }
+
+    pub fn write_raw_bank(&mut self, bank: &str, addr: usize, bytes: &[u8]) -> Option<usize> {
+        match self {
+            Self::Tvc(tvc) => tvc.bus.mmu.write_raw_bank(bank, addr, bytes),
+            Self::Zx82(_) => None,
         }
     }
 

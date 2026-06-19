@@ -43,7 +43,17 @@ enum DebuggerCommand {
         bank: Option<String>,
     },
     #[serde(rename = "write_memory")]
-    WriteMemory { addr: u16, data: Vec<u8> },
+    WriteMemory {
+        addr: u16,
+        data: Vec<u8>,
+        bank: Option<String>,
+    },
+    #[serde(rename = "set_register")]
+    SetRegister { name: String, value: u16 },
+    #[serde(rename = "write_port")]
+    WritePort { port: u8, value: u8 },
+    #[serde(rename = "run_to_interrupt")]
+    RunToInterrupt,
     #[serde(rename = "disassemble")]
     Disassemble { addr: u16, len: usize },
     #[serde(rename = "assemble")]
@@ -352,6 +362,14 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                 emu.debug_step(step_count);
                 serde_json::json!({ "status": "ok" })
             }
+            DebuggerCommand::RunToInterrupt => {
+                let result = emu.debug_run_to_interrupt();
+                serde_json::json!({
+                    "status": "ok",
+                    "elapsed_cycles": result.elapsed_cycles,
+                    "interrupt_accepted": result.interrupt_accepted
+                })
+            }
             DebuggerCommand::Continue => {
                 emu.running = true;
                 serde_json::json!({ "status": "ok" })
@@ -393,14 +411,54 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                     serde_json::json!({ "status": "ok", "data": data })
                 }
             }
-            DebuggerCommand::WriteMemory { addr, data } => {
-                emu.write_mapped_memory(addr, &data);
-                serde_json::json!({
-                    "status": "ok",
-                    "addr": addr,
-                    "len": data.len()
-                })
+            DebuggerCommand::WriteMemory { addr, data, bank } => {
+                if let Some(bank) = bank {
+                    match emu.write_raw_bank(&bank, addr as usize, &data) {
+                        Some(len) => serde_json::json!({
+                            "status": "ok",
+                            "bank": bank,
+                            "addr": addr,
+                            "len": len
+                        }),
+                        None => serde_json::json!({
+                            "status": "error",
+                            "message": format!("Unknown, read-only, or unavailable memory bank: {}", bank)
+                        }),
+                    }
+                } else {
+                    emu.write_mapped_memory(addr, &data);
+                    serde_json::json!({
+                        "status": "ok",
+                        "addr": addr,
+                        "len": data.len()
+                    })
+                }
             }
+            DebuggerCommand::SetRegister { name, value } => match normalize_register_name(&name) {
+                Some(name) => {
+                    emu.set_z80_register(name, value);
+                    serde_json::json!({
+                        "status": "ok",
+                        "name": name,
+                        "value": value
+                    })
+                }
+                None => serde_json::json!({
+                    "status": "error",
+                    "message": format!("Unknown register: {}", name)
+                }),
+            },
+            DebuggerCommand::WritePort { port, value } => match emu.write_port(port, value) {
+                Ok(()) => serde_json::json!({
+                    "status": "ok",
+                    "port": port,
+                    "value": value
+                }),
+                Err(err) => serde_json::json!({
+                    "status": "error",
+                    "message": err
+                }),
+            },
             DebuggerCommand::Disassemble { addr, len } => {
                 let insts = emu.disassemble(addr, len);
                 let mapped: Vec<_> = insts
@@ -420,14 +478,42 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                 })
             }
             DebuggerCommand::Assemble { addr, source } => {
-                match crate::asm::assemble_line(&source, addr) {
-                    Ok(bytes) => serde_json::json!({
-                        "status": "ok",
-                        "addr": addr,
-                        "len": bytes.len(),
-                        "bytes": bytes,
-                        "next_addr": addr.wrapping_add(bytes.len() as u16)
-                    }),
+                match crate::asm::assemble_program(&source, addr) {
+                    Ok(program) => {
+                        let segments: Vec<_> = program
+                            .segments
+                            .iter()
+                            .map(|segment| {
+                                serde_json::json!({
+                                    "addr": segment.addr,
+                                    "len": segment.bytes.len(),
+                                    "bytes": segment.bytes
+                                })
+                            })
+                            .collect();
+                        let lines: Vec<_> = program
+                            .lines
+                            .iter()
+                            .map(|line| {
+                                serde_json::json!({
+                                    "line": line.line,
+                                    "addr": line.addr,
+                                    "len": line.len,
+                                    "source": line.source
+                                })
+                            })
+                            .collect();
+                        serde_json::json!({
+                            "status": "ok",
+                            "addr": program.origin,
+                            "len": program.bytes.len(),
+                            "bytes": program.bytes,
+                            "next_addr": program.next_addr,
+                            "segments": segments,
+                            "symbols": program.symbols,
+                            "lines": lines
+                        })
+                    }
                     Err(err) => {
                         serde_json::json!({ "status": "error", "message": err.to_string() })
                     }
@@ -500,6 +586,38 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
     };
 
     response_val.to_string()
+}
+
+fn normalize_register_name(name: &str) -> Option<&'static str> {
+    match name.to_ascii_uppercase().as_str() {
+        "AF" => Some("AF"),
+        "BC" => Some("BC"),
+        "DE" => Some("DE"),
+        "HL" => Some("HL"),
+        "AF'" | "AFA" | "AF_ALT" => Some("AFa"),
+        "BC'" | "BCA" | "BC_ALT" => Some("BCa"),
+        "DE'" | "DEA" | "DE_ALT" => Some("DEa"),
+        "HL'" | "HLA" | "HL_ALT" => Some("HLa"),
+        "IX" => Some("IX"),
+        "IY" => Some("IY"),
+        "SP" => Some("SP"),
+        "PC" => Some("PC"),
+        "A" => Some("A"),
+        "F" => Some("F"),
+        "B" => Some("B"),
+        "C" => Some("C"),
+        "D" => Some("D"),
+        "E" => Some("E"),
+        "H" => Some("H"),
+        "L" => Some("L"),
+        "I" => Some("I"),
+        "R" => Some("R"),
+        "IFF1" => Some("IFF1"),
+        "IFF2" => Some("IFF2"),
+        "IM" => Some("im"),
+        "HALTED" => Some("halted"),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

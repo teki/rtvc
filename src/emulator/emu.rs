@@ -360,6 +360,22 @@ impl Emu {
         self.machine.write_mapped(addr, bytes);
     }
 
+    pub fn write_raw_bank(&mut self, bank: &str, addr: usize, bytes: &[u8]) -> Option<usize> {
+        self.machine.write_raw_bank(bank, addr, bytes)
+    }
+
+    pub fn set_z80_register(&mut self, name: &str, value: u16) {
+        self.machine.z80_mut().set_reg_val(name, value);
+    }
+
+    pub fn write_port(&mut self, port: u8, value: u8) -> Result<(), String> {
+        let Some(tvc) = self.tvc_mut() else {
+            return Err("port writes are currently implemented for TVC only".to_string());
+        };
+        tvc.bus.write_port(port, value);
+        Ok(())
+    }
+
     pub fn disassemble(&mut self, addr: u16, len: usize) -> Vec<DisassembledInstruction> {
         self.machine.disassemble(addr, len)
     }
@@ -393,7 +409,7 @@ impl Emu {
             .unwrap_or_default()
     }
 
-    pub fn log_entries(&self) -> &[String] {
+    pub fn log_entries(&self) -> &[crate::log::LogEntry] {
         self.tvc().map(Tvc::log_entries).unwrap_or(&[])
     }
 

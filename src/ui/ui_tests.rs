@@ -1,4 +1,3 @@
-
 use super::{GameEntry, framebuffer_image, normalize_game_name};
 use eframe::egui::Color32;
 

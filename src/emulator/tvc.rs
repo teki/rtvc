@@ -7,7 +7,7 @@ use crate::cas::TapeBitstreamGenerator;
 use crate::expansion::ExpansionSlots;
 use crate::hbf::HBF;
 use crate::key::Key;
-use crate::log::{Log, Logger};
+use crate::log::{Log, LogCategory, LogEntry, Logger};
 use crate::mmu::{RomBank, TvcMmu};
 use crate::snapshot;
 use crate::sound::SoundTimer;
@@ -66,7 +66,7 @@ impl TvcBus {
         self.extensions.attach_hbf(port as usize, ext);
     }
 
-    fn write_port(&mut self, addr: u8, val: u8) {
+    pub fn write_port(&mut self, addr: u8, val: u8) {
         match addr {
             0x00 => self.vid.set_border(val),
 
@@ -87,9 +87,11 @@ impl TvcBus {
             0x05 => {
                 let was_on = self.sound.audible_oscillator_enabled();
                 let old_divisor = self.sound.divisor();
+                let was_motor_on = self.tape.motor_on();
                 self.sound.write_control(val);
                 self.log_sound_change(was_on, old_divisor, addr);
                 self.tape.set_motor_from_port5(val);
+                self.log_tape_motor_change(was_motor_on, addr);
             }
 
             0x06 => {
@@ -105,13 +107,21 @@ impl TvcBus {
 
             0x60..=0x63 => self.vid.set_palette(addr - 0x60, val),
 
-            0x70..=0x7F => self.vid.write_crtc_port(addr, val),
+            0x70..=0x7F => self.write_crtc_port(addr, val),
 
             0x58 => {}
             0x59 => {}
             0x5A => {}
             0x50..=0x57 => {
-                self.tape.toggle_output();
+                let level = self.tape.toggle_output();
+                self.log.log_with_category(
+                    LogCategory::Tape,
+                    &format!(
+                        "tape output {} via port 0x{addr:02X} (pc 0x{:04X})",
+                        if level { "high" } else { "low" },
+                        self.trace_pc
+                    ),
+                );
             }
             0x5B => {}
 
@@ -133,17 +143,22 @@ impl TvcBus {
                                 0x0F => "Write Track",
                                 _ => "Unknown",
                             };
-                            self.log.log(&format!(
-                                "FDC command: 0x{:02X} [{}] (pc 0x{:04X})",
-                                val, cmd_name, self.trace_pc
-                            ));
+                            self.log.log_with_category(
+                                LogCategory::Disk,
+                                &format!(
+                                    "FDC command: 0x{:02X} [{}] (pc 0x{:04X})",
+                                    val, cmd_name, self.trace_pc
+                                ),
+                            );
                         }
-                        0x01 => self
-                            .log
-                            .log(&format!("FDC track: {} (pc 0x{:04X})", val, self.trace_pc)),
-                        0x02 => self
-                            .log
-                            .log(&format!("FDC sector: {} (pc 0x{:04X})", val, self.trace_pc)),
+                        0x01 => self.log.log_with_category(
+                            LogCategory::Disk,
+                            &format!("FDC track: {} (pc 0x{:04X})", val, self.trace_pc),
+                        ),
+                        0x02 => self.log.log_with_category(
+                            LogCategory::Disk,
+                            &format!("FDC sector: {} (pc 0x{:04X})", val, self.trace_pc),
+                        ),
                         0x04 => {
                             let drive = if (val & 1) != 0 {
                                 "A:"
@@ -153,10 +168,13 @@ impl TvcBus {
                                 "none"
                             };
                             let side = (val & 0x80) >> 7;
-                            self.log.log(&format!(
-                                "FDC select: drive {}, side {} (pc 0x{:04X})",
-                                drive, side, self.trace_pc
-                            ));
+                            self.log.log_with_category(
+                                LogCategory::Disk,
+                                &format!(
+                                    "FDC select: drive {}, side {} (pc 0x{:04X})",
+                                    drive, side, self.trace_pc
+                                ),
+                            );
                         }
                         _ => {}
                     }
@@ -171,31 +189,151 @@ impl TvcBus {
         let divisor = self.sound.divisor();
         if was_on != is_on {
             if is_on {
-                self.log.log(&format!(
-                    "sound on: {} (divisor 0x{divisor:03X}, port 0x{port:02X}, pc 0x{:04X})",
-                    self.sound_frequency_label(),
-                    self.trace_pc
-                ));
+                self.log.log_with_category(
+                    LogCategory::Sound,
+                    &format!(
+                        "sound on: {} (divisor 0x{divisor:03X}, port 0x{port:02X}, pc 0x{:04X})",
+                        self.sound_frequency_label(),
+                        self.trace_pc
+                    ),
+                );
             } else {
-                self.log
-                    .log(&format!("sound off (pc 0x{:04X})", self.trace_pc));
+                self.log.log_with_category(
+                    LogCategory::Sound,
+                    &format!("sound off (pc 0x{:04X})", self.trace_pc),
+                );
             }
         } else if is_on && old_divisor != divisor {
-            self.log.log(&format!(
-                "sound freq: {} (divisor 0x{divisor:03X}, port 0x{port:02X}, pc 0x{:04X})",
-                self.sound_frequency_label(),
-                self.trace_pc
-            ));
+            self.log.log_with_category(
+                LogCategory::Sound,
+                &format!(
+                    "sound freq: {} (divisor 0x{divisor:03X}, port 0x{port:02X}, pc 0x{:04X})",
+                    self.sound_frequency_label(),
+                    self.trace_pc
+                ),
+            );
         }
     }
 
     fn log_sound_volume_change(&mut self, old_amplitude: u8) {
         let amplitude = self.sound.amplitude();
         if old_amplitude != amplitude {
-            self.log.log(&format!(
-                "sound volume: {amplitude}/15 (pc 0x{:04X})",
+            self.log.log_with_category(
+                LogCategory::Sound,
+                &format!("sound volume: {amplitude}/15 (pc 0x{:04X})", self.trace_pc),
+            );
+        }
+    }
+
+    fn log_tape_motor_change(&mut self, was_motor_on: bool, port: u8) {
+        let motor_on = self.tape.motor_on();
+        if was_motor_on != motor_on {
+            self.log.log_with_category(
+                LogCategory::Tape,
+                &format!(
+                    "tape motor {} via port 0x{port:02X} (pc 0x{:04X})",
+                    if motor_on { "on" } else { "off" },
+                    self.trace_pc
+                ),
+            );
+        }
+    }
+
+    fn write_crtc_port(&mut self, addr: u8, val: u8) {
+        if addr & 1 == 0 {
+            self.vid.write_crtc_port(addr, val);
+            let idx = self.vid.get_reg_idx();
+            self.log.log_with_category(
+                LogCategory::Video,
+                &format!(
+                    "CRTC select R{idx} {} via port 0x{addr:02X} (pc 0x{:04X})",
+                    crtc_register_name(idx),
+                    self.trace_pc
+                ),
+            );
+            return;
+        }
+
+        let idx = self.vid.get_reg_idx();
+        if idx >= 16 {
+            self.vid.write_crtc_port(addr, val);
+            self.log.log_with_category(LogCategory::Video, &format!(
+                "CRTC write ignored: R{idx} {} is not writable (value 0x{val:02X}, port 0x{addr:02X}, pc 0x{:04X})",
+                crtc_register_name(idx),
                 self.trace_pc
             ));
+            return;
+        }
+
+        let old_value = self.vid.raw_reg(idx);
+        self.vid.write_crtc_port(addr, val);
+
+        let Some(new_value) = self.vid.raw_reg(idx) else {
+            self.log.log_with_category(LogCategory::Video, &format!(
+                "CRTC write ignored: R{idx} {} is not writable (value 0x{val:02X}, port 0x{addr:02X}, pc 0x{:04X})",
+                crtc_register_name(idx),
+                self.trace_pc
+            ));
+            return;
+        };
+
+        let change = match old_value {
+            Some(old) if old != new_value => format!("0x{old:02X}->0x{new_value:02X}"),
+            Some(_) => format!("0x{new_value:02X}"),
+            None => format!("0x{new_value:02X}"),
+        };
+        self.log.log_with_category(
+            LogCategory::Video,
+            &format!(
+                "CRTC R{idx} {} = {change} via port 0x{addr:02X}: {} (pc 0x{:04X})",
+                crtc_register_name(idx),
+                self.crtc_write_effect(idx),
+                self.trace_pc
+            ),
+        );
+    }
+
+    fn crtc_write_effect(&self, idx: u8) -> String {
+        let reg = |idx| self.vid.raw_reg(idx).unwrap_or(0);
+        match idx {
+            0 => format!(
+                "horizontal total {} character clocks",
+                reg(0).wrapping_add(1)
+            ),
+            1 => format!("horizontal displayed {} characters", reg(1)),
+            2 => format!("horizontal sync starts at character {}", reg(2)),
+            3 => format!(
+                "horizontal sync width {}, vertical sync width field {}",
+                reg(3) & 0x0F,
+                (reg(3) >> 4) & 0x0F
+            ),
+            4 => format!("vertical total {} character rows", (reg(4) & 0x7F) + 1),
+            5 => format!("vertical total adjust {} scanlines", reg(5) & 0x1F),
+            6 => format!("vertical displayed {} character rows", reg(6) & 0x7F),
+            7 => format!("vertical sync starts at character row {}", reg(7) & 0x7F),
+            8 => format!(
+                "interlace mode {}, skew bits {}",
+                reg(8) & 0x03,
+                (reg(8) >> 6) & 0x03
+            ),
+            9 => format!("{} scanlines per character row", (reg(9) & 0x1F) + 1),
+            10 => format!(
+                "cursor starts on raster {}, mode {}",
+                reg(10) & 0x1F,
+                cursor_mode_label((reg(10) >> 5) & 0x03)
+            ),
+            11 => format!("cursor ends on raster {}", reg(11) & 0x1F),
+            12 | 13 => format!(
+                "display start address 0x{:04X}",
+                crtc_address(reg(12), reg(13))
+            ),
+            14 | 15 => format!(
+                "cursor address 0x{:04X}, cursor raster {}",
+                crtc_address(reg(14), reg(15)),
+                reg(10) & 0x1F
+            ),
+            16 | 17 => "light pen register is read-only".to_string(),
+            _ => "invalid CRTC register index".to_string(),
         }
     }
 
@@ -304,7 +442,15 @@ impl TvcBus {
             0x58 => self.key.read_row(),
             0x59 | 0x5D => (self.tape_input_bit() << 5) | 0x40 | self.pend_it,
             0x50..=0x57 => {
-                self.tape.toggle_output();
+                let level = self.tape.toggle_output();
+                self.log.log_with_category(
+                    LogCategory::Tape,
+                    &format!(
+                        "tape output {} via input port 0x{addr:02X} (pc 0x{:04X})",
+                        if level { "high" } else { "low" },
+                        self.trace_pc
+                    ),
+                );
                 0xFF
             }
             0x5B | 0x5F => {
@@ -316,6 +462,44 @@ impl TvcBus {
             _ => self.extensions.read_port(addr).unwrap_or(0xFF),
         };
         val
+    }
+}
+
+fn crtc_register_name(idx: u8) -> &'static str {
+    match idx {
+        0 => "Horizontal Total",
+        1 => "Horizontal Displayed",
+        2 => "Horizontal Sync Position",
+        3 => "Sync Width",
+        4 => "Vertical Total",
+        5 => "Vertical Total Adjust",
+        6 => "Vertical Displayed",
+        7 => "Vertical Sync Position",
+        8 => "Interlace Mode and Skew",
+        9 => "Maximum Raster Address",
+        10 => "Cursor Start",
+        11 => "Cursor End",
+        12 => "Start Address (H)",
+        13 => "Start Address (L)",
+        14 => "Cursor Address (H)",
+        15 => "Cursor Address (L)",
+        16 => "Light Pen (H)",
+        17 => "Light Pen (L)",
+        _ => "Invalid Register",
+    }
+}
+
+fn crtc_address(hi: u8, lo: u8) -> u16 {
+    (((hi & 0x3F) as u16) << 8) | lo as u16
+}
+
+fn cursor_mode_label(mode: u8) -> &'static str {
+    match mode {
+        0 => "visible",
+        1 => "hidden",
+        2 => "blink 16 frames",
+        3 => "blink 32 frames",
+        _ => "unknown",
     }
 }
 
@@ -509,7 +693,7 @@ impl Tvc {
         self.bus.key.key_press(ch);
     }
 
-    pub fn log_entries(&self) -> &[String] {
+    pub fn log_entries(&self) -> &[LogEntry] {
         &self.bus.log.entries
     }
 

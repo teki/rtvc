@@ -337,7 +337,9 @@ fn load_comments(options: &Options) -> Result<BTreeMap<u16, Vec<Comment>>, Strin
                 .and_then(Value::as_str)
                 .map(ascii_comment)
                 .unwrap_or_else(|| "comment".to_string());
-            out.entry(address).or_default().push(Comment { source, text });
+            out.entry(address)
+                .or_default()
+                .push(Comment { source, text });
         }
     }
     Ok(out)
@@ -405,7 +407,8 @@ fn render_listing(
         emit_labels(&mut out, addr, symbols, &auto_labels);
         emit_comments(&mut out, addr, comments);
         if in_data_range(addr, &options.data_ranges) {
-            let chunk_len = data_chunk_len(addr, bytes.len() - offset, options, symbols, &auto_labels);
+            let chunk_len =
+                data_chunk_len(addr, bytes.len() - offset, options, symbols, &auto_labels);
             emit_db(&mut out, bytes, options.origin, addr, chunk_len);
             offset += chunk_len;
             continue;
@@ -446,7 +449,13 @@ fn discover_auto_labels(bytes: &[u8], options: &Options) -> Result<BTreeSet<u16>
     while offset < bytes.len() {
         let addr = options.origin.wrapping_add(offset as u16);
         if in_data_range(addr, &options.data_ranges) {
-            offset += data_chunk_len(addr, bytes.len() - offset, options, &BTreeMap::new(), &labels);
+            offset += data_chunk_len(
+                addr,
+                bytes.len() - offset,
+                options,
+                &BTreeMap::new(),
+                &labels,
+            );
             continue;
         }
         let inst = disassemble_at(&mut bus, addr);
@@ -527,12 +536,23 @@ fn emit_comments(out: &mut Vec<String>, addr: u16, comments: &BTreeMap<u16, Vec<
 
 fn emit_db(out: &mut Vec<String>, bytes: &[u8], origin: u16, addr: u16, len: usize) {
     let start = addr.wrapping_sub(origin) as usize;
-    let items = bytes[start..start + len]
+    let row = &bytes[start..start + len];
+    let items = row
         .iter()
         .map(|byte| hex8(*byte))
         .collect::<Vec<_>>()
         .join(", ");
-    out.push(format!("    DB {items}"));
+    let ascii = row
+        .iter()
+        .map(|byte| {
+            if (0x20..=0x7E).contains(byte) {
+                *byte as char
+            } else {
+                '.'
+            }
+        })
+        .collect::<String>();
+    out.push(format!("    DB {items:<76} ; |{ascii}|"));
 }
 
 fn data_chunk_len(

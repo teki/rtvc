@@ -27,10 +27,10 @@ debugger request may contain either one instruction or a small source block.
 
 ### Command Line
 
-Assemble a helper source to JSON:
+Assemble a helper source to TOML:
 
 ```bash
-cargo run --bin rtvc-asm -- --origin 8000H helper.asm -o helper.json
+cargo run --bin rtvc-asm -- --origin 8000H helper.asm -o helper.toml
 ```
 
 Use `-` as the input path to read source from stdin:
@@ -44,7 +44,8 @@ Options:
 | Option | Meaning |
 | --- | --- |
 | `--origin <addr>` | Initial assembly address before source-level `ORG`; defaults to `0`. |
-| `-o <path>`, `--output <path>` | Write JSON to a file; omitted means stdout. |
+| `--format <toml\|cas\|bin>` | Output format; defaults to `toml`. `cas` expects a single `BASIC_START` segment, and `bin` expects one contiguous segment. |
+| `-o <path>`, `--output <path>` | Write output to a file; omitted means stdout. |
 | `-`, as input path | Read source from stdin. |
 
 `<addr>` accepts decimal, `0x` hexadecimal, `$` hexadecimal, and `H`-suffixed
@@ -101,13 +102,13 @@ Inside [scripts/rtvc_debug.py](../scripts/rtvc_debug.py):
 ```text
 asm [addr]
 asmfile helper.asm [origin]
-loadasm helper.json
+loadasm helper.toml
 ```
 
 - `asm` keeps the old one-instruction interactive patch workflow.
 - `asmfile` sends a source file to the debugger assembler and writes the
   returned segments to mapped memory.
-- `loadasm` loads `rtvc-asm-v1` JSON from disk and writes every segment to
+- `loadasm` loads `rtvc-asm-v1` TOML from disk and writes every segment to
   mapped memory.
 
 ## Source Format
@@ -130,6 +131,7 @@ Supported directives:
 | Directive | Forms | Notes |
 | --- | --- | --- |
 | `ORG` | `ORG expr` | Sets the current assembly address. Multiple `ORG` directives create multiple output segments. |
+| `BASIC_START` | `BASIC_START` | Emits a tokenized TVC BASIC autorun line at `19EFH`, pads to `1A30H`, and defines `BASIC_START` as the first machine-code instruction address called by `USR(6704)`. |
 | `EQU` | `LABEL EQU expr` or `LABEL: EQU expr` | Defines a constant symbol. |
 | `DB`, `DEFB` | `DB expr[, expr...]` | Emits bytes. String literals are also accepted. |
 | `DW`, `DEFW` | `DW expr[, expr...]` | Emits little-endian 16-bit words. |
@@ -153,6 +155,31 @@ There is no operator precedence beyond left-to-right `+`/`-`, and there are no
 parenthesized arithmetic expressions. Parentheses are still used for Z80 memory
 operands such as `(4000H)` and `(IX+2)`.
 
+## Runnable TVC BASIC Programs
+
+Use `BASIC_START` instead of `ORG` for small experiments that should load as an
+autorun TVC BASIC program. The directive emits the same one-line bootstrap
+shape used by `TVBALL.CAS`:
+
+```asm
+        BASIC_START
+
+        LD A,02H
+FLASH:  OUT (00H),A
+        XOR 0AH
+        JP FLASH
+```
+
+Assemble directly to CAS:
+
+```bash
+cargo run --bin rtvc-asm -- --format cas experiment.asm -o experiment.cas
+```
+
+Use `--format toml` when the emitted TOML should be loaded through the debugger
+with `loadasm`, and `--format bin` when only the contiguous machine-code bytes
+are needed.
+
 ## Instruction Coverage
 
 The instruction encoder supports the Z80 forms currently implemented by
@@ -173,38 +200,29 @@ does not implement macros, includes, conditional assembly, local-scope rules,
 relocation records, listing files, or third-party assembler compatibility
 syntax.
 
-## JSON Output
+## TOML Output
 
-`rtvc-asm` emits versioned JSON only. The format is intended to be consumed by
-future linker/injection tools without losing address or symbol information:
+`rtvc-asm` emits versioned TOML. The format is intended to be consumed by
+future linker/injection tools without losing address or symbol information,
+while remaining pleasant to inspect and annotate:
 
-```json
-{
-  "format": "rtvc-asm-v1",
-  "source": "helper.asm",
-  "requested_origin": 28672,
-  "origin": 32768,
-  "next_addr": 32777,
-  "segments": [
-    {
-      "addr": 32768,
-      "len": 9,
-      "bytes": [33, 6, 128, 195, 0, 128, 79, 75, 0]
-    }
-  ],
-  "symbols": {
-    "MSG": 32774,
-    "START": 32768
-  },
-  "lines": [
-    {
-      "line": 2,
-      "addr": 32768,
-      "len": 3,
-      "source": "START: LD HL,MSG"
-    }
-  ]
-}
+```toml
+format = "rtvc-asm-v1"
+source = "helper.asm"
+requested_origin = 0x7000
+origin = 0x8000
+next_addr = 0x8009
+
+[symbols]
+MSG = 0x8006
+START = 0x8000
+
+[[segments]]
+addr = 0x8000
+len = 0x09
+bytes = [
+  0x21, 0x06, 0x80, 0xC3, 0x00, 0x80, 0x4F, 0x4B, 0x00,                       # |!.....OK.|
+]
 ```
 
 Fields:
@@ -237,13 +255,13 @@ match the length of `segments[].bytes`.
 2. Assemble it:
 
    ```bash
-   cargo run --bin rtvc-asm -- --origin 7000H helper.asm -o helper.json
+   cargo run --bin rtvc-asm -- --origin 7000H helper.asm -o helper.toml
    ```
 
 3. Load it into the active machine through the debugger client:
 
    ```text
-   rtvc> loadasm helper.json
+   rtvc> loadasm helper.toml
    ```
 
 4. Use debugger commands such as `disasm`, `read`, breakpoints, and CPU stepping
@@ -258,6 +276,6 @@ line 2: unknown symbol 'MISSING'
 line 4: relative target 9000H is out of range from 8000H
 ```
 
-`loadasm` validates that JSON has `format: "rtvc-asm-v1"`, at least one segment,
+`loadasm` validates that TOML has `format = "rtvc-asm-v1"`, at least one segment,
 16-bit segment addresses, byte arrays containing integers in `0..255`, and
 matching `len` values when present.

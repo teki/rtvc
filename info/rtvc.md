@@ -13,6 +13,7 @@ implementation-neutral machine specification, see
 - [Sound emulation](#sound-emulation)
 - [Keyboard input](#keyboard-input)
 - [Media handling](#media-handling)
+- [Command-line helper assembler](#command-line-helper-assembler)
 - [ROM loading and fast boot](#rom-loading-and-fast-boot)
 - [Snapshot format](#snapshot-format)
 - [Native and web UI](#native-and-web-ui)
@@ -40,6 +41,9 @@ and full-web frontends.
 | [src/tape.rs](../src/tape.rs) | cassette transport and signal sampling |
 | [src/expansion.rs](../src/expansion.rs) | four-slot expansion routing |
 | [src/hbf.rs](../src/hbf.rs) | HBF card memory and registers |
+| [src/emulator/asm.rs](../src/emulator/asm.rs) | Z80 single-line and two-pass helper assembler |
+| [src/emulator/disasm.rs](../src/emulator/disasm.rs) | Z80 disassembler and debugger instruction metadata |
+| [src/bin/rtvc_asm.rs](../src/bin/rtvc_asm.rs) | command-line assembler that emits `rtvc-asm-v1` TOML |
 | [src/fd1793.rs](../src/fd1793.rs) | FD1793 floppy controller with two-drive read/write support |
 | [src/emu.rs](../src/emu.rs) | machine selection, media, run state |
 | [src/machine.rs](../src/machine.rs) | explicit TVC/Zx82 machine boundary and shared debugger operations |
@@ -225,7 +229,15 @@ is not yet a complete cycle-accurate implementation.
 
 The `rtvc-dsk` utility can inspect legacy TVC/MSX-DOS style FAT12 images whose
 boot sectors omit the PC `55 AA` signature and reuse later BPB bytes for boot
-code.
+code. It can also create formatted images and copy host files into them:
+
+```bash
+cargo run --bin rtvc-dsk -- new720 game.dsk
+cargo run --bin rtvc-dsk -- put game.dsk:HELLO.TXT local.txt
+cargo run --bin rtvc-dsk -- dir game.dsk
+cargo run --bin rtvc-dsk -- cat game.dsk:HELLO.TXT
+cargo run --bin rtvc-dsk -- get game.dsk:HELLO.TXT local-copy.txt
+```
 
 The CLI accepts up to two `-d` arguments: the first mounts on drive A:, the
 second on drive B:. The Disk menu provides Drive A: and Drive B: sub-menus
@@ -243,6 +255,15 @@ The lightweight WASM core excludes zip support.
 Gamebase launches load the embedded clean VT-DOS boot snapshot, choose the
 matching TVC 1.2 VT-DOS machine, attach or inject media, start emulation, and
 type `RUN` for CAS or `LOAD "*"` for DSK.
+
+## Command-Line Helper Assembler
+
+`cargo run --bin rtvc-asm -- [--origin <addr>] [-o output.toml] input.asm`
+assembles small Z80 helper sources through the same two-pass assembler used by
+the debugger. It currently emits versioned TOML for later linker and
+injection tooling. The TCP debugger client can load this output with
+`loadasm <path.toml>`. See [assembler.md](assembler.md) for source syntax, TOML
+schema, command-line options, and debugger loading details.
 
 ## ROM Loading and Fast Boot
 
@@ -351,7 +372,7 @@ cargo run --bin rtvc -- --headless --port 8080
 | `breakpoint_add`, `breakpoint_remove`, `breakpoint_list` | breakpoints |
 | `read_memory` | mapped memory or raw `u0`-`u3`, `vid0`-`vid3`, `sys`, `cart`, `exth` |
 | `write_memory` | write bytes to the active machine's mapped CPU address space |
-| `disassemble`, `assemble` | Z80 developer tools |
+| `disassemble`, `assemble` | Z80 developer tools; `assemble` accepts one instruction or a small source block |
 | `save_snapshot`, `load_snapshot` | snapshot files |
 | `save_screenshot` | 4:3 PNG |
 | `key` | key down/up or typed character |
@@ -360,7 +381,18 @@ cargo run --bin rtvc -- --headless --port 8080
 Requests and responses are one JSON object per line. A running emulator emits
 `{"event":"breakpoint","pc":...}` asynchronously when a breakpoint is hit.
 
+The `assemble` command uses rtvc's built-in two-pass helper assembler. It
+supports labels, `ORG`, `EQU`, `DB`/`DEFB`, `DW`/`DEFW`, `DS`/`DEFS`, simple
+`+`/`-` expressions, and `$` as the current address. Responses keep the
+single-line compatibility fields (`addr`, `len`, `bytes`, `next_addr`) and also
+include `segments`, `symbols`, and emitted line-address metadata for multi-line
+source. See [assembler.md](assembler.md) for the detailed assembler reference.
+
 The interactive client is [scripts/rtvc_debug.py](../scripts/rtvc_debug.py).
+Its `asm` command keeps the one-instruction interactive patch workflow,
+`asmfile <path> [origin]` assembles a helper source file and writes all returned
+segments to mapped memory, and `loadasm <path.toml>` writes segments from
+`rtvc-asm-v1` TOML.
 
 ## ROM Symbol Database
 

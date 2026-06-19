@@ -2,6 +2,7 @@ use std::path::Path;
 
 use crate::debug_ui::DebuggerUi;
 use crate::emu::Emu;
+use crate::log::LogCategory;
 use eframe::egui::{self, TextureHandle};
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use serde::{Deserialize, Serialize};
@@ -38,14 +39,50 @@ struct WorkspaceDocument {
     version: u32,
     mode: WorkspaceMode,
     dock_state: DockState<WorkspaceTab>,
+    #[serde(default)]
+    io_log_filters: IoLogFilters,
 }
 
 pub struct Workspace {
     mode: WorkspaceMode,
     dock_state: DockState<WorkspaceTab>,
+    io_log_filters: IoLogFilters,
     dirty: bool,
     persisted_json: Option<String>,
     persisted_location: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct IoLogFilters {
+    sound: bool,
+    video: bool,
+    tape: bool,
+    disk: bool,
+    other: bool,
+}
+
+impl Default for IoLogFilters {
+    fn default() -> Self {
+        Self {
+            sound: true,
+            video: true,
+            tape: true,
+            disk: true,
+            other: true,
+        }
+    }
+}
+
+impl IoLogFilters {
+    fn allows(self, category: LogCategory) -> bool {
+        match category {
+            LogCategory::Sound => self.sound,
+            LogCategory::Video => self.video,
+            LogCategory::Tape => self.tape,
+            LogCategory::Disk => self.disk,
+            LogCategory::Other => self.other,
+        }
+    }
 }
 
 impl Workspace {
@@ -141,6 +178,8 @@ impl Workspace {
             screen_visible: false,
             screen_clicked: false,
             events_visible: false,
+            io_log_filters: &mut self.io_log_filters,
+            io_log_filters_changed: false,
         };
         DockArea::new(&mut self.dock_state)
             .id(egui::Id::new("rtvc_developer_workspace"))
@@ -150,7 +189,11 @@ impl Workspace {
             ui.input(|input| input.pointer.primary_clicked()) && !viewer.screen_clicked;
         let screen_visible = viewer.screen_visible;
         let events_visible = viewer.events_visible;
+        let io_log_filters_changed = viewer.io_log_filters_changed;
         drop(viewer);
+        if io_log_filters_changed {
+            self.dirty = true;
+        }
         if !screen_visible || clicked_elsewhere {
             *screen_captured = false;
         }
@@ -178,6 +221,7 @@ impl Workspace {
         Self {
             mode: WorkspaceMode::Simple,
             dock_state: default_dock_state(),
+            io_log_filters: IoLogFilters::default(),
             dirty: false,
             persisted_json: None,
             persisted_location: None,
@@ -188,6 +232,7 @@ impl Workspace {
         Self {
             mode: WorkspaceMode::Developer,
             dock_state: default_dock_state(),
+            io_log_filters: IoLogFilters::default(),
             dirty: true,
             persisted_json: None,
             persisted_location: None,
@@ -216,6 +261,7 @@ impl Workspace {
         let mut workspace = Self {
             mode: document.mode,
             dock_state: document.dock_state,
+            io_log_filters: document.io_log_filters,
             dirty: false,
             persisted_json: None,
             persisted_location: None,
@@ -234,6 +280,7 @@ impl Workspace {
             version: WORKSPACE_VERSION,
             mode: self.mode,
             dock_state: self.dock_state.clone(),
+            io_log_filters: self.io_log_filters,
         })
         .map_err(|err| err.to_string())?;
         replace_non_finite_coordinates(&mut value);
@@ -357,23 +404,41 @@ pub fn draw_screen(
     response.clicked()
 }
 
-fn draw_io_log(ui: &mut egui::Ui, emu: &mut Emu) {
+fn draw_io_log(ui: &mut egui::Ui, emu: &mut Emu, filters: &mut IoLogFilters) -> bool {
     if emu.tvc().is_none() {
         ui.label("IO logging is currently available only for TVC.");
-        return;
+        return false;
     }
+    let before = *filters;
     ui.horizontal(|ui| {
         if ui.small_button("Clear").clicked() {
             emu.clear_log();
         }
+        ui.separator();
+        ui.checkbox(&mut filters.sound, "Sound");
+        ui.checkbox(&mut filters.video, "Video");
+        ui.checkbox(&mut filters.tape, "Tape");
+        ui.checkbox(&mut filters.disk, "Disk");
+        ui.checkbox(&mut filters.other, "Other");
     });
+    let hidden_count = emu
+        .log_entries()
+        .iter()
+        .filter(|entry| !filters.allows(entry.category))
+        .count();
+    if hidden_count > 0 {
+        ui.small(format!("{hidden_count} hidden"));
+    }
     egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
         .show(ui, |ui| {
             for entry in emu.log_entries().iter().rev() {
-                ui.label(entry);
+                if filters.allows(entry.category) {
+                    ui.label(&entry.message);
+                }
             }
         });
+    before != *filters
 }
 
 struct WorkspaceViewer<'a> {
@@ -384,6 +449,8 @@ struct WorkspaceViewer<'a> {
     screen_visible: bool,
     screen_clicked: bool,
     events_visible: bool,
+    io_log_filters: &'a mut IoLogFilters,
+    io_log_filters_changed: bool,
 }
 
 impl TabViewer for WorkspaceViewer<'_> {
@@ -409,7 +476,9 @@ impl TabViewer for WorkspaceViewer<'_> {
                 self.screen_clicked =
                     draw_screen(ui, self.screen_texture, Some(self.screen_captured));
             }
-            WorkspaceTab::IoLog => draw_io_log(ui, self.emu),
+            WorkspaceTab::IoLog => {
+                self.io_log_filters_changed |= draw_io_log(ui, self.emu, self.io_log_filters);
+            }
             WorkspaceTab::Cpu => self.debugger.draw_cpu(ui, self.emu),
             WorkspaceTab::Disassembly => self.debugger.draw_disassembly(ui, self.emu),
             WorkspaceTab::Memory => self.debugger.draw_memory(ui, self.emu),

@@ -1,4 +1,3 @@
-
 use super::*;
 
 #[test]
@@ -393,6 +392,41 @@ fn sound_volume_writes_log_only_when_amplitude_changes() {
     bus.write_port(0x06, 0x3C);
     assert_eq!(bus.log.entries.len(), 2);
     assert_eq!(bus.log.entries[1], "sound volume: 15/15 (pc 0x5678)");
+}
+
+#[test]
+fn crtc_writes_log_selected_register_and_decoded_effect() {
+    let mut bus = TvcBus::new(true);
+    bus.trace_pc = 0x1111;
+
+    bus.write_port(0x70, 14);
+    assert_eq!(
+        bus.log.entries[0],
+        "CRTC select R14 Cursor Address (H) via port 0x70 (pc 0x1111)"
+    );
+
+    bus.trace_pc = 0x2222;
+    bus.write_port(0x71, 0x0E);
+    assert_eq!(
+        bus.log.entries[1],
+        "CRTC R14 Cursor Address (H) = 0x00->0x0E via port 0x71: cursor address 0x0E00, cursor raster 0 (pc 0x2222)"
+    );
+
+    bus.trace_pc = 0x3333;
+    bus.write_port(0x72, 15);
+    bus.write_port(0x73, 0xFF);
+    assert_eq!(
+        bus.log.entries[3],
+        "CRTC R15 Cursor Address (L) = 0x00->0xFF via port 0x73: cursor address 0x0EFF, cursor raster 0 (pc 0x3333)"
+    );
+
+    bus.trace_pc = 0x4444;
+    bus.write_port(0x70, 16);
+    bus.write_port(0x71, 0x5A);
+    assert_eq!(
+        bus.log.entries[5],
+        "CRTC write ignored: R16 Light Pen (H) is not writable (value 0x5A, port 0x71, pc 0x4444)"
+    );
 }
 
 #[test]

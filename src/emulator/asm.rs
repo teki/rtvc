@@ -1,4 +1,7 @@
-use std::fmt;
+use std::{collections::BTreeMap, fmt};
+
+const TVC_BASIC_LOAD_ADDR: u16 = 0x19EF;
+const TVC_BASIC_USR_ENTRY: u16 = 0x1A30;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AsmError {
@@ -20,6 +23,56 @@ impl fmt::Display for AsmError {
 }
 
 impl std::error::Error for AsmError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssembledProgram {
+    pub origin: u16,
+    pub bytes: Vec<u8>,
+    pub segments: Vec<AssembledSegment>,
+    pub symbols: BTreeMap<String, u16>,
+    pub lines: Vec<AssembledLine>,
+    pub next_addr: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssembledSegment {
+    pub addr: u16,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssembledLine {
+    pub line: usize,
+    pub addr: u16,
+    pub len: usize,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedLine {
+    line_no: usize,
+    source: String,
+    labels: Vec<String>,
+    statement: Statement,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Statement {
+    Empty,
+    Org(String),
+    BasicStart,
+    Equ { label: String, expr: String },
+    Bytes(Vec<ByteValue>),
+    Words(Vec<String>),
+    Space { count: String, fill: Option<String> },
+    Instruction(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ByteValue {
+    Expr(String),
+    String(Vec<u8>),
+}
 
 /// Assemble one Z80 instruction at `pc`.
 ///
@@ -83,16 +136,603 @@ pub fn assemble_line(source: &str, pc: u16) -> Result<Vec<u8>, AsmError> {
     Ok(bytes)
 }
 
+/// Assemble a small Z80 source block at `origin`.
+///
+/// This two-pass layer is intended for debugger helper code and porting shims,
+/// not as a full macro assembler. It supports labels, `ORG`, `EQU`, `DB`/`DEFB`,
+/// `DW`/`DEFW`, `DS`/`DEFS`, simple `+`/`-` expressions, and `$` as the current
+/// address. Instruction encoding is delegated to [`assemble_line`].
+pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, AsmError> {
+    let parsed: Vec<_> = source
+        .lines()
+        .enumerate()
+        .map(|(index, line)| parse_program_line(index + 1, line))
+        .collect::<Result<_, _>>()?;
+
+    let mut symbols = BTreeMap::new();
+    let mut pc = origin;
+
+    for line in &parsed {
+        if !matches!(line.statement, Statement::Equ { .. }) {
+            for label in &line.labels {
+                insert_symbol(&mut symbols, label, pc, line.line_no)?;
+            }
+        }
+
+        match &line.statement {
+            Statement::Empty => {}
+            Statement::Org(expr) => {
+                pc = eval_word(expr, pc, &symbols, false, 0)
+                    .map_err(|err| line_error(line.line_no, err))?;
+            }
+            Statement::BasicStart => {
+                insert_symbol(
+                    &mut symbols,
+                    "BASIC_START",
+                    TVC_BASIC_USR_ENTRY,
+                    line.line_no,
+                )?;
+                pc = TVC_BASIC_USR_ENTRY;
+            }
+            Statement::Equ { label, expr } => {
+                let value = eval_word(expr, pc, &symbols, false, 0)
+                    .map_err(|err| line_error(line.line_no, err))?;
+                insert_symbol(&mut symbols, label, value, line.line_no)?;
+            }
+            Statement::Bytes(values) => {
+                pc = pc.wrapping_add(byte_values_len(values)? as u16);
+            }
+            Statement::Words(values) => {
+                pc = pc.wrapping_add(values.len().wrapping_mul(2) as u16);
+            }
+            Statement::Space { count, .. } => {
+                let count = eval_nonnegative(count, pc, &symbols, false, 0)
+                    .map_err(|err| line_error(line.line_no, err))?;
+                pc = pc.wrapping_add(count as u16);
+            }
+            Statement::Instruction(statement) => {
+                let rendered = render_instruction(statement, pc, &symbols, true)
+                    .map_err(|err| line_error(line.line_no, err))?;
+                let bytes =
+                    assemble_line(&rendered, pc).map_err(|err| line_error(line.line_no, err))?;
+                pc = pc.wrapping_add(bytes.len() as u16);
+            }
+        }
+    }
+
+    let mut bytes = Vec::new();
+    let mut segments = Vec::new();
+    let mut lines = Vec::new();
+    pc = origin;
+
+    for line in &parsed {
+        let addr = pc;
+        let emitted = match &line.statement {
+            Statement::Empty => Vec::new(),
+            Statement::Org(expr) => {
+                pc = eval_word(expr, pc, &symbols, false, 0)
+                    .map_err(|err| line_error(line.line_no, err))?;
+                Vec::new()
+            }
+            Statement::BasicStart => {
+                pc = TVC_BASIC_LOAD_ADDR;
+                tvc_basic_start_bytes()
+            }
+            Statement::Equ { .. } => Vec::new(),
+            Statement::Bytes(values) => emit_byte_values(values, pc, &symbols)
+                .map_err(|err| line_error(line.line_no, err))?,
+            Statement::Words(values) => {
+                let mut out = Vec::with_capacity(values.len() * 2);
+                for value in values {
+                    let value = eval_word(value, pc, &symbols, false, 0)
+                        .map_err(|err| line_error(line.line_no, err))?;
+                    push_word(&mut out, value);
+                }
+                out
+            }
+            Statement::Space { count, fill } => {
+                let count = eval_nonnegative(count, pc, &symbols, false, 0)
+                    .map_err(|err| line_error(line.line_no, err))?;
+                let fill = match fill {
+                    Some(fill) => eval_byte(fill, pc, &symbols, false, 0)
+                        .map_err(|err| line_error(line.line_no, err))?,
+                    None => 0,
+                };
+                vec![fill; count]
+            }
+            Statement::Instruction(statement) => {
+                let rendered = render_instruction(statement, pc, &symbols, false)
+                    .map_err(|err| line_error(line.line_no, err))?;
+                assemble_line(&rendered, pc).map_err(|err| line_error(line.line_no, err))?
+            }
+        };
+
+        if !emitted.is_empty() {
+            emit_segment(&mut segments, pc, &emitted);
+            bytes.extend_from_slice(&emitted);
+            let line_addr = if matches!(line.statement, Statement::BasicStart) {
+                TVC_BASIC_LOAD_ADDR
+            } else {
+                addr
+            };
+            lines.push(AssembledLine {
+                line: line.line_no,
+                addr: line_addr,
+                len: emitted.len(),
+                source: line.source.clone(),
+            });
+            pc = pc.wrapping_add(emitted.len() as u16);
+        }
+    }
+
+    Ok(AssembledProgram {
+        origin: segments
+            .first()
+            .map(|segment| segment.addr)
+            .unwrap_or(origin),
+        bytes,
+        segments,
+        symbols,
+        lines,
+        next_addr: pc,
+    })
+}
+
+fn parse_program_line(line_no: usize, source: &str) -> Result<ParsedLine, AsmError> {
+    let clean = strip_comment(source)?;
+    let mut rest = clean.trim();
+    let mut labels = Vec::new();
+
+    while let Some((label, after)) = take_colon_label(rest)? {
+        labels.push(label);
+        rest = after.trim_start();
+    }
+
+    let statement = parse_statement(rest, &labels).map_err(|err| line_error(line_no, err))?;
+    Ok(ParsedLine {
+        line_no,
+        source: source.to_string(),
+        labels,
+        statement,
+    })
+}
+
+fn parse_statement(source: &str, labels: &[String]) -> Result<Statement, AsmError> {
+    if source.is_empty() {
+        return Ok(Statement::Empty);
+    }
+
+    let (mnemonic, rest) = split_statement_head(source);
+    let mnemonic_upper = mnemonic.to_ascii_uppercase();
+    if mnemonic_upper == "EQU" {
+        if labels.len() != 1 {
+            return Err(AsmError::new("EQU requires exactly one label"));
+        }
+        if rest.trim().is_empty() {
+            return Err(AsmError::new("EQU requires an expression"));
+        }
+        return Ok(Statement::Equ {
+            label: labels[0].clone(),
+            expr: rest.trim().to_string(),
+        });
+    }
+
+    if labels.is_empty()
+        && let Some((next, after_next)) = split_optional_head(rest)
+        && next.eq_ignore_ascii_case("EQU")
+    {
+        validate_label(mnemonic)?;
+        if after_next.trim().is_empty() {
+            return Err(AsmError::new("EQU requires an expression"));
+        }
+        return Ok(Statement::Equ {
+            label: mnemonic.to_ascii_uppercase(),
+            expr: after_next.trim().to_string(),
+        });
+    }
+
+    match mnemonic_upper.as_str() {
+        "ORG" => {
+            if rest.trim().is_empty() {
+                return Err(AsmError::new("ORG requires an address"));
+            }
+            Ok(Statement::Org(rest.trim().to_string()))
+        }
+        "BASIC_START" => {
+            if !rest.trim().is_empty() {
+                return Err(AsmError::new("BASIC_START takes no operands"));
+            }
+            Ok(Statement::BasicStart)
+        }
+        "DB" | "DEFB" => Ok(Statement::Bytes(parse_byte_values(rest)?)),
+        "DW" | "DEFW" => Ok(Statement::Words(split_operands(rest)?)),
+        "DS" | "DEFS" => {
+            let operands = split_operands(rest)?;
+            match operands.as_slice() {
+                [count] => Ok(Statement::Space {
+                    count: count.clone(),
+                    fill: None,
+                }),
+                [count, fill] => Ok(Statement::Space {
+                    count: count.clone(),
+                    fill: Some(fill.clone()),
+                }),
+                _ => Err(AsmError::new("DS requires count and optional fill byte")),
+            }
+        }
+        _ => Ok(Statement::Instruction(source.to_string())),
+    }
+}
+
+fn tvc_basic_start_bytes() -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&[
+        0x0F, 0x0A, 0x00, 0x43, 0x9A, b'U', b'S', b'R', 0x96, b'6', b'7', b'0', b'4', 0x95, 0xFF,
+        0x00,
+    ]);
+    out.resize((TVC_BASIC_USR_ENTRY - TVC_BASIC_LOAD_ADDR) as usize, 0x00);
+    out
+}
+
+fn strip_comment(source: &str) -> Result<String, AsmError> {
+    let mut quote = None;
+    let mut escape = false;
+    let mut out = String::new();
+    for (index, ch) in source.char_indices() {
+        if escape {
+            out.push(ch);
+            escape = false;
+            continue;
+        }
+        if quote.is_some() && ch == '\\' {
+            out.push(ch);
+            escape = true;
+            continue;
+        }
+        if let Some(quote_ch) = quote {
+            out.push(ch);
+            if ch == quote_ch {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            ';' => break,
+            '"' => {
+                quote = Some(ch);
+                out.push(ch);
+            }
+            '\'' if single_quote_starts_operand(&out) => {
+                quote = Some(ch);
+                out.push(ch);
+            }
+            '\'' if single_quote_starts_statement_string(&out, source, index) => {
+                quote = Some(ch);
+                out.push(ch);
+            }
+            _ => out.push(ch),
+        }
+    }
+    if quote.is_some() {
+        return Err(AsmError::new("unterminated string literal"));
+    }
+    Ok(out)
+}
+
+fn single_quote_starts_operand(prefix: &str) -> bool {
+    prefix
+        .chars()
+        .rev()
+        .find(|ch| !ch.is_whitespace())
+        .is_none_or(|ch| ch == ',')
+}
+
+fn single_quote_starts_statement_string(prefix: &str, source: &str, index: usize) -> bool {
+    prefix.chars().last().is_some_and(|ch| ch.is_whitespace()) && source[index + 1..].contains('\'')
+}
+
+fn take_colon_label(source: &str) -> Result<Option<(String, &str)>, AsmError> {
+    let Some(colon) = source.find(':') else {
+        return Ok(None);
+    };
+    let before = source[..colon].trim();
+    if before.is_empty() || before.contains(char::is_whitespace) {
+        return Ok(None);
+    }
+    validate_label(before)?;
+    Ok(Some((before.to_ascii_uppercase(), &source[colon + 1..])))
+}
+
+fn validate_label(label: &str) -> Result<(), AsmError> {
+    let mut chars = label.chars();
+    let Some(first) = chars.next() else {
+        return Err(AsmError::new("empty label"));
+    };
+    if !(first.is_ascii_alphabetic() || first == '_' || first == '.') {
+        return Err(AsmError::new(format!("invalid label '{}'", label)));
+    }
+    if chars.any(|ch| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '.')) {
+        return Err(AsmError::new(format!("invalid label '{}'", label)));
+    }
+    Ok(())
+}
+
+fn split_statement_head(source: &str) -> (&str, &str) {
+    let split = source.find(char::is_whitespace).unwrap_or(source.len());
+    (&source[..split], source[split..].trim_start())
+}
+
+fn split_optional_head(source: &str) -> Option<(&str, &str)> {
+    if source.trim().is_empty() {
+        return None;
+    }
+    Some(split_statement_head(source.trim_start()))
+}
+
+fn parse_byte_values(source: &str) -> Result<Vec<ByteValue>, AsmError> {
+    let operands = split_operands(source)?;
+    if operands.is_empty() {
+        return Err(AsmError::new("DB requires at least one byte"));
+    }
+    operands
+        .into_iter()
+        .map(|operand| {
+            if is_quoted(&operand) {
+                parse_string_literal(&operand).map(ByteValue::String)
+            } else {
+                Ok(ByteValue::Expr(operand))
+            }
+        })
+        .collect()
+}
+
+fn is_quoted(value: &str) -> bool {
+    value.len() >= 2
+        && ((value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\'')))
+}
+
+fn parse_string_literal(value: &str) -> Result<Vec<u8>, AsmError> {
+    let inner = &value[1..value.len() - 1];
+    let mut out = Vec::new();
+    let mut chars = inner.chars();
+    while let Some(ch) = chars.next() {
+        let ch = if ch == '\\' {
+            match chars.next() {
+                Some('0') => '\0',
+                Some('n') => '\n',
+                Some('r') => '\r',
+                Some('t') => '\t',
+                Some('\\') => '\\',
+                Some('"') => '"',
+                Some('\'') => '\'',
+                Some(other) => {
+                    return Err(AsmError::new(format!("unsupported escape '\\{}'", other)));
+                }
+                None => return Err(AsmError::new("unterminated escape sequence")),
+            }
+        } else {
+            ch
+        };
+        if !ch.is_ascii() {
+            return Err(AsmError::new("DB string literals must be ASCII"));
+        }
+        out.push(ch as u8);
+    }
+    Ok(out)
+}
+
+fn byte_values_len(values: &[ByteValue]) -> Result<usize, AsmError> {
+    values.iter().try_fold(0usize, |len, value| match value {
+        ByteValue::Expr(_) => Ok(len + 1),
+        ByteValue::String(bytes) => len
+            .checked_add(bytes.len())
+            .ok_or_else(|| AsmError::new("DB data is too long")),
+    })
+}
+
+fn emit_byte_values(
+    values: &[ByteValue],
+    pc: u16,
+    symbols: &BTreeMap<String, u16>,
+) -> Result<Vec<u8>, AsmError> {
+    let mut out = Vec::new();
+    for value in values {
+        match value {
+            ByteValue::Expr(expr) => out.push(eval_byte(expr, pc, symbols, false, 0)?),
+            ByteValue::String(bytes) => out.extend_from_slice(bytes),
+        }
+    }
+    Ok(out)
+}
+
+fn render_instruction(
+    source: &str,
+    pc: u16,
+    symbols: &BTreeMap<String, u16>,
+    allow_undefined: bool,
+) -> Result<String, AsmError> {
+    let (mnemonic, rest) = split_statement_head(source);
+    let operands = split_operands(rest)?;
+    if operands.is_empty() {
+        return Ok(mnemonic.to_string());
+    }
+
+    let mnemonic_upper = mnemonic.to_ascii_uppercase();
+    let unknown_value = if mnemonic_upper == "JR" || mnemonic_upper == "DJNZ" {
+        pc.wrapping_add(2)
+    } else {
+        0
+    };
+
+    let rendered: Vec<_> = operands
+        .iter()
+        .map(|operand| render_operand(operand, pc, symbols, allow_undefined, unknown_value))
+        .collect::<Result<_, _>>()?;
+    Ok(format!("{} {}", mnemonic, rendered.join(",")))
+}
+
+fn render_operand(
+    operand: &str,
+    pc: u16,
+    symbols: &BTreeMap<String, u16>,
+    allow_undefined: bool,
+    unknown_value: u16,
+) -> Result<String, AsmError> {
+    let operand = normalize(operand);
+    if is_fixed_operand(&operand) {
+        return Ok(operand);
+    }
+
+    if operand.starts_with('(') && operand.ends_with(')') {
+        let inner = &operand[1..operand.len() - 1];
+        if let Some(rendered) = render_indexed_operand(inner, pc, symbols, allow_undefined)? {
+            return Ok(format!("({rendered})"));
+        }
+        if is_fixed_operand(inner) {
+            return Ok(operand);
+        }
+        let value = eval_word(inner, pc, symbols, allow_undefined, unknown_value)?;
+        return Ok(format!("({:04X}H)", value));
+    }
+
+    let value = eval_expr(&operand, pc, symbols, allow_undefined, unknown_value)?;
+    if value < 0 {
+        Ok(value.to_string())
+    } else {
+        Ok(format!("{:X}H", value))
+    }
+}
+
+fn is_fixed_operand(operand: &str) -> bool {
+    matches!(
+        operand,
+        "A" | "B"
+            | "C"
+            | "D"
+            | "E"
+            | "H"
+            | "L"
+            | "F"
+            | "I"
+            | "R"
+            | "AF"
+            | "AF'"
+            | "BC"
+            | "DE"
+            | "HL"
+            | "SP"
+            | "IX"
+            | "IY"
+            | "NZ"
+            | "Z"
+            | "NC"
+            | "PO"
+            | "PE"
+            | "P"
+            | "M"
+            | "0"
+            | "(HL)"
+            | "(BC)"
+            | "(DE)"
+            | "(SP)"
+            | "(C)"
+            | "(IX)"
+            | "(IY)"
+    )
+}
+
+fn render_indexed_operand(
+    inner: &str,
+    pc: u16,
+    symbols: &BTreeMap<String, u16>,
+    allow_undefined: bool,
+) -> Result<Option<String>, AsmError> {
+    let (index, rest) = if let Some(rest) = inner.strip_prefix("IX") {
+        ("IX", rest)
+    } else if let Some(rest) = inner.strip_prefix("IY") {
+        ("IY", rest)
+    } else {
+        return Ok(None);
+    };
+
+    if rest.is_empty() {
+        return Ok(Some(index.to_string()));
+    }
+    let value = eval_expr(rest, pc, symbols, allow_undefined, 0)?;
+    i8::try_from(value).map_err(|_| {
+        AsmError::new(format!(
+            "index displacement '{}' is outside -128..127",
+            rest
+        ))
+    })?;
+    if value < 0 {
+        Ok(Some(format!("{index}{value}")))
+    } else {
+        Ok(Some(format!("{index}+{value}")))
+    }
+}
+
+fn emit_segment(segments: &mut Vec<AssembledSegment>, addr: u16, bytes: &[u8]) {
+    if let Some(last) = segments.last_mut() {
+        if last.addr.wrapping_add(last.bytes.len() as u16) == addr {
+            last.bytes.extend_from_slice(bytes);
+            return;
+        }
+    }
+    segments.push(AssembledSegment {
+        addr,
+        bytes: bytes.to_vec(),
+    });
+}
+
+fn insert_symbol(
+    symbols: &mut BTreeMap<String, u16>,
+    label: &str,
+    value: u16,
+    line_no: usize,
+) -> Result<(), AsmError> {
+    if symbols.insert(label.to_string(), value).is_some() {
+        return Err(AsmError::new(format!(
+            "line {}: duplicate label '{}'",
+            line_no, label
+        )));
+    }
+    Ok(())
+}
+
+fn line_error(line_no: usize, err: AsmError) -> AsmError {
+    AsmError::new(format!("line {}: {}", line_no, err))
+}
+
 fn split_operands(source: &str) -> Result<Vec<String>, AsmError> {
     if source.is_empty() {
         return Ok(Vec::new());
     }
 
     let mut depth = 0u8;
+    let mut quote = None;
+    let mut escape = false;
     let mut start = 0usize;
     let mut operands = Vec::new();
     for (index, ch) in source.char_indices() {
+        if escape {
+            escape = false;
+            continue;
+        }
+        if quote.is_some() && ch == '\\' {
+            escape = true;
+            continue;
+        }
+        if let Some(quote_ch) = quote {
+            if ch == quote_ch {
+                quote = None;
+            }
+            continue;
+        }
         match ch {
+            '"' => quote = Some(ch),
+            '\'' if source[start..index].trim().is_empty() => quote = Some(ch),
             '(' => depth = depth.saturating_add(1),
             ')' => {
                 if depth == 0 {
@@ -113,6 +753,9 @@ fn split_operands(source: &str) -> Result<Vec<String>, AsmError> {
     }
     if depth != 0 {
         return Err(AsmError::new("unmatched '('"));
+    }
+    if quote.is_some() {
+        return Err(AsmError::new("unterminated string literal"));
     }
 
     let operand = source[start..].trim();
@@ -669,6 +1312,132 @@ fn number(value: &str) -> Result<i32, AsmError> {
     i32::from_str_radix(digits, radix)
         .map(|number| sign * number)
         .map_err(|_| AsmError::new(format!("invalid number '{}'", value)))
+}
+
+fn eval_byte(
+    value: &str,
+    pc: u16,
+    symbols: &BTreeMap<String, u16>,
+    allow_undefined: bool,
+    unknown_value: u16,
+) -> Result<u8, AsmError> {
+    let value_number = eval_expr(value, pc, symbols, allow_undefined, unknown_value)?;
+    u8::try_from(value_number)
+        .map_err(|_| AsmError::new(format!("byte '{}' is outside 0..255", value)))
+}
+
+fn eval_word(
+    value: &str,
+    pc: u16,
+    symbols: &BTreeMap<String, u16>,
+    allow_undefined: bool,
+    unknown_value: u16,
+) -> Result<u16, AsmError> {
+    let value_number = eval_expr(value, pc, symbols, allow_undefined, unknown_value)?;
+    u16::try_from(value_number)
+        .map_err(|_| AsmError::new(format!("word '{}' is outside 0..65535", value)))
+}
+
+fn eval_nonnegative(
+    value: &str,
+    pc: u16,
+    symbols: &BTreeMap<String, u16>,
+    allow_undefined: bool,
+    unknown_value: u16,
+) -> Result<usize, AsmError> {
+    let value_number = eval_expr(value, pc, symbols, allow_undefined, unknown_value)?;
+    usize::try_from(value_number)
+        .map_err(|_| AsmError::new(format!("count '{}' must be non-negative", value)))
+}
+
+fn eval_expr(
+    value: &str,
+    pc: u16,
+    symbols: &BTreeMap<String, u16>,
+    allow_undefined: bool,
+    unknown_value: u16,
+) -> Result<i32, AsmError> {
+    let value = normalize(value);
+    if value.is_empty() {
+        return Err(AsmError::new("empty expression"));
+    }
+
+    let bytes = value.as_bytes();
+    let mut index = 0usize;
+    let mut total = 0i32;
+    let mut expect_term = true;
+    let mut sign = 1i32;
+
+    while index < bytes.len() {
+        match bytes[index] as char {
+            '+' if expect_term => {
+                sign = 1;
+                index += 1;
+            }
+            '-' if expect_term => {
+                sign = -1;
+                index += 1;
+            }
+            '+' | '-' => {
+                sign = if bytes[index] as char == '-' { -1 } else { 1 };
+                expect_term = true;
+                index += 1;
+            }
+            _ => {
+                let start = index;
+                while index < bytes.len() {
+                    let ch = bytes[index] as char;
+                    if ch == '+' || ch == '-' {
+                        break;
+                    }
+                    index += 1;
+                }
+                let term = &value[start..index];
+                if term.is_empty() {
+                    return Err(AsmError::new(format!("invalid expression '{}'", value)));
+                }
+                total += sign * eval_term(term, pc, symbols, allow_undefined, unknown_value)?;
+                expect_term = false;
+                sign = 1;
+            }
+        }
+    }
+
+    if expect_term {
+        return Err(AsmError::new(format!("invalid expression '{}'", value)));
+    }
+    Ok(total)
+}
+
+fn eval_term(
+    term: &str,
+    pc: u16,
+    symbols: &BTreeMap<String, u16>,
+    allow_undefined: bool,
+    unknown_value: u16,
+) -> Result<i32, AsmError> {
+    if term == "$" {
+        return Ok(pc as i32);
+    }
+    if let Ok(value) = number(term) {
+        return Ok(value);
+    }
+    if let Some(value) = symbols.get(term) {
+        return Ok(*value as i32);
+    }
+    if allow_undefined && is_label_like(term) {
+        return Ok(unknown_value as i32);
+    }
+    Err(AsmError::new(format!("unknown symbol '{}'", term)))
+}
+
+fn is_label_like(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first.is_ascii_alphabetic() || first == '_' || first == '.')
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.')
 }
 
 fn byte(value: &str) -> Result<u8, AsmError> {

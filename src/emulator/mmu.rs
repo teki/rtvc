@@ -473,6 +473,29 @@ impl TvcMmu {
         let end = (addr + len).min(bank_data.len());
         Some(bank_data[addr..end].to_vec())
     }
+
+    pub fn write_raw_bank(&mut self, bank: &str, addr: usize, bytes: &[u8]) -> Option<usize> {
+        let bank_data: &mut [u8] = match bank.to_lowercase().as_str() {
+            "u0" => &mut self.u0,
+            "u1" => &mut self.u1,
+            "u2" => &mut self.u2,
+            "u3" => &mut self.u3,
+            "vid0" => &mut self.vid0,
+            "vid1" => self.vid1.as_mut()?,
+            "vid2" => self.vid2.as_mut()?,
+            "vid3" => self.vid3.as_mut()?,
+            "sys" | "cart" | "exth" => return None,
+            _ => return None,
+        };
+
+        if addr >= bank_data.len() {
+            return Some(0);
+        }
+        let end = (addr + bytes.len()).min(bank_data.len());
+        let len = end - addr;
+        bank_data[addr..end].copy_from_slice(&bytes[..len]);
+        Some(len)
+    }
 }
 
 impl TvcMmu {

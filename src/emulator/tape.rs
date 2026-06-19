@@ -47,8 +47,9 @@ impl TapeInterface {
         self.motor_on = (val & 0xC0) != 0;
     }
 
-    pub(crate) fn toggle_output(&mut self) {
+    pub(crate) fn toggle_output(&mut self) -> bool {
         self.output_flip_flop = !self.output_flip_flop;
+        self.output_flip_flop
     }
 
     pub(crate) fn play(&mut self, generator: TapeBitstreamGenerator) {

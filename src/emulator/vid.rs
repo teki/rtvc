@@ -212,6 +212,11 @@ impl Vid {
         self.reg_idx
     }
 
+    /// Return the raw stored value for a CRTC register, including write-only registers.
+    pub fn raw_reg(&self, idx: u8) -> Option<u8> {
+        self.reg.get(idx as usize).copied()
+    }
+
     /// Write to the selected CRTC data register.
     pub fn set_reg(&mut self, val: u8) {
         let idx = self.reg_idx as usize;
