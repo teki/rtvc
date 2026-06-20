@@ -34,6 +34,7 @@ winres = "0.1"
 [features]
 default = ["native"]
 native = ["dep:cpal", "dep:egui", "dep:eframe", "dep:egui_dock", "dep:png", "dep:image", "dep:rfd", "dep:ureq", "dep:zip", "dep:serde", "dep:serde_json"]
+cli-tools = ["dep:serde_json"]
 wasm = ["dep:wasm-bindgen"]
 wasm-full = ["dep:wasm-bindgen", "dep:egui", "dep:eframe", "dep:egui_dock", "dep:png", "dep:image", "dep:rfd", "dep:zip", "dep:serde", "dep:serde_json", "dep:web-sys", "dep:js-sys", "dep:wasm-bindgen-futures", "dep:web-time"]
 web-vid-simple = []
@@ -57,7 +58,7 @@ name = "perf_test"
 path = "src/bin/perf_test.rs"
 
 [[bin]]
-name = "cas2wav"
+name = "rtvc-cas2wav"
 path = "src/bin/cas2wav.rs"
 
 [[bin]]
@@ -81,4 +82,4 @@ path = "src/bin/rtvc_dsk.rs"
 lto = true
 codegen-units = 1
 panic = "abort"
-strip = true
+strip = "symbols"

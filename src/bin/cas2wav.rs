@@ -13,15 +13,23 @@ const NEG_PEAK: u8 = 0x08;
 
 fn main() {
     if let Err(err) = run() {
-        eprintln!("cas2wav: {err}");
+        eprintln!("rtvc-cas2wav: {err}");
         std::process::exit(1);
     }
 }
 
 fn run() -> Result<(), String> {
     let args = env::args().collect::<Vec<_>>();
+    if args[1..]
+        .iter()
+        .any(|arg| arg.as_str() == "-h" || arg.as_str() == "--help")
+    {
+        let program = args.first().map(String::as_str).unwrap_or("rtvc-cas2wav");
+        println!("usage: {program} <input.cas> <output.wav> [tape-name]");
+        return Ok(());
+    }
     if args.len() != 3 && args.len() != 4 {
-        let program = args.first().map(String::as_str).unwrap_or("cas2wav");
+        let program = args.first().map(String::as_str).unwrap_or("rtvc-cas2wav");
         return Err(format!(
             "usage: {program} <input.cas> <output.wav> [tape-name]"
         ));

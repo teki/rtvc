@@ -65,6 +65,7 @@ validation independent from machine emulation.
 | Target | Features | Notes |
 | --- | --- | --- |
 | Native desktop | default `native` | egui/eframe, cpal audio, filesystem media, zip support, TCP debugger |
+| Native CLI tools | `cli-tools` without default features | disk, assembler, disassembler, and CAS-to-WAV utilities without desktop UI/audio dependencies |
 | Native headless | default `native`, `--headless` CLI | machine loop and TCP debugger without GUI |
 | Integrated Zx82 | default `native` and `wasm-full` | Spectrum 48K state loading through the shared application and debugger |
 | Standalone Zx82 | default `native`, `cargo run --bin zx82` | focused Spectrum core runner |
@@ -203,7 +204,7 @@ Mounted CAS files are converted to pulse intervals in CPU cycles. Tape position
 advances only while playback is active and a motor bit is set. Port `0x59`
 samples the current interval level.
 
-`cargo run --bin cas2wav -- input.cas output.wav [tape-name]` writes compatible
+`cargo run --bin rtvc-cas2wav -- input.cas output.wav [tape-name]` writes compatible
 unsigned 8-bit mono 44.1 kHz WAV output.
 
 ### Direct cassette injection

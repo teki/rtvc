@@ -25,22 +25,33 @@ jobs:
       - name: Install wasm-bindgen
         run: cargo install wasm-bindgen-cli --version 0.2.122
 
-      - name: Build
+      - name: Build emulator
         run: cargo build --release --bin rtvc
 
+      - name: Build command-line tools
+        run: cargo build --release --no-default-features --features cli-tools --bin rtvc-dsk --bin rtvc-asm --bin rtvc-disasm --bin rtvc-cas2wav
+
       - name: Build web app
-        run: cargo xtask bundle-web-full package/web
+        run: cargo xtask bundle-web-full package/rtvc-windows-x64/web
 
       - name: Package
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Path package -Force
-          Copy-Item target/release/rtvc.exe package/
-          Copy-Item README.md package/
-          Copy-Item LICENSE package/
-          Copy-Item roms package/roms -Recurse
-          Copy-Item progs package/progs -Recurse
-          Compress-Archive -Path package/* -DestinationPath rtvc-windows-x64.zip
+          $PackageDir = "package/rtvc-windows-x64"
+          New-Item -ItemType Directory -Path $PackageDir -Force
+          Copy-Item target/release/rtvc.exe $PackageDir/
+          Copy-Item target/release/rtvc-dsk.exe $PackageDir/
+          Copy-Item target/release/rtvc-asm.exe $PackageDir/
+          Copy-Item target/release/rtvc-disasm.exe $PackageDir/
+          Copy-Item target/release/rtvc-cas2wav.exe $PackageDir/
+          Copy-Item README.md $PackageDir/
+          Copy-Item README.hu.md $PackageDir/
+          Copy-Item LICENSE $PackageDir/
+          Copy-Item info $PackageDir -Recurse
+          Copy-Item info.hu $PackageDir -Recurse
+          Copy-Item roms "$PackageDir/roms" -Recurse
+          Copy-Item progs "$PackageDir/progs" -Recurse
+          Compress-Archive -Path $PackageDir -DestinationPath rtvc-windows-x64.zip
 
       - name: Upload package
         uses: actions/upload-artifact@v4
@@ -58,10 +69,12 @@ jobs:
           - arch: x64
             os: macos-15-intel
             target: x86_64-apple-darwin
+            folder: rtvc-macos-x64
             package: rtvc-macos-x64.zip
           - arch: arm64
             os: macos-15
             target: aarch64-apple-darwin
+            folder: rtvc-macos-arm64
             package: rtvc-macos-arm64.zip
 
     steps:
@@ -74,22 +87,25 @@ jobs:
       - name: Install wasm-bindgen
         run: cargo install wasm-bindgen-cli --version 0.2.122
 
-      - name: Build
+      - name: Build emulator
         run: cargo build --release --bin rtvc --target ${{ matrix.target }}
 
+      - name: Build command-line tools
+        run: cargo build --release --no-default-features --features cli-tools --target ${{ matrix.target }} --bin rtvc-dsk --bin rtvc-asm --bin rtvc-disasm --bin rtvc-cas2wav
+
       - name: Build web app
-        run: cargo xtask bundle-web-full package/web
+        run: cargo xtask bundle-web-full package/${{ matrix.folder }}/web
 
       - name: Package
         run: |
           scripts/package-macos-app.sh \
             ${{ matrix.target }} \
             target/${{ matrix.target }}/release/rtvc \
-            package
+            package/${{ matrix.folder }}
 
       - name: Zip package
         run: |
-          (cd package && zip -r --symlinks ../${{ matrix.package }} RTVC.app README.md LICENSE)
+          (cd package && zip -r --symlinks ../${{ matrix.package }} ${{ matrix.folder }})
 
       - name: Upload package
         uses: actions/upload-artifact@v4

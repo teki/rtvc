@@ -60,6 +60,7 @@ validációt függetleníti a gépemulációtól.
 | Cél | Funkciók | Megjegyzések |
 | --- | --- | --- |
 | Natív asztali | alapértelmezett `native` | egui/eframe, cpal hang, fájlrendszer média, zip támogatás, TCP hibakereső |
+| Natív parancssori segédprogramok | `cli-tools` alapértelmezett funkciók nélkül | lemez-, assembler-, disassembler- és CAS–WAV segédprogramok asztali UI- és hangfüggőségek nélkül |
 | Natív fej nélküli | alapértelmezett `native`, `--headless` CLI | gép ciklus és TCP hibakereső GUI nélkül |
 | Integrált Zx82 | alapértelmezett `native` és `wasm-full` | Spectrum 48K állapot betöltés a közös alkalmazáson és hibakeresőn keresztül |
 | Önálló Zx82 | alapértelmezett `native`, `cargo run --bin zx82` | fókuszált Spectrum mag futtató |
@@ -198,7 +199,7 @@ A csatlakoztatott CAS fájlok CPU ciklusokban mért impulzus-intervallumokká ko
 csak akkor halad előre, ha a lejátszás aktív és a motor bit be van állítva. A `0x59` port
 az aktuális intervallum szintet mintavételezi.
 
-A `cargo run --bin cas2wav -- input.cas output.wav [tape-name]` kompatibilis
+A `cargo run --bin rtvc-cas2wav -- input.cas output.wav [tape-name]` kompatibilis
 előjel nélküli 8 bites mono 44,1 kHz-es WAV kimenetet ír.
 
 ### Közvetlen kazetta befecskendezés

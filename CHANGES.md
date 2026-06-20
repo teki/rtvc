@@ -4,6 +4,10 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+- Expanded Windows and macOS releases into containing directories with disk,
+  assembler, disassembler, and CAS-to-WAV command-line tools plus English and
+  Hungarian documentation.
+
 ## v0.8.0 - 2026-06-13
 
 - Added a simple built-in Z80 assembler.

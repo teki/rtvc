@@ -53,17 +53,38 @@ Csomagold ki az archívumot, majd indítsd el:
 - macOS alatt az `RTVC.app` alkalmazást
 
 A release csomagok tartalmazzák az emulátort, a ROM-fájlokat, mellékelt
-programokat és a teljes böngészős verziót a `web/` könyvtárban.
+programokat, a teljes angol és magyar dokumentációt az `info/` és `info.hu/`
+könyvtárban, valamint a teljes böngészős verziót a `web/` könyvtárban.
+
+### Parancssori segédprogramok
+
+A Windows- és macOS-csomag az alábbi kis segédprogramokat is tartalmazza. Windows
+alatt `.exe` utótaggal a csomag gyökerében, macOS alatt a `bin/` könyvtárban
+találhatók. A teljes opciólistát az adott program `--help` kapcsolójával lehet
+megjeleníteni:
+
+| Program | Feladat | Példa |
+| --- | --- | --- |
+| `rtvc-dsk` | TVC FAT12 lemezképek létrehozása, vizsgálata és módosítása. | `rtvc-dsk dir lemez.dsk` |
+| `rtvc-asm` | Kis Z80 források fordítása TOML, CAS vagy nyers bináris formátumba. | `rtvc-asm --format cas demo.asm -o demo.cas` |
+| `rtvc-disasm` | Bináris vagy ROM-adatok visszafordítása újra lefordítható assembly forrássá. | `rtvc-disasm --origin C000H rom.bin -o rom.asm` |
+| `rtvc-cas2wav` | TVC CAS kazettakép átalakítása 44,1 kHz-es WAV fájllá. | `rtvc-cas2wav bemenet.cas kimenet.wav` |
+
+Az assembler és disassembler szintaxisát és kimeneti formátumait az
+[assembler referencia](info.hu/assembler.md) ismerteti.
 
 ### Első indítás macOS-en
 
 A macOS alkalmazás ad hoc aláírást kap, nincs notarizálva. Ha a macOS blokkolja
 letöltés után, töröld a böngésző által hozzáadott karantén jelölést a
-kicsomagolt alkalmazásról:
+kicsomagolt könyvtárról:
 
 ```bash
-xattr -dr com.apple.quarantine RTVC.app
+xattr -dr com.apple.quarantine rtvc-macos-arm64
 ```
+
+Intel build esetén az `rtvc-macos-x64` könyvtárnevet használd. A parancs így a
+parancssori segédprogramokról is eltávolítja a karanténjelölést.
 
 A kiadási archívum terminálból is letölthető, ami általában elkerüli a
 böngészős karantén jelölést:
@@ -196,6 +217,7 @@ A teljes fejlesztési munkafolyamathoz lásd:
 
 ## Dokumentáció
 
+- [rtvc assembler referencia](info.hu/assembler.md)
 - [Az rtvc implementációja és használata (angol)](info/rtvc.md)
 - [Részletes TVC hardverreferencia (angol)](info/tvc.md)
 - [TVC BASIC referencia (magyar)](info.hu/basic.md)

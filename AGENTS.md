@@ -9,7 +9,8 @@ Refer to the following resources for detailed documentation on the system:
 - [TVC Technical Reference](info/tvc.md) — Detailed, implementation-neutral TVC hardware reference for emulator authors: timing, memory, I/O, interrupts, video, keyboard, sound, cassette, and expansion devices.
 - [Zx82 Technical Reference](info/zx82.md) — Scoped ZX Spectrum 48K hardware reference and minimum agent-friendly emulation model, including limited instant-load options.
 - [rtvc Implementation and Usage Reference](info/rtvc.md) — Rust architecture, emulation choices, media handling, snapshots, debugger, UI, persistence, and build targets.
-- [rtvc Assembler Reference](info/assembler.md) — Built-in Z80 helper assembler syntax, `rtvc-asm` JSON output, and debugger loading workflow.
+- [rtvc Assembler Reference](info/assembler.md) — Built-in Z80 helper assembler syntax, `rtvc-asm` TOML output, and debugger loading workflow.
+- [Hungarian rtvc Assembler Reference](info.hu/assembler.md) — Hungarian-language reference for the helper assembler, disassembler, output formats, and debugger workflow.
 - [rtvc Developer Notes](info/developer.md) — Practical repo-specific findings, experimental workflows, debugger tricks, and development sharp edges that should be preserved but do not belong in hardware references.
 - [User README](README.md) — User-facing run, snapshot, and web bundle commands.
 - [Release Notes](CHANGES.md) — Concise release notes starting with the next release; older releases are intentionally not backfilled.

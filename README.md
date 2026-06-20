@@ -45,6 +45,8 @@ More historical background is available on the
   the TVC floppy disk subsystem: setup, BASIC usage, and CLI commands.
 - [rtvc Implementation and Usage Reference](info/rtvc.md) — emulator
   architecture, media, snapshots, debugger, UI, and build targets.
+- [rtvc Assembler Reference](info/assembler.md) — helper assembler and
+  disassembler syntax, formats, and debugger workflow.
 
 ## Download
 
@@ -62,17 +64,37 @@ Extract the archive and run:
 - `rtvc.exe` on Windows
 - `RTVC.app` on macOS
 
-The release packages include the emulator, ROM files, bundled programs, and a
-full browser version in `web/`.
+The release packages include the emulator, ROM files, bundled programs, the
+complete English and Hungarian documentation trees under `info/` and
+`info.hu/`, and a full browser version in `web/`.
+
+### Command-line tools
+
+The Windows and macOS packages also include these small utilities. They are in
+the package root with an `.exe` suffix on Windows and under `bin/` on macOS;
+run any tool with `--help` for its complete options:
+
+| Tool | Purpose | Example |
+| --- | --- | --- |
+| `rtvc-dsk` | Create, inspect, and modify TVC FAT12 disk images. | `rtvc-dsk dir disk.dsk` |
+| `rtvc-asm` | Assemble small Z80 sources to TOML, CAS, or raw binary. | `rtvc-asm --format cas demo.asm -o demo.cas` |
+| `rtvc-disasm` | Convert binary or ROM bytes to round-trippable assembler source. | `rtvc-disasm --origin C000H rom.bin -o rom.asm` |
+| `rtvc-cas2wav` | Convert a TVC CAS cassette image to a 44.1 kHz WAV file. | `rtvc-cas2wav input.cas output.wav` |
+
+See the [assembler reference](info/assembler.md) for the assembler and
+disassembler syntax and output formats.
 
 ### macOS First Launch
 
 The macOS app is ad hoc signed, not notarized. If macOS blocks it after
-download, remove the browser quarantine flag from the extracted app:
+download, remove the browser quarantine flag from the extracted directory:
 
 ```bash
-xattr -dr com.apple.quarantine RTVC.app
+xattr -dr com.apple.quarantine rtvc-macos-arm64
 ```
+
+Use `rtvc-macos-x64` instead when you downloaded the Intel build. Applying the
+command to the containing directory also covers the command-line tools.
 
 You can also download the archive from Terminal, which usually avoids the
 browser quarantine flag:

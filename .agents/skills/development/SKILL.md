@@ -175,11 +175,11 @@ This skill provides step-by-step instructions and references for compiling, exec
   git push origin v0.1.0
   ```
   - The release workflow builds `rtvc.exe` on `windows-latest`, a macOS x64 binary on `macos-15-intel`, and a macOS Apple Silicon binary on `macos-15`.
-  - Release builds use LTO, one codegen unit, stripped symbols, and `panic = "abort"` to keep binaries smaller.
+  - Release builds use LTO, one codegen unit, stripped symbols, and `panic = "abort"` to keep binaries smaller. Windows and macOS command-line tools are built separately with `--no-default-features --features cli-tools` so they do not include the native UI/audio dependency set.
   - It uploads `rtvc-windows-x64.zip`, `rtvc-macos-x64.zip`, and `rtvc-macos-arm64.zip`.
   - The GitHub release body is extracted from the matching `## v<version>` section in `CHANGES.md`.
-  - The Windows archive contains the native binary, `README.md`, `LICENSE`, `roms/`, `progs/`, and `web/`.
-  - The macOS archives contain an ad hoc signed `RTVC.app` bundle, `README.md`, and `LICENSE`. The release workflow does not use paid Developer ID signing or notarization, so users may need to remove the browser quarantine flag with `xattr -dr com.apple.quarantine RTVC.app` before first launch.
+  - The Windows archive expands to an `rtvc-windows-x64/` directory containing `rtvc.exe`, `rtvc-dsk.exe`, `rtvc-asm.exe`, `rtvc-disasm.exe`, `rtvc-cas2wav.exe`, English and Hungarian READMEs and complete `info/` documentation trees, `LICENSE`, `roms/`, `progs/`, and `web/`.
+  - Each macOS archive expands to an architecture-named directory containing the ad hoc signed `RTVC.app`, individually ad hoc signed command-line tools under `bin/`, English and Hungarian READMEs and complete `info/` documentation trees, and `LICENSE`. The release workflow does not use paid Developer ID signing or notarization, so users may need to remove the browser quarantine flag from the extracted directory with `xattr -dr com.apple.quarantine rtvc-macos-<arch>` before first use.
   - Native windows use `assets/rtvc-app-icon.png`; Windows release executables embed `assets/rtvc-app-icon.ico`, and macOS app bundles include `assets/rtvc-app-icon.icns`.
   - The app bundle includes `roms/`, `progs/`, and `web/` beside `Contents/MacOS/rtvc` so Finder launches can find runtime assets.
   - The native app searches `roms/` and `progs/` in the current working directory first, then beside the executable for extracted release archives and app bundles.
@@ -187,7 +187,7 @@ This skill provides step-by-step instructions and references for compiling, exec
 
 - **Convert a TVC CAS cassette image to WAV:**
   ```bash
-  cargo run --bin cas2wav -- progs/TVBALL.CAS /tmp/TVBALL.WAV
+  cargo run --bin rtvc-cas2wav -- progs/TVBALL.CAS /tmp/TVBALL.WAV
   ```
   - Writes unsigned 8-bit mono PCM at 44.1 kHz.
   - The optional third argument overrides the filename stored in the generated tape header.
