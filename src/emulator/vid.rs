@@ -283,6 +283,25 @@ impl Vid {
         self.curenabled
     }
 
+    /// Return the 14-bit CRTC display start address.
+    pub fn display_start_address(&self) -> u16 {
+        self.smem & 0x3FFF
+    }
+
+    /// Return the CRTC cursor address and its zero-based raster line in the active screen.
+    pub fn cursor_interrupt_setup(&self) -> (u16, Option<u16>) {
+        let start_address = self.display_start_address();
+        let relative_address = self.curaddr.wrapping_sub(start_address) & 0x3FFF;
+        let displayed_addresses = self.hd as u16 * self.vd as u16;
+        let raster_line =
+            (self.hd != 0 && relative_address < displayed_addresses && self.curstart <= self.slr)
+                .then(|| {
+                    let character_row = relative_address / self.hd as u16;
+                    character_row * (self.slr as u16 + 1) + self.curstart as u16
+                });
+        (self.curaddr, raster_line)
+    }
+
     /// Set video mode (port 0x06 bits 0-1)
     pub fn set_mode(&mut self, mode: u8) {
         self.mode = mode & 0x03;

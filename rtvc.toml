@@ -3,10 +3,11 @@ video_model = "interleaved"
 fast_boot = true
 
 [tape]
-loaded = false
-recent = ["rtvc-media/tapes/unicum/UNICUM.CAS", "rtvc-media/tapes/atomix/ATOMIX.CAS", "rtvc-media/tapes/tisztalappal/TISZTALA.CAS"]
+selected = "data/porting/test.cas"
+loaded = true
+recent = ["data/porting/test.cas", "rtvc-media/tapes/unicum/UNICUM.CAS", "rtvc-media/tapes/atomix/ATOMIX.CAS", "rtvc-media/tapes/tisztalappal/TISZTALA.CAS"]
 
 [disk]
-selected = "progs/kisertetkastelyv3.zip"
+selected = "progs/szankoev.zip"
 loaded = true
-recent = ["progs/kisertetkastelyv3.zip", "rtvc-media/disks/boulderdash/boulderdash.dsk"]
+recent = ["progs/szankoev.zip", "progs/mralex.dsk", "rtvc-media/disks/boulderdash/boulderdash.dsk", "progs/kisertetkastelyv3.zip"]

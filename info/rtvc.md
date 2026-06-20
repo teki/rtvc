@@ -354,6 +354,9 @@ The dock debugger acts on the active `Machine` through `Emu` and is available
 in native and full web. Both TVC and Zx82 provide run/pause/reset, instruction
 stepping, bounded run-to-IRQ, mapped memory, disassembly, and breakpoints. Raw
 banks, ROM symbols, trace landmarks, and IO logs remain TVC-specific.
+The TVC CPU pane shows the configured CRTC display start address, video-interrupt
+cursor address, and its zero-based active-screen raster line together as
+`VID START AAAA  IRQ AAAA/R`.
 
 ### TCP debugger
 

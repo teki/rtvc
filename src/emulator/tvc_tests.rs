@@ -430,6 +430,31 @@ fn crtc_writes_log_selected_register_and_decoded_effect() {
 }
 
 #[test]
+fn video_setup_reports_start_address_and_irq_raster_line() {
+    let mut bus = TvcBus::new(false);
+
+    bus.vid.set_reg_idx(12);
+    bus.vid.set_reg(0x40);
+    bus.vid.set_reg_idx(13);
+    bus.vid.set_reg(0x00);
+    bus.vid.set_reg_idx(1);
+    bus.vid.set_reg(64);
+    bus.vid.set_reg_idx(6);
+    bus.vid.set_reg(60);
+    bus.vid.set_reg_idx(9);
+    bus.vid.set_reg(3);
+    bus.vid.set_reg_idx(14);
+    bus.vid.set_reg(0x0A);
+    bus.vid.set_reg_idx(15);
+    bus.vid.set_reg(0xFF);
+    bus.vid.set_reg_idx(10);
+    bus.vid.set_reg(3);
+
+    assert_eq!(bus.vid.display_start_address(), 0x0000);
+    assert_eq!(bus.vid.cursor_interrupt_setup(), (0x0AFF, Some(175)));
+}
+
+#[test]
 fn crtc_ports_are_mirrored_across_0x70_to_0x7f() {
     let mut bus = TvcBus::new(true);
 

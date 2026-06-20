@@ -230,6 +230,15 @@ impl DebuggerUi {
                 state.iff2,
                 u8::from(state.halted != 0)
             ));
+            if let Some(tvc) = emu.tvc() {
+                let start_address = tvc.bus.vid.display_start_address();
+                let (address, raster_line) = tvc.bus.vid.cursor_interrupt_setup();
+                let raster_line =
+                    raster_line.map_or_else(|| "?".to_string(), |line| line.to_string());
+                ui.monospace(format!(
+                    "VID START {start_address:04X}  IRQ {address:04X}/{raster_line}"
+                ));
+            }
             let mapping = emu
                 .mapping_summary()
                 .unwrap_or_else(|| "fixed 16K ROM + 48K RAM".to_string());
