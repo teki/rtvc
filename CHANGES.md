@@ -4,6 +4,14 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+## v0.8.5 - 2026-06-20
+
+- Added ZX Spectrum 48K emulation through the new `zx82` frontend.
+- Added writable and formattable disk-image support.
+- Added developer-mode and debugger UI improvements, expanded diagnostics, and
+  ROM-aware disassembly tooling.
+- Moved snapshots into the application data directory and improved ROM lookup.
+- Expanded the TVC, BASIC, VT-DOS, and developer documentation.
 - Expanded Windows and macOS releases into containing directories with disk,
   assembler, disassembler, and CAS-to-WAV command-line tools plus English and
   Hungarian documentation.
