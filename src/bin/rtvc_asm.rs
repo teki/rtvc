@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::io::{self, Read, Write};
@@ -14,6 +15,7 @@ struct Options {
     output: Option<PathBuf>,
     origin: u16,
     format: OutputFormat,
+    defines: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +50,7 @@ fn run() -> Result<(), String> {
     }
     let options = parse_args(program, &args[1..])?;
     let (source_name, source) = read_source(&options.input)?;
+    let source = apply_defines(&source, &options.defines)?;
     let assembled = assemble_program(&source, options.origin).map_err(|err| err.to_string())?;
 
     let output = render_output(&source_name, &options, &assembled)?;
@@ -59,6 +62,7 @@ fn parse_args(program: &str, args: &[String]) -> Result<Options, String> {
     let mut output = None;
     let mut origin = 0u16;
     let mut format = OutputFormat::Toml;
+    let mut defines = BTreeMap::new();
     let mut index = 0;
 
     while index < args.len() {
@@ -84,6 +88,16 @@ fn parse_args(program: &str, args: &[String]) -> Result<Options, String> {
                     .ok_or_else(|| "--format requires toml, cas, or bin".to_string())?;
                 format = parse_format(value)?;
             }
+            "-d" | "--define" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--define requires NAME=VALUE".to_string())?;
+                let (name, number) = parse_define(value)?;
+                if defines.insert(name.clone(), number).is_some() {
+                    return Err(format!("duplicate definition '{name}'"));
+                }
+            }
             value if value.starts_with("--origin=") => {
                 origin = parse_number(&value["--origin=".len()..])?;
             }
@@ -92,6 +106,12 @@ fn parse_args(program: &str, args: &[String]) -> Result<Options, String> {
             }
             value if value.starts_with("--output=") => {
                 output = Some(PathBuf::from(&value["--output=".len()..]));
+            }
+            value if value.starts_with("--define=") => {
+                let (name, number) = parse_define(&value["--define=".len()..])?;
+                if defines.insert(name.clone(), number).is_some() {
+                    return Err(format!("duplicate definition '{name}'"));
+                }
             }
             value if value.starts_with('-') && value != "-" => {
                 return Err(format!("unknown option '{value}'\n\n{}", usage(program)));
@@ -118,12 +138,13 @@ fn parse_args(program: &str, args: &[String]) -> Result<Options, String> {
         output,
         origin,
         format,
+        defines,
     })
 }
 
 fn usage(program: &str) -> String {
     format!(
-        "usage: {program} [--origin <addr>] [--format toml|cas|bin] [-o <output>] <input.asm>\n\
+        "usage: {program} [--origin <addr>] [--format toml|cas|bin] [-d NAME=VALUE] [-o <output>] <input.asm>\n\
          use '-' as input to read source from stdin; omit -o to write output to stdout"
     )
 }
@@ -320,6 +341,46 @@ fn parse_format(value: &str) -> Result<OutputFormat, String> {
     }
 }
 
+fn parse_define(value: &str) -> Result<(String, String), String> {
+    let (name, value) = value
+        .split_once('=')
+        .ok_or_else(|| format!("invalid definition '{value}' (expected NAME=VALUE)"))?;
+    let name = name.trim().to_ascii_uppercase();
+    let mut chars = name.chars();
+    let valid = chars
+        .next()
+        .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_' || ch == '.')
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.');
+    if !valid {
+        return Err(format!("invalid definition name '{name}'"));
+    }
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(format!("definition '{name}' has an empty value"));
+    }
+    Ok((name, value.to_string()))
+}
+
+fn apply_defines(source: &str, defines: &BTreeMap<String, String>) -> Result<String, String> {
+    let mut output = String::with_capacity(source.len());
+    let mut rest = source;
+    while let Some(start) = rest.find('%') {
+        output.push_str(&rest[..start]);
+        rest = &rest[start + 1..];
+        let end = rest
+            .find('%')
+            .ok_or_else(|| "unterminated definition placeholder '%'".to_string())?;
+        let name = rest[..end].to_ascii_uppercase();
+        let value = defines
+            .get(&name)
+            .ok_or_else(|| format!("missing definition for %{name}%"))?;
+        output.push_str(value);
+        rest = &rest[end + 1..];
+    }
+    output.push_str(rest);
+    Ok(output)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,6 +401,36 @@ mod tests {
         assert_eq!(options.format, OutputFormat::Bin);
         assert_eq!(options.output, Some(PathBuf::from("out.bin")));
         assert_eq!(options.input, Input::Path(PathBuf::from("helper.asm")));
+        assert!(options.defines.is_empty());
+    }
+
+    #[test]
+    fn parses_command_line_definitions() {
+        let args = vec![
+            "-d".to_string(),
+            "block_size=0748H".to_string(),
+            "--define=TARGET=5E28H".to_string(),
+            "input.asm".to_string(),
+        ];
+        let options = parse_args("rtvc-asm", &args).unwrap();
+        assert_eq!(options.defines["BLOCK_SIZE"], "0748H");
+        assert_eq!(options.defines["TARGET"], "5E28H");
+    }
+
+    #[test]
+    fn substitutes_definition_placeholders() {
+        let defines = BTreeMap::from([
+            ("SIZE".to_string(), "0748H".to_string()),
+            ("TARGET".to_string(), "7530H".to_string()),
+        ]);
+        assert_eq!(
+            apply_defines("LD BC,%size%\nLD DE,%TARGET%\n", &defines).unwrap(),
+            "LD BC,0748H\nLD DE,7530H\n"
+        );
+        assert_eq!(
+            apply_defines("LD BC,%MISSING%", &defines).unwrap_err(),
+            "missing definition for %MISSING%"
+        );
     }
 
     #[test]

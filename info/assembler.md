@@ -45,11 +45,27 @@ Options:
 | --- | --- |
 | `--origin <addr>` | Initial assembly address before source-level `ORG`; defaults to `0`. |
 | `--format <toml\|cas\|bin>` | Output format; defaults to `toml`. `cas` expects a single `BASIC_START` segment, and `bin` expects one contiguous segment. |
+| `-d <NAME=VALUE>`, `--define <NAME=VALUE>` | Replace every `%NAME%` placeholder before assembly. Repeat for multiple values; a missing placeholder value is an error. |
 | `-o <path>`, `--output <path>` | Write output to a file; omitted means stdout. |
 | `-`, as input path | Read source from stdin. |
 
 `<addr>` accepts decimal, `0x` hexadecimal, `$` hexadecimal, and `H`-suffixed
 hexadecimal forms.
+
+Build-generated values can be kept out of assembly sources with `%NAME%`
+placeholders:
+
+```asm
+        LD BC,%BLOCK_SIZE%
+```
+
+```bash
+rtvc-asm -d BLOCK_SIZE=0748H helper.asm -o helper.toml
+```
+
+Definitions are case-insensitive by name and substituted as text. Omitting
+`-d BLOCK_SIZE=...` in this example fails with `missing definition for
+%BLOCK_SIZE%`.
 
 ### Disassembler Command Line
 

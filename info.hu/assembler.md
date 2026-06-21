@@ -40,11 +40,26 @@ kimenet a szabványos kimenetre kerül.
 | --- | --- |
 | `--origin <cím>` | Kezdő fordítási cím a forrásbeli `ORG` előtt; alapértéke `0`. |
 | `--format <toml\|cas\|bin>` | Kimeneti formátum; alapértéke `toml`. A `cas` egyetlen `BASIC_START` szegmenst, a `bin` egy összefüggő szegmenst vár. |
+| `-d <NÉV=ÉRTÉK>`, `--define <NÉV=ÉRTÉK>` | Fordítás előtt lecseréli az összes `%NÉV%` helyőrzőt. Többször is megadható; a hiányzó érték hiba. |
 | `-o <útvonal>`, `--output <útvonal>` | Kimeneti fájl. |
 | `-` bemenetként | Olvasás a szabványos bemenetről. |
 
 A `<cím>` lehet decimális, `0x` vagy `$` előtagú, illetve `H` utótagú
 hexadecimális szám.
+
+A build során meghatározott értékek `%NÉV%` helyőrzőkkel tarthatók külön az
+assembly forrástól:
+
+```asm
+        LD BC,%BLOCK_SIZE%
+```
+
+```cmd
+rtvc-asm -d BLOCK_SIZE=0748H helper.asm -o helper.toml
+```
+
+A definíciók neve nem érzékeny a kis- és nagybetűkre, értékük szövegesen kerül
+behelyettesítésre. A fenti példában a `-d BLOCK_SIZE=...` elhagyása hibát ad.
 
 ### Parancssori disassembler
 

@@ -200,6 +200,7 @@ This skill provides step-by-step instructions and references for compiling, exec
   - Uses the built-in two-pass helper assembler from [src/emulator/asm.rs](../../../src/emulator/asm.rs).
   - Emits `rtvc-asm-v1` TOML with segments, symbols, source line metadata, and `next_addr`.
   - Pass `--format cas` for a runnable TVC CAS program assembled from a `BASIC_START` source, or `--format bin` for raw contiguous machine-code bytes.
+  - Pass repeatable `-d NAME=VALUE` options to replace `%NAME%` placeholders before assembly; unresolved placeholders are errors.
   - Use `-` as the input path to read source from stdin; omit `-o` to write TOML to stdout.
   - In [scripts/rtvc_debug.py](../../../scripts/rtvc_debug.py), use `loadasm helper.toml` to write TOML segments to mapped memory.
 
