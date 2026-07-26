@@ -27,6 +27,7 @@ js-sys = { version = "0.3", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 web-time = { version = "1.1", optional = true }
 fatfs = { version = "0.3.6", default-features = false, features = ["std", "alloc"] }
+sha2 = "0.10"
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
@@ -77,6 +78,10 @@ required-features = ["native"]
 [[bin]]
 name = "rtvc-dsk"
 path = "src/bin/rtvc_dsk.rs"
+
+[[bin]]
+name = "rtvc-tap2toml"
+path = "src/bin/rtvc_tap2toml.rs"
 
 [profile.release]
 lto = true

@@ -80,6 +80,7 @@ run any tool with `--help` for its complete options:
 | `rtvc-asm` | Assemble small Z80 sources to TOML, CAS, or raw binary. | `rtvc-asm --format cas demo.asm -o demo.cas` |
 | `rtvc-disasm` | Convert binary or ROM bytes to round-trippable assembler source. | `rtvc-disasm --origin C000H rom.bin -o rom.asm` |
 | `rtvc-cas2wav` | Convert a TVC CAS cassette image to a 44.1 kHz WAV file. | `rtvc-cas2wav input.cas output.wav` |
+| `rtvc-tap2toml` | Convert a ZX Spectrum TAP image to structured TOML for analysis and porting tools. | `rtvc-tap2toml game.tap -o game.toml` |
 
 See the [assembler reference](info/assembler.md) for the assembler and
 disassembler syntax and output formats.

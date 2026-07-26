@@ -14,6 +14,7 @@ implementation-neutral machine specification, see
 - [Keyboard input](#keyboard-input)
 - [Media handling](#media-handling)
 - [Command-line helper assembler](#command-line-helper-assembler)
+- [ZX Spectrum TAP conversion](#zx-spectrum-tap-conversion)
 - [ROM loading and fast boot](#rom-loading-and-fast-boot)
 - [Snapshot format](#snapshot-format)
 - [Native and web UI](#native-and-web-ui)
@@ -44,6 +45,7 @@ and full-web frontends.
 | [src/emulator/asm.rs](../src/emulator/asm.rs) | Z80 single-line and two-pass helper assembler |
 | [src/emulator/disasm.rs](../src/emulator/disasm.rs) | Z80 disassembler and debugger instruction metadata |
 | [src/bin/rtvc_asm.rs](../src/bin/rtvc_asm.rs) | command-line assembler that emits `rtvc-asm-v1` TOML |
+| [src/bin/rtvc_tap2toml.rs](../src/bin/rtvc_tap2toml.rs) | ZX Spectrum TAP parser that emits structured `rtvc-zx-tap-v1` TOML |
 | [src/fd1793.rs](../src/fd1793.rs) | FD1793 floppy controller with two-drive read/write support |
 | [src/emu.rs](../src/emu.rs) | machine selection, media, run state |
 | [src/machine.rs](../src/machine.rs) | explicit TVC/Zx82 machine boundary and shared debugger operations |
@@ -65,7 +67,7 @@ validation independent from machine emulation.
 | Target | Features | Notes |
 | --- | --- | --- |
 | Native desktop | default `native` | egui/eframe, cpal audio, filesystem media, zip support, TCP debugger |
-| Native CLI tools | `cli-tools` without default features | disk, assembler, disassembler, and CAS-to-WAV utilities without desktop UI/audio dependencies |
+| Native CLI tools | `cli-tools` without default features | disk, assembler, disassembler, CAS-to-WAV, and TAP conversion utilities without desktop UI/audio dependencies |
 | Native headless | default `native`, `--headless` CLI | machine loop and TCP debugger without GUI |
 | Integrated Zx82 | default `native` and `wasm-full` | Spectrum 48K state loading through the shared application and debugger |
 | Standalone Zx82 | default `native`, `cargo run --bin zx82` | focused Spectrum core runner |
@@ -265,6 +267,17 @@ the debugger. It currently emits versioned TOML for later linker and
 injection tooling. The TCP debugger client can load this output with
 `loadasm <path.toml>`. See [assembler.md](assembler.md) for source syntax, TOML
 schema, command-line options, and debugger loading details.
+
+## ZX Spectrum TAP Conversion
+
+`cargo run --bin rtvc-tap2toml -- input.tap -o output.toml` converts a standard
+ZX Spectrum 48K TAP image to versioned `rtvc-zx-tap-v1` TOML. CODE blocks
+become byte-array segments, PROGRAM blocks include decoded BASIC lines, and
+non-standard data flags are preserved as raw blocks. The output also records
+the original tape order, SHA-256 provenance, and TVC bridge mapping hints.
+
+Use `-` as the input path to read from standard input. If `-o` is omitted, the
+TOML is written to standard output.
 
 ## ROM Loading and Fast Boot
 

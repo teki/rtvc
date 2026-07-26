@@ -69,6 +69,7 @@ megjeleníteni:
 | `rtvc-asm` | Kis Z80 források fordítása TOML, CAS vagy nyers bináris formátumba. | `rtvc-asm --format cas demo.asm -o demo.cas` |
 | `rtvc-disasm` | Bináris vagy ROM-adatok visszafordítása újra lefordítható assembly forrássá. | `rtvc-disasm --origin C000H rom.bin -o rom.asm` |
 | `rtvc-cas2wav` | TVC CAS kazettakép átalakítása 44,1 kHz-es WAV fájllá. | `rtvc-cas2wav bemenet.cas kimenet.wav` |
+| `rtvc-tap2toml` | ZX Spectrum TAP kazettakép átalakítása elemzési és portolási TOML formátumba. | `rtvc-tap2toml jatek.tap -o jatek.toml` |
 
 Az assembler és disassembler szintaxisát és kimeneti formátumait az
 [assembler referencia](info.hu/assembler.md) ismerteti.
