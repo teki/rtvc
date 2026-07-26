@@ -3,6 +3,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::bus::CpuBus;
+use crate::instruction_trace::{
+    InstructionEffects, InstructionTrace, InstructionTraceEntry, TraceRegisters,
+};
 use crate::vid::VidModel;
 use crate::z80::Z80;
 
@@ -32,6 +35,7 @@ pub struct Zx82Bus {
     keyboard: [u8; 8],
     ula_latch: u8,
     ear_input: bool,
+    instruction_effects: Option<InstructionEffects>,
 }
 
 impl Zx82Bus {
@@ -42,6 +46,7 @@ impl Zx82Bus {
             keyboard: [0x1F; 8],
             ula_latch: 0,
             ear_input: false,
+            instruction_effects: None,
         }
     }
 
@@ -49,6 +54,7 @@ impl Zx82Bus {
         self.keyboard = [0x1F; 8];
         self.ula_latch = 0;
         self.ear_input = false;
+        self.instruction_effects = None;
     }
 
     pub fn clear_ram(&mut self) {
@@ -115,6 +121,14 @@ impl Zx82Bus {
         }
         0xA0 | ((self.ear_input as u8) << 6) | columns
     }
+
+    fn begin_instruction_effects(&mut self) {
+        self.instruction_effects = Some(InstructionEffects::default());
+    }
+
+    fn take_instruction_effects(&mut self) -> InstructionEffects {
+        self.instruction_effects.take().unwrap_or_default()
+    }
 }
 
 impl Default for Zx82Bus {
@@ -134,11 +148,17 @@ impl CpuBus for Zx82Bus {
 
     fn w8(&mut self, addr: u16, val: u8) {
         if addr >= 0x4000 {
+            if let Some(effects) = &mut self.instruction_effects {
+                effects.record_memory_write(addr, val);
+            }
             self.ram[addr as usize - 0x4000] = val;
         }
     }
 
-    fn out8(&mut self, port: u8, val: u8, _high_addr: u8) {
+    fn out8(&mut self, port: u8, val: u8, high_addr: u8) {
+        if let Some(effects) = &mut self.instruction_effects {
+            effects.record_port_write(u16::from_be_bytes([high_addr, port]), val);
+        }
         if port & 1 == 0 {
             self.ula_latch = val;
         }
@@ -167,6 +187,7 @@ pub struct Zx82 {
     pressed_bindings: HashMap<u32, Vec<MatrixKey>>,
     matrix_key_counts: [[u8; 5]; 8],
     pending_key_release: Vec<MatrixKey>,
+    instruction_trace: InstructionTrace,
 }
 
 impl Zx82 {
@@ -189,6 +210,7 @@ impl Zx82 {
             pressed_bindings: HashMap::new(),
             matrix_key_counts: [[0; 5]; 8],
             pending_key_release: Vec::new(),
+            instruction_trace: InstructionTrace::default(),
         };
         machine.reset();
         machine
@@ -202,6 +224,7 @@ impl Zx82 {
         self.frame_counter = 0;
         self.last_frame_interrupt_accepted = false;
         self.release_all_keys();
+        self.instruction_trace.clear();
         self.draw_full_frame();
         self.frame_complete = true;
     }
@@ -260,6 +283,7 @@ impl Zx82 {
         self.last_frame_interrupt_accepted = false;
         self.draw_full_frame();
         self.frame_complete = true;
+        self.instruction_trace.clear();
         Ok(())
     }
 
@@ -305,6 +329,14 @@ impl Zx82 {
 
     pub fn last_frame_interrupt_accepted(&self) -> bool {
         self.last_frame_interrupt_accepted
+    }
+
+    pub fn instruction_trace(&self) -> &InstructionTrace {
+        &self.instruction_trace
+    }
+
+    pub fn instruction_trace_mut(&mut self) -> &mut InstructionTrace {
+        &mut self.instruction_trace
     }
 
     pub fn set_breakpoint(&mut self, addr: u16) {
@@ -365,14 +397,36 @@ impl Zx82 {
     }
 
     fn step_instruction(&mut self) -> u32 {
+        let trace_entry = self.instruction_trace.is_recording().then(|| {
+            let pc = self.z80.state.r16[11];
+            let opcode = std::array::from_fn(|offset| self.bus.r8(pc.wrapping_add(offset as u16)));
+            self.bus.begin_instruction_effects();
+            InstructionTraceEntry {
+                sequence: 0,
+                clock: self.clock,
+                registers: TraceRegisters::from(&self.z80.state),
+                opcode,
+                main_map: None,
+                video_map: None,
+                elapsed_cycles: 0,
+                interrupt_accepted: false,
+                effects: InstructionEffects::default(),
+            }
+        });
         let cpu_cycles = self.z80.step(&mut self.bus, 0);
         self.clock += cpu_cycles as u64;
-        cpu_cycles
-            + if self.clock >= self.next_frame_clock {
-                self.finish_frame()
-            } else {
-                0
-            }
+        let irq_cycles = if self.clock >= self.next_frame_clock {
+            self.finish_frame()
+        } else {
+            0
+        };
+        if let Some(mut entry) = trace_entry {
+            entry.elapsed_cycles = cpu_cycles + irq_cycles;
+            entry.interrupt_accepted = irq_cycles != 0;
+            entry.effects = self.bus.take_instruction_effects();
+            self.instruction_trace.record(entry);
+        }
+        cpu_cycles + irq_cycles
     }
 
     fn finish_frame(&mut self) -> u32 {

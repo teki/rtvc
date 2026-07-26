@@ -1,5 +1,6 @@
 use crate::bus::CpuBus;
 use crate::disasm::{DisassembledInstruction, disassemble_block};
+use crate::instruction_trace::InstructionTrace;
 use crate::tvc::{DEBUG_RUN_TO_IRQ_MAX_CYCLES, Tvc};
 use crate::vid::VidModel;
 use crate::z80::{Z80, Z80State};
@@ -132,6 +133,20 @@ impl Machine {
         match self {
             Self::Tvc(tvc) => tvc.clock,
             Self::Zx82(zx82) => zx82.clock(),
+        }
+    }
+
+    pub fn instruction_trace(&self) -> &InstructionTrace {
+        match self {
+            Self::Tvc(tvc) => tvc.instruction_trace(),
+            Self::Zx82(zx82) => zx82.instruction_trace(),
+        }
+    }
+
+    pub fn instruction_trace_mut(&mut self) -> &mut InstructionTrace {
+        match self {
+            Self::Tvc(tvc) => tvc.instruction_trace_mut(),
+            Self::Zx82(zx82) => zx82.instruction_trace_mut(),
         }
     }
 

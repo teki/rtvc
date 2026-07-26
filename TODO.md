@@ -92,6 +92,11 @@ Open issues and planned improvements for the TVC emulator.
   - Allow panes to be opened, closed, docked, and persisted independently.
   - Reuse the shared bank-aware navigation and project labels.
 
+- [ ] Add once-per-frame snapshot history to the debugger for short reverse
+  debugging sessions, including timeline navigation, thumbnails, and saving a
+  selected frame as a normal snapshot file. See the
+  [Frame History Debugger plan](.agents/plans/frame-history-debugger.md).
+
 - [ ] Add layered visual debugging overlays to the TVC screen.
   - Render overlays above the TVC framebuffer with configurable translucency,
     initially around 0.5 alpha.

@@ -1168,6 +1168,9 @@ impl EmuApp {
                 .button(if self.emu.running { "Pause" } else { "Run" })
                 .clicked()
             {
+                if !self.emu.running {
+                    self.debugger_ui.prepare_history_resume();
+                }
                 self.emu.toggle_running();
                 self.last_repaint_time = Instant::now();
                 self.emu_frame_accumulator = 0.0;
@@ -1544,6 +1547,8 @@ impl EmuApp {
                         (WorkspaceTab::Breakpoints, "Breakpoints"),
                         (WorkspaceTab::RomSymbols, "ROM Symbols"),
                         (WorkspaceTab::Events, "Events"),
+                        (WorkspaceTab::FrameHistory, "Frame History"),
+                        (WorkspaceTab::InstructionTrace, "Instruction Trace"),
                     ] {
                         let is_open = self.workspace.has_tab(tab);
                         if ui.selectable_label(is_open, label).clicked() {
@@ -1840,6 +1845,13 @@ PI                           — π (3.141592654)
             });
             if was_captured && !self.screen_captured {
                 self.release_machine_keys();
+            }
+            if self.debugger_ui.take_history_restored() {
+                self.release_machine_keys();
+                self.emu_frame_accumulator = 0.0;
+            }
+            if self.debugger_ui.take_save_history_snapshot_requested() {
+                self.save_snapshot_dialog();
             }
             if ctx.input(|input| input.pointer.any_released()) {
                 self.workspace.mark_layout_changed();
@@ -2417,6 +2429,11 @@ impl eframe::App for EmuApp {
 
         if self.emu.running && self.emu_frame_accumulator >= TVC_FRAME_DT {
             let hit_breakpoint = self.emu.tick();
+            if !hit_breakpoint && self.emu.frame_complete() {
+                if let Err(error) = self.debugger_ui.capture_history_frame(&self.emu) {
+                    self.file_status = Some(format!("Frame history stopped: {error}"));
+                }
+            }
             #[cfg(all(feature = "native", not(target_arch = "wasm32")))]
             if let Some(ref dbg) = self.debugger {
                 dbg.record_frame();

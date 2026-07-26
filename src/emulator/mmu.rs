@@ -213,6 +213,10 @@ impl TvcMmu {
         self.map_val
     }
 
+    pub fn get_vid_map_val(&self) -> u8 {
+        self.map_val_vid
+    }
+
     pub fn map_labels(&self) -> [&'static str; 4] {
         self.map.map(|bank| match bank {
             Some(0) => "U0",

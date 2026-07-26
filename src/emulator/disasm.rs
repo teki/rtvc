@@ -50,6 +50,26 @@ pub fn disassemble_block<M: CpuBus>(
     out
 }
 
+/// Disassemble one instruction from bytes captured at execution time.
+pub fn disassemble_captured(addr: u16, bytes: &[u8]) -> DisassembledInstruction {
+    let mut bus = CapturedInstructionBus { addr, bytes };
+    disassemble_at(&mut bus, addr)
+}
+
+struct CapturedInstructionBus<'a> {
+    addr: u16,
+    bytes: &'a [u8],
+}
+
+impl CpuBus for CapturedInstructionBus<'_> {
+    fn r8(&mut self, addr: u16) -> u8 {
+        let offset = addr.wrapping_sub(self.addr) as usize;
+        self.bytes.get(offset).copied().unwrap_or(0)
+    }
+
+    fn w8(&mut self, _addr: u16, _val: u8) {}
+}
+
 struct Reader<'a, M: CpuBus> {
     bus: &'a mut M,
     addr: u16,

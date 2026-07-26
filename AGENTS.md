@@ -14,7 +14,8 @@ Refer to the following resources for detailed documentation on the system:
 - [rtvc Developer Notes](info/developer.md) — Practical repo-specific findings, experimental workflows, debugger tricks, and development sharp edges that should be preserved but do not belong in hardware references.
 - [User README](README.md) — User-facing run, snapshot, and web bundle commands.
 - [Release Notes](CHANGES.md) — Concise release notes starting with the next release; older releases are intentionally not backfilled.
-- [Open Issues and Planned Work](TODO.md) — Known issues and implementation ideas that are not yet complete.
+- [Open Issues and Desired Work](TODO.md) — High-level backlog of fixes, features, and emulator capabilities that are not yet complete.
+- [Implementation Plans](.agents/plans/README.md) — Detailed, actionable plans for substantial work listed at a high level in `TODO.md`.
 - [Development and Testing Skill](.agents/skills/development/SKILL.md) — Essential commands for compiling, running, testing, and benchmarking the emulator.
 - [Release Skill](.agents/skills/release/SKILL.md) — Release workflow for version bumps, concise `CHANGES.md` updates, manual review, commits, tags, and pushes.
 - [info.hu](info.hu/) — Hungarian-language technical references, translated and adapted from [info/](info/). See [info.hu/README.md](info.hu/README.md) for the file index and the `L10N.md` policy.
@@ -29,6 +30,7 @@ To prevent documentation rot and ensure all agents have access to accurate infor
 4. **Maintain the Boundary**: Put observable TVC hardware behavior in `info/tvc.md`, scoped Spectrum 48K behavior in `info/zx82.md`, repository-specific implementation and usage behavior in `info/rtvc.md`, and practical development findings or experimental workflow notes in `info/developer.md`.
 5. **Avoid Topic Fragmentation**: Extend an existing machine or implementation reference rather than creating a new English subsystem document unless the material cannot reasonably fit an existing scope.
 6. **Use Clickable Links**: When referencing codebase files or documentation, always use clickable Markdown links with the relative path (e.g., `[main.rs](src/main.rs)`) to enable easy navigation.
+7. **Keep Planning Separate From the Backlog**: Keep [TODO.md](TODO.md) concise and high level: it records what should be added or fixed. Put detailed designs, implementation steps, integration points, and validation notes in [.agents/plans/](.agents/plans/README.md), and link the two when applicable.
 
 ## Session Archive
 

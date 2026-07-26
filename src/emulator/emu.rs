@@ -1,10 +1,11 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::Read;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::cas::TapeBitstreamGenerator;
 use crate::disasm::DisassembledInstruction;
+use crate::instruction_trace::{InstructionTrace, InstructionTraceEntry};
 use crate::machine::{DebugRunToIrqResult, FramebufferRef, Machine, System};
 use crate::mmu::RomBank;
 use crate::snapshot::{self, Reader, SnapshotError, Writer};
@@ -221,6 +222,7 @@ pub struct Emu {
     loaded_tape_was_injected: bool,
     typed_text: VecDeque<char>,
     typed_key: Option<u32>,
+    timed_keys: HashMap<u32, u32>,
     tvc_fast_boot: bool,
 }
 
@@ -251,6 +253,7 @@ impl Emu {
             loaded_tape_was_injected: false,
             typed_text: VecDeque::new(),
             typed_key: None,
+            timed_keys: HashMap::new(),
             tvc_fast_boot: false,
         };
         emu.scan_progs();
@@ -317,7 +320,21 @@ impl Emu {
     }
 
     pub fn key_up(&mut self, code: u32) {
+        self.timed_keys.remove(&code);
         self.machine.key_up(code);
+    }
+
+    pub fn key_press_frames(&mut self, code: u32, duration: u32) -> Result<(), String> {
+        if duration == 0 {
+            return Err("key press duration must be at least one frame".to_string());
+        }
+        if !self.machine.key_down(code) {
+            let character = default_character_for_key_code(code)
+                .ok_or_else(|| format!("key code {code} has no known mapping"))?;
+            self.machine.key_press(character);
+        }
+        self.timed_keys.insert(code, duration);
+        Ok(())
     }
 
     pub fn key_press(&mut self, ch: char) {
@@ -325,6 +342,9 @@ impl Emu {
     }
 
     pub fn focus_change(&mut self, has_focus: bool) {
+        if !has_focus {
+            self.release_timed_keys();
+        }
         self.machine.focus_change(has_focus);
     }
 
@@ -350,6 +370,28 @@ impl Emu {
 
     pub fn get_breakpoints(&self) -> Vec<u16> {
         self.machine.get_breakpoints()
+    }
+
+    pub fn instruction_trace(&self) -> &InstructionTrace {
+        self.machine.instruction_trace()
+    }
+
+    pub fn start_instruction_trace(&mut self, capacity: usize) {
+        self.machine.instruction_trace_mut().start(capacity);
+    }
+
+    pub fn stop_instruction_trace(&mut self) {
+        self.machine.instruction_trace_mut().stop();
+    }
+
+    pub fn clear_instruction_trace(&mut self) {
+        self.machine.instruction_trace_mut().clear();
+    }
+
+    pub fn recent_instruction_trace(&self, limit: usize) -> Vec<InstructionTraceEntry> {
+        let entries = self.machine.instruction_trace().entries();
+        let start = entries.len().saturating_sub(limit);
+        entries.iter().skip(start).cloned().collect()
     }
 
     pub fn read_mapped_memory(&mut self, addr: u16, len: usize) -> Vec<u8> {
@@ -421,6 +463,7 @@ impl Emu {
 
     pub fn load_z80_bytes(&mut self, data: &[u8]) -> Result<(), String> {
         self.clear_typed_text();
+        self.release_timed_keys();
         let mut zx82 = Zx82::new_with_vid_model(self.vid_model());
         load_zx82_rom(&mut zx82)?;
         zx82.load_z80(data)?;
@@ -430,6 +473,7 @@ impl Emu {
 
     pub fn switch_to_zx82(&mut self) -> Result<(), String> {
         self.clear_typed_text();
+        self.release_timed_keys();
         let mut zx82 = Zx82::new_with_vid_model(self.vid_model());
         load_zx82_rom(&mut zx82)?;
         self.activate_zx82(zx82);
@@ -458,11 +502,16 @@ impl Emu {
             return false;
         }
         self.advance_typed_text();
-        self.machine.run_frame()
+        let hit_breakpoint = self.machine.run_frame();
+        if !hit_breakpoint {
+            self.advance_timed_keys();
+        }
+        hit_breakpoint
     }
 
     pub fn reset(&mut self) {
         self.clear_typed_text();
+        self.release_timed_keys();
         self.machine.reset();
     }
 
@@ -494,6 +543,27 @@ impl Emu {
         self.typed_key = Some(code);
     }
 
+    fn advance_timed_keys(&mut self) {
+        let mut released = Vec::new();
+        for (&code, remaining) in &mut self.timed_keys {
+            if *remaining <= 1 {
+                released.push(code);
+            } else {
+                *remaining -= 1;
+            }
+        }
+        for code in released {
+            self.timed_keys.remove(&code);
+            self.machine.key_up(code);
+        }
+    }
+
+    fn release_timed_keys(&mut self) {
+        for code in self.timed_keys.drain().map(|(code, _)| code) {
+            self.machine.key_up(code);
+        }
+    }
+
     pub fn save_snapshot(&self) -> Vec<u8> {
         let Some(tvc) = self.machine.tvc() else {
             return Vec::new();
@@ -520,8 +590,30 @@ impl Emu {
         snapshot::write_file(&chunks)
     }
 
+    pub fn capture_debug_snapshot(&self) -> Result<Vec<u8>, String> {
+        if self.system() != System::Tvc {
+            return Err("frame history is currently available only for TVC".to_string());
+        }
+        Ok(self.save_snapshot())
+    }
+
+    pub fn restore_debug_snapshot(&mut self, data: &[u8]) -> Result<(), String> {
+        self.running = false;
+        self.clear_typed_text();
+        self.release_timed_keys();
+        self.machine.focus_change(false);
+        let tvc = self
+            .machine
+            .tvc_mut()
+            .ok_or_else(|| "frame history is currently available only for TVC".to_string())?;
+        tvc.load_snapshot(data).map_err(|err| err.to_string())?;
+        tvc.refresh_framebuffer_from_state();
+        Ok(())
+    }
+
     pub fn load_snapshot(&mut self, data: &[u8]) -> crate::snapshot::Result<()> {
         self.clear_typed_text();
+        self.release_timed_keys();
         let fast_boot = self.fast_boot();
         let snapshot_state = Self::read_emu_snapshot_state(data)?;
         #[cfg(target_arch = "wasm32")]
@@ -1549,6 +1641,14 @@ fn data_dir(name: &str) -> PathBuf {
         .and_then(|path| path.parent().map(|parent| parent.join(name)))
         .filter(|path| path.exists())
         .unwrap_or(cwd_dir)
+}
+
+fn default_character_for_key_code(code: u32) -> Option<char> {
+    match code {
+        48..=57 => char::from_u32(code),
+        65..=90 => char::from_u32(code + 32),
+        _ => None,
+    }
 }
 
 fn is_zip_path(path: &std::path::Path) -> bool {

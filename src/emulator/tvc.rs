@@ -6,6 +6,9 @@ use crate::bus::CpuBus;
 use crate::cas::TapeBitstreamGenerator;
 use crate::expansion::ExpansionSlots;
 use crate::hbf::HBF;
+use crate::instruction_trace::{
+    InstructionEffects, InstructionTrace, InstructionTraceEntry, TraceRegisters,
+};
 use crate::key::Key;
 use crate::log::{Log, LogCategory, LogEntry, Logger};
 use crate::mmu::{RomBank, TvcMmu};
@@ -34,6 +37,7 @@ pub struct TvcBus {
     sound: SoundTimer,
     // Last Z80 PC before an I/O instruction, used only for debug logging.
     pub trace_pc: u16,
+    instruction_effects: Option<InstructionEffects>,
 }
 
 impl TvcBus {
@@ -48,6 +52,7 @@ impl TvcBus {
             tape: TapeInterface::new(),
             sound: SoundTimer::new(),
             trace_pc: 0,
+            instruction_effects: None,
         }
     }
 
@@ -60,6 +65,15 @@ impl TvcBus {
         self.tape.reset();
         self.trace_pc = 0;
         self.sound.reset();
+        self.instruction_effects = None;
+    }
+
+    fn begin_instruction_effects(&mut self) {
+        self.instruction_effects = Some(InstructionEffects::default());
+    }
+
+    fn take_instruction_effects(&mut self) -> InstructionEffects {
+        self.instruction_effects.take().unwrap_or_default()
     }
 
     pub fn extension_attach(&mut self, port: u8, ext: HBF) {
@@ -512,6 +526,9 @@ impl CpuBus for TvcBus {
     }
 
     fn w8(&mut self, addr: u16, val: u8) {
+        if let Some(effects) = &mut self.instruction_effects {
+            effects.record_memory_write(addr, val);
+        }
         if let Some(offset) = self.mmu.ext_card_offset(addr) {
             self.extensions.write_mem(offset, val);
             return;
@@ -519,7 +536,10 @@ impl CpuBus for TvcBus {
         self.mmu.w8(addr, val);
     }
 
-    fn out8(&mut self, port: u8, val: u8, _expected_val: u8) {
+    fn out8(&mut self, port: u8, val: u8, high_addr: u8) {
+        if let Some(effects) = &mut self.instruction_effects {
+            effects.record_port_write(u16::from_be_bytes([high_addr, port]), val);
+        }
         self.write_port(port, val);
     }
 
@@ -539,6 +559,7 @@ pub struct Tvc {
     breakpoints: HashSet<u16>,
     tracepoints: HashSet<(RomBank, u16)>,
     trace_events: Vec<ExecutionTrace>,
+    instruction_trace: InstructionTrace,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -570,6 +591,7 @@ impl Tvc {
             breakpoints: HashSet::new(),
             tracepoints: HashSet::new(),
             trace_events: Vec::new(),
+            instruction_trace: InstructionTrace::default(),
         };
         tvc.reset();
         tvc
@@ -604,7 +626,17 @@ impl Tvc {
     }
 
     pub fn load_snapshot(&mut self, data: &[u8]) -> snapshot::Result<()> {
-        crate::tvc_snapshot::load(self, data)
+        let result = crate::tvc_snapshot::load(self, data);
+        if result.is_ok() {
+            self.instruction_trace.clear();
+        }
+        result
+    }
+
+    pub fn refresh_framebuffer_from_state(&mut self) {
+        let vidmem = self.bus.mmu.get_vid_mem();
+        self.bus.vid.draw_frame(vidmem, &mut self.framebuffer);
+        self.frame_complete = true;
     }
 
     pub(crate) fn prepare_snapshot_load(
@@ -633,6 +665,15 @@ impl Tvc {
         self.bus.reset();
         self.clock = 0;
         self.sync_timeout_frames = 0;
+        self.instruction_trace.clear();
+    }
+
+    pub fn instruction_trace(&self) -> &InstructionTrace {
+        &self.instruction_trace
+    }
+
+    pub fn instruction_trace_mut(&mut self) -> &mut InstructionTrace {
+        &mut self.instruction_trace
     }
 
     pub fn load_cas(&mut self, data: &[u8]) -> bool {
@@ -782,6 +823,22 @@ impl Tvc {
 
     fn step_instruction(&mut self, sync_video: bool) -> (u32, bool, bool) {
         self.bus.trace_pc = self.z80.state.r16[11];
+        let trace_entry = self.instruction_trace.is_recording().then(|| {
+            let pc = self.z80.state.r16[11];
+            let opcode = std::array::from_fn(|offset| self.bus.r8(pc.wrapping_add(offset as u16)));
+            self.bus.begin_instruction_effects();
+            InstructionTraceEntry {
+                sequence: 0,
+                clock: self.clock,
+                registers: TraceRegisters::from(&self.z80.state),
+                opcode,
+                main_map: Some(self.bus.mmu.get_map_val()),
+                video_map: Some(self.bus.mmu.get_vid_map_val()),
+                elapsed_cycles: 0,
+                interrupt_accepted: false,
+                effects: InstructionEffects::default(),
+            }
+        });
         let cpu_time = self.z80.step(&mut self.bus, 0);
         self.record_tracepoint();
 
@@ -795,6 +852,12 @@ impl Tvc {
         }
 
         let (irq_time, irq_frame_complete) = self.service_pending_shared_irq();
+        if let Some(mut entry) = trace_entry {
+            entry.elapsed_cycles = cpu_time + irq_time;
+            entry.interrupt_accepted = irq_time > 0;
+            entry.effects = self.bus.take_instruction_effects();
+            self.instruction_trace.record(entry);
+        }
         (
             cpu_time + irq_time,
             frame_complete || irq_frame_complete,

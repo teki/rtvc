@@ -67,3 +67,61 @@ fn tcp_debugger_reads_and_writes_active_zx82_memory() {
     let response = serde_json::from_str::<serde_json::Value>(&response).unwrap();
     assert_eq!(response["instructions"][0]["text"], "LD A,2AH");
 }
+
+#[test]
+fn tcp_debugger_schedules_frame_timed_key_press() {
+    let mut emu = Emu::new(MachineType {
+        is_plus: false,
+        rom_version: RomVersion::V1_2,
+        has_dos: false,
+    });
+
+    let response = handle_command(
+        &mut emu,
+        r#"{"cmd":"key_press","key":49,"duration":3}"#,
+        FrameStatsSnapshot::default(),
+    );
+    let response = serde_json::from_str::<serde_json::Value>(&response).unwrap();
+
+    assert_eq!(response["status"], "ok");
+    assert_eq!(response["key"], 49);
+    assert_eq!(response["duration"], 3);
+}
+
+#[test]
+fn tcp_debugger_controls_and_lists_instruction_trace() {
+    let mut snapshot = vec![0; 30 + 0xC000];
+    snapshot[6..8].copy_from_slice(&0x4000u16.to_le_bytes());
+    snapshot[30..33].copy_from_slice(&[0x32, 0x00, 0x80]);
+    let mut emu = Emu::new(MachineType {
+        is_plus: false,
+        rom_version: RomVersion::V1_2,
+        has_dos: false,
+    });
+    emu.load_z80_bytes(&snapshot).unwrap();
+    emu.set_z80_register("A", 0x2A);
+
+    let response = handle_command(
+        &mut emu,
+        r#"{"cmd":"instruction_trace_start","capacity":1000}"#,
+        FrameStatsSnapshot::default(),
+    );
+    let response = serde_json::from_str::<serde_json::Value>(&response).unwrap();
+    assert_eq!(response["recording"], true);
+
+    handle_command(
+        &mut emu,
+        r#"{"cmd":"step","count":1}"#,
+        FrameStatsSnapshot::default(),
+    );
+    let response = handle_command(
+        &mut emu,
+        r#"{"cmd":"instruction_trace_list","limit":1}"#,
+        FrameStatsSnapshot::default(),
+    );
+    let response = serde_json::from_str::<serde_json::Value>(&response).unwrap();
+    assert_eq!(response["entries"][0]["pc"], 0x4000);
+    assert_eq!(response["entries"][0]["instruction"], "LD (8000H),A");
+    assert_eq!(response["entries"][0]["memory_writes"][0]["addr"], 0x8000);
+    assert_eq!(response["entries"][0]["memory_writes"][0]["value"], 0x2A);
+}

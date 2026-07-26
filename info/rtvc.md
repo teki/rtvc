@@ -44,6 +44,7 @@ and full-web frontends.
 | [src/hbf.rs](../src/hbf.rs) | HBF card memory and registers |
 | [src/emulator/asm.rs](../src/emulator/asm.rs) | Z80 single-line and two-pass helper assembler |
 | [src/emulator/disasm.rs](../src/emulator/disasm.rs) | Z80 disassembler and debugger instruction metadata |
+| [src/emulator/instruction_trace.rs](../src/emulator/instruction_trace.rs) | bounded machine-independent instruction trace model |
 | [src/bin/rtvc_asm.rs](../src/bin/rtvc_asm.rs) | command-line assembler that emits `rtvc-asm-v1` TOML |
 | [src/bin/rtvc_tap2toml.rs](../src/bin/rtvc_tap2toml.rs) | ZX Spectrum TAP parser that emits structured `rtvc-zx-tap-v1` TOML |
 | [src/fd1793.rs](../src/fd1793.rs) | FD1793 floppy controller with two-drive read/write support |
@@ -346,8 +347,9 @@ Simple mode shows the 4:3 TVC screen. Developer mode uses `egui_dock`; its
 default layout places Screen above IO Log.
 
 Debugger Layout opens CPU, Disassembly, Memory, Breakpoints, ROM Symbols,
-Events, Screen, and IO Log panes. Pane rendering does not advance emulation.
-Memory/disassembly ranges and event histories are bounded.
+Events, Frame History, Instruction Trace, Screen, and IO Log panes. Pane
+rendering does not advance emulation. Memory/disassembly ranges and event
+histories are bounded.
 
 ### Persistence
 
@@ -371,6 +373,34 @@ The TVC CPU pane shows the configured CRTC display start address, video-interrup
 cursor address, and its zero-based active-screen raster line together as
 `VID START AAAA  IRQ AAAA/R`.
 
+The TVC-only Frame History pane records an adjustable 1–30 seconds of in-memory
+state at one snapshot per completed frame. Record starts a new timeline; Stop
+retains it. Back Frame, Forward Frame, Return to Live, and clickable thumbnails
+restore a selected frame and pause execution. The pane reports negative offsets
+from the newest frame and current memory use. Resuming or instruction-stepping
+from an older frame discards its newer branch.
+
+History restore shares the normal TVC snapshot codec but loads into the current
+machine so attached media remain in place. Keyboard state is released and
+queued text is cleared after restore. Disk image bytes are not snapshotted or
+rolled back. Save Selected Snapshot uses the normal snapshot-file writer, so
+the resulting file can be loaded through the regular UI, command line, or TCP
+debugger.
+
+The Instruction Trace pane is available for both TVC and Zx82. Record clears
+the previous trace and starts a configurable 1,000–1,000,000 instruction ring
+buffer; Stop retains the captured entries and Clear discards them. Entries are
+shown newest first and contain the pre-instruction clock, opcode bytes, main
+and alternate Z80 registers, interrupt state, elapsed cycles, memory writes,
+port writes, and whether an interrupt was accepted immediately afterward. TVC
+entries additionally contain the main and video paging register values.
+
+Tracing is an optional diagnostic path. The buses collect write effects only
+while an instruction is actively being traced, and the normal execution path
+does not allocate trace entries while recording is disabled. Reset and state
+load clear existing entries so a trace cannot silently span unrelated machine
+states. Instruction traces are not stored in snapshot files.
+
 ### TCP debugger
 
 Native GUI and headless modes expose newline-delimited JSON on localhost:
@@ -393,10 +423,29 @@ cargo run --bin rtvc -- --headless --port 8080
 | `save_snapshot`, `load_snapshot` | snapshot files |
 | `save_screenshot` | 4:3 PNG |
 | `key` | key down/up or typed character |
+| `key_press` | hold a host key code for a number of 50 Hz frames, then release it |
+| `instruction_trace_start`, `instruction_trace_stop` | start a new bounded trace or stop recording |
+| `instruction_trace_clear`, `instruction_trace_status` | discard entries or report trace state |
+| `instruction_trace_list` | return the newest captured instructions, including registers and writes |
 | `close_app` | normal application shutdown |
 
 Requests and responses are one JSON object per line. A running emulator emits
 `{"event":"breakpoint","pc":...}` asynchronously when a breakpoint is hit.
+
+Frame-timed input uses, for example,
+`{"cmd":"key_press","key":49,"duration":3}` to hold key code 49 (`1`) for
+three completed emulator frames. The countdown advances only while the machine
+is running. A repeated request for the same key replaces its remaining
+duration. Reset, snapshot/state load, focus loss, or an explicit key-up releases
+and cancels pending timed keys. The interactive debugger client exposes the same
+operation as `key_press 49 3`, with `kp` as a short alias.
+
+Instruction tracing can be driven with JSON such as
+`{"cmd":"instruction_trace_start","capacity":100000}` followed by
+`{"cmd":"instruction_trace_list","limit":100}`. List responses are capped
+at 10,000 entries per request. The interactive client provides the equivalent
+`trace start [capacity]`, `trace stop`, `trace clear`, `trace status`, and
+`trace list [count]` commands; `itrace` is an alias.
 
 The `assemble` command uses rtvc's built-in two-pass helper assembler. It
 supports labels, `ORG`, `EQU`, `DB`/`DEFB`, `DW`/`DEFW`, `DS`/`DEFS`, simple

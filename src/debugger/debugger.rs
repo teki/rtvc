@@ -71,6 +71,18 @@ enum DebuggerCommand {
         #[serde(rename = "char")]
         character: Option<String>,
     },
+    #[serde(rename = "key_press")]
+    KeyPress { key: u32, duration: u32 },
+    #[serde(rename = "instruction_trace_start")]
+    InstructionTraceStart { capacity: Option<usize> },
+    #[serde(rename = "instruction_trace_stop")]
+    InstructionTraceStop,
+    #[serde(rename = "instruction_trace_clear")]
+    InstructionTraceClear,
+    #[serde(rename = "instruction_trace_status")]
+    InstructionTraceStatus,
+    #[serde(rename = "instruction_trace_list")]
+    InstructionTraceList { limit: Option<usize> },
 }
 
 pub struct DebuggerMessage {
@@ -576,6 +588,88 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                 }
                 _ => serde_json::json!({ "status": "error", "message": "Unknown key action" }),
             },
+            DebuggerCommand::KeyPress { key, duration } => {
+                match emu.key_press_frames(key, duration) {
+                    Ok(()) => serde_json::json!({
+                        "status": "ok",
+                        "key": key,
+                        "duration": duration
+                    }),
+                    Err(error) => serde_json::json!({
+                        "status": "error",
+                        "message": error
+                    }),
+                }
+            }
+            DebuggerCommand::InstructionTraceStart { capacity } => {
+                let capacity = capacity.unwrap_or(crate::instruction_trace::DEFAULT_TRACE_CAPACITY);
+                emu.start_instruction_trace(capacity);
+                let trace = emu.instruction_trace();
+                serde_json::json!({
+                    "status": "ok",
+                    "recording": trace.is_recording(),
+                    "capacity": trace.capacity(),
+                    "entries": trace.len()
+                })
+            }
+            DebuggerCommand::InstructionTraceStop => {
+                emu.stop_instruction_trace();
+                let trace = emu.instruction_trace();
+                serde_json::json!({
+                    "status": "ok",
+                    "recording": trace.is_recording(),
+                    "capacity": trace.capacity(),
+                    "entries": trace.len()
+                })
+            }
+            DebuggerCommand::InstructionTraceClear => {
+                emu.clear_instruction_trace();
+                let trace = emu.instruction_trace();
+                serde_json::json!({
+                    "status": "ok",
+                    "recording": trace.is_recording(),
+                    "capacity": trace.capacity(),
+                    "entries": trace.len()
+                })
+            }
+            DebuggerCommand::InstructionTraceStatus => {
+                let trace = emu.instruction_trace();
+                serde_json::json!({
+                    "status": "ok",
+                    "recording": trace.is_recording(),
+                    "capacity": trace.capacity(),
+                    "entries": trace.len()
+                })
+            }
+            DebuggerCommand::InstructionTraceList { limit } => {
+                let limit = limit.unwrap_or(100).clamp(1, 10_000);
+                let entries: Vec<_> = emu
+                    .recent_instruction_trace(limit)
+                    .into_iter()
+                    .map(|entry| {
+                        let instruction =
+                            crate::disasm::disassemble_captured(entry.pc(), &entry.opcode);
+                        serde_json::json!({
+                            "sequence": entry.sequence,
+                            "clock": entry.clock,
+                            "pc": entry.pc(),
+                            "opcode": entry.opcode,
+                            "instruction": instruction.text,
+                            "registers": entry.registers,
+                            "main_map": entry.main_map,
+                            "video_map": entry.video_map,
+                            "elapsed_cycles": entry.elapsed_cycles,
+                            "interrupt_accepted": entry.interrupt_accepted,
+                            "memory_writes": entry.effects.memory_writes,
+                            "port_writes": entry.effects.port_writes
+                        })
+                    })
+                    .collect();
+                serde_json::json!({
+                    "status": "ok",
+                    "entries": entries
+                })
+            }
         },
         Err(err) => {
             serde_json::json!({

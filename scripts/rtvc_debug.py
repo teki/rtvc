@@ -861,6 +861,107 @@ class RtvcShell(cmd.Cmd):
         elif resp:
             print(f"Error: {resp.get('message')}")
 
+    def do_key_press(self, arg):
+        """Hold a key for 50 Hz frames. Usage: key_press <keycode> <duration_frames>"""
+        parts = arg.split()
+        if len(parts) != 2:
+            print("Usage: key_press <keycode> <duration_frames>")
+            return
+        try:
+            key = self._parse_number(parts[0])
+            duration = self._parse_number(parts[1])
+        except ValueError:
+            print("Error: keycode and duration must be numbers.")
+            return
+        resp = self._send_cmd({"cmd": "key_press", "key": key, "duration": duration})
+        if resp and resp.get("status") == "ok":
+            print(f"Key {key} pressed for {duration} frame(s).")
+        elif resp:
+            print(f"Error: {resp.get('message')}")
+
+    def do_trace(self, arg):
+        """Control the bounded instruction trace.
+        Usage:
+          trace start [capacity]
+          trace stop
+          trace clear
+          trace status
+          trace list [count]
+        """
+        parts = arg.split()
+        if not parts:
+            parts = ["status"]
+        action = parts[0].lower()
+        if action == "start":
+            cmd_dict = {"cmd": "instruction_trace_start"}
+            if len(parts) > 2:
+                print("Usage: trace start [capacity]")
+                return
+            if len(parts) == 2:
+                try:
+                    cmd_dict["capacity"] = self._parse_number(parts[1])
+                except ValueError:
+                    print("Error: capacity must be a number.")
+                    return
+        elif action in ("stop", "clear", "status"):
+            if len(parts) != 1:
+                print(f"Usage: trace {action}")
+                return
+            cmd_dict = {"cmd": f"instruction_trace_{action}"}
+        elif action == "list":
+            if len(parts) > 2:
+                print("Usage: trace list [count]")
+                return
+            cmd_dict = {"cmd": "instruction_trace_list"}
+            if len(parts) == 2:
+                try:
+                    cmd_dict["limit"] = self._parse_number(parts[1])
+                except ValueError:
+                    print("Error: count must be a number.")
+                    return
+        else:
+            print("Usage: trace [start [capacity] | stop | clear | status | list [count]]")
+            return
+
+        resp = self._send_cmd(cmd_dict)
+        if not resp:
+            return
+        if resp.get("status") != "ok":
+            print(f"Error: {resp.get('message')}")
+            return
+        if action == "list":
+            for entry in resp.get("entries", []):
+                registers = entry.get("registers", {})
+                opcode = " ".join(f"{value:02X}" for value in entry.get("opcode", []))
+                line = (
+                    f"#{entry.get('sequence', 0):08d} "
+                    f"{entry.get('pc', 0):04X}  {opcode:<11} "
+                    f"{entry.get('instruction', ''):<20} "
+                    f"AF={registers.get('af', 0):04X} BC={registers.get('bc', 0):04X} "
+                    f"DE={registers.get('de', 0):04X} HL={registers.get('hl', 0):04X} "
+                    f"SP={registers.get('sp', 0):04X}"
+                )
+                maps = []
+                if entry.get("main_map") is not None:
+                    maps.append(f"map={entry['main_map']:02X}")
+                if entry.get("video_map") is not None:
+                    maps.append(f"vid={entry['video_map']:02X}")
+                writes = [
+                    f"[{write.get('addr', 0):04X}]={write.get('value', 0):02X}"
+                    for write in entry.get("memory_writes", [])
+                ]
+                ports = [
+                    f"OUT({write.get('port', 0):04X})={write.get('value', 0):02X}"
+                    for write in entry.get("port_writes", [])
+                ]
+                suffix = " ".join(maps + writes + ports)
+                print(f"{line}  {suffix}".rstrip())
+        else:
+            print(
+                f"Instruction trace: recording={resp.get('recording')} "
+                f"entries={resp.get('entries', 0)}/{resp.get('capacity', 0)}"
+            )
+
     def do_exit(self, arg):
         """Exit the debugger shell."""
         print("Goodbye.")
@@ -880,9 +981,11 @@ class RtvcShell(cmd.Cmd):
     do_p = do_pause
     do_m = do_read
     do_d = do_disasm
+    do_itrace = do_trace
     do_a = do_asm
     do_af = do_asmfile
     do_la = do_loadasm
+    do_kp = do_key_press
     do_loadz80toml = do_loadz80json
     do_lz80 = do_loadz80json
     do_lz = do_loadz80json

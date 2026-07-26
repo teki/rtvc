@@ -1,10 +1,14 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::OnceLock;
 
 use crate::emu::{Emu, RomVersion};
+use crate::frame_history::{
+    FrameHistory, FrameThumbnail, MAX_HISTORY_SECONDS, MIN_HISTORY_SECONDS,
+};
+use crate::instruction_trace::{DEFAULT_TRACE_CAPACITY, MAX_TRACE_CAPACITY, MIN_TRACE_CAPACITY};
 use crate::machine::System;
 use crate::mmu::RomBank;
-use eframe::egui;
+use eframe::egui::{self, Color32, ColorImage, TextureHandle};
 use serde::Deserialize;
 
 const EVENT_LIMIT: usize = 200;
@@ -116,6 +120,12 @@ pub struct DebuggerUi {
     trace_rom_landmarks: bool,
     events: VecDeque<DebugEvent>,
     next_event_sequence: u64,
+    frame_history: FrameHistory,
+    frame_history_textures: HashMap<u64, TextureHandle>,
+    frame_history_error: Option<String>,
+    frame_history_restored: bool,
+    save_history_snapshot_requested: bool,
+    instruction_trace_capacity: usize,
 }
 
 impl Default for DebuggerUi {
@@ -132,25 +142,356 @@ impl Default for DebuggerUi {
             trace_rom_landmarks: false,
             events: VecDeque::new(),
             next_event_sequence: 1,
+            frame_history: FrameHistory::default(),
+            frame_history_textures: HashMap::new(),
+            frame_history_error: None,
+            frame_history_restored: false,
+            save_history_snapshot_requested: false,
+            instruction_trace_capacity: DEFAULT_TRACE_CAPACITY,
         }
     }
 }
 
 impl DebuggerUi {
+    pub fn capture_history_frame(&mut self, emu: &Emu) -> Result<(), String> {
+        if !self.frame_history.is_recording() {
+            return Ok(());
+        }
+        let snapshot = match emu.capture_debug_snapshot() {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                self.frame_history.stop();
+                self.frame_history_error = Some(error.clone());
+                return Err(error);
+            }
+        };
+        let frame = emu.framebuffer();
+        let thumbnail = FrameThumbnail::from_framebuffer(frame.pixels, frame.width, frame.height);
+        let pc = emu.z80_state().r16[11];
+        self.frame_history.record_frame(snapshot, thumbnail, pc);
+        self.prune_history_textures();
+        Ok(())
+    }
+
+    pub fn take_history_restored(&mut self) -> bool {
+        std::mem::take(&mut self.frame_history_restored)
+    }
+
+    pub fn take_save_history_snapshot_requested(&mut self) -> bool {
+        std::mem::take(&mut self.save_history_snapshot_requested)
+    }
+
+    pub fn prepare_history_resume(&mut self) {
+        if self.frame_history.branch_from_selected() {
+            self.prune_history_textures();
+        }
+    }
+
+    pub fn draw_frame_history(&mut self, ui: &mut egui::Ui, emu: &mut Emu) {
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .add_enabled(
+                    !self.frame_history.is_recording() && emu.system() == System::Tvc,
+                    egui::Button::new("Record"),
+                )
+                .clicked()
+            {
+                self.frame_history.start();
+                self.frame_history_textures.clear();
+                let _ = self.capture_history_frame(emu);
+            }
+            if ui
+                .add_enabled(self.frame_history.is_recording(), egui::Button::new("Stop"))
+                .clicked()
+            {
+                self.frame_history.stop();
+            }
+
+            ui.separator();
+            ui.label("History:");
+            let mut duration = self.frame_history.duration_seconds();
+            if ui
+                .add(
+                    egui::DragValue::new(&mut duration)
+                        .range(MIN_HISTORY_SECONDS..=MAX_HISTORY_SECONDS)
+                        .suffix(" s"),
+                )
+                .changed()
+            {
+                self.frame_history.set_duration_seconds(duration);
+                self.prune_history_textures();
+            }
+        });
+
+        ui.horizontal_wrapped(|ui| {
+            let can_back = self
+                .frame_history
+                .selected_index()
+                .is_some_and(|index| index > 0);
+            let can_forward = self
+                .frame_history
+                .selected_index()
+                .is_some_and(|index| index + 1 < self.frame_history.len());
+            let can_live = self
+                .frame_history
+                .selected_offset()
+                .is_some_and(|offset| offset != 0);
+
+            if ui
+                .add_enabled(can_back, egui::Button::new("Back Frame"))
+                .clicked()
+                && self.frame_history.select_previous()
+            {
+                self.restore_selected_history_frame(emu);
+            }
+            if ui
+                .add_enabled(can_forward, egui::Button::new("Forward Frame"))
+                .clicked()
+                && self.frame_history.select_next()
+            {
+                self.restore_selected_history_frame(emu);
+            }
+            if ui
+                .add_enabled(can_live, egui::Button::new("Return to Live"))
+                .clicked()
+                && self.frame_history.select_latest()
+            {
+                self.restore_selected_history_frame(emu);
+            }
+            ui.separator();
+            ui.strong(history_position_label(self.frame_history.selected_offset()));
+            ui.label(format!(
+                "{} / {} frames, {}",
+                self.frame_history.len(),
+                self.frame_history.capacity(),
+                format_memory_size(self.frame_history.memory_bytes())
+            ));
+        });
+
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .add_enabled(
+                    !self.frame_history.is_empty(),
+                    egui::Button::new("Save Selected Snapshot..."),
+                )
+                .clicked()
+            {
+                self.save_history_snapshot_requested = true;
+            }
+            if emu.system() != System::Tvc {
+                ui.label("Frame history is currently available only for TVC.");
+            }
+            if let Some(error) = &self.frame_history_error {
+                ui.colored_label(Color32::LIGHT_RED, error);
+            }
+        });
+        ui.separator();
+
+        self.ensure_history_textures(ui.ctx());
+        let selected = self.frame_history.selected_index();
+        let newest = self.frame_history.len().saturating_sub(1);
+        let mut clicked = None;
+        egui::ScrollArea::horizontal()
+            .id_salt("frame_history_timeline")
+            .auto_shrink([false, true])
+            .stick_to_right(self.frame_history.is_recording())
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    for (index, frame) in self.frame_history.frames().iter().enumerate() {
+                        let Some(texture) = self.frame_history_textures.get(&frame.id) else {
+                            continue;
+                        };
+                        let offset = index as isize - newest as isize;
+                        let label = if offset == 0 {
+                            format!("Live  PC {:04X}", frame.pc)
+                        } else {
+                            format!("{offset}  PC {:04X}", frame.pc)
+                        };
+                        ui.vertical(|ui| {
+                            let image = egui::Image::new(texture)
+                                .fit_to_exact_size(egui::vec2(160.0, 76.0));
+                            let response = ui.add(
+                                egui::ImageButton::new(image)
+                                    .selected(selected == Some(index))
+                                    .frame(true),
+                            );
+                            if response.clicked() {
+                                clicked = Some(index);
+                            }
+                            ui.small(label);
+                        });
+                    }
+                });
+            });
+        if let Some(index) = clicked {
+            if self.frame_history.select(index) {
+                self.restore_selected_history_frame(emu);
+            }
+        }
+    }
+
+    pub fn draw_instruction_trace(&mut self, ui: &mut egui::Ui, emu: &mut Emu) {
+        let recording = emu.instruction_trace().is_recording();
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .add_enabled(!recording, egui::Button::new("Record"))
+                .on_hover_text("Clear the old trace and begin recording instructions")
+                .clicked()
+            {
+                emu.start_instruction_trace(self.instruction_trace_capacity);
+            }
+            if ui
+                .add_enabled(recording, egui::Button::new("Stop"))
+                .clicked()
+            {
+                emu.stop_instruction_trace();
+            }
+            if ui.button("Clear").clicked() {
+                emu.clear_instruction_trace();
+            }
+            ui.separator();
+            ui.label("Capacity:");
+            ui.add_enabled(
+                !recording,
+                egui::DragValue::new(&mut self.instruction_trace_capacity)
+                    .range(MIN_TRACE_CAPACITY..=MAX_TRACE_CAPACITY)
+                    .speed(1_000),
+            );
+            let trace = emu.instruction_trace();
+            ui.label(format!(
+                "{} / {} instructions",
+                trace.len(),
+                trace.capacity()
+            ));
+        });
+        ui.small(
+            "Newest first. Registers and opcode bytes are captured before execution; writes include an interrupt accepted immediately after that instruction.",
+        );
+        ui.separator();
+
+        let trace = emu.instruction_trace();
+        if trace.is_empty() {
+            ui.label(if trace.is_recording() {
+                "Recording; waiting for the next instruction."
+            } else {
+                "No instruction trace recorded."
+            });
+            return;
+        }
+
+        let entries = trace.entries();
+        egui::ScrollArea::vertical()
+            .auto_shrink([false; 2])
+            .show_rows(ui, 20.0, entries.len(), |ui, rows| {
+                for row in rows {
+                    let entry = &entries[entries.len() - 1 - row];
+                    let instruction =
+                        crate::disasm::disassemble_captured(entry.pc(), &entry.opcode);
+                    ui.horizontal(|ui| {
+                        ui.monospace(format!("#{:08}", entry.sequence));
+                        if ui
+                            .link(format!("{:04X}", entry.pc()))
+                            .on_hover_text("Show this address in Disassembly")
+                            .clicked()
+                        {
+                            self.follow_pc = false;
+                            self.set_disassembly_address(entry.pc());
+                        }
+                        ui.monospace(format_bytes(&instruction.bytes, 4));
+                        ui.monospace(format!("{:<20}", instruction.text));
+                        let r = entry.registers;
+                        ui.monospace(format!(
+                            "AF={:04X} BC={:04X} DE={:04X} HL={:04X} SP={:04X}",
+                            r.af, r.bc, r.de, r.hl, r.sp
+                        ));
+                        if let Some(map) = entry.main_map {
+                            ui.monospace(format!(
+                                "M={map:02X} V={:02X}",
+                                entry.video_map.unwrap_or(0)
+                            ));
+                        }
+                        for write in &entry.effects.memory_writes {
+                            ui.colored_label(
+                                Color32::LIGHT_GREEN,
+                                format!("[{:04X}]={:02X}", write.addr, write.value),
+                            );
+                        }
+                        for write in &entry.effects.port_writes {
+                            ui.colored_label(
+                                Color32::LIGHT_BLUE,
+                                format!("OUT({:04X})={:02X}", write.port, write.value),
+                            );
+                        }
+                        if entry.interrupt_accepted {
+                            ui.colored_label(Color32::LIGHT_YELLOW, "IRQ");
+                        }
+                    });
+                }
+            });
+    }
+
+    fn restore_selected_history_frame(&mut self, emu: &mut Emu) {
+        let Some(snapshot) = self
+            .frame_history
+            .selected()
+            .map(|frame| frame.snapshot.clone())
+        else {
+            return;
+        };
+        match emu.restore_debug_snapshot(&snapshot) {
+            Ok(()) => {
+                self.frame_history_error = None;
+                self.frame_history_restored = true;
+            }
+            Err(error) => self.frame_history_error = Some(error),
+        }
+    }
+
+    fn ensure_history_textures(&mut self, ctx: &egui::Context) {
+        for frame in self.frame_history.frames() {
+            self.frame_history_textures
+                .entry(frame.id)
+                .or_insert_with(|| {
+                    ctx.load_texture(
+                        format!("frame-history-{}", frame.id),
+                        thumbnail_image(&frame.thumbnail),
+                        egui::TextureOptions::LINEAR,
+                    )
+                });
+        }
+        self.prune_history_textures();
+    }
+
+    fn prune_history_textures(&mut self) {
+        let retained: HashSet<u64> = self
+            .frame_history
+            .frames()
+            .iter()
+            .map(|frame| frame.id)
+            .collect();
+        self.frame_history_textures
+            .retain(|id, _| retained.contains(id));
+    }
+
     pub fn draw_cpu(&mut self, ui: &mut egui::Ui, emu: &mut Emu) {
         ui.horizontal(|ui| {
             if ui
                 .button(if emu.running { "Pause" } else { "Run" })
                 .clicked()
             {
+                if !emu.running {
+                    self.prepare_history_resume();
+                }
                 emu.running = !emu.running;
                 self.record_control(if emu.running { "Continued" } else { "Paused" });
             }
             if ui.button("Step").clicked() {
+                self.prepare_history_resume();
                 emu.debug_step(1);
                 self.record_control("Stepped 1 instruction");
             }
             if ui.button("Step 10").clicked() {
+                self.prepare_history_resume();
                 emu.debug_step(10);
                 self.record_control("Stepped 10 instructions");
             }
@@ -159,6 +500,7 @@ impl DebuggerUi {
                 .on_hover_text("Run until the Z80 accepts an interrupt")
                 .clicked()
             {
+                self.prepare_history_resume();
                 let result = emu.debug_run_to_interrupt();
                 if result.interrupt_accepted {
                     self.record_control(&format!(
@@ -776,6 +1118,43 @@ fn format_bytes(bytes: &[u8], width: usize) -> String {
         text.push(' ');
     }
     text
+}
+
+fn history_position_label(offset: Option<isize>) -> String {
+    match offset {
+        Some(0) => "Live".to_string(),
+        Some(-1) => "-1 frame".to_string(),
+        Some(offset) => format!("{offset} frames"),
+        None => "No frames".to_string(),
+    }
+}
+
+fn format_memory_size(bytes: usize) -> String {
+    if bytes < 1024 * 1024 {
+        format!("{:.1} KiB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1} MiB", bytes as f64 / (1024.0 * 1024.0))
+    }
+}
+
+fn thumbnail_image(thumbnail: &FrameThumbnail) -> ColorImage {
+    let pixels = thumbnail
+        .pixels
+        .iter()
+        .copied()
+        .map(|pixel| {
+            Color32::from_rgba_unmultiplied(
+                pixel as u8,
+                (pixel >> 8) as u8,
+                (pixel >> 16) as u8,
+                (pixel >> 24) as u8,
+            )
+        })
+        .collect();
+    ColorImage {
+        size: [thumbnail.width, thumbnail.height],
+        pixels,
+    }
 }
 
 #[cfg(test)]

@@ -58,6 +58,15 @@ This skill provides step-by-step instructions and references for compiling, exec
     cargo run --bin rtvc -- --headless --port 8080 path/to/game.z80
     python3 scripts/rtvc_debug.py --port 8080
     ```
+    For deterministic automation, `key_press <keycode> <duration_frames>` (or
+    `kp`) holds a key for the requested number of 50 Hz emulator frames. The
+    equivalent TCP request is
+    `{"cmd":"key_press","key":49,"duration":3}`.
+  - Use `trace start [capacity]`, `trace stop`, `trace status`,
+    `trace clear`, and `trace list [count]` in `scripts/rtvc_debug.py` to
+    capture a bounded instruction trace. Entries include pre-instruction Z80
+    state, opcode bytes, TVC mapper values, and memory/port writes. The JSON
+    protocol uses the corresponding `instruction_trace_*` command names.
   - Use the File menu to write/read `.rtvcsnap.zip` snapshots, load tape/disk files via open file dialog, and save the current framebuffer as a 4:3 PNG (`768x576`).
   - Use the Tape and Disk menus to load cassette and floppy media (either from local list or by browsing for any file). Selecting an entry immediately loads it.
   - Gamebase launches use the clean boot snapshot embedded in the app, force the TVC 1.2 VT-DOS machine, attach or inject the selected media, start emulation, and type `RUN` for CAS or `LOAD "*"` for DSK.
@@ -209,9 +218,10 @@ This skill provides step-by-step instructions and references for compiling, exec
   cargo run --bin rtvc-tap2toml -- path/to/tape.tap -o tape.toml
   ```
   - Parses standard ZX Spectrum 48K `.tap` files with flag `0x00` headers and `0xFF` data blocks.
-  - Extracts CODE blocks into `[[segments]]`, decodes PROGRAM headers into readable BASIC data, and preserves non-standard data flags in `[[raw_blocks]]`.
-  - Emits `rtvc-zx-tap-v1` TOML with SHA-256 provenance, mapping hints, and original tape order.
-  - Use `-` as the input path to read from stdin; omit `-o` to write TOML to stdout.
+  - Extracts CODE blocks into `[[segments]]` with byte arrays, decodes PROGRAM headers into `[[data_blocks]]` with readable BASIC lines.
+  - Non-standard data flags (e.g. multiload blocks) are preserved verbatim in `[[raw_blocks]]`.
+  - Emits `rtvc-zx-tap-v1` format TOML with SHA-256 provenance, TVC bridge mapping hints, and a `tap_order` index that mirrors the original block sequence.
+  - Use `-` as the input path to read tap from stdin; omit `-o` to write TOML to stdout.
 
 - **Disassemble ROM or binary bytes to helper assembler source:**
   ```bash

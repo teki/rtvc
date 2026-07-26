@@ -83,6 +83,76 @@ fn snapshot_restores_selected_program() {
 }
 
 #[test]
+fn debug_snapshot_restores_in_place_and_clears_typed_input() {
+    let machine_type = MachineType {
+        is_plus: false,
+        rom_version: RomVersion::V1_2,
+        has_dos: false,
+    };
+    let mut emu = Emu::new(machine_type);
+    emu.tvc_mut().unwrap().bus.mmu.set_map(0x10);
+    emu.set_z80_register("PC", 0x4567);
+    assert_eq!(emu.write_raw_bank("u0", 0x1234, &[0xA5]), Some(1));
+    let snapshot = emu.capture_debug_snapshot().unwrap();
+
+    emu.set_z80_register("PC", 0x9999);
+    assert_eq!(emu.write_raw_bank("u0", 0x1234, &[0x5A]), Some(1));
+    emu.queue_typed_text("RUN\r");
+    emu.running = true;
+
+    emu.restore_debug_snapshot(&snapshot).unwrap();
+
+    assert!(!emu.running);
+    assert_eq!(emu.z80_state().r16[11], 0x4567);
+    assert_eq!(emu.read_mapped_memory(0x1234, 1), vec![0xA5]);
+    assert!(emu.typed_text.is_empty());
+    assert!(emu.typed_key.is_none());
+    assert!(emu.frame_complete());
+}
+
+fn any_tvc_key_pressed(emu: &mut Emu) -> bool {
+    let key = &mut emu.tvc_mut().unwrap().bus.key;
+    (0..11).any(|row| {
+        key.select_row(row);
+        key.read_row() != 0xFF
+    })
+}
+
+#[test]
+fn timed_key_press_releases_after_requested_frames() {
+    let mut emu = Emu::new(MachineType {
+        is_plus: false,
+        rom_version: RomVersion::V1_2,
+        has_dos: false,
+    });
+
+    emu.key_press_frames(49, 2).unwrap();
+    assert!(any_tvc_key_pressed(&mut emu));
+    assert_eq!(emu.timed_keys.get(&49), Some(&2));
+
+    emu.tick();
+    assert!(any_tvc_key_pressed(&mut emu));
+    assert_eq!(emu.timed_keys.get(&49), Some(&1));
+
+    emu.tick();
+    assert!(!any_tvc_key_pressed(&mut emu));
+    assert!(!emu.timed_keys.contains_key(&49));
+}
+
+#[test]
+fn timed_key_press_rejects_zero_duration_and_unknown_codes() {
+    let mut emu = Emu::new(MachineType {
+        is_plus: false,
+        rom_version: RomVersion::V1_2,
+        has_dos: false,
+    });
+
+    assert!(emu.key_press_frames(49, 0).is_err());
+    assert!(emu.key_press_frames(999, 1).is_err());
+    assert!(!any_tvc_key_pressed(&mut emu));
+}
+
+#[test]
 fn game_archive_uses_exact_requested_media() {
     let archive = game_archive(&[
         ("OTHER.CAS", b"wrong"),

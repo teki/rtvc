@@ -15,6 +15,8 @@ pub mod expansion;
 pub mod fd1793;
 #[path = "emulator/hbf.rs"]
 pub mod hbf;
+#[path = "emulator/instruction_trace.rs"]
+pub mod instruction_trace;
 #[path = "emulator/key.rs"]
 pub mod key;
 #[path = "emulator/log.rs"]
@@ -59,6 +61,10 @@ pub mod ui;
 #[cfg(any(feature = "native", feature = "wasm-full"))]
 #[path = "debugger/debug_ui.rs"]
 pub mod debug_ui;
+
+#[cfg(any(feature = "native", feature = "wasm-full"))]
+#[path = "debugger/frame_history.rs"]
+pub mod frame_history;
 
 #[cfg(any(feature = "native", feature = "wasm-full"))]
 #[path = "ui/workspace.rs"]

@@ -32,6 +32,8 @@ pub enum WorkspaceTab {
     Breakpoints,
     RomSymbols,
     Events,
+    FrameHistory,
+    InstructionTrace,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -345,6 +347,8 @@ fn debugger_dock_state() -> DockState<WorkspaceTab> {
             WorkspaceTab::Memory,
             WorkspaceTab::Breakpoints,
             WorkspaceTab::RomSymbols,
+            WorkspaceTab::FrameHistory,
+            WorkspaceTab::InstructionTrace,
         ],
     );
     dock_state
@@ -466,6 +470,8 @@ impl TabViewer for WorkspaceViewer<'_> {
             WorkspaceTab::Breakpoints => "Breakpoints".into(),
             WorkspaceTab::RomSymbols => "ROM Symbols".into(),
             WorkspaceTab::Events => "Events".into(),
+            WorkspaceTab::FrameHistory => "Frame History".into(),
+            WorkspaceTab::InstructionTrace => "Instruction Trace".into(),
         }
     }
 
@@ -488,6 +494,8 @@ impl TabViewer for WorkspaceViewer<'_> {
                 self.events_visible = true;
                 self.debugger.draw_events(ui, self.emu);
             }
+            WorkspaceTab::FrameHistory => self.debugger.draw_frame_history(ui, self.emu),
+            WorkspaceTab::InstructionTrace => self.debugger.draw_instruction_trace(ui, self.emu),
         }
     }
 

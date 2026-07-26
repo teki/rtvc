@@ -1,6 +1,34 @@
 use super::*;
 
 #[test]
+fn instruction_trace_records_tvc_mapper_and_memory_writes() {
+    let mut tvc = Tvc::new(true);
+    tvc.bus.mmu.set_map(0x10);
+    tvc.bus.mmu.w8(0x0000, 0x32); // LD (4000H),A
+    tvc.bus.mmu.w8(0x0001, 0x00);
+    tvc.bus.mmu.w8(0x0002, 0x40);
+    tvc.z80.state.set_reg8(0, 0x2A);
+    tvc.instruction_trace_mut()
+        .start(crate::instruction_trace::MIN_TRACE_CAPACITY);
+
+    tvc.debug_step_instruction();
+
+    let entry = tvc.instruction_trace().entries().back().unwrap();
+    assert_eq!(entry.pc(), 0x0000);
+    assert_eq!(entry.registers.af >> 8, 0x2A);
+    assert_eq!(entry.opcode[..3], [0x32, 0x00, 0x40]);
+    assert_eq!(entry.main_map, Some(0x10));
+    assert_eq!(entry.video_map, Some(0x00));
+    assert_eq!(
+        entry.effects.memory_writes,
+        vec![crate::instruction_trace::TraceMemoryWrite {
+            addr: 0x4000,
+            value: 0x2A,
+        }]
+    );
+}
+
+#[test]
 fn snapshot_round_trips_core_state() {
     let mut tvc = Tvc::new_with_vid_model(true, VidModel::Interleaved);
     tvc.z80.state.r16[11] = 0x1234;

@@ -1,6 +1,42 @@
 use super::*;
 
 #[test]
+fn instruction_trace_records_zx82_memory_writes() {
+    let mut zx82 = Zx82::new();
+    zx82.bus.ram_mut()[0..5].copy_from_slice(&[0x32, 0x00, 0x80, 0xD3, 0xFE]);
+    zx82.z80.state.r16[11] = 0x4000;
+    zx82.z80.state.set_reg8(0, 0x2A);
+    zx82.instruction_trace_mut()
+        .start(crate::instruction_trace::MIN_TRACE_CAPACITY);
+
+    zx82.debug_step_instruction();
+
+    let entry = zx82.instruction_trace().entries().back().unwrap();
+    assert_eq!(entry.pc(), 0x4000);
+    assert_eq!(entry.registers.af >> 8, 0x2A);
+    assert_eq!(entry.opcode[..3], [0x32, 0x00, 0x80]);
+    assert_eq!(entry.main_map, None);
+    assert_eq!(
+        entry.effects.memory_writes,
+        vec![crate::instruction_trace::TraceMemoryWrite {
+            addr: 0x8000,
+            value: 0x2A,
+        }]
+    );
+
+    zx82.debug_step_instruction();
+    let entry = zx82.instruction_trace().entries().back().unwrap();
+    assert_eq!(entry.pc(), 0x4003);
+    assert_eq!(
+        entry.effects.port_writes,
+        vec![crate::instruction_trace::TracePortWrite {
+            port: 0x2AFE,
+            value: 0x2A,
+        }]
+    );
+}
+
+#[test]
 fn fixed_memory_map_keeps_rom_read_only() {
     let mut bus = Zx82Bus::new();
     let mut rom = [0; ROM_SIZE];

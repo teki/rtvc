@@ -72,6 +72,8 @@ fn debugger_layout_contains_all_phase_two_panes() {
         WorkspaceTab::Breakpoints,
         WorkspaceTab::RomSymbols,
         WorkspaceTab::Events,
+        WorkspaceTab::FrameHistory,
+        WorkspaceTab::InstructionTrace,
     ] {
         assert!(workspace.has_tab(tab));
     }
