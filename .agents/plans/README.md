@@ -28,6 +28,8 @@ implementation order, limitations, and focused validation.
 
 ## Current Plans
 
+- [Clean Up the `laser-port1` Porting Effort](cleanup-laser-port1.md)
+  ([progress](cleanup-laser-port1-progress.md))
 - [Frame History Debugger](frame-history-debugger.md)
   ([progress](frame-history-debugger-progress.md))
 - [Instruction Trace](instruction-trace-progress.md)

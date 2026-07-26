@@ -73,7 +73,7 @@ ROM-szimbólumok és adatterületek is megadhatók, hogy az ismert táblák `DB`
 sorokként, a kód pedig utasításokként jelenjen meg:
 
 ```cmd
-rtvc-disasm --origin C000H --symbols data\rom_symbols_1_2.json --comments data\rom_comments_1_2.json --bank sys --bank-offset 0000H --data-range C003H-C228H roms\TVC12_D4.64K -o rom.asm
+rtvc-disasm --origin C000H --symbols roms\rom_symbols_1_2.json --comments roms\rom_comments_1_2.json --bank sys --bank-offset 0000H --data-range C003H-C228H roms\TVC12_D4.64K -o rom.asm
 ```
 
 | Opció | Jelentés |

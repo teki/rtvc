@@ -3,8 +3,8 @@
 ; Source: roms/TVC12_D4.64K
 ; ORG: C000H
 ; Size: 8192 bytes
-; Symbols: data/rom_symbols_1_2.json
-; Comments: data/rom_comments_1_2.json
+; Symbols: roms/rom_symbols_1_2.json
+; Comments: roms/rom_comments_1_2.json
 ; Data ranges: C003H-C228H, C334H-C337H, C4ACH-C4B6H, C545H-C572H, C5B4H-C973H, C974H-C98EH, C9EAH-C9F1H, CB7FH-CBDCH, CF98H-D012H, D170H-D190H, D7BFH-D905H, D92AH-D9C7H, DA84H-DB05H, DBF6H-DC20H
 ; Auto labels: branch and call targets are emitted as Lxxxx.
 ; -----------------------------------------------------------------------------

@@ -14,7 +14,7 @@ use crate::vid::VidModel;
 use crate::z80::Z80State;
 use crate::zx82::Zx82;
 
-const GAMEBASE_BOOT_SNAPSHOT: &[u8] = include_bytes!("../../data/snapshots/boot12dos.rtvcsnap.zip");
+const GAMEBASE_BOOT_SNAPSHOT: &[u8] = include_bytes!("../../snapshots/boot12dos.rtvcsnap.zip");
 
 #[derive(Clone, Copy)]
 pub struct DiskGeometry {

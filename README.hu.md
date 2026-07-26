@@ -134,10 +134,10 @@ cargo run --bin rtvc
 Indítás snapshotból:
 
 ```bash
-cargo run --bin rtvc -- data/snapshots/boot12dos.rtvcsnap.zip
+cargo run --bin rtvc -- snapshots/boot12dos.rtvcsnap.zip
 ```
 
-A `data/snapshots/boot12dos.rtvcsnap.zip` egy tiszta, teljesen elindított TVC 1.2
+A `snapshots/boot12dos.rtvcsnap.zip` egy tiszta, teljesen elindított TVC 1.2
 VT-DOS gépállapot. Olyan tesztekhez használható, amelyeknél nem szükséges
 kivárni a gép normál indulását.
 

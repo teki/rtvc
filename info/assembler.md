@@ -72,7 +72,7 @@ Definitions are case-insensitive by name and substituted as text. Omitting
 Disassemble a binary blob into `rtvc-asm` source:
 
 ```bash
-cargo run --bin rtvc-disasm -- --origin C000H roms/TVC12_D4.64K -o data/TVC12_D4.64K.asm
+cargo run --bin rtvc-disasm -- --origin C000H roms/TVC12_D4.64K -o roms/TVC12_D4.64K.asm
 ```
 
 ROM symbol metadata and explicit data ranges can be supplied to keep known
@@ -81,11 +81,11 @@ tables as `DB` statements while emitting instructions for code:
 ```bash
 cargo run --bin rtvc-disasm -- \
   --origin C000H \
-  --symbols data/rom_symbols_1_2.json \
-  --comments data/rom_comments_1_2.json \
+  --symbols roms/rom_symbols_1_2.json \
+  --comments roms/rom_comments_1_2.json \
   --bank sys --bank-offset 0000H \
   --data-range C003H-C228H \
-  roms/TVC12_D4.64K -o data/TVC12_D4.64K.asm
+  roms/TVC12_D4.64K -o roms/TVC12_D4.64K.asm
 ```
 
 Options:

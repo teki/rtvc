@@ -378,7 +378,7 @@ shared interrupt on raster line 3 of the last displayed character row: the last
 active scanline.
 
 Do not assume all running software keeps this cursor address. For example, the
-checked-in clean VT-DOS boot snapshot (`data/snapshots/boot12dos.rtvcsnap.zip`)
+checked-in clean VT-DOS boot snapshot (`snapshots/boot12dos.rtvcsnap.zip`)
 currently contains `R14-R15 = 0x0AFF` with the same `R10=3`, which places the
 cursor interrupt at character row 43, column 63, raster line 3. This value is
 programmed by the VT-DOS disk ROM while it is temporarily mapped at `0xC000`;

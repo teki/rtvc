@@ -225,10 +225,10 @@ This skill provides step-by-step instructions and references for compiling, exec
 
 - **Disassemble ROM or binary bytes to helper assembler source:**
   ```bash
-  cargo run --bin rtvc-disasm -- --origin C000H roms/TVC12_D4.64K -o data/TVC12_D4.64K.asm
+  cargo run --bin rtvc-disasm -- --origin C000H roms/TVC12_D4.64K -o roms/TVC12_D4.64K.asm
   ```
   - Uses the emulator's Z80 disassembler and validates emitted instructions with the helper assembler.
-  - Pass `--symbols data/rom_symbols_1_2.json --bank sys --bank-offset 0000H` to add ROM labels and comments.
+  - Pass `--symbols roms/rom_symbols_1_2.json --bank sys --bank-offset 0000H` to add ROM labels and comments.
   - Pass repeated `--data-range START-END` options for known tables or text regions that should remain `DB` data.
 
 ### Cross-Target Validation

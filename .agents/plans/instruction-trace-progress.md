@@ -50,10 +50,11 @@ smoke test remains.
 - Lightweight `web-vid-simple` and `web-vid-realistic` WASM checks: passed.
 - Full `wasm-full` check: passed.
 - `python3 -m py_compile scripts/rtvc_debug.py`: passed.
-- Headless TCP smoke test against `data/snapshots/baddraw.rtvcsnap.zip`:
+- Headless TCP smoke test against a port-local Laser Squad diagnostic snapshot:
   a 1,000-entry ring filled while running, `trace status` reported its state,
   and `trace list 5` returned disassembly, registers, mapper values, stack/RAM
-  writes, and port writes.
+  writes, and port writes. The snapshot now lives in the standalone
+  `tvc-ports` workspace and is not part of this repository.
 - `git diff --check`: passed.
 
 ## Next Steps

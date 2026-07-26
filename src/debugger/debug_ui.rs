@@ -1035,7 +1035,7 @@ fn rom_symbols() -> &'static [RomSymbol] {
     static SYMBOLS: OnceLock<Vec<RomSymbol>> = OnceLock::new();
     SYMBOLS.get_or_init(|| {
         let document: RomSymbolDocument =
-            serde_json::from_str(include_str!("../../data/rom_symbols_1_2.json"))
+            serde_json::from_str(include_str!("../../roms/rom_symbols_1_2.json"))
                 .expect("embedded ROM symbol database must be valid");
         document
             .symbols

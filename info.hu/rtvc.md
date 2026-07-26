@@ -296,7 +296,7 @@ A 2-es verzió szándékosan elutasítja az 1-es verziójú pillanatképeket.
 
 A natív mentés/betöltés támogatja a nyers `.rtvcsnap` és a ZIP-be csomagolt
 `.rtvcsnap.zip` formátumokat. A verziókövetett
-[boot12dos.rtvcsnap.zip](../data/snapshots/boot12dos.rtvcsnap.zip) egy stabil
+[boot12dos.rtvcsnap.zip](../snapshots/boot12dos.rtvcsnap.zip) egy stabil
 rendszerindítás utáni fixture és a Gamebase indítás alapja.
 
 A `cargo bundle-web <snapshot>` egy könnyűsúlyú statikus pillanatkép lejátszót hoz létre.
@@ -364,7 +364,7 @@ Az interaktív kliens a [scripts/rtvc_debug.py](../scripts/rtvc_debug.py).
 
 ## ROM szimbólum adatbázis
 
-A [data/rom_symbols_1_2.json](../data/rom_symbols_1_2.json) gondosan válogatott
+A [roms/rom_symbols_1_2.json](../roms/rom_symbols_1_2.json) gondosan válogatott
 BASIC 1.2 végrehajtási tereptárgyakat, hívható rutinokat és adatokat tartalmaz.
 
 Egy CPU cím önmagában nem stabil ROM azonosító, mert a SYS és EXTH

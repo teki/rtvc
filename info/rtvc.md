@@ -332,7 +332,7 @@ Version 2 intentionally rejects version 1 snapshots.
 
 Native save/load accepts raw `.rtvcsnap` and ZIP-wrapped
 `.rtvcsnap.zip`. The checked-in
-[boot12dos.rtvcsnap.zip](../data/snapshots/boot12dos.rtvcsnap.zip) is a stable
+[boot12dos.rtvcsnap.zip](../snapshots/boot12dos.rtvcsnap.zip) is a stable
 post-boot fixture and the Gamebase launch base.
 
 `cargo bundle-web <snapshot>` creates a lightweight static snapshot player.
@@ -462,7 +462,7 @@ segments to mapped memory, and `loadasm <path.toml>` writes segments from
 
 ## ROM Symbol Database
 
-[data/rom_symbols_1_2.json](../data/rom_symbols_1_2.json) contains curated
+[roms/rom_symbols_1_2.json](../roms/rom_symbols_1_2.json) contains curated
 BASIC 1.2 execution landmarks, callable routines, and data.
 
 A CPU address alone is not a stable ROM identity because SYS and EXTH can

@@ -63,9 +63,10 @@ considered complete.
 - `cargo test --lib`: 116 passed.
 - `cargo check`: passed.
 - Targeted timed-key and TCP command tests: 3 passed.
-- Manual headless check: `key_press 49 3` against
-  `data/snapshots/nogreen.rtvcsnap.zip` was accepted and advanced execution
-  from the player-count input loop.
+- Manual headless check: `key_press 49 3` against a Laser Squad diagnostic
+  snapshot was accepted and advanced execution from the player-count input
+  loop. That port-local snapshot now lives in the standalone `tvc-ports`
+  workspace and is not part of this repository.
 - `cargo check --lib --no-default-features --features wasm-full --target
   wasm32-unknown-unknown`: passed.
 - Documentation and source changes pass `git diff --check`.

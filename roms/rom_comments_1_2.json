@@ -30,7 +30,7 @@
     {
       "address": "0xC111",
       "source": "LL",
-      "text": "Numbered floating-point constants stored in BASIC stack number format without overflow bytes."
+      "text": "Numbered floating-point constants (0-39) stored in BASIC stack format without overflow bytes; each constant is 7 bytes (6-byte BCD mantissa + 1 characteristic byte)."
     },
     {
       "address": "0xC229",
@@ -90,7 +90,7 @@
     {
       "address": "0xC363",
       "source": "KL",
-      "text": "RST 30H entry point."
+      "text": "RST 30H entry point; function call dispatcher."
     },
     {
       "address": "0xC371",
@@ -135,7 +135,7 @@
     {
       "address": "0xC4B7",
       "source": "KL",
-      "text": "HI_MEM_SET expects the number of bytes to reserve above HI_MEM in DE; on success DE returns the new HI_MEM+1."
+      "text": "HI_MEM_SET (KERNEL 01) expects the number of bytes to reserve above HI_MEM in DE; on success DE returns the new HI_MEM+1, on failure A returns FBh."
     },
     {
       "address": "0xC545",
@@ -145,7 +145,7 @@
     {
       "address": "0xC555",
       "source": "KL",
-      "text": "Startup initialization routine table."
+      "text": "Startup initialization routine table: sets four-color mode, initializes keyboard, RET, initializes cassette workspace."
     },
     {
       "address": "0xC5B4",
@@ -170,32 +170,32 @@
     {
       "address": "0xC9F4",
       "source": "KL",
-      "text": "VMODE routine."
+      "text": "VMODE routine (VIDEO 04); sets the video display mode."
     },
     {
       "address": "0xCA38",
       "source": "KL",
-      "text": "PAL routine."
+      "text": "PAL routine (VIDEO 0C); defines palette colors."
     },
     {
       "address": "0xCA49",
       "source": "KL",
-      "text": "CLS routine."
+      "text": "CLS routine (VIDEO 05); clears the screen."
     },
     {
       "address": "0xCAD7",
       "source": "KL",
-      "text": "BREL routine."
+      "text": "BREL routine (VIDEO 07); sets pen position relative to current point."
     },
     {
       "address": "0xCADA",
       "source": "KL",
-      "text": "BABS routine."
+      "text": "BABS routine (VIDEO 06); sets pen position to absolute coordinates."
     },
     {
       "address": "0xCB7F",
       "source": "KL",
-      "text": "Line style bit-pattern table."
+      "text": "Line style bit-pattern table; 16 bytes, 14 unique patterns."
     },
     {
       "address": "0xCBA0",
@@ -210,27 +210,27 @@
     {
       "address": "0xCBF3",
       "source": "KL",
-      "text": "BON routine."
+      "text": "BON routine (VIDEO 08); pen down (starts drawing)."
     },
     {
       "address": "0xCBFF",
       "source": "KL",
-      "text": "BOFF routine."
+      "text": "BOFF routine (VIDEO 09); pen up (stops drawing)."
     },
     {
       "address": "0xCD48",
       "source": "KL",
-      "text": "FILL routine."
+      "text": "FILL routine (VIDEO 0A); fills closed shapes with color."
     },
     {
       "address": "0xCF2C",
       "source": "KL",
-      "text": "DEFC routine."
+      "text": "DEFC routine (VIDEO 0B); defines a character with specified code."
     },
     {
       "address": "0xCF4B",
       "source": "KL",
-      "text": "BTEXT routine."
+      "text": "BTEXT routine (VIDEO 03); positions pen to normal character position."
     },
     {
       "address": "0xCF98",
@@ -240,12 +240,12 @@
     {
       "address": "0xD007",
       "source": "KL",
-      "text": "Editor mode descriptor table; each four-byte entry holds routine, row width, and bits per pixel."
+      "text": "Editor mode descriptor table; each four-byte entry holds routine address, row width, and bits per pixel."
     },
     {
       "address": "0xD013",
       "source": "KL",
-      "text": "CFIX routine."
+      "text": "CFIX routine (EDITOR 04); notes the current cursor position."
     },
     {
       "address": "0xD170",
@@ -260,12 +260,12 @@
     {
       "address": "0xD612",
       "source": "KL",
-      "text": "KB STATUS routine."
+      "text": "KB STATUS routine (BILL 03); checks if a key is pressed."
     },
     {
       "address": "0xD618",
       "source": "KL",
-      "text": "KB CHIN routine."
+      "text": "KB CHIN routine (BILL 01); reads the pressed key code."
     },
     {
       "address": "0xD7BF",
@@ -290,7 +290,7 @@
     {
       "address": "0xD9DC",
       "source": "KL",
-      "text": "CAS VERIFY routine."
+      "text": "CAS VERIFY routine (CAS 05); verifies cassette data."
     },
     {
       "address": "0xDA84",
@@ -660,7 +660,7 @@
     {
       "address": "0xF726",
       "source": "KL",
-      "text": "Arithmetic routine 4: a BASIC Stack-ben levo 9 byte-os szam elojelet az ellenkezojere valtoztatja."
+      "text": "Arithmetic routine 4: negates the sign of the 9-byte number on the BASIC Stack."
     },
     {
       "address": "0xF741",
@@ -685,12 +685,12 @@
     {
       "address": "0xFB0E",
       "source": "KL",
-      "text": "Initialization bytes copied to RAM addresses 0B00H-0B48H."
+      "text": "Initialization bytes copied to RAM addresses 0B00H-0B48H; includes the I/O assignment table."
     },
     {
       "address": "0xFB28",
       "source": "KL",
-      "text": "Arithmetic routine 13: a BASIC Stack-bol a HL regiszter altal mutatott helyre mozgat. A Stackbol felszabadul 9 byte."
+      "text": "Arithmetic routine 13: moves from BASIC Stack to the address in HL; 9 bytes freed from Stack."
     },
     {
       "address": "0xFB54",
@@ -705,7 +705,7 @@
     {
       "address": "0xFB5B",
       "source": "KL",
-      "text": "Bytes copied into RAM at initialization, including RST and system entry stubs."
+      "text": "Bytes copied into RAM at initialization (addresses 0008H-002FH): error handlers, RST 18H entry, and function call dispatcher."
     },
     {
       "address": "0xFB5C",
@@ -735,7 +735,7 @@
     {
       "address": "0xFD9C",
       "source": "KL",
-      "text": "\"System error \" text."
+      "text": "\"System error\" text."
     },
     {
       "address": "0xFDC6",

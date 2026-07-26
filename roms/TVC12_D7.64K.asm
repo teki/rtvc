@@ -3,8 +3,8 @@
 ; Source: roms/TVC12_D7.64K
 ; ORG: E000H
 ; Size: 8192 bytes
-; Symbols: data/rom_symbols_1_2.json
-; Comments: data/rom_comments_1_2.json
+; Symbols: roms/rom_symbols_1_2.json
+; Comments: roms/rom_comments_1_2.json
 ; Data ranges: E000H-EFFFH, F291H-F29BH, F3C6H-F3D7H, F741H-F77AH
 ; Auto labels: branch and call targets are emitted as Lxxxx.
 ; -----------------------------------------------------------------------------

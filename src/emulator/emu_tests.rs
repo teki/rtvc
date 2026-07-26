@@ -366,7 +366,7 @@ fn game_archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
 
 #[test]
 fn load_tape_snapshot_restores_selection_and_can_play() {
-    let snapshot_path = std::path::Path::new("data/snapshots/load_tape.rtvcsnap.zip");
+    let snapshot_path = std::path::Path::new("snapshots/load_tape.rtvcsnap.zip");
     if !snapshot_path.exists() {
         return;
     }
