@@ -822,9 +822,9 @@ impl Tvc {
     }
 
     fn step_instruction(&mut self, sync_video: bool) -> (u32, bool, bool) {
-        self.bus.trace_pc = self.z80.state.r16[11];
+        self.bus.trace_pc = self.z80.state.pc;
         let trace_entry = self.instruction_trace.is_recording().then(|| {
-            let pc = self.z80.state.r16[11];
+            let pc = self.z80.state.pc;
             let opcode = std::array::from_fn(|offset| self.bus.r8(pc.wrapping_add(offset as u16)));
             self.bus.begin_instruction_effects();
             InstructionTraceEntry {
@@ -869,7 +869,7 @@ impl Tvc {
         if self.tracepoints.is_empty() || self.trace_events.len() >= 256 {
             return;
         }
-        let pc = self.z80.state.r16[11];
+        let pc = self.z80.state.pc;
         let Some(bank) = self.bus.mmu.mapped_rom_bank(pc) else {
             return;
         };
@@ -918,7 +918,7 @@ impl Tvc {
             let (instruction_time, instruction_frame_complete, _) =
                 self.step_instruction(sync_video);
 
-            if self.breakpoints.contains(&self.z80.state.r16[11]) {
+            if self.breakpoints.contains(&self.z80.state.pc) {
                 do_break = true;
             }
 

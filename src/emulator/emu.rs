@@ -15,6 +15,8 @@ use crate::z80::Z80State;
 use crate::zx82::Zx82;
 
 const GAMEBASE_BOOT_SNAPSHOT: &[u8] = include_bytes!("../../snapshots/boot12dos.rtvcsnap.zip");
+const TYPED_KEY_HOLD_FRAMES: u32 = 3;
+const TYPED_KEY_GAP_FRAMES: u32 = 1;
 
 #[derive(Clone, Copy)]
 pub struct DiskGeometry {
@@ -222,6 +224,8 @@ pub struct Emu {
     loaded_tape_was_injected: bool,
     typed_text: VecDeque<char>,
     typed_key: Option<u32>,
+    typed_key_frames: u32,
+    typed_gap_frames: u32,
     timed_keys: HashMap<u32, u32>,
     tvc_fast_boot: bool,
 }
@@ -253,6 +257,8 @@ impl Emu {
             loaded_tape_was_injected: false,
             typed_text: VecDeque::new(),
             typed_key: None,
+            typed_key_frames: 0,
+            typed_gap_frames: 0,
             timed_keys: HashMap::new(),
             tvc_fast_boot: false,
         };
@@ -339,6 +345,10 @@ impl Emu {
 
     pub fn key_press(&mut self, ch: char) {
         self.machine.key_press(ch);
+    }
+
+    pub fn type_text(&mut self, text: &str) {
+        self.queue_typed_text(text);
     }
 
     pub fn focus_change(&mut self, has_focus: bool) {
@@ -519,6 +529,8 @@ impl Emu {
         if let Some(code) = self.typed_key.take() {
             self.machine.key_up(code);
         }
+        self.typed_key_frames = 0;
+        self.typed_gap_frames = 0;
         self.typed_text.clear();
     }
 
@@ -528,8 +540,19 @@ impl Emu {
     }
 
     fn advance_typed_text(&mut self) {
-        if let Some(code) = self.typed_key.take() {
+        if let Some(code) = self.typed_key {
+            if self.typed_key_frames > 1 {
+                self.typed_key_frames -= 1;
+                return;
+            }
             self.machine.key_up(code);
+            self.typed_key = None;
+            self.typed_key_frames = 0;
+            self.typed_gap_frames = TYPED_KEY_GAP_FRAMES;
+            return;
+        }
+        if self.typed_gap_frames != 0 {
+            self.typed_gap_frames -= 1;
             return;
         }
         let Some(ch) = self.typed_text.pop_front() else {
@@ -541,6 +564,7 @@ impl Emu {
             self.machine.key_press(ch);
         }
         self.typed_key = Some(code);
+        self.typed_key_frames = TYPED_KEY_HOLD_FRAMES;
     }
 
     fn advance_timed_keys(&mut self) {

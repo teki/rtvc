@@ -193,16 +193,15 @@ impl FrameStats {
     }
 }
 
-pub fn start_debugger_server(port: u16) -> DebuggerInterface {
+pub fn start_debugger_server(port: u16) -> std::io::Result<DebuggerInterface> {
+    let listener = TcpListener::bind(("127.0.0.1", port))?;
+    listener.set_nonblocking(true)?;
     let (cmd_tx, cmd_rx) = channel::<DebuggerMessage>();
     let (event_tx, event_rx) = channel::<DebuggerEvent>();
     let ctx = Arc::new(Mutex::new(None::<egui::Context>));
     let ctx_clone = Arc::clone(&ctx);
 
     thread::spawn(move || {
-        let listener =
-            TcpListener::bind(format!("127.0.0.1:{}", port)).expect("Failed to bind TCP port");
-        listener.set_nonblocking(true).unwrap();
         println!("Debugger server listening on 127.0.0.1:{}", port);
 
         let mut stream: Option<TcpStream> = None;
@@ -286,17 +285,17 @@ pub fn start_debugger_server(port: u16) -> DebuggerInterface {
         }
     });
 
-    DebuggerInterface {
+    Ok(DebuggerInterface {
         cmd_rx,
         event_tx,
         ctx,
         frame_stats: Mutex::new(FrameStats::new()),
         close_requested: AtomicBool::new(false),
-    }
+    })
 }
 
-pub fn run_headless(mut emu: Emu, port: u16) {
-    let debugger = start_debugger_server(port);
+pub fn run_headless(mut emu: Emu, port: u16) -> std::io::Result<()> {
+    let debugger = start_debugger_server(port)?;
     let mut last_frame_time = Instant::now();
 
     loop {
@@ -307,7 +306,7 @@ pub fn run_headless(mut emu: Emu, port: u16) {
         }
         if debugger.close_requested() {
             thread::sleep(Duration::from_millis(10));
-            return;
+            return Ok(());
         }
 
         // 2. Emulate frame if running
@@ -321,7 +320,7 @@ pub fn run_headless(mut emu: Emu, port: u16) {
 
                 if hit_breakpoint {
                     emu.running = false;
-                    let pc = emu.z80_state().r16[11];
+                    let pc = emu.z80_state().pc;
                     println!("Hit breakpoint at PC = 0x{:04X}", pc);
                     let _ = debugger.event_tx.send(DebuggerEvent::BreakpointHit { pc });
                 }
@@ -345,8 +344,8 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                     "status": "ok",
                     "system": emu.system_label(),
                     "running": emu.running,
-                    "pc": state.r16[11],
-                    "sp": state.r16[10],
+                    "pc": state.pc,
+                    "sp": state.sp,
                     "af": state.get_reg16(0),
                     "bc": state.get_reg16(1),
                     "de": state.get_reg16(2),
@@ -578,9 +577,7 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                 }
                 "press" => {
                     if let Some(ch_str) = character {
-                        for ch in ch_str.chars() {
-                            emu.key_press(ch);
-                        }
+                        emu.type_text(&ch_str);
                         serde_json::json!({ "status": "ok" })
                     } else {
                         serde_json::json!({ "status": "error", "message": "Missing char for key_press" })

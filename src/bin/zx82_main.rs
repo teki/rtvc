@@ -89,7 +89,7 @@ fn main() -> eframe::Result<()> {
         }
         println!(
             "Zx82 ran {frames} frames, PC={:04X}, clock={}, interrupt={}",
-            zx82.z80.state.r16[11],
+            zx82.z80.state.pc,
             zx82.clock(),
             zx82.last_frame_interrupt_accepted()
         );
@@ -188,7 +188,7 @@ impl eframe::App for Zx82App {
                 ui.separator();
                 ui.monospace(format!(
                     "PC {:04X}  frame {}",
-                    self.zx82.z80.state.r16[11],
+                    self.zx82.z80.state.pc,
                     self.zx82.frame_counter()
                 ));
             });

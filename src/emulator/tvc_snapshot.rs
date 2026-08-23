@@ -18,8 +18,14 @@ pub(crate) fn save(tvc: &Tvc) -> Vec<u8> {
 
     let mut cpu = Writer::new();
     cpu.raw_bytes(&tvc.z80.state.r8);
-    for reg in tvc.z80.state.r16 {
-        cpu.u16(reg);
+    // CPUZ layout: 13 CPU words (legacy), of which SP=word 10 and PC=word 11.
+    for i in 0..13 {
+        let w = match i {
+            10 => tvc.z80.state.sp,
+            11 => tvc.z80.state.pc,
+            _ => 0,
+        };
+        cpu.u16(w);
     }
     cpu.u8(tvc.z80.state.halted);
     cpu.u8(tvc.z80.state.im);
@@ -87,9 +93,12 @@ pub(crate) fn load(tvc: &mut Tvc, data: &[u8]) -> snapshot::Result<()> {
             b"META" => {}
             b"CPUZ" => {
                 tvc.z80.state.r8.copy_from_slice(reader.raw_bytes(22)?);
-                for reg in &mut tvc.z80.state.r16 {
-                    *reg = reader.u16()?;
+                let mut words = [0u16; 13];
+                for w in &mut words {
+                    *w = reader.u16()?;
                 }
+                tvc.z80.state.sp = words[10];
+                tvc.z80.state.pc = words[11];
                 tvc.z80.state.halted = reader.u8()?;
                 tvc.z80.state.im = reader.u8()?;
                 tvc.z80.state.iff1 = reader.u8()?;

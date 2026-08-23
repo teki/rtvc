@@ -31,7 +31,7 @@ fn instruction_trace_records_tvc_mapper_and_memory_writes() {
 #[test]
 fn snapshot_round_trips_core_state() {
     let mut tvc = Tvc::new_with_vid_model(true, VidModel::Interleaved);
-    tvc.z80.state.r16[11] = 0x1234;
+    tvc.z80.state.pc = 0x1234;
     tvc.bus.mmu.w8(0x4000, 0xAB);
     tvc.bus.vid.set_border(0x55);
     tvc.bus.pend_it = 0x0F;
@@ -48,7 +48,7 @@ fn snapshot_round_trips_core_state() {
 
     assert!(restored.bus.mmu.is_plus());
     assert_eq!(restored.vid_model(), VidModel::Interleaved);
-    assert_eq!(restored.z80.state.r16[11], 0x1234);
+    assert_eq!(restored.z80.state.pc, 0x1234);
     assert_eq!(restored.bus.mmu.r8(0x4000), 0xAB);
     assert_eq!(restored.bus.pend_it, 0x0F);
     assert!(restored.bus.tape_motor_on());

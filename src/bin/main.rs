@@ -150,11 +150,20 @@ fn main() -> eframe::Result<()> {
         }
     }
     if headless {
-        rtvc_core::debugger::run_headless(emu, port);
+        if let Err(err) = rtvc_core::debugger::run_headless(emu, port) {
+            eprintln!("Error: failed to bind debugger port {port}: {err}");
+            std::process::exit(1);
+        }
         return Ok(());
     }
 
-    let debugger = Some(rtvc_core::debugger::start_debugger_server(port));
+    let debugger = match rtvc_core::debugger::start_debugger_server(port) {
+        Ok(debugger) => Some(debugger),
+        Err(err) => {
+            eprintln!("Error: failed to bind debugger port {port}: {err}");
+            std::process::exit(1);
+        }
+    };
     let app = ui::EmuApp::new(emu, app_state_file, debugger);
     let app_icon =
         eframe::icon_data::from_png_bytes(APP_ICON_PNG).expect("invalid embedded RTVC app icon");

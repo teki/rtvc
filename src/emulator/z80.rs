@@ -46,15 +46,12 @@ const R_AFA: usize = 6;
 const R_BCA: usize = 7;
 const R_DEA: usize = 8;
 const R_HLA: usize = 9;
-const R_SP: usize = 10;
-const R_PC: usize = 11;
-const R_IR: usize = 12;
 
 pub struct Z80State {
     // 8-bit registers: A,F,B,C,D,E,H,L,IXh,IXl,IYh,IYl,A',F',B',C',D',E',H',L',I,R
     pub r8: [u8; 22],
-    // 16-bit registers: AF,BC,DE,HL,IX,IY,AF',BC',DE',HL',SP,PC,IR
-    pub r16: [u16; 13],
+    pub sp: u16,
+    pub pc: u16,
 
     pub halted: u8,
     pub im: u8,
@@ -66,7 +63,8 @@ impl Z80State {
     pub fn new() -> Self {
         let mut state = Z80State {
             r8: [0; 22],
-            r16: [0; 13],
+            sp: 0,
+            pc: 0,
             halted: 0,
             im: 0,
             iff1: 0,
@@ -78,20 +76,8 @@ impl Z80State {
 
     pub fn initialize(&mut self) {
         self.r8 = [0; 22];
-        self.r16 = [0; 13];
-
-        self.r16[R_AF] = 0xFFFF;
-        self.r16[R_BC] = 0xFFFF;
-        self.r16[R_DE] = 0xFFFF;
-        self.r16[R_HL] = 0xFFFF;
-        self.r16[R_IX] = 0xFFFF;
-        self.r16[R_IY] = 0xFFFF;
-        self.r16[R_SP] = 0xFFFF;
-        self.r16[R_AFA] = 0xFFFF;
-        self.r16[R_BCA] = 0xFFFF;
-        self.r16[R_DEA] = 0xFFFF;
-        self.r16[R_HLA] = 0xFFFF;
-        self.sync_r8_from_r16();
+        self.r8[0..=19].fill(0xFF);
+        self.sp = 0xFFFF;
 
         self.reset();
     }
@@ -107,30 +93,14 @@ impl Z80State {
         self.r8[R_I] = 0x00;
         self.r8[R_R] = 0x00;
 
-        self.r16[R_PC] = 0x0000;
-    }
-
-    // Sync 8-bit registers from 16-bit (high byte first)
-    pub fn sync_r8_from_r16(&mut self) {
-        for i in 0..=9 {
-            let val = self.r16[i];
-            self.r8[i * 2] = ((val >> 8) & 0xFF) as u8;
-            self.r8[i * 2 + 1] = (val & 0xFF) as u8;
-        }
-    }
-
-    // Sync 16-bit registers from 8-bit
-    pub fn sync_r16_from_r8(&mut self) {
-        for i in 0..=9 {
-            self.r16[i] = ((self.r8[i * 2] as u16) << 8) | (self.r8[i * 2 + 1] as u16);
-        }
+        self.pc = 0x0000;
     }
 
     pub fn get_reg16(&self, reg: usize) -> u16 {
         match reg {
             0..=9 => ((self.r8[reg * 2] as u16) << 8) | (self.r8[reg * 2 + 1] as u16),
-            10 => self.r16[R_SP],
-            11 => self.r16[R_PC],
+            10 => self.sp,
+            11 => self.pc,
             12 => ((self.r8[R_I] as u16) << 8) | (self.r8[R_R] as u16),
             _ => 0,
         }
@@ -142,8 +112,8 @@ impl Z80State {
                 self.r8[reg * 2] = ((val >> 8) & 0xFF) as u8;
                 self.r8[reg * 2 + 1] = (val & 0xFF) as u8;
             }
-            10 => self.r16[R_SP] = val,
-            11 => self.r16[R_PC] = val,
+            10 => self.sp = val,
+            11 => self.pc = val,
             12 => {
                 self.r8[R_I] = ((val >> 8) & 0xFF) as u8;
                 self.r8[R_R] = (val & 0xFF) as u8;
@@ -211,19 +181,19 @@ impl Z80 {
     }
 
     pub fn push16<M: CpuBus>(&mut self, mmu: &mut M, val: u16) {
-        let sp = self.state.r16[R_SP].wrapping_sub(1);
+        let sp = self.state.sp.wrapping_sub(1);
         mmu.w8(sp, ((val >> 8) & 0xFF) as u8);
         let sp = sp.wrapping_sub(1);
         mmu.w8(sp, (val & 0xFF) as u8);
-        self.state.r16[R_SP] = sp;
+        self.state.sp = sp;
     }
 
     pub fn pop16<M: CpuBus>(&mut self, mmu: &mut M) -> u16 {
-        let sp = self.state.r16[R_SP];
+        let sp = self.state.sp;
         let lo = mmu.r8(sp) as u16;
         let sp = sp.wrapping_add(1);
         let hi = mmu.r8(sp) as u16;
-        self.state.r16[R_SP] = sp.wrapping_add(1);
+        self.state.sp = sp.wrapping_add(1);
         (hi << 8) | lo
     }
 
@@ -326,8 +296,8 @@ impl Z80 {
             "HLa" => self.state.get_reg16(R_HLA),
             "IX" => self.state.get_reg16(R_IX),
             "IY" => self.state.get_reg16(R_IY),
-            "SP" => self.state.r16[R_SP],
-            "PC" => self.state.r16[R_PC],
+            "SP" => self.state.sp,
+            "PC" => self.state.pc,
             "A" => self.state.r8[R_A] as u16,
             "F" => self.state.r8[R_F] as u16,
             "B" => self.state.r8[R_B] as u16,
@@ -358,8 +328,8 @@ impl Z80 {
             "HLa" => self.state.set_reg16(R_HLA, val),
             "IX" => self.state.set_reg16(R_IX, val),
             "IY" => self.state.set_reg16(R_IY, val),
-            "SP" => self.state.r16[R_SP] = val,
-            "PC" => self.state.r16[R_PC] = val,
+            "SP" => self.state.sp = val,
+            "PC" => self.state.pc = val,
             "A" => self.state.r8[R_A] = (val & 0xFF) as u8,
             "F" => self.state.r8[R_F] = (val & 0xFF) as u8,
             "B" => self.state.r8[R_B] = (val & 0xFF) as u8,
@@ -383,9 +353,9 @@ impl Z80 {
             self.state.halted = 0;
             self.state.iff1 = 0;
             self.state.iff2 = 0;
-            let pc = self.state.r16[R_PC];
+            let pc = self.state.pc;
             self.push16(mmu, pc);
-            self.state.r16[R_PC] = 0x0038;
+            self.state.pc = 0x0038;
             13
         } else {
             0
@@ -397,7 +367,7 @@ impl Z80 {
             return 4;
         }
 
-        let mut pc = self.state.r16[R_PC];
+        let mut pc = self.state.pc;
         let mut r_add = 0u8;
         let mut t_add = 0u32;
         let mut displ = 0i8;
@@ -416,7 +386,7 @@ impl Z80 {
                     break;
                 }
             }
-            self.state.r16[R_PC] = pc_loop;
+            self.state.pc = pc_loop;
             pc = pc_loop;
             opcode = (opcode << 8) | opcodeb2;
             r_add += 2;
@@ -437,7 +407,7 @@ impl Z80 {
             panic!("Opcode not implemented: 0x{:04X}", opcode);
         }
         if m > 0 && (self.state.halted == 0 || opcode == 0x76) {
-            self.state.r16[R_PC] = pc.wrapping_add(m as u16);
+            self.state.pc = pc.wrapping_add(m as u16);
         }
         t + t_add
     }
@@ -489,10 +459,10 @@ impl Z80 {
 
     pub fn execute_base<M: CpuBus>(&mut self, opcode: u8, mmu: &mut M) -> (u32, u8) {
         match opcode {
-            0x00 => (4, 1),  // NOP
+            0x00 => (4, 1), // NOP
             0x01 => {
                 // LD BC,nn
-                let nn = mmu.r16(self.state.r16[R_PC].wrapping_add(1));
+                let nn = mmu.r16(self.state.pc.wrapping_add(1));
                 self.state.set_reg16(R_BC, nn);
                 (10, 3)
             }
@@ -523,7 +493,7 @@ impl Z80 {
             }
             0x06 => {
                 // LD B,n
-                let n = mmu.r8(self.state.r16[R_PC].wrapping_add(1));
+                let n = mmu.r8(self.state.pc.wrapping_add(1));
                 self.state.r8[R_B] = n;
                 (7, 2)
             }
@@ -582,7 +552,7 @@ impl Z80 {
             }
             0x0E => {
                 // LD C,n
-                let n = mmu.r8(self.state.r16[R_PC].wrapping_add(1));
+                let n = mmu.r8(self.state.pc.wrapping_add(1));
                 self.state.r8[R_C] = n;
                 (7, 2)
             }
@@ -597,19 +567,19 @@ impl Z80 {
             }
             0x10 => {
                 // DJNZ e
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 self.state.r8[R_B] = self.state.r8[R_B].wrapping_sub(1);
                 if self.state.r8[R_B] == 0 {
                     (8, 2)
                 } else {
                     let e = mmu.r8s(pc.wrapping_add(1)) as i16;
-                    self.state.r16[R_PC] = pc.wrapping_add(2).wrapping_add(e as u16);
+                    self.state.pc = pc.wrapping_add(2).wrapping_add(e as u16);
                     (13, 0)
                 }
             }
             0x11 => {
                 // LD DE,nn
-                let nn = mmu.r16(self.state.r16[R_PC].wrapping_add(1));
+                let nn = mmu.r16(self.state.pc.wrapping_add(1));
                 self.state.set_reg16(R_DE, nn);
                 (10, 3)
             }
@@ -640,7 +610,7 @@ impl Z80 {
             }
             0x16 => {
                 // LD D,n
-                let n = mmu.r8(self.state.r16[R_PC].wrapping_add(1));
+                let n = mmu.r8(self.state.pc.wrapping_add(1));
                 self.state.r8[R_D] = n;
                 (7, 2)
             }
@@ -655,9 +625,9 @@ impl Z80 {
             }
             0x18 => {
                 // JR e
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let e = mmu.r8s(pc.wrapping_add(1)) as i16;
-                self.state.r16[R_PC] = pc.wrapping_add(2).wrapping_add(e as u16);
+                self.state.pc = pc.wrapping_add(2).wrapping_add(e as u16);
                 (12, 0)
             }
             0x19 => {
@@ -696,7 +666,7 @@ impl Z80 {
             }
             0x1E => {
                 // LD E,n
-                let n = mmu.r8(self.state.r16[R_PC].wrapping_add(1));
+                let n = mmu.r8(self.state.pc.wrapping_add(1));
                 self.state.r8[R_E] = n;
                 (7, 2)
             }
@@ -711,24 +681,24 @@ impl Z80 {
             }
             0x20 => {
                 // JR NZ e
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 if self.state.r8[R_F] & F_Z != 0 {
                     (7, 2)
                 } else {
                     let e = mmu.r8s(pc.wrapping_add(1)) as i16;
-                    self.state.r16[R_PC] = pc.wrapping_add(2).wrapping_add(e as u16);
+                    self.state.pc = pc.wrapping_add(2).wrapping_add(e as u16);
                     (12, 0)
                 }
             }
             0x21 => {
                 // LD HL,nn
-                let nn = mmu.r16(self.state.r16[R_PC].wrapping_add(1));
+                let nn = mmu.r16(self.state.pc.wrapping_add(1));
                 self.state.set_reg16(R_HL, nn);
                 (10, 3)
             }
             0x22 => {
                 // LD (nn),HL
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let nn = mmu.r16(pc.wrapping_add(1));
                 mmu.w16(nn, self.state.get_reg16(R_HL));
                 (16, 3)
@@ -755,7 +725,7 @@ impl Z80 {
             }
             0x26 => {
                 // LD H,n
-                let n = mmu.r8(self.state.r16[R_PC].wrapping_add(1));
+                let n = mmu.r8(self.state.pc.wrapping_add(1));
                 self.state.r8[R_H] = n;
                 (7, 2)
             }
@@ -787,10 +757,10 @@ impl Z80 {
             }
             0x28 => {
                 // JR Z e
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 if self.state.r8[R_F] & F_Z != 0 {
                     let e = mmu.r8s(pc.wrapping_add(1)) as i16;
-                    self.state.r16[R_PC] = pc.wrapping_add(2).wrapping_add(e as u16);
+                    self.state.pc = pc.wrapping_add(2).wrapping_add(e as u16);
                     (12, 0)
                 } else {
                     (7, 2)
@@ -807,7 +777,7 @@ impl Z80 {
             }
             0x2A => {
                 // LD HL,(nn)
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let nn = mmu.r16(pc.wrapping_add(1));
                 self.state.set_reg16(R_HL, mmu.r16(nn));
                 (16, 3)
@@ -834,7 +804,7 @@ impl Z80 {
             }
             0x2E => {
                 // LD L,n
-                let n = mmu.r8(self.state.r16[R_PC].wrapping_add(1));
+                let n = mmu.r8(self.state.pc.wrapping_add(1));
                 self.state.r8[R_L] = n;
                 (7, 2)
             }
@@ -850,31 +820,31 @@ impl Z80 {
             }
             0x30 => {
                 // JR NC e
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 if self.state.r8[R_F] & F_C != 0 {
                     (7, 2)
                 } else {
                     let e = mmu.r8s(pc.wrapping_add(1)) as i16;
-                    self.state.r16[R_PC] = pc.wrapping_add(2).wrapping_add(e as u16);
+                    self.state.pc = pc.wrapping_add(2).wrapping_add(e as u16);
                     (12, 0)
                 }
             }
             0x31 => {
                 // LD SP,nn
-                let nn = mmu.r16(self.state.r16[R_PC].wrapping_add(1));
-                self.state.r16[R_SP] = nn;
+                let nn = mmu.r16(self.state.pc.wrapping_add(1));
+                self.state.sp = nn;
                 (10, 3)
             }
             0x32 => {
                 // LD (nn),A
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let nn = mmu.r16(pc.wrapping_add(1));
                 mmu.w8(nn, self.state.r8[R_A]);
                 (13, 3)
             }
             0x33 => {
                 // INC SP
-                self.state.r16[R_SP] = self.state.r16[R_SP].wrapping_add(1);
+                self.state.sp = self.state.sp.wrapping_add(1);
                 (6, 1)
             }
             0x34 => {
@@ -897,7 +867,7 @@ impl Z80 {
             }
             0x36 => {
                 // LD (HL),n
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let n = mmu.r8(pc.wrapping_add(1));
                 mmu.w8(self.state.get_reg16(R_HL), n);
                 (10, 2)
@@ -912,10 +882,10 @@ impl Z80 {
             }
             0x38 => {
                 // JR C e
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 if self.state.r8[R_F] & F_C != 0 {
                     let e = mmu.r8s(pc.wrapping_add(1)) as i16;
-                    self.state.r16[R_PC] = pc.wrapping_add(2).wrapping_add(e as u16);
+                    self.state.pc = pc.wrapping_add(2).wrapping_add(e as u16);
                     (12, 0)
                 } else {
                     (7, 2)
@@ -924,7 +894,7 @@ impl Z80 {
             0x39 => {
                 // ADD HL,SP
                 let hl = self.state.get_reg16(R_HL);
-                let (res, flags) = self.add16(hl, self.state.r16[R_SP], false);
+                let (res, flags) = self.add16(hl, self.state.sp, false);
                 self.state.set_reg16(R_HL, res);
                 self.state.r8[R_F] =
                     (flags & !(F_S | F_Z | F_PV)) | (self.state.r8[R_F] & (F_S | F_Z | F_PV));
@@ -932,14 +902,14 @@ impl Z80 {
             }
             0x3A => {
                 // LD A,(nn)
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let nn = mmu.r16(pc.wrapping_add(1));
                 self.state.r8[R_A] = mmu.r8(nn);
                 (13, 3)
             }
             0x3B => {
                 // DEC SP
-                self.state.r16[R_SP] = self.state.r16[R_SP].wrapping_sub(1);
+                self.state.sp = self.state.sp.wrapping_sub(1);
                 (6, 1)
             }
             0x3C => {
@@ -958,7 +928,7 @@ impl Z80 {
             }
             0x3E => {
                 // LD A,n
-                let n = mmu.r8(self.state.r16[R_PC].wrapping_add(1));
+                let n = mmu.r8(self.state.pc.wrapping_add(1));
                 self.state.r8[R_A] = n;
                 (7, 2)
             }
@@ -1780,7 +1750,7 @@ impl Z80 {
                     (5, 1)
                 } else {
                     let addr = self.pop16(mmu);
-                    self.state.r16[R_PC] = addr;
+                    self.state.pc = addr;
                     (11, 0)
                 }
             }
@@ -1792,33 +1762,33 @@ impl Z80 {
             }
             0xC2 => {
                 // JP NZ,nn
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 if self.state.r8[R_F] & F_Z != 0 {
                     mmu.r16nolog(pc.wrapping_add(1));
                     (10, 3)
                 } else {
                     let nn = mmu.r16(pc.wrapping_add(1));
-                    self.state.r16[R_PC] = nn;
+                    self.state.pc = nn;
                     (10, 0)
                 }
             }
             0xC3 => {
                 // JP nn
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let nn = mmu.r16(pc.wrapping_add(1));
-                self.state.r16[R_PC] = nn;
+                self.state.pc = nn;
                 (10, 0)
             }
             0xC4 => {
                 // CALL NZ,nn
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 if self.state.r8[R_F] & F_Z != 0 {
                     mmu.r16nolog(pc.wrapping_add(1));
                     (10, 3)
                 } else {
                     let nn = mmu.r16(pc.wrapping_add(1));
                     self.push16(mmu, pc.wrapping_add(3));
-                    self.state.r16[R_PC] = nn;
+                    self.state.pc = nn;
                     (17, 0)
                 }
             }
@@ -1829,7 +1799,7 @@ impl Z80 {
             }
             0xC6 => {
                 // ADD A,n
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let n = mmu.r8(pc.wrapping_add(1));
                 let (res, flags) = self.add8(self.state.r8[R_A], n, false);
                 self.state.r8[R_A] = res;
@@ -1838,16 +1808,16 @@ impl Z80 {
             }
             0xC7 => {
                 // RST 00H
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 self.push16(mmu, pc.wrapping_add(1));
-                self.state.r16[R_PC] = 0x00;
+                self.state.pc = 0x00;
                 (11, 0)
             }
             0xC8 => {
                 // RET Z
                 if self.state.r8[R_F] & F_Z != 0 {
                     let addr = self.pop16(mmu);
-                    self.state.r16[R_PC] = addr;
+                    self.state.pc = addr;
                     (11, 0)
                 } else {
                     (5, 1)
@@ -1856,29 +1826,29 @@ impl Z80 {
             0xC9 => {
                 // RET
                 let addr = self.pop16(mmu);
-                self.state.r16[R_PC] = addr;
+                self.state.pc = addr;
                 (10, 0)
             }
             0xCA => {
                 // JP Z,nn
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 if self.state.r8[R_F] & F_Z != 0 {
                     let nn = mmu.r16(pc.wrapping_add(1));
-                    self.state.r16[R_PC] = nn;
+                    self.state.pc = nn;
                     (10, 0)
                 } else {
                     mmu.r16nolog(pc.wrapping_add(1));
                     (10, 3)
                 }
             }
-            0xCB => (4, 1),  // CB
+            0xCB => (4, 1), // CB
             0xCC => {
                 // CALL Z,nn
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 if self.state.r8[R_F] & F_Z != 0 {
                     let nn = mmu.r16(pc.wrapping_add(1));
                     self.push16(mmu, pc.wrapping_add(3));
-                    self.state.r16[R_PC] = nn;
+                    self.state.pc = nn;
                     (17, 0)
                 } else {
                     mmu.r16nolog(pc.wrapping_add(1));
@@ -1887,15 +1857,15 @@ impl Z80 {
             }
             0xCD => {
                 // CALL nn
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let nn = mmu.r16(pc.wrapping_add(1));
                 self.push16(mmu, pc.wrapping_add(3));
-                self.state.r16[R_PC] = nn;
+                self.state.pc = nn;
                 (17, 0)
             }
             0xCE => {
                 // ADC A,n
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let n = mmu.r8(pc.wrapping_add(1));
                 let (res, flags) =
                     self.add8(self.state.r8[R_A], n, (self.state.r8[R_F] & F_C) != 0);
@@ -1905,9 +1875,9 @@ impl Z80 {
             }
             0xCF => {
                 // RST 08H
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 self.push16(mmu, pc.wrapping_add(1));
-                self.state.r16[R_PC] = 0x08;
+                self.state.pc = 0x08;
                 (11, 0)
             }
             0xD0 => {
@@ -1916,7 +1886,7 @@ impl Z80 {
                     (5, 1)
                 } else {
                     let addr = self.pop16(mmu);
-                    self.state.r16[R_PC] = addr;
+                    self.state.pc = addr;
                     (11, 0)
                 }
             }
@@ -1928,33 +1898,33 @@ impl Z80 {
             }
             0xD2 => {
                 // JP NC,nn
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 if self.state.r8[R_F] & F_C != 0 {
                     mmu.r16nolog(pc.wrapping_add(1));
                     (10, 3)
                 } else {
                     let nn = mmu.r16(pc.wrapping_add(1));
-                    self.state.r16[R_PC] = nn;
+                    self.state.pc = nn;
                     (10, 0)
                 }
             }
             0xD3 => {
                 // OUT (n),A
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let n = mmu.r8(pc.wrapping_add(1));
                 mmu.out8(n, self.state.r8[R_A], self.state.r8[R_A]);
                 (11, 2)
             }
             0xD4 => {
                 // CALL NC,nn
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 if self.state.r8[R_F] & F_C != 0 {
                     mmu.r16nolog(pc.wrapping_add(1));
                     (10, 3)
                 } else {
                     let nn = mmu.r16(pc.wrapping_add(1));
                     self.push16(mmu, pc.wrapping_add(3));
-                    self.state.r16[R_PC] = nn;
+                    self.state.pc = nn;
                     (17, 0)
                 }
             }
@@ -1965,7 +1935,7 @@ impl Z80 {
             }
             0xD6 => {
                 // SUB n
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let n = mmu.r8(pc.wrapping_add(1));
                 let (res, flags) = self.sub8(self.state.r8[R_A], n, false);
                 self.state.r8[R_A] = res;
@@ -1974,16 +1944,16 @@ impl Z80 {
             }
             0xD7 => {
                 // RST 10H
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 self.push16(mmu, pc.wrapping_add(1));
-                self.state.r16[R_PC] = 0x10;
+                self.state.pc = 0x10;
                 (11, 0)
             }
             0xD8 => {
                 // RET C
                 if self.state.r8[R_F] & F_C != 0 {
                     let addr = self.pop16(mmu);
-                    self.state.r16[R_PC] = addr;
+                    self.state.pc = addr;
                     (11, 0)
                 } else {
                     (5, 1)
@@ -2013,10 +1983,10 @@ impl Z80 {
             }
             0xDA => {
                 // JP C,nn
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 if self.state.r8[R_F] & F_C != 0 {
                     let nn = mmu.r16(pc.wrapping_add(1));
-                    self.state.r16[R_PC] = nn;
+                    self.state.pc = nn;
                     (10, 0)
                 } else {
                     mmu.r16nolog(pc.wrapping_add(1));
@@ -2025,28 +1995,28 @@ impl Z80 {
             }
             0xDB => {
                 // IN A,(n)
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let n = mmu.r8(pc.wrapping_add(1));
                 self.state.r8[R_A] = mmu.in8(n, self.state.r8[R_A]);
                 (11, 2)
             }
             0xDC => {
                 // CALL C,nn
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 if self.state.r8[R_F] & F_C != 0 {
                     let nn = mmu.r16(pc.wrapping_add(1));
                     self.push16(mmu, pc.wrapping_add(3));
-                    self.state.r16[R_PC] = nn;
+                    self.state.pc = nn;
                     (17, 0)
                 } else {
                     mmu.r16nolog(pc.wrapping_add(1));
                     (10, 3)
                 }
             }
-            0xDD => (4, 1),  // DD
+            0xDD => (4, 1), // DD
             0xDE => {
                 // SBC A,n
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let n = mmu.r8(pc.wrapping_add(1));
                 let (res, flags) =
                     self.sub8(self.state.r8[R_A], n, (self.state.r8[R_F] & F_C) != 0);
@@ -2056,9 +2026,9 @@ impl Z80 {
             }
             0xDF => {
                 // RST 18H
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 self.push16(mmu, pc.wrapping_add(1));
-                self.state.r16[R_PC] = 0x18;
+                self.state.pc = 0x18;
                 (11, 0)
             }
             0xE0 => {
@@ -2067,7 +2037,7 @@ impl Z80 {
                     (5, 1)
                 } else {
                     let addr = self.pop16(mmu);
-                    self.state.r16[R_PC] = addr;
+                    self.state.pc = addr;
                     (11, 0)
                 }
             }
@@ -2079,19 +2049,19 @@ impl Z80 {
             }
             0xE2 => {
                 // JP PO,nn
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 if self.state.r8[R_F] & F_PV != 0 {
                     mmu.r16nolog(pc.wrapping_add(1));
                     (10, 3)
                 } else {
                     let nn = mmu.r16(pc.wrapping_add(1));
-                    self.state.r16[R_PC] = nn;
+                    self.state.pc = nn;
                     (10, 0)
                 }
             }
             0xE3 => {
                 // EX (SP),HL
-                let sp = self.state.r16[R_SP];
+                let sp = self.state.sp;
                 let memval = mmu.r16(sp);
                 mmu.w16reverse(sp, self.state.get_reg16(R_HL));
                 self.state.set_reg16(R_HL, memval);
@@ -2099,14 +2069,14 @@ impl Z80 {
             }
             0xE4 => {
                 // CALL PO,nn
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 if self.state.r8[R_F] & F_PV != 0 {
                     mmu.r16nolog(pc.wrapping_add(1));
                     (10, 3)
                 } else {
                     let nn = mmu.r16(pc.wrapping_add(1));
                     self.push16(mmu, pc.wrapping_add(3));
-                    self.state.r16[R_PC] = nn;
+                    self.state.pc = nn;
                     (17, 0)
                 }
             }
@@ -2117,7 +2087,7 @@ impl Z80 {
             }
             0xE6 => {
                 // AND n
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let n = mmu.r8(pc.wrapping_add(1));
                 self.state.r8[R_A] &= n;
                 self.state.r8[R_F] = self.sz53p_table[self.state.r8[R_A] as usize] | F_H;
@@ -2125,16 +2095,16 @@ impl Z80 {
             }
             0xE7 => {
                 // RST 20H
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 self.push16(mmu, pc.wrapping_add(1));
-                self.state.r16[R_PC] = 0x20;
+                self.state.pc = 0x20;
                 (11, 0)
             }
             0xE8 => {
                 // RET PE
                 if self.state.r8[R_F] & F_PV != 0 {
                     let addr = self.pop16(mmu);
-                    self.state.r16[R_PC] = addr;
+                    self.state.pc = addr;
                     (11, 0)
                 } else {
                     (5, 1)
@@ -2142,15 +2112,15 @@ impl Z80 {
             }
             0xE9 => {
                 // JP (HL)
-                self.state.r16[R_PC] = self.state.get_reg16(R_HL);
+                self.state.pc = self.state.get_reg16(R_HL);
                 (4, 0)
             }
             0xEA => {
                 // JP PE,nn
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 if self.state.r8[R_F] & F_PV != 0 {
                     let nn = mmu.r16(pc.wrapping_add(1));
-                    self.state.r16[R_PC] = nn;
+                    self.state.pc = nn;
                     (10, 0)
                 } else {
                     mmu.r16nolog(pc.wrapping_add(1));
@@ -2166,21 +2136,21 @@ impl Z80 {
             }
             0xEC => {
                 // CALL PE,nn
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 if self.state.r8[R_F] & F_PV != 0 {
                     let nn = mmu.r16(pc.wrapping_add(1));
                     self.push16(mmu, pc.wrapping_add(3));
-                    self.state.r16[R_PC] = nn;
+                    self.state.pc = nn;
                     (17, 0)
                 } else {
                     mmu.r16nolog(pc.wrapping_add(1));
                     (10, 3)
                 }
             }
-            0xED => (4, 1),  // ED
+            0xED => (4, 1), // ED
             0xEE => {
                 // XOR n
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let n = mmu.r8(pc.wrapping_add(1));
                 self.state.r8[R_A] ^= n;
                 self.state.r8[R_F] = self.sz53p_table[self.state.r8[R_A] as usize];
@@ -2188,9 +2158,9 @@ impl Z80 {
             }
             0xEF => {
                 // RST 28H
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 self.push16(mmu, pc.wrapping_add(1));
-                self.state.r16[R_PC] = 0x28;
+                self.state.pc = 0x28;
                 (11, 0)
             }
             0xF0 => {
@@ -2199,7 +2169,7 @@ impl Z80 {
                     (5, 1)
                 } else {
                     let addr = self.pop16(mmu);
-                    self.state.r16[R_PC] = addr;
+                    self.state.pc = addr;
                     (11, 0)
                 }
             }
@@ -2211,13 +2181,13 @@ impl Z80 {
             }
             0xF2 => {
                 // JP P,nn
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 if self.state.r8[R_F] & F_S != 0 {
                     mmu.r16nolog(pc.wrapping_add(1));
                     (10, 3)
                 } else {
                     let nn = mmu.r16(pc.wrapping_add(1));
-                    self.state.r16[R_PC] = nn;
+                    self.state.pc = nn;
                     (10, 0)
                 }
             }
@@ -2229,14 +2199,14 @@ impl Z80 {
             }
             0xF4 => {
                 // CALL P,nn
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 if self.state.r8[R_F] & F_S != 0 {
                     mmu.r16nolog(pc.wrapping_add(1));
                     (10, 3)
                 } else {
                     let nn = mmu.r16(pc.wrapping_add(1));
                     self.push16(mmu, pc.wrapping_add(3));
-                    self.state.r16[R_PC] = nn;
+                    self.state.pc = nn;
                     (17, 0)
                 }
             }
@@ -2247,7 +2217,7 @@ impl Z80 {
             }
             0xF6 => {
                 // OR n
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let n = mmu.r8(pc.wrapping_add(1));
                 self.state.r8[R_A] |= n;
                 self.state.r8[R_F] = self.sz53p_table[self.state.r8[R_A] as usize];
@@ -2255,16 +2225,16 @@ impl Z80 {
             }
             0xF7 => {
                 // RST 30H
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 self.push16(mmu, pc.wrapping_add(1));
-                self.state.r16[R_PC] = 0x30;
+                self.state.pc = 0x30;
                 (11, 0)
             }
             0xF8 => {
                 // RET M
                 if self.state.r8[R_F] & F_S != 0 {
                     let addr = self.pop16(mmu);
-                    self.state.r16[R_PC] = addr;
+                    self.state.pc = addr;
                     (11, 0)
                 } else {
                     (5, 1)
@@ -2272,15 +2242,15 @@ impl Z80 {
             }
             0xF9 => {
                 // LD SP,HL
-                self.state.r16[R_SP] = self.state.get_reg16(R_HL);
+                self.state.sp = self.state.get_reg16(R_HL);
                 (6, 1)
             }
             0xFA => {
                 // JP M,nn
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 if self.state.r8[R_F] & F_S != 0 {
                     let nn = mmu.r16(pc.wrapping_add(1));
-                    self.state.r16[R_PC] = nn;
+                    self.state.pc = nn;
                     (10, 0)
                 } else {
                     mmu.r16nolog(pc.wrapping_add(1));
@@ -2295,21 +2265,21 @@ impl Z80 {
             }
             0xFC => {
                 // CALL M,nn
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 if self.state.r8[R_F] & F_S != 0 {
                     let nn = mmu.r16(pc.wrapping_add(1));
                     self.push16(mmu, pc.wrapping_add(3));
-                    self.state.r16[R_PC] = nn;
+                    self.state.pc = nn;
                     (17, 0)
                 } else {
                     mmu.r16nolog(pc.wrapping_add(1));
                     (10, 3)
                 }
             }
-            0xFD => (4, 1),  // FD
+            0xFD => (4, 1), // FD
             0xFE => {
                 // CP n
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let n = mmu.r8(pc.wrapping_add(1));
                 let (_, flags) = self.sub8(self.state.r8[R_A], n, false);
                 self.state.r8[R_F] = (flags & !(F_5 | F_3)) | (n & (F_5 | F_3));
@@ -2317,9 +2287,9 @@ impl Z80 {
             }
             0xFF => {
                 // RST 38H
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 self.push16(mmu, pc.wrapping_add(1));
-                self.state.r16[R_PC] = 0x38;
+                self.state.pc = 0x38;
                 (11, 0)
             }
         }
@@ -4284,7 +4254,7 @@ impl Z80 {
             }
             0x43 => {
                 // LD (nn),BC
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let nn = mmu.r16(pc.wrapping_add(2));
                 mmu.w16(nn, self.state.get_reg16(1));
                 (20, 4)
@@ -4300,7 +4270,7 @@ impl Z80 {
             }
             0x4B => {
                 // LD BC,(nn)
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let nn = mmu.r16(pc.wrapping_add(2));
                 let val = mmu.r16(nn);
                 self.state.set_reg16(1, val);
@@ -4317,7 +4287,7 @@ impl Z80 {
             }
             0x53 => {
                 // LD (nn),DE
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let nn = mmu.r16(pc.wrapping_add(2));
                 mmu.w16(nn, self.state.get_reg16(2));
                 (20, 4)
@@ -4333,7 +4303,7 @@ impl Z80 {
             }
             0x5B => {
                 // LD DE,(nn)
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let nn = mmu.r16(pc.wrapping_add(2));
                 let val = mmu.r16(nn);
                 self.state.set_reg16(2, val);
@@ -4350,7 +4320,7 @@ impl Z80 {
             }
             0x63 => {
                 // LD (nn),HL
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let nn = mmu.r16(pc.wrapping_add(2));
                 mmu.w16(nn, self.state.get_reg16(3));
                 (20, 4)
@@ -4366,7 +4336,7 @@ impl Z80 {
             }
             0x6B => {
                 // LD HL,(nn)
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let nn = mmu.r16(pc.wrapping_add(2));
                 let val = mmu.r16(nn);
                 self.state.set_reg16(3, val);
@@ -4375,34 +4345,32 @@ impl Z80 {
             0x72 => {
                 // SBC HL,SP
                 let hl = self.state.get_reg16(R_HL);
-                let (res, flags) =
-                    self.sub16(hl, self.state.r16[R_SP], (self.state.r8[R_F] & F_C) != 0);
+                let (res, flags) = self.sub16(hl, self.state.sp, (self.state.r8[R_F] & F_C) != 0);
                 self.state.set_reg16(R_HL, res);
                 self.state.r8[R_F] = flags;
                 (15, 2)
             }
             0x73 => {
                 // LD (nn),SP
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let nn = mmu.r16(pc.wrapping_add(2));
-                mmu.w16(nn, self.state.r16[R_SP]);
+                mmu.w16(nn, self.state.sp);
                 (20, 4)
             }
             0x7A => {
                 // ADC HL,SP
                 let hl = self.state.get_reg16(R_HL);
-                let (res, flags) =
-                    self.add16(hl, self.state.r16[R_SP], (self.state.r8[R_F] & F_C) != 0);
+                let (res, flags) = self.add16(hl, self.state.sp, (self.state.r8[R_F] & F_C) != 0);
                 self.state.set_reg16(R_HL, res);
                 self.state.r8[R_F] = flags;
                 (15, 2)
             }
             0x7B => {
                 // LD SP,(nn)
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let nn = mmu.r16(pc.wrapping_add(2));
                 let val = mmu.r16(nn);
-                self.state.r16[R_SP] = val;
+                self.state.sp = val;
                 (20, 4)
             }
             0x44 => {
@@ -4465,55 +4433,55 @@ impl Z80 {
                 // RETN
                 self.state.iff1 = self.state.iff2;
                 let addr = self.pop16(mmu);
-                self.state.r16[R_PC] = addr;
+                self.state.pc = addr;
                 (14, 0)
             }
             0x55 => {
                 // RETN
                 self.state.iff1 = self.state.iff2;
                 let addr = self.pop16(mmu);
-                self.state.r16[R_PC] = addr;
+                self.state.pc = addr;
                 (14, 0)
             }
             0x65 => {
                 // RETN
                 self.state.iff1 = self.state.iff2;
                 let addr = self.pop16(mmu);
-                self.state.r16[R_PC] = addr;
+                self.state.pc = addr;
                 (14, 0)
             }
             0x75 => {
                 // RETN
                 self.state.iff1 = self.state.iff2;
                 let addr = self.pop16(mmu);
-                self.state.r16[R_PC] = addr;
+                self.state.pc = addr;
                 (14, 0)
             }
             0x5D => {
                 // RETN
                 self.state.iff1 = self.state.iff2;
                 let addr = self.pop16(mmu);
-                self.state.r16[R_PC] = addr;
+                self.state.pc = addr;
                 (14, 0)
             }
             0x6D => {
                 // RETN
                 self.state.iff1 = self.state.iff2;
                 let addr = self.pop16(mmu);
-                self.state.r16[R_PC] = addr;
+                self.state.pc = addr;
                 (14, 0)
             }
             0x7D => {
                 // RETN
                 self.state.iff1 = self.state.iff2;
                 let addr = self.pop16(mmu);
-                self.state.r16[R_PC] = addr;
+                self.state.pc = addr;
                 (14, 0)
             }
             0x4D => {
                 // RETI
                 let addr = self.pop16(mmu);
-                self.state.r16[R_PC] = addr;
+                self.state.pc = addr;
                 (14, 0)
             }
             0x46 => {
@@ -4602,8 +4570,8 @@ impl Z80 {
                     (self.state.r8[R_F] & F_C) | self.sz53p_table[self.state.r8[R_A] as usize];
                 (18, 2)
             }
-            0x77 => (8, 2),  // NOP
-            0x7F => (8, 2),  // NOP
+            0x77 => (8, 2), // NOP
+            0x7F => (8, 2), // NOP
             0xA0 => {
                 // LDI
                 let de = self.state.get_reg16(R_DE);
@@ -4995,7 +4963,7 @@ impl Z80 {
             0x39 => {
                 // ADD IX,SP
                 let ix = self.state.get_reg16(4);
-                let (res, flags) = self.add16(ix, self.state.r16[R_SP], false);
+                let (res, flags) = self.add16(ix, self.state.sp, false);
                 self.state.set_reg16(4, res);
                 self.state.r8[R_F] =
                     (flags & !(F_S | F_Z | F_PV)) | (self.state.r8[R_F] & (F_S | F_Z | F_PV));
@@ -5003,20 +4971,20 @@ impl Z80 {
             }
             0x21 => {
                 // LD IX,nn
-                let nn = mmu.r16(self.state.r16[R_PC].wrapping_add(2));
+                let nn = mmu.r16(self.state.pc.wrapping_add(2));
                 self.state.set_reg16(4, nn);
                 (14, 4)
             }
             0x22 => {
                 // LD (nn),IX
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let nn = mmu.r16(pc.wrapping_add(2));
                 mmu.w16(nn, self.state.get_reg16(4));
                 (20, 4)
             }
             0x2A => {
                 // LD IX,(nn)
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let nn = mmu.r16(pc.wrapping_add(2));
                 self.state.set_reg16(4, mmu.r16(nn));
                 (20, 4)
@@ -5049,7 +5017,7 @@ impl Z80 {
             }
             0x26 => {
                 // LD IXH,n
-                let n = mmu.r8(self.state.r16[R_PC].wrapping_add(2));
+                let n = mmu.r8(self.state.pc.wrapping_add(2));
                 self.state.r8[8] = n;
                 (11, 3)
             }
@@ -5069,13 +5037,13 @@ impl Z80 {
             }
             0x2E => {
                 // LD IXL,n
-                let n = mmu.r8(self.state.r16[R_PC].wrapping_add(2));
+                let n = mmu.r8(self.state.pc.wrapping_add(2));
                 self.state.r8[9] = n;
                 (11, 3)
             }
             0x34 => {
                 // INC (IX+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
                 let v = mmu.r8(addr);
                 let (res, flags) = self.add8(v, 1, false);
@@ -5085,7 +5053,7 @@ impl Z80 {
             }
             0x35 => {
                 // DEC (IX+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
                 let v = mmu.r8(addr);
                 let (res, flags) = self.sub8(v, 1, false);
@@ -5095,9 +5063,9 @@ impl Z80 {
             }
             0x36 => {
                 // LD (IX+d),n
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
-                let n = mmu.r8(self.state.r16[R_PC].wrapping_add(3));
+                let n = mmu.r8(self.state.pc.wrapping_add(3));
                 mmu.w8(addr, n);
                 (19, 4)
             }
@@ -5113,7 +5081,7 @@ impl Z80 {
             }
             0x46 => {
                 // LD B,(IX+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
                 self.state.r8[R_B] = mmu.r8(addr);
                 (19, 3)
@@ -5130,7 +5098,7 @@ impl Z80 {
             }
             0x4E => {
                 // LD C,(IX+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
                 self.state.r8[R_C] = mmu.r8(addr);
                 (19, 3)
@@ -5147,7 +5115,7 @@ impl Z80 {
             }
             0x56 => {
                 // LD D,(IX+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
                 self.state.r8[R_D] = mmu.r8(addr);
                 (19, 3)
@@ -5164,21 +5132,21 @@ impl Z80 {
             }
             0x5E => {
                 // LD E,(IX+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
                 self.state.r8[R_E] = mmu.r8(addr);
                 (19, 3)
             }
             0x66 => {
                 // LD H,(IX+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
                 self.state.r8[R_H] = mmu.r8(addr);
                 (19, 3)
             }
             0x6E => {
                 // LD L,(IX+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
                 self.state.r8[R_L] = mmu.r8(addr);
                 (19, 3)
@@ -5195,7 +5163,7 @@ impl Z80 {
             }
             0x7E => {
                 // LD A,(IX+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
                 self.state.r8[R_A] = mmu.r8(addr);
                 (19, 3)
@@ -5220,7 +5188,7 @@ impl Z80 {
                 self.state.r8[8] = self.state.r8[R_E];
                 (8, 2)
             }
-            0x64 => (8, 2),  // LD IXH,IXH
+            0x64 => (8, 2), // LD IXH,IXH
             0x65 => {
                 // LD IXH,IXL
                 self.state.r8[8] = self.state.r8[9];
@@ -5256,7 +5224,7 @@ impl Z80 {
                 self.state.r8[9] = self.state.r8[8];
                 (8, 2)
             }
-            0x6D => (8, 2),  // LD IXL,IXL
+            0x6D => (8, 2), // LD IXL,IXL
             0x6F => {
                 // LD IXL,A
                 self.state.r8[9] = self.state.r8[R_A];
@@ -5264,49 +5232,49 @@ impl Z80 {
             }
             0x70 => {
                 // LD (IX+d),B
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
                 mmu.w8(addr, self.state.r8[2]);
                 (19, 3)
             }
             0x71 => {
                 // LD (IX+d),C
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
                 mmu.w8(addr, self.state.r8[3]);
                 (19, 3)
             }
             0x72 => {
                 // LD (IX+d),D
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
                 mmu.w8(addr, self.state.r8[4]);
                 (19, 3)
             }
             0x73 => {
                 // LD (IX+d),E
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
                 mmu.w8(addr, self.state.r8[5]);
                 (19, 3)
             }
             0x74 => {
                 // LD (IX+d),H
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
                 mmu.w8(addr, self.state.r8[6]);
                 (19, 3)
             }
             0x75 => {
                 // LD (IX+d),L
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
                 mmu.w8(addr, self.state.r8[7]);
                 (19, 3)
             }
             0x77 => {
                 // LD (IX+d),A
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
                 mmu.w8(addr, self.state.r8[0]);
                 (19, 3)
@@ -5327,7 +5295,7 @@ impl Z80 {
             }
             0x86 => {
                 // ADD A,(IX+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
                 let (res, flags) = self.add8(self.state.r8[R_A], mmu.r8(addr), false);
                 self.state.r8[R_A] = res;
@@ -5358,7 +5326,7 @@ impl Z80 {
             }
             0x8E => {
                 // ADC A,(IX+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
                 let (res, flags) = self.add8(
                     self.state.r8[R_A],
@@ -5385,7 +5353,7 @@ impl Z80 {
             }
             0x96 => {
                 // SUB (IX+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
                 let (res, flags) = self.sub8(self.state.r8[R_A], mmu.r8(addr), false);
                 self.state.r8[R_A] = res;
@@ -5416,7 +5384,7 @@ impl Z80 {
             }
             0x9E => {
                 // SBC A,(IX+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
                 let (res, flags) = self.sub8(
                     self.state.r8[R_A],
@@ -5441,7 +5409,7 @@ impl Z80 {
             }
             0xA6 => {
                 // AND (IX+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
                 self.state.r8[R_A] &= mmu.r8(addr);
                 self.state.r8[R_F] = self.sz53p_table[self.state.r8[R_A] as usize] | F_H;
@@ -5461,7 +5429,7 @@ impl Z80 {
             }
             0xAE => {
                 // XOR (IX+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
                 self.state.r8[R_A] ^= mmu.r8(addr);
                 self.state.r8[R_F] = self.sz53p_table[self.state.r8[R_A] as usize];
@@ -5481,7 +5449,7 @@ impl Z80 {
             }
             0xB6 => {
                 // OR (IX+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
                 self.state.r8[R_A] |= mmu.r8(addr);
                 self.state.r8[R_F] = self.sz53p_table[self.state.r8[R_A] as usize];
@@ -5501,7 +5469,7 @@ impl Z80 {
             }
             0xBE => {
                 // CP (IX+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(4) as i32 + displ as i32) as u16;
                 let val = mmu.r8(addr);
                 let (_, flags) = self.sub8(self.state.r8[R_A], val, false);
@@ -5516,7 +5484,7 @@ impl Z80 {
             }
             0xE3 => {
                 // EX (SP),IX
-                let sp = self.state.r16[R_SP];
+                let sp = self.state.sp;
                 let memval = mmu.r16(sp);
                 mmu.w16reverse(sp, self.state.get_reg16(4));
                 self.state.set_reg16(4, memval);
@@ -5529,12 +5497,12 @@ impl Z80 {
             }
             0xE9 => {
                 // JP (IX)
-                self.state.r16[R_PC] = self.state.get_reg16(4);
+                self.state.pc = self.state.get_reg16(4);
                 (8, 0)
             }
             0xF9 => {
                 // LD SP,IX
-                self.state.r16[R_SP] = self.state.get_reg16(4);
+                self.state.sp = self.state.get_reg16(4);
                 (10, 2)
             }
             _ => (0, 0),
@@ -5572,7 +5540,7 @@ impl Z80 {
             0x39 => {
                 // ADD IY,SP
                 let ix = self.state.get_reg16(5);
-                let (res, flags) = self.add16(ix, self.state.r16[R_SP], false);
+                let (res, flags) = self.add16(ix, self.state.sp, false);
                 self.state.set_reg16(5, res);
                 self.state.r8[R_F] =
                     (flags & !(F_S | F_Z | F_PV)) | (self.state.r8[R_F] & (F_S | F_Z | F_PV));
@@ -5580,20 +5548,20 @@ impl Z80 {
             }
             0x21 => {
                 // LD IY,nn
-                let nn = mmu.r16(self.state.r16[R_PC].wrapping_add(2));
+                let nn = mmu.r16(self.state.pc.wrapping_add(2));
                 self.state.set_reg16(5, nn);
                 (14, 4)
             }
             0x22 => {
                 // LD (nn),IY
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let nn = mmu.r16(pc.wrapping_add(2));
                 mmu.w16(nn, self.state.get_reg16(5));
                 (20, 4)
             }
             0x2A => {
                 // LD IY,(nn)
-                let pc = self.state.r16[R_PC];
+                let pc = self.state.pc;
                 let nn = mmu.r16(pc.wrapping_add(2));
                 self.state.set_reg16(5, mmu.r16(nn));
                 (20, 4)
@@ -5626,7 +5594,7 @@ impl Z80 {
             }
             0x26 => {
                 // LD IYH,n
-                let n = mmu.r8(self.state.r16[R_PC].wrapping_add(2));
+                let n = mmu.r8(self.state.pc.wrapping_add(2));
                 self.state.r8[10] = n;
                 (11, 3)
             }
@@ -5646,13 +5614,13 @@ impl Z80 {
             }
             0x2E => {
                 // LD IYL,n
-                let n = mmu.r8(self.state.r16[R_PC].wrapping_add(2));
+                let n = mmu.r8(self.state.pc.wrapping_add(2));
                 self.state.r8[11] = n;
                 (11, 3)
             }
             0x34 => {
                 // INC (IY+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
                 let v = mmu.r8(addr);
                 let (res, flags) = self.add8(v, 1, false);
@@ -5662,7 +5630,7 @@ impl Z80 {
             }
             0x35 => {
                 // DEC (IY+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
                 let v = mmu.r8(addr);
                 let (res, flags) = self.sub8(v, 1, false);
@@ -5672,9 +5640,9 @@ impl Z80 {
             }
             0x36 => {
                 // LD (IY+d),n
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
-                let n = mmu.r8(self.state.r16[R_PC].wrapping_add(3));
+                let n = mmu.r8(self.state.pc.wrapping_add(3));
                 mmu.w8(addr, n);
                 (19, 4)
             }
@@ -5690,7 +5658,7 @@ impl Z80 {
             }
             0x46 => {
                 // LD B,(IY+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
                 self.state.r8[R_B] = mmu.r8(addr);
                 (19, 3)
@@ -5707,7 +5675,7 @@ impl Z80 {
             }
             0x4E => {
                 // LD C,(IY+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
                 self.state.r8[R_C] = mmu.r8(addr);
                 (19, 3)
@@ -5724,7 +5692,7 @@ impl Z80 {
             }
             0x56 => {
                 // LD D,(IY+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
                 self.state.r8[R_D] = mmu.r8(addr);
                 (19, 3)
@@ -5741,21 +5709,21 @@ impl Z80 {
             }
             0x5E => {
                 // LD E,(IY+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
                 self.state.r8[R_E] = mmu.r8(addr);
                 (19, 3)
             }
             0x66 => {
                 // LD H,(IY+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
                 self.state.r8[R_H] = mmu.r8(addr);
                 (19, 3)
             }
             0x6E => {
                 // LD L,(IY+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
                 self.state.r8[R_L] = mmu.r8(addr);
                 (19, 3)
@@ -5772,7 +5740,7 @@ impl Z80 {
             }
             0x7E => {
                 // LD A,(IY+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
                 self.state.r8[R_A] = mmu.r8(addr);
                 (19, 3)
@@ -5797,7 +5765,7 @@ impl Z80 {
                 self.state.r8[10] = self.state.r8[R_E];
                 (8, 2)
             }
-            0x64 => (8, 2),  // LD IYH,IYH
+            0x64 => (8, 2), // LD IYH,IYH
             0x65 => {
                 // LD IYH,IYL
                 self.state.r8[10] = self.state.r8[11];
@@ -5833,7 +5801,7 @@ impl Z80 {
                 self.state.r8[11] = self.state.r8[10];
                 (8, 2)
             }
-            0x6D => (8, 2),  // LD IYL,IYL
+            0x6D => (8, 2), // LD IYL,IYL
             0x6F => {
                 // LD IYL,A
                 self.state.r8[11] = self.state.r8[R_A];
@@ -5841,49 +5809,49 @@ impl Z80 {
             }
             0x70 => {
                 // LD (IY+d),B
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
                 mmu.w8(addr, self.state.r8[2]);
                 (19, 3)
             }
             0x71 => {
                 // LD (IY+d),C
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
                 mmu.w8(addr, self.state.r8[3]);
                 (19, 3)
             }
             0x72 => {
                 // LD (IY+d),D
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
                 mmu.w8(addr, self.state.r8[4]);
                 (19, 3)
             }
             0x73 => {
                 // LD (IY+d),E
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
                 mmu.w8(addr, self.state.r8[5]);
                 (19, 3)
             }
             0x74 => {
                 // LD (IY+d),H
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
                 mmu.w8(addr, self.state.r8[6]);
                 (19, 3)
             }
             0x75 => {
                 // LD (IY+d),L
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
                 mmu.w8(addr, self.state.r8[7]);
                 (19, 3)
             }
             0x77 => {
                 // LD (IY+d),A
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
                 mmu.w8(addr, self.state.r8[0]);
                 (19, 3)
@@ -5904,7 +5872,7 @@ impl Z80 {
             }
             0x86 => {
                 // ADD A,(IY+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
                 let (res, flags) = self.add8(self.state.r8[R_A], mmu.r8(addr), false);
                 self.state.r8[R_A] = res;
@@ -5935,7 +5903,7 @@ impl Z80 {
             }
             0x8E => {
                 // ADC A,(IY+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
                 let (res, flags) = self.add8(
                     self.state.r8[R_A],
@@ -5962,7 +5930,7 @@ impl Z80 {
             }
             0x96 => {
                 // SUB (IY+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
                 let (res, flags) = self.sub8(self.state.r8[R_A], mmu.r8(addr), false);
                 self.state.r8[R_A] = res;
@@ -5993,7 +5961,7 @@ impl Z80 {
             }
             0x9E => {
                 // SBC A,(IY+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
                 let (res, flags) = self.sub8(
                     self.state.r8[R_A],
@@ -6018,7 +5986,7 @@ impl Z80 {
             }
             0xA6 => {
                 // AND (IY+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
                 self.state.r8[R_A] &= mmu.r8(addr);
                 self.state.r8[R_F] = self.sz53p_table[self.state.r8[R_A] as usize] | F_H;
@@ -6038,7 +6006,7 @@ impl Z80 {
             }
             0xAE => {
                 // XOR (IY+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
                 self.state.r8[R_A] ^= mmu.r8(addr);
                 self.state.r8[R_F] = self.sz53p_table[self.state.r8[R_A] as usize];
@@ -6058,7 +6026,7 @@ impl Z80 {
             }
             0xB6 => {
                 // OR (IY+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
                 self.state.r8[R_A] |= mmu.r8(addr);
                 self.state.r8[R_F] = self.sz53p_table[self.state.r8[R_A] as usize];
@@ -6078,7 +6046,7 @@ impl Z80 {
             }
             0xBE => {
                 // CP (IY+d)
-                let displ = mmu.r8s(self.state.r16[R_PC].wrapping_add(2));
+                let displ = mmu.r8s(self.state.pc.wrapping_add(2));
                 let addr = (self.state.get_reg16(5) as i32 + displ as i32) as u16;
                 let val = mmu.r8(addr);
                 let (_, flags) = self.sub8(self.state.r8[R_A], val, false);
@@ -6093,7 +6061,7 @@ impl Z80 {
             }
             0xE3 => {
                 // EX (SP),IY
-                let sp = self.state.r16[R_SP];
+                let sp = self.state.sp;
                 let memval = mmu.r16(sp);
                 mmu.w16reverse(sp, self.state.get_reg16(5));
                 self.state.set_reg16(5, memval);
@@ -6106,12 +6074,12 @@ impl Z80 {
             }
             0xE9 => {
                 // JP (IY)
-                self.state.r16[R_PC] = self.state.get_reg16(5);
+                self.state.pc = self.state.get_reg16(5);
                 (8, 0)
             }
             0xF9 => {
                 // LD SP,IY
-                self.state.r16[R_SP] = self.state.get_reg16(5);
+                self.state.sp = self.state.get_reg16(5);
                 (10, 2)
             }
             _ => (0, 0),

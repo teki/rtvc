@@ -410,6 +410,11 @@ cargo run --bin rtvc -- --port 8089
 cargo run --bin rtvc -- --headless --port 8080
 ```
 
+The debugger listener is bound before the GUI or headless emulation loop
+starts. If the requested port is already in use, `rtvc` prints the bind error
+and exits with a nonzero status instead of leaving an emulator instance running
+without its debugger socket.
+
 | Command | Purpose |
 | --- | --- |
 | `status` | CPU registers, clock, run/HALT state |
@@ -422,7 +427,7 @@ cargo run --bin rtvc -- --headless --port 8080
 | `disassemble`, `assemble` | Z80 developer tools; `assemble` accepts one instruction or a small source block |
 | `save_snapshot`, `load_snapshot` | snapshot files |
 | `save_screenshot` | 4:3 PNG |
-| `key` | key down/up or typed character |
+| `key` | key down/up or frame-paced typed text |
 | `key_press` | hold a host key code for a number of 50 Hz frames, then release it |
 | `instruction_trace_start`, `instruction_trace_stop` | start a new bounded trace or stop recording |
 | `instruction_trace_clear`, `instruction_trace_status` | discard entries or report trace state |
@@ -431,6 +436,14 @@ cargo run --bin rtvc -- --headless --port 8080
 
 Requests and responses are one JSON object per line. A running emulator emits
 `{"event":"breakpoint","pc":...}` asynchronously when a breakpoint is hit.
+
+Typed text is queued and each character is pressed and released over completed
+emulator frames. For example, the following enters a complete BASIC command
+without leaving a matrix key held:
+
+```json
+{"cmd":"key","action":"press","char":"load \"*\"\r"}
+```
 
 Frame-timed input uses, for example,
 `{"cmd":"key_press","key":49,"duration":3}` to hold key code 49 (`1`) for

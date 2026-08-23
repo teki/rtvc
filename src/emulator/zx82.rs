@@ -382,7 +382,7 @@ impl Zx82 {
         let mut hit_breakpoint = false;
         while self.clock < frame_target {
             self.step_instruction();
-            if self.breakpoints.contains(&self.z80.state.r16[11]) {
+            if self.breakpoints.contains(&self.z80.state.pc) {
                 hit_breakpoint = true;
                 break;
             }
@@ -398,7 +398,7 @@ impl Zx82 {
 
     fn step_instruction(&mut self) -> u32 {
         let trace_entry = self.instruction_trace.is_recording().then(|| {
-            let pc = self.z80.state.r16[11];
+            let pc = self.z80.state.pc;
             let opcode = std::array::from_fn(|offset| self.bus.r8(pc.wrapping_add(offset as u16)));
             self.bus.begin_instruction_effects();
             InstructionTraceEntry {

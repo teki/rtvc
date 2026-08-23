@@ -2440,7 +2440,7 @@ impl eframe::App for EmuApp {
             }
             if hit_breakpoint {
                 self.emu.running = false;
-                let pc = self.emu.z80_state().r16[11];
+                let pc = self.emu.z80_state().pc;
                 self.debugger_ui.record_breakpoint_hit(pc, &self.emu);
                 #[cfg(all(feature = "native", not(target_arch = "wasm32")))]
                 if let Some(ref dbg) = self.debugger {

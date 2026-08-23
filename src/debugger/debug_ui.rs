@@ -167,7 +167,7 @@ impl DebuggerUi {
         };
         let frame = emu.framebuffer();
         let thumbnail = FrameThumbnail::from_framebuffer(frame.pixels, frame.width, frame.height);
-        let pc = emu.z80_state().r16[11];
+        let pc = emu.z80_state().pc;
         self.frame_history.record_frame(snapshot, thumbnail, pc);
         self.prune_history_textures();
         Ok(())

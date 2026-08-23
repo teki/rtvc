@@ -35,7 +35,7 @@ fn zipped_snapshot_round_trips() {
         has_dos: true,
     });
     emu.load_roms();
-    emu.tvc_mut().unwrap().z80.state.r16[11] = 0xBEEF;
+    emu.tvc_mut().unwrap().z80.state.pc = 0xBEEF;
     let zipped = zip_snapshot(&emu.save_snapshot()).unwrap();
     assert!(zipped.len() < emu.save_snapshot().len());
 
@@ -47,7 +47,7 @@ fn zipped_snapshot_round_trips() {
     });
     restored.load_snapshot(&raw).unwrap();
     assert_eq!(restored.machine_type, emu.machine_type);
-    assert_eq!(restored.tvc().unwrap().z80.state.r16[11], 0xBEEF);
+    assert_eq!(restored.tvc().unwrap().z80.state.pc, 0xBEEF);
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn debug_snapshot_restores_in_place_and_clears_typed_input() {
     emu.restore_debug_snapshot(&snapshot).unwrap();
 
     assert!(!emu.running);
-    assert_eq!(emu.z80_state().r16[11], 0x4567);
+    assert_eq!(emu.z80_state().pc, 0x4567);
     assert_eq!(emu.read_mapped_memory(0x1234, 1), vec![0xA5]);
     assert!(emu.typed_text.is_empty());
     assert!(emu.typed_key.is_none());
@@ -149,6 +149,45 @@ fn timed_key_press_rejects_zero_duration_and_unknown_codes() {
 
     assert!(emu.key_press_frames(49, 0).is_err());
     assert!(emu.key_press_frames(999, 1).is_err());
+    assert!(!any_tvc_key_pressed(&mut emu));
+}
+
+#[test]
+fn typed_text_presses_and_releases_each_tvc_key() {
+    let mut emu = Emu::new(MachineType {
+        is_plus: false,
+        rom_version: RomVersion::V1_2,
+        has_dos: false,
+    });
+
+    emu.type_text("a\r");
+    assert!(!any_tvc_key_pressed(&mut emu));
+
+    emu.tick();
+    assert!(any_tvc_key_pressed(&mut emu));
+
+    emu.tick();
+    assert!(any_tvc_key_pressed(&mut emu));
+
+    emu.tick();
+    assert!(any_tvc_key_pressed(&mut emu));
+
+    emu.tick();
+    assert!(!any_tvc_key_pressed(&mut emu));
+
+    emu.tick();
+    assert!(!any_tvc_key_pressed(&mut emu));
+
+    emu.tick();
+    assert!(any_tvc_key_pressed(&mut emu));
+
+    emu.tick();
+    assert!(any_tvc_key_pressed(&mut emu));
+
+    emu.tick();
+    assert!(any_tvc_key_pressed(&mut emu));
+
+    emu.tick();
     assert!(!any_tvc_key_pressed(&mut emu));
 }
 

@@ -1,6 +1,17 @@
-use super::{FPS_WINDOW, FrameStats, FrameStatsSnapshot, handle_command};
+use super::{FPS_WINDOW, FrameStats, FrameStatsSnapshot, handle_command, start_debugger_server};
 use crate::emu::{Emu, MachineType, RomVersion};
+use std::net::TcpListener;
 use std::time::{Duration, Instant};
+
+#[test]
+fn tcp_debugger_reports_an_occupied_port_before_starting() {
+    let occupied = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = occupied.local_addr().unwrap().port();
+
+    let err = start_debugger_server(port).err().unwrap();
+
+    assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
+}
 
 #[test]
 fn frame_stats_report_average_over_five_second_window() {
@@ -86,6 +97,48 @@ fn tcp_debugger_schedules_frame_timed_key_press() {
     assert_eq!(response["status"], "ok");
     assert_eq!(response["key"], 49);
     assert_eq!(response["duration"], 3);
+}
+
+#[test]
+fn tcp_debugger_queues_typed_text_for_frame_paced_input() {
+    let mut emu = Emu::new(MachineType {
+        is_plus: false,
+        rom_version: RomVersion::V1_2,
+        has_dos: false,
+    });
+
+    let response = handle_command(
+        &mut emu,
+        r#"{"cmd":"key","action":"press","char":"\r"}"#,
+        FrameStatsSnapshot::default(),
+    );
+    let response = serde_json::from_str::<serde_json::Value>(&response).unwrap();
+
+    assert_eq!(response["status"], "ok");
+
+    let key = &mut emu.tvc_mut().unwrap().bus.key;
+    key.select_row(5);
+    assert_ne!(key.read_row() & 0x10, 0);
+
+    emu.tick();
+    let key = &mut emu.tvc_mut().unwrap().bus.key;
+    key.select_row(5);
+    assert_eq!(key.read_row() & 0x10, 0);
+
+    emu.tick();
+    let key = &mut emu.tvc_mut().unwrap().bus.key;
+    key.select_row(5);
+    assert_eq!(key.read_row() & 0x10, 0);
+
+    emu.tick();
+    let key = &mut emu.tvc_mut().unwrap().bus.key;
+    key.select_row(5);
+    assert_eq!(key.read_row() & 0x10, 0);
+
+    emu.tick();
+    let key = &mut emu.tvc_mut().unwrap().bus.key;
+    key.select_row(5);
+    assert_ne!(key.read_row() & 0x10, 0);
 }
 
 #[test]

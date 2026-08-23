@@ -4,7 +4,7 @@ use super::*;
 fn instruction_trace_records_zx82_memory_writes() {
     let mut zx82 = Zx82::new();
     zx82.bus.ram_mut()[0..5].copy_from_slice(&[0x32, 0x00, 0x80, 0xD3, 0xFE]);
-    zx82.z80.state.r16[11] = 0x4000;
+    zx82.z80.state.pc = 0x4000;
     zx82.z80.state.set_reg8(0, 0x2A);
     zx82.instruction_trace_mut()
         .start(crate::instruction_trace::MIN_TRACE_CAPACITY);
@@ -80,7 +80,7 @@ fn full_frame_renderer_uses_spectrum_bitmap_layout_and_attributes() {
 fn frame_interrupt_is_offered_every_69888_t_states() {
     let mut zx82 = Zx82::new();
     zx82.bus.ram_mut()[0] = 0x76;
-    zx82.z80.state.r16[11] = 0x4000;
+    zx82.z80.state.pc = 0x4000;
     zx82.z80.state.iff1 = 1;
     zx82.z80.state.iff2 = 1;
 
@@ -88,7 +88,7 @@ fn frame_interrupt_is_offered_every_69888_t_states() {
 
     assert!(zx82.clock() >= FRAME_CLOCKS);
     assert!(zx82.last_frame_interrupt_accepted());
-    assert_eq!(zx82.z80.state.r16[11], 0x0038);
+    assert_eq!(zx82.z80.state.pc, 0x0038);
 }
 
 #[test]
