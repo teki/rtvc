@@ -514,6 +514,17 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                                 })
                             })
                             .collect();
+                        let mappings: Vec<_> = program
+                            .mappings
+                            .iter()
+                            .map(|mapping| {
+                                serde_json::json!({
+                                    "name": mapping.name,
+                                    "source_base": mapping.source_base,
+                                    "mapped_base": mapping.mapped_base
+                                })
+                            })
+                            .collect();
                         serde_json::json!({
                             "status": "ok",
                             "addr": program.origin,
@@ -522,6 +533,7 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                             "next_addr": program.next_addr,
                             "segments": segments,
                             "symbols": program.symbols,
+                            "mappings": mappings,
                             "lines": lines
                         })
                     }

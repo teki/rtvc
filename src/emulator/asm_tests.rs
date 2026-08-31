@@ -155,6 +155,100 @@ second:     NOP
 }
 
 #[test]
+fn org_declares_persistent_named_address_mappings() {
+    let program = assemble_program(
+        r#"
+            ORG C000H, SYS0, 0000H, SYS1, 4000H
+start:      JP MAIN@SYS0
+main:       NOP
+            ORG C100H
+table:      DW TABLE@SYS0, TABLE@SYS1, MAIN
+            ORG D000H, SYS2, 8000H
+other:      JP TABLE@SYS0
+        "#,
+        0,
+    )
+    .unwrap();
+
+    assert_eq!(program.symbols["START"], 0xC000);
+    assert_eq!(program.symbols["MAIN"], 0xC003);
+    assert_eq!(program.symbols["TABLE"], 0xC100);
+    assert_eq!(program.symbols["OTHER"], 0xD000);
+    assert_eq!(
+        program.bytes,
+        vec![
+            0xC3, 0x03, 0x00, // JP MAIN@SYS0
+            0x00, // MAIN: NOP
+            0x00, 0x01, // TABLE@SYS0
+            0x00, 0x41, // TABLE@SYS1
+            0x03, 0xC0, // MAIN
+            0xC3, 0x00, 0x01, // JP TABLE@SYS0
+        ]
+    );
+    assert_eq!(
+        program.mappings,
+        vec![
+            AsmMapping {
+                name: "SYS0".to_string(),
+                source_base: 0xC000,
+                mapped_base: 0x0000,
+            },
+            AsmMapping {
+                name: "SYS1".to_string(),
+                source_base: 0xC000,
+                mapped_base: 0x4000,
+            },
+            AsmMapping {
+                name: "SYS2".to_string(),
+                source_base: 0xD000,
+                mapped_base: 0x8000,
+            },
+        ]
+    );
+}
+
+#[test]
+fn rejects_incomplete_org_mapping() {
+    let error = assemble_program("ORG 8000H, SYS0\n", 0).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "line 1: ORG mappings require a name and mapped address pair"
+    );
+}
+
+#[test]
+fn mapping_expressions_work_in_equ_and_data_directives() {
+    let program = assemble_program(
+        "ORG C000H, SYS0, 0000H\nMAIN: NOP\nMAPPED EQU MAIN@SYS0\nDB MAIN@SYS0, MAPPED\nDW MAIN@SYS0+1\nDS MAIN@SYS0+1, MAIN@SYS0+7\n",
+        0,
+    )
+    .unwrap();
+
+    assert_eq!(program.symbols["MAPPED"], 0);
+    assert_eq!(program.bytes, vec![0x00, 0x00, 0x00, 0x01, 0x00, 0x07]);
+}
+
+#[test]
+fn rejects_unknown_and_duplicate_mappings() {
+    let error =
+        assemble_program("ORG 8000H, SYS0, 0000H\nJP START@MISSING\nSTART: NOP\n", 0).unwrap_err();
+    assert_eq!(error.to_string(), "line 2: unknown mapping 'MISSING'");
+
+    let error =
+        assemble_program("ORG 8000H, SYS0, 0000H\nORG 9000H, sys0, 4000H\n", 0).unwrap_err();
+    assert_eq!(error.to_string(), "line 2: duplicate mapping 'SYS0'");
+}
+
+#[test]
+fn rejects_the_old_map_directive() {
+    let error = assemble_program("MAP SYS,0000H,C000H\n", 0).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "line 1: MAP is no longer supported; declare mappings on ORG"
+    );
+}
+
+#[test]
 fn assembles_basic_start_program() {
     let program = assemble_program(
         r#"

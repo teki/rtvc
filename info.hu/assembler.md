@@ -40,7 +40,7 @@ kimenet a szabványos kimenetre kerül.
 | --- | --- |
 | `--origin <cím>` | Kezdő fordítási cím a forrásbeli `ORG` előtt; alapértéke `0`. |
 | `--format <toml\|cas\|bin>` | Kimeneti formátum; alapértéke `toml`. A `cas` egyetlen `BASIC_START` szegmenst, a `bin` egy összefüggő szegmenst vár. |
-| `-d <NÉV=ÉRTÉK>`, `--define <NÉV=ÉRTÉK>` | Fordítás előtt lecseréli az összes `%NÉV%` helyőrzőt. Többször is megadható; a hiányzó érték hiba. |
+| `-d <NÉV=ÉRTÉK>`, `--define <NÉV=ÉRTÉK>` | Fordítás előtt lecseréli az assembly kódban lévő `%NÉV%` helyőrzőket. Többször is megadható; a hiányzó érték hiba. |
 | `-o <útvonal>`, `--output <útvonal>` | Kimeneti fájl. |
 | `-` bemenetként | Olvasás a szabványos bemenetről. |
 
@@ -60,6 +60,9 @@ rtvc-asm -d BLOCK_SIZE=0748H helper.asm -o helper.toml
 
 A definíciók neve nem érzékeny a kis- és nagybetűkre, értékük szövegesen kerül
 behelyettesítésre. A fenti példában a `-d BLOCK_SIZE=...` elhagyása hibát ad.
+A behelyettesítés csak az assembly kódra vonatkozik: a pontosvesszős
+megjegyzésekben és az idézett szövegliterálokban lévő helyőrzők változatlanok
+maradnak. Az idézett szövegen belüli pontosvessző szintén nem kezd megjegyzést.
 
 ### Parancssori disassembler
 
@@ -126,7 +129,7 @@ tartalmazhat, de nem kezdődhet számjeggyel.
 
 | Direktíva | Alak | Megjegyzés |
 | --- | --- | --- |
-| `ORG` | `ORG kifejezés` | Beállítja az aktuális címet; több `ORG` több kimeneti szegmenst hoz létre. |
+| `ORG` | `ORG kifejezés[, név, leképezett-cím ...]` | Beállítja az aktuális címet; a név/cím párok tartós címleképezéseket definiálnak erről az eredetről. Több `ORG` több kimeneti szegmenst hoz létre. |
 | `BASIC_START` | `BASIC_START` | Tokenizált TVC BASIC autorun sort ír `19EFH` címre, `1A30H`-ig kitölt, és ott definiálja a `BASIC_START` címkét. |
 | `EQU` | `CÍMKE EQU kifejezés` vagy `CÍMKE: EQU kifejezés` | Konstans szimbólumot definiál. |
 | `DB`, `DEFB` | `DB érték[, érték...]` | Bájtokat, illetve ASCII szövegeket ír ki. |
@@ -145,11 +148,14 @@ A támogatott elemek:
 - `0b1010` és `1010B` bináris számok;
 - címkék és `EQU` szimbólumok;
 - `$` mint aktuális cím;
+- `címke@leképezés` címátalakítások;
 - `+` és `-` műveletek.
 
 A `+` és `-` balról jobbra értékelődik; zárójeles aritmetika nincs. A Z80
 memóriaoperandusai, például `(4000H)` és `(IX+2)`, természetesen használnak
-zárójelet.
+zárójelet. A `címke@leképezés` alak az `ORG` sorban rögzített eredetből a
+leképezett címre alakít át; a későbbi `ORG` ezt nem módosítja. Az ismeretlen
+vagy ismételten definiált leképezés assemblerhiba.
 
 ## Futtatható TVC BASIC programok
 
@@ -224,10 +230,47 @@ bytes = [
 | `next_addr` | Az utolsó utasítás vagy `ORG` utáni aktuális cím. |
 | `segments` | Címzett bájttartományok; nem folytonos `ORG` esetén több elem. |
 | `symbols` | Nagybetűs szimbólumnevek és 16 bites értékeik. |
+| `mappings` | Az `ORG` sorok névvel ellátott leképezései: `name`, `source_base`, `mapped_base`. |
 | `lines` | A kibocsátott forrássorok sorszáma, címe és bájthossza. |
 
 A betöltők számára a `segments[].bytes` a mérvadó adat. A `segments[].len`
 értékének egyeznie kell a bájttömb hosszával.
+
+### Névvel ellátott címleképezések
+
+Az `ORG` sor egy vagy több, az adott címtartományból kiinduló névvel ellátott
+átalakítást definiálhat:
+
+```asm
+ORG C000H, SYS0, 0000H, SYS1, 4000H
+
+START:  JP MAIN@SYS0
+MAIN:   NOP
+
+ORG C100H
+TABLE:  DW TABLE@SYS0, TABLE@SYS1, MAIN
+
+ORG D000H, DATA0, 8000H
+OTHER:  JP TABLE@SYS0
+```
+
+Ez a `SYS0` leképezést `C000H -> 0000H`, a `SYS1` leképezést pedig
+`C000H -> 4000H` értékekkel rögzíti. A leképezés deklarációja nem ír ki bájtokat.
+`START` címe `C000H`, `MAIN` címe `C003H`, `TABLE` címe pedig `C100H`. A
+leképezett hivatkozás jelentése:
+
+```text
+címke@leképezés = címke - forrás-alapcím + leképezett-alapcím
+```
+
+Ezért a `DW` értékei `0100H`, `4100H` és `C003H`, a kibocsátott little-endian
+bájtok pedig `00 01 00 41 03 C0`. Az utolsó ugrásban a `TABLE@SYS0` értéke
+`0100H`, ezért az utasítás bájtjai `C3 00 01`. A `DATA0` leképezés `D000H ->
+8000H` értéket rögzít; a későbbi `ORG` sorok nem módosítják a korábbi
+leképezéseket. A sima `TABLE` továbbra is `C100H`.
+
+A leképezésnevek egy assemblált modulon belül egyediek. Ismeretlen vagy
+ismételten definiált leképezés assemblerhibát okoz.
 
 ## Tipikus munkafolyamat
 

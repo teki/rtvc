@@ -30,8 +30,17 @@ pub struct AssembledProgram {
     pub bytes: Vec<u8>,
     pub segments: Vec<AssembledSegment>,
     pub symbols: BTreeMap<String, u16>,
+    pub mappings: Vec<AsmMapping>,
     pub lines: Vec<AssembledLine>,
     pub next_addr: u16,
+}
+
+/// A named address transformation captured at an `ORG` declaration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AsmMapping {
+    pub name: String,
+    pub source_base: u16,
+    pub mapped_base: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,12 +68,21 @@ struct ParsedLine {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Statement {
     Empty,
-    Org(String),
+    Org {
+        address: String,
+        mappings: Vec<(String, String)>,
+    },
     BasicStart,
-    Equ { label: String, expr: String },
+    Equ {
+        label: String,
+        expr: String,
+    },
     Bytes(Vec<ByteValue>),
     Words(Vec<String>),
-    Space { count: String, fill: Option<String> },
+    Space {
+        count: String,
+        fill: Option<String>,
+    },
     Instruction(String),
 }
 
@@ -139,9 +157,10 @@ pub fn assemble_line(source: &str, pc: u16) -> Result<Vec<u8>, AsmError> {
 /// Assemble a small Z80 source block at `origin`.
 ///
 /// This two-pass layer is intended for debugger helper code and porting shims,
-/// not as a full macro assembler. It supports labels, `ORG`, `EQU`, `DB`/`DEFB`,
-/// `DW`/`DEFW`, `DS`/`DEFS`, simple `+`/`-` expressions, and `$` as the current
-/// address. Instruction encoding is delegated to [`assemble_line`].
+/// not as a full macro assembler. It supports labels, `ORG` with named address
+/// mappings, `EQU`, `DB`/`DEFB`, `DW`/`DEFW`, `DS`/`DEFS`, simple `+`/`-`
+/// expressions, and `$` as the current address. Instruction encoding is
+/// delegated to [`assemble_line`].
 pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, AsmError> {
     let parsed: Vec<_> = source
         .lines()
@@ -150,6 +169,8 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
         .collect::<Result<_, _>>()?;
 
     let mut symbols = BTreeMap::new();
+    let mut mappings = Vec::new();
+    let mut mappings_by_name = BTreeMap::new();
     let mut pc = origin;
 
     for line in &parsed {
@@ -161,9 +182,30 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
 
         match &line.statement {
             Statement::Empty => {}
-            Statement::Org(expr) => {
-                pc = eval_word(expr, pc, &symbols, false, 0)
+            Statement::Org {
+                address,
+                mappings: declarations,
+            } => {
+                pc = eval_word(address, pc, &symbols, &mappings_by_name, false, 0)
                     .map_err(|err| line_error(line.line_no, err))?;
+                for (name, mapped_address) in declarations {
+                    if mappings_by_name.contains_key(name) {
+                        return Err(line_error(
+                            line.line_no,
+                            AsmError::new(format!("duplicate mapping '{name}'")),
+                        ));
+                    }
+                    let mapped_base =
+                        eval_word(mapped_address, pc, &symbols, &mappings_by_name, false, 0)
+                            .map_err(|err| line_error(line.line_no, err))?;
+                    let mapping = AsmMapping {
+                        name: name.clone(),
+                        source_base: pc,
+                        mapped_base,
+                    };
+                    mappings_by_name.insert(name.clone(), mapping.clone());
+                    mappings.push(mapping);
+                }
             }
             Statement::BasicStart => {
                 insert_symbol(
@@ -175,7 +217,7 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
                 pc = TVC_BASIC_USR_ENTRY;
             }
             Statement::Equ { label, expr } => {
-                let value = eval_word(expr, pc, &symbols, false, 0)
+                let value = eval_word(expr, pc, &symbols, &mappings_by_name, false, 0)
                     .map_err(|err| line_error(line.line_no, err))?;
                 insert_symbol(&mut symbols, label, value, line.line_no)?;
             }
@@ -186,12 +228,12 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
                 pc = pc.wrapping_add(values.len().wrapping_mul(2) as u16);
             }
             Statement::Space { count, .. } => {
-                let count = eval_nonnegative(count, pc, &symbols, false, 0)
+                let count = eval_nonnegative(count, pc, &symbols, &mappings_by_name, false, 0)
                     .map_err(|err| line_error(line.line_no, err))?;
                 pc = pc.wrapping_add(count as u16);
             }
             Statement::Instruction(statement) => {
-                let rendered = render_instruction(statement, pc, &symbols, true)
+                let rendered = render_instruction(statement, pc, &symbols, &mappings_by_name, true)
                     .map_err(|err| line_error(line.line_no, err))?;
                 let bytes =
                     assemble_line(&rendered, pc).map_err(|err| line_error(line.line_no, err))?;
@@ -209,8 +251,8 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
         let addr = pc;
         let emitted = match &line.statement {
             Statement::Empty => Vec::new(),
-            Statement::Org(expr) => {
-                pc = eval_word(expr, pc, &symbols, false, 0)
+            Statement::Org { address, .. } => {
+                pc = eval_word(address, pc, &symbols, &mappings_by_name, false, 0)
                     .map_err(|err| line_error(line.line_no, err))?;
                 Vec::new()
             }
@@ -219,30 +261,31 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
                 tvc_basic_start_bytes()
             }
             Statement::Equ { .. } => Vec::new(),
-            Statement::Bytes(values) => emit_byte_values(values, pc, &symbols)
+            Statement::Bytes(values) => emit_byte_values(values, pc, &symbols, &mappings_by_name)
                 .map_err(|err| line_error(line.line_no, err))?,
             Statement::Words(values) => {
                 let mut out = Vec::with_capacity(values.len() * 2);
                 for value in values {
-                    let value = eval_word(value, pc, &symbols, false, 0)
+                    let value = eval_word(value, pc, &symbols, &mappings_by_name, false, 0)
                         .map_err(|err| line_error(line.line_no, err))?;
                     push_word(&mut out, value);
                 }
                 out
             }
             Statement::Space { count, fill } => {
-                let count = eval_nonnegative(count, pc, &symbols, false, 0)
+                let count = eval_nonnegative(count, pc, &symbols, &mappings_by_name, false, 0)
                     .map_err(|err| line_error(line.line_no, err))?;
                 let fill = match fill {
-                    Some(fill) => eval_byte(fill, pc, &symbols, false, 0)
+                    Some(fill) => eval_byte(fill, pc, &symbols, &mappings_by_name, false, 0)
                         .map_err(|err| line_error(line.line_no, err))?,
                     None => 0,
                 };
                 vec![fill; count]
             }
             Statement::Instruction(statement) => {
-                let rendered = render_instruction(statement, pc, &symbols, false)
-                    .map_err(|err| line_error(line.line_no, err))?;
+                let rendered =
+                    render_instruction(statement, pc, &symbols, &mappings_by_name, false)
+                        .map_err(|err| line_error(line.line_no, err))?;
                 assemble_line(&rendered, pc).map_err(|err| line_error(line.line_no, err))?
             }
         };
@@ -273,6 +316,7 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
         bytes,
         segments,
         symbols,
+        mappings,
         lines,
         next_addr: pc,
     })
@@ -336,8 +380,11 @@ fn parse_statement(source: &str, labels: &[String]) -> Result<Statement, AsmErro
             if rest.trim().is_empty() {
                 return Err(AsmError::new("ORG requires an address"));
             }
-            Ok(Statement::Org(rest.trim().to_string()))
+            parse_org(rest)
         }
+        "MAP" => Err(AsmError::new(
+            "MAP is no longer supported; declare mappings on ORG",
+        )),
         "BASIC_START" => {
             if !rest.trim().is_empty() {
                 return Err(AsmError::new("BASIC_START takes no operands"));
@@ -362,6 +409,30 @@ fn parse_statement(source: &str, labels: &[String]) -> Result<Statement, AsmErro
         }
         _ => Ok(Statement::Instruction(source.to_string())),
     }
+}
+
+fn parse_org(source: &str) -> Result<Statement, AsmError> {
+    let operands = split_operands(source)?;
+    if operands.is_empty() {
+        return Err(AsmError::new("ORG requires an address"));
+    }
+    let mapping_operands = &operands[1..];
+    if mapping_operands.len() % 2 != 0 {
+        return Err(AsmError::new(
+            "ORG mappings require a name and mapped address pair",
+        ));
+    }
+    let mappings = mapping_operands
+        .chunks_exact(2)
+        .map(|pair| {
+            validate_label(&pair[0])?;
+            Ok((pair[0].to_ascii_uppercase(), pair[1].clone()))
+        })
+        .collect::<Result<Vec<_>, AsmError>>()?;
+    Ok(Statement::Org {
+        address: operands[0].clone(),
+        mappings,
+    })
 }
 
 fn tvc_basic_start_bytes() -> Vec<u8> {
@@ -535,11 +606,12 @@ fn emit_byte_values(
     values: &[ByteValue],
     pc: u16,
     symbols: &BTreeMap<String, u16>,
+    mappings: &BTreeMap<String, AsmMapping>,
 ) -> Result<Vec<u8>, AsmError> {
     let mut out = Vec::new();
     for value in values {
         match value {
-            ByteValue::Expr(expr) => out.push(eval_byte(expr, pc, symbols, false, 0)?),
+            ByteValue::Expr(expr) => out.push(eval_byte(expr, pc, symbols, mappings, false, 0)?),
             ByteValue::String(bytes) => out.extend_from_slice(bytes),
         }
     }
@@ -550,6 +622,7 @@ fn render_instruction(
     source: &str,
     pc: u16,
     symbols: &BTreeMap<String, u16>,
+    mappings: &BTreeMap<String, AsmMapping>,
     allow_undefined: bool,
 ) -> Result<String, AsmError> {
     let (mnemonic, rest) = split_statement_head(source);
@@ -567,7 +640,16 @@ fn render_instruction(
 
     let rendered: Vec<_> = operands
         .iter()
-        .map(|operand| render_operand(operand, pc, symbols, allow_undefined, unknown_value))
+        .map(|operand| {
+            render_operand(
+                operand,
+                pc,
+                symbols,
+                mappings,
+                allow_undefined,
+                unknown_value,
+            )
+        })
         .collect::<Result<_, _>>()?;
     Ok(format!("{} {}", mnemonic, rendered.join(",")))
 }
@@ -576,6 +658,7 @@ fn render_operand(
     operand: &str,
     pc: u16,
     symbols: &BTreeMap<String, u16>,
+    mappings: &BTreeMap<String, AsmMapping>,
     allow_undefined: bool,
     unknown_value: u16,
 ) -> Result<String, AsmError> {
@@ -586,17 +669,26 @@ fn render_operand(
 
     if operand.starts_with('(') && operand.ends_with(')') {
         let inner = &operand[1..operand.len() - 1];
-        if let Some(rendered) = render_indexed_operand(inner, pc, symbols, allow_undefined)? {
+        if let Some(rendered) =
+            render_indexed_operand(inner, pc, symbols, mappings, allow_undefined)?
+        {
             return Ok(format!("({rendered})"));
         }
         if is_fixed_operand(inner) {
             return Ok(operand);
         }
-        let value = eval_word(inner, pc, symbols, allow_undefined, unknown_value)?;
+        let value = eval_word(inner, pc, symbols, mappings, allow_undefined, unknown_value)?;
         return Ok(format!("({:04X}H)", value));
     }
 
-    let value = eval_expr(&operand, pc, symbols, allow_undefined, unknown_value)?;
+    let value = eval_expr(
+        &operand,
+        pc,
+        symbols,
+        mappings,
+        allow_undefined,
+        unknown_value,
+    )?;
     if value < 0 {
         Ok(value.to_string())
     } else {
@@ -646,6 +738,7 @@ fn render_indexed_operand(
     inner: &str,
     pc: u16,
     symbols: &BTreeMap<String, u16>,
+    mappings: &BTreeMap<String, AsmMapping>,
     allow_undefined: bool,
 ) -> Result<Option<String>, AsmError> {
     let (index, rest) = if let Some(rest) = inner.strip_prefix("IX") {
@@ -659,7 +752,7 @@ fn render_indexed_operand(
     if rest.is_empty() {
         return Ok(Some(index.to_string()));
     }
-    let value = eval_expr(rest, pc, symbols, allow_undefined, 0)?;
+    let value = eval_expr(rest, pc, symbols, mappings, allow_undefined, 0)?;
     i8::try_from(value).map_err(|_| {
         AsmError::new(format!(
             "index displacement '{}' is outside -128..127",
@@ -1318,10 +1411,11 @@ fn eval_byte(
     value: &str,
     pc: u16,
     symbols: &BTreeMap<String, u16>,
+    mappings: &BTreeMap<String, AsmMapping>,
     allow_undefined: bool,
     unknown_value: u16,
 ) -> Result<u8, AsmError> {
-    let value_number = eval_expr(value, pc, symbols, allow_undefined, unknown_value)?;
+    let value_number = eval_expr(value, pc, symbols, mappings, allow_undefined, unknown_value)?;
     u8::try_from(value_number)
         .map_err(|_| AsmError::new(format!("byte '{}' is outside 0..255", value)))
 }
@@ -1330,10 +1424,11 @@ fn eval_word(
     value: &str,
     pc: u16,
     symbols: &BTreeMap<String, u16>,
+    mappings: &BTreeMap<String, AsmMapping>,
     allow_undefined: bool,
     unknown_value: u16,
 ) -> Result<u16, AsmError> {
-    let value_number = eval_expr(value, pc, symbols, allow_undefined, unknown_value)?;
+    let value_number = eval_expr(value, pc, symbols, mappings, allow_undefined, unknown_value)?;
     u16::try_from(value_number)
         .map_err(|_| AsmError::new(format!("word '{}' is outside 0..65535", value)))
 }
@@ -1342,10 +1437,11 @@ fn eval_nonnegative(
     value: &str,
     pc: u16,
     symbols: &BTreeMap<String, u16>,
+    mappings: &BTreeMap<String, AsmMapping>,
     allow_undefined: bool,
     unknown_value: u16,
 ) -> Result<usize, AsmError> {
-    let value_number = eval_expr(value, pc, symbols, allow_undefined, unknown_value)?;
+    let value_number = eval_expr(value, pc, symbols, mappings, allow_undefined, unknown_value)?;
     usize::try_from(value_number)
         .map_err(|_| AsmError::new(format!("count '{}' must be non-negative", value)))
 }
@@ -1354,6 +1450,7 @@ fn eval_expr(
     value: &str,
     pc: u16,
     symbols: &BTreeMap<String, u16>,
+    mappings: &BTreeMap<String, AsmMapping>,
     allow_undefined: bool,
     unknown_value: u16,
 ) -> Result<i32, AsmError> {
@@ -1396,7 +1493,8 @@ fn eval_expr(
                 if term.is_empty() {
                     return Err(AsmError::new(format!("invalid expression '{}'", value)));
                 }
-                total += sign * eval_term(term, pc, symbols, allow_undefined, unknown_value)?;
+                total +=
+                    sign * eval_term(term, pc, symbols, mappings, allow_undefined, unknown_value)?;
                 expect_term = false;
                 sign = 1;
             }
@@ -1410,6 +1508,42 @@ fn eval_expr(
 }
 
 fn eval_term(
+    term: &str,
+    pc: u16,
+    symbols: &BTreeMap<String, u16>,
+    mappings: &BTreeMap<String, AsmMapping>,
+    allow_undefined: bool,
+    unknown_value: u16,
+) -> Result<i32, AsmError> {
+    if let Some((source_term, mapping_name)) = term.split_once('@') {
+        if source_term.is_empty() || mapping_name.is_empty() || mapping_name.contains('@') {
+            return Err(AsmError::new(format!(
+                "invalid mapped expression '{}'",
+                term
+            )));
+        }
+        let Some(mapping) = mappings.get(mapping_name) else {
+            if allow_undefined {
+                return Ok(unknown_value as i32);
+            }
+            return Err(AsmError::new(format!("unknown mapping '{}'", mapping_name)));
+        };
+        let source_value = if allow_undefined
+            && is_label_like(source_term)
+            && !symbols.contains_key(source_term)
+            && number(source_term).is_err()
+        {
+            return Ok(unknown_value as i32);
+        } else {
+            eval_plain_term(source_term, pc, symbols, allow_undefined, unknown_value)?
+        };
+        return Ok(source_value - mapping.source_base as i32 + mapping.mapped_base as i32);
+    }
+
+    eval_plain_term(term, pc, symbols, allow_undefined, unknown_value)
+}
+
+fn eval_plain_term(
     term: &str,
     pc: u16,
     symbols: &BTreeMap<String, u16>,

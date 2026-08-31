@@ -258,6 +258,14 @@ fn render_toml(
         }
     }
 
+    for mapping in &assembled.mappings {
+        out.push(String::new());
+        out.push("[[mappings]]".to_string());
+        out.push(format!("name = {}", toml_string(&mapping.name)));
+        out.push(format!("source_base = {}", hex16(mapping.source_base)));
+        out.push(format!("mapped_base = {}", hex16(mapping.mapped_base)));
+    }
+
     for line in &assembled.lines {
         out.push(String::new());
         out.push("[[lines]]".to_string());
@@ -363,22 +371,127 @@ fn parse_define(value: &str) -> Result<(String, String), String> {
 
 fn apply_defines(source: &str, defines: &BTreeMap<String, String>) -> Result<String, String> {
     let mut output = String::with_capacity(source.len());
-    let mut rest = source;
-    while let Some(start) = rest.find('%') {
-        output.push_str(&rest[..start]);
-        rest = &rest[start + 1..];
-        let end = rest
-            .find('%')
-            .ok_or_else(|| "unterminated definition placeholder '%'".to_string())?;
-        let name = rest[..end].to_ascii_uppercase();
-        let value = defines
-            .get(&name)
-            .ok_or_else(|| format!("missing definition for %{name}%"))?;
-        output.push_str(value);
-        rest = &rest[end + 1..];
+    for line in source.split_inclusive('\n') {
+        let comment_start = find_comment_start(line);
+        let (code, comment) = line.split_at(comment_start);
+        output.push_str(&apply_defines_to_code(code, defines)?);
+        output.push_str(comment);
     }
-    output.push_str(rest);
     Ok(output)
+}
+
+fn apply_defines_to_code(
+    source: &str,
+    defines: &BTreeMap<String, String>,
+) -> Result<String, String> {
+    let mut output = String::with_capacity(source.len());
+    let mut quote = None;
+    let mut escape = false;
+    let mut index = 0usize;
+    let mut text_start = 0usize;
+    while index < source.len() {
+        let ch = source[index..]
+            .chars()
+            .next()
+            .expect("index must point at a character boundary");
+        let next_index = index + ch.len_utf8();
+
+        if escape {
+            escape = false;
+            index = next_index;
+            continue;
+        }
+        if quote.is_some() && ch == '\\' {
+            escape = true;
+            index = next_index;
+            continue;
+        }
+        if let Some(quote_ch) = quote {
+            if ch == quote_ch {
+                quote = None;
+            }
+            index = next_index;
+            continue;
+        }
+
+        match ch {
+            '"' => quote = Some(ch),
+            '\'' if single_quote_starts_operand(source, index)
+                || single_quote_starts_statement_string(source, index) =>
+            {
+                quote = Some(ch)
+            }
+            '%' => {
+                output.push_str(&source[text_start..index]);
+                let rest = &source[index + 1..];
+                let end = rest
+                    .find('%')
+                    .ok_or_else(|| "unterminated definition placeholder '%'".to_string())?;
+                let name = rest[..end].to_ascii_uppercase();
+                let value = defines
+                    .get(&name)
+                    .ok_or_else(|| format!("missing definition for %{name}%"))?;
+                output.push_str(value);
+                index += end + 2;
+                text_start = index;
+                continue;
+            }
+            _ => {}
+        }
+        index = next_index;
+    }
+    output.push_str(&source[text_start..]);
+    Ok(output)
+}
+
+/// Find the first assembler comment delimiter outside a quoted string so
+/// definition substitution can leave comments and string data untouched.
+fn find_comment_start(source: &str) -> usize {
+    let mut quote = None;
+    let mut escape = false;
+    for (index, ch) in source.char_indices() {
+        if escape {
+            escape = false;
+            continue;
+        }
+        if quote.is_some() && ch == '\\' {
+            escape = true;
+            continue;
+        }
+        if let Some(quote_ch) = quote {
+            if ch == quote_ch {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            ';' => return index,
+            '"' => quote = Some(ch),
+            '\'' if single_quote_starts_operand(source, index)
+                || single_quote_starts_statement_string(source, index) =>
+            {
+                quote = Some(ch)
+            }
+            _ => {}
+        }
+    }
+    source.len()
+}
+
+fn single_quote_starts_operand(source: &str, index: usize) -> bool {
+    source[..index]
+        .chars()
+        .rev()
+        .find(|ch| !ch.is_whitespace())
+        .is_none_or(|ch| ch == ',')
+}
+
+fn single_quote_starts_statement_string(source: &str, index: usize) -> bool {
+    source[..index]
+        .chars()
+        .last()
+        .is_some_and(|ch| ch.is_whitespace())
+        && source[index + 1..].contains('\'')
 }
 
 #[cfg(test)]
@@ -434,6 +547,19 @@ mod tests {
     }
 
     #[test]
+    fn leaves_definition_like_text_in_comments_untouched() {
+        let defines = BTreeMap::from([("VALUE".to_string(), "42".to_string())]);
+        assert_eq!(
+            apply_defines(
+                "; %COMMENT%\nLD A,%VALUE% ; %INLINE%\nDB 'A;%;B'\n",
+                &defines
+            )
+            .unwrap(),
+            "; %COMMENT%\nLD A,42 ; %INLINE%\nDB 'A;%;B'\n"
+        );
+    }
+
+    #[test]
     fn parses_address_formats() {
         assert_eq!(parse_number("32768").unwrap(), 0x8000);
         assert_eq!(parse_number("0x8000").unwrap(), 0x8000);
@@ -450,6 +576,17 @@ mod tests {
         assert_eq!(&cas[0x87..0x89], &[0xEF, 0x19]);
         assert_eq!(&cas[0x90..0xA0], &assembled.segments[0].bytes[..16]);
         assert_eq!(cas[0x90 + 0x41], 0xC9);
+    }
+
+    #[test]
+    fn renders_named_mapping_metadata() {
+        let assembled = assemble_program("ORG C000H, SYS0, 0000H\nNOP\n", 0).unwrap();
+        let toml = render_toml("mapping.asm", 0, &assembled);
+        assert!(toml.contains("[[mappings]]"));
+        assert!(toml.contains("name = \"SYS0\""));
+        assert!(toml.contains("source_base = 0xC000"));
+        assert!(toml.contains("mapped_base = 0x0000"));
+        assert!(!toml.contains("physical_offset"));
     }
 
     #[test]

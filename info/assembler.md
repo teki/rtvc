@@ -45,7 +45,7 @@ Options:
 | --- | --- |
 | `--origin <addr>` | Initial assembly address before source-level `ORG`; defaults to `0`. |
 | `--format <toml\|cas\|bin>` | Output format; defaults to `toml`. `cas` expects a single `BASIC_START` segment, and `bin` expects one contiguous segment. |
-| `-d <NAME=VALUE>`, `--define <NAME=VALUE>` | Replace every `%NAME%` placeholder before assembly. Repeat for multiple values; a missing placeholder value is an error. |
+| `-d <NAME=VALUE>`, `--define <NAME=VALUE>` | Replace `%NAME%` placeholders in assembly code before assembly. Repeat for multiple values; a missing placeholder value is an error. |
 | `-o <path>`, `--output <path>` | Write output to a file; omitted means stdout. |
 | `-`, as input path | Read source from stdin. |
 
@@ -65,7 +65,9 @@ rtvc-asm -d BLOCK_SIZE=0748H helper.asm -o helper.toml
 
 Definitions are case-insensitive by name and substituted as text. Omitting
 `-d BLOCK_SIZE=...` in this example fails with `missing definition for
-%BLOCK_SIZE%`.
+%BLOCK_SIZE%`. Substitution applies only to assembly code: placeholders in
+semicolon comments and quoted string literals are left unchanged. A semicolon
+inside a quoted string is likewise not treated as the start of a comment.
 
 ### Disassembler Command Line
 
@@ -146,7 +148,7 @@ Supported directives:
 
 | Directive | Forms | Notes |
 | --- | --- | --- |
-| `ORG` | `ORG expr` | Sets the current assembly address. Multiple `ORG` directives create multiple output segments. |
+| `ORG` | `ORG expr[, map-name, mapped-address ...]` | Sets the current CPU assembly address. Each optional name/address pair declares a persistent address mapping from this origin. Multiple `ORG` directives create multiple output segments. |
 | `BASIC_START` | `BASIC_START` | Emits a tokenized TVC BASIC autorun line at `19EFH`, pads to `1A30H`, and defines `BASIC_START` as the first machine-code instruction address called by `USR(6704)`. |
 | `EQU` | `LABEL EQU expr` or `LABEL: EQU expr` | Defines a constant symbol. |
 | `DB`, `DEFB` | `DB expr[, expr...]` | Emits bytes. String literals are also accepted. |
@@ -165,6 +167,7 @@ Expressions are intentionally limited:
 - `0b1010` and `1010B` binary;
 - labels and `EQU` symbols;
 - `$` as the current address;
+- `label@map` address transformations;
 - `+` and `-` operators.
 
 There is no operator precedence beyond left-to-right `+`/`-`, and there are no
@@ -252,10 +255,57 @@ Fields:
 | `next_addr` | Current assembly address after the final emitted statement or `ORG`. |
 | `segments` | Addressed byte ranges. Multiple ranges appear when source uses non-contiguous `ORG` values. |
 | `symbols` | Uppercase symbol names mapped to 16-bit values. |
+| `mappings` | Named `ORG` transformations with `name`, `source_base`, and `mapped_base`. |
 | `lines` | Emitted source lines with source line number, output address, and byte length. |
 
 `segments[].bytes` is the canonical data for loaders. `segments[].len` must
 match the length of `segments[].bytes`.
+
+### Named address mappings
+
+An `ORG` can declare one or more named transformations from its address space
+to another address space:
+
+```asm
+ORG C000H, SYS0, 0000H, SYS1, 4000H
+
+START:  JP MAIN@SYS0
+MAIN:   NOP
+
+ORG C100H
+TABLE:  DW TABLE@SYS0, TABLE@SYS1, MAIN
+
+ORG D000H, DATA0, 8000H
+OTHER:  JP TABLE@SYS0
+```
+
+This captures `SYS0` as `C000H -> 0000H` and `SYS1` as `C000H -> 4000H`.
+The mapping declaration emits no bytes. `START` is assembled at `C000H`,
+`MAIN` at `C003H`, and `TABLE` at `C100H`. A mapped reference applies:
+
+```text
+label@map = label - source_base + mapped_base
+```
+
+Therefore the `DW` values are `0100H`, `4100H`, and `C003H`, producing the
+little-endian bytes `00 01 00 41 03 C0`. The final jump uses `TABLE@SYS0`,
+which is `0100H`, so it emits `C3 00 01`. `DATA0` captures `D000H -> 8000H`;
+the later `ORG` does not alter any earlier mapping. Plain `TABLE` continues
+to mean `C100H`.
+
+Mappings are unique within one assembled module, and both an unknown mapping
+reference and a duplicate mapping declaration are errors.
+
+Mapping references can be used in any address expression accepted by the
+assembler, including instruction operands, `EQU`, `DB`, and `DW` values.
+
+For the TVC BASIC 1.2 ROM set, the common mappings are:
+
+| Chip | Bank offset | Canonical CPU origin | Other CPU alias |
+| --- | ---: | ---: | ---: |
+| `TVC12_D4.64K` | `0000H` | `C000H` | `0000H` |
+| `TVC12_D3.64K` | `2000H` | `E000H` | `2000H` |
+| `TVC12_D7.64K` | `0000H` | `E000H` | — |
 
 ## Typical Workflow
 

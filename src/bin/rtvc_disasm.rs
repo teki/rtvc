@@ -39,6 +39,12 @@ struct Symbol {
     name: String,
     summary: String,
     usage: Vec<String>,
+    input: String,
+    output: String,
+    effects: String,
+    tags: Vec<String>,
+    sources: Vec<String>,
+    confidence: String,
 }
 
 #[derive(Debug, Clone)]
@@ -300,13 +306,47 @@ fn load_symbols(options: &Options) -> Result<BTreeMap<u16, Vec<Symbol>>, String>
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        let input = json_comment(symbol, "input");
+        let output = json_comment(symbol, "output");
+        let effects = json_comment(symbol, "effects");
+        let tags = json_strings(symbol, "tags");
+        let sources = json_strings(symbol, "sources");
+        let confidence = json_comment(symbol, "confidence");
         out.entry(addr).or_default().push(Symbol {
             name,
             summary,
             usage,
+            input,
+            output,
+            effects,
+            tags,
+            sources,
+            confidence,
         });
     }
     Ok(out)
+}
+
+fn json_comment(value: &Value, field: &str) -> String {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .map(ascii_comment)
+        .unwrap_or_default()
+}
+
+fn json_strings(value: &Value, field: &str) -> Vec<String> {
+    value
+        .get(field)
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ascii_comment)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
 }
 
 fn load_comments(options: &Options) -> Result<BTreeMap<u16, Vec<Comment>>, String> {
@@ -371,6 +411,25 @@ fn render_listing(
     out.push(format!("; Source: {source_name}"));
     out.push(format!("; ORG: {}", hex16(options.origin)));
     out.push(format!("; Size: {} bytes", bytes.len()));
+    out.push(
+        "; Instructions use CPU-visible addresses at ORG; the ROM bank is recorded separately."
+            .to_string(),
+    );
+    if let Some(bank) = &options.bank {
+        out.push(format!(
+            "; Physical bank: {} offset {}",
+            bank.to_ascii_uppercase(),
+            hex16(options.bank_offset)
+        ));
+        if let Some(aliases) = mapping_aliases(options) {
+            let aliases = aliases
+                .iter()
+                .map(|address| hex16(*address))
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push(format!("; CPU-visible aliases: {aliases}"));
+        }
+    }
     if let Some(symbols) = &options.symbols {
         out.push(format!("; Symbols: {}", symbols.display()));
     }
@@ -394,11 +453,17 @@ fn render_listing(
     }
     out.push("; Auto labels: branch and call targets are emitted as Lxxxx.".to_string());
     out.push(
+        "; Book-derived routine summaries include input, output, effects, sources, and confidence."
+            .to_string(),
+    );
+    out.push(
         "; -----------------------------------------------------------------------------"
             .to_string(),
     );
     out.push(String::new());
-    out.push(format!("ORG {}", hex16(options.origin)));
+    out.push(
+        mapping_directive(options).unwrap_or_else(|| format!("ORG {}", hex16(options.origin))),
+    );
     out.push(String::new());
 
     let mut offset = 0usize;
@@ -435,6 +500,44 @@ fn render_listing(
     }
     out.push(String::new());
     Ok(out.join("\n"))
+}
+
+fn mapping_aliases(options: &Options) -> Option<Vec<u16>> {
+    let bank = options.bank.as_deref()?;
+    let mut aliases = match bank {
+        "sys" => {
+            let page0 = options.bank_offset;
+            let page3 = options.bank_offset.checked_add(0xC000)?;
+            vec![page0, page3]
+        }
+        "exth" => vec![options.bank_offset.checked_add(0xE000)?],
+        _ => return None,
+    };
+    let origin_index = aliases
+        .iter()
+        .position(|address| *address == options.origin)?;
+    aliases.swap(0, origin_index);
+    Some(aliases)
+}
+
+fn mapping_directive(options: &Options) -> Option<String> {
+    let bank = options.bank.as_deref()?;
+    let aliases = mapping_aliases(options)?;
+    let mapped_address = aliases
+        .into_iter()
+        .find(|address| *address != options.origin)
+        .unwrap_or(options.origin);
+    let mapping_name = match bank {
+        "sys" => "SYS0",
+        "exth" => "EXTH0",
+        _ => return None,
+    };
+    Some(format!(
+        "ORG {}, {}, {}",
+        hex16(options.origin),
+        mapping_name,
+        hex16(mapped_address),
+    ))
 }
 
 fn discover_auto_labels(bytes: &[u8], options: &Options) -> Result<BTreeSet<u16>, String> {
@@ -515,8 +618,26 @@ fn emit_labels(
         if !symbol.summary.is_empty() {
             out.push(format!("; {} - {}", symbol.name, symbol.summary));
         }
+        if !symbol.input.is_empty() {
+            out.push(format!("; input: {}", symbol.input));
+        }
+        if !symbol.output.is_empty() {
+            out.push(format!("; output: {}", symbol.output));
+        }
+        if !symbol.effects.is_empty() {
+            out.push(format!("; effects: {}", symbol.effects));
+        }
         if !symbol.usage.is_empty() {
             out.push(format!("; usage: {}", symbol.usage.join(",")));
+        }
+        if !symbol.tags.is_empty() {
+            out.push(format!("; tags: {}", symbol.tags.join(",")));
+        }
+        if !symbol.sources.is_empty() {
+            out.push(format!("; sources: {}", symbol.sources.join(",")));
+        }
+        if !symbol.confidence.is_empty() {
+            out.push(format!("; confidence: {}", symbol.confidence));
         }
         out.push(format!("{}:", symbol.name));
     }

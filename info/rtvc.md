@@ -483,11 +483,13 @@ at 10,000 entries per request. The interactive client provides the equivalent
 `trace list [count]` commands; `itrace` is an alias.
 
 The `assemble` command uses rtvc's built-in two-pass helper assembler. It
-supports labels, `ORG`, `EQU`, `DB`/`DEFB`, `DW`/`DEFW`, `DS`/`DEFS`, simple
-`+`/`-` expressions, and `$` as the current address. Responses keep the
-single-line compatibility fields (`addr`, `len`, `bytes`, `next_addr`) and also
-include `segments`, `symbols`, and emitted line-address metadata for multi-line
-source. See [assembler.md](assembler.md) for the detailed assembler reference.
+supports labels, `ORG` with persistent named address mappings, `EQU`,
+`DB`/`DEFB`, `DW`/`DEFW`, `DS`/`DEFS`, simple `+`/`-` expressions, and `$` as
+the current address. Responses keep the single-line compatibility fields
+(`addr`, `len`, `bytes`, `next_addr`) and also include `segments`, `symbols`,
+and emitted line-address metadata for multi-line source; mapping declarations
+are returned in `mappings`. See
+[assembler.md](assembler.md) for the detailed assembler reference.
 
 The interactive client is [scripts/rtvc_debug.py](../scripts/rtvc_debug.py).
 Its `asm` command keeps the one-instruction interactive patch workflow,
