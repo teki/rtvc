@@ -389,9 +389,9 @@ pub fn draw_screen(
             *captured = true;
         }
         let stroke = if *captured {
-            egui::Stroke::new(2.0, egui::Color32::from_rgb(80, 170, 255))
+            egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(80, 170, 255))
         } else {
-            egui::Stroke::new(1.0, egui::Color32::from_gray(70))
+            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(70))
         };
         ui.painter()
             .rect_stroke(rect, 0.0, stroke, egui::StrokeKind::Inside);

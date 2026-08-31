@@ -488,6 +488,33 @@ value written         = IxGxRxB
 border register value = IIGGRRBB
 ```
 
+### Output pipeline, blanking, and sync
+
+The CRTC does not drive a television directly. Its MA/RA, display-enable,
+horizontal-sync, and vertical-sync outputs feed the TVC display circuitry:
+
+1. MA/RA select a video-memory byte and the color shifter serializes it;
+2. the palette or direct-color path resolves that byte to final IGRB levels;
+3. display enable controls the WSE border flip-flop, selecting paper while DE
+   is active and the border latch otherwise;
+4. NVRCL clears the final video register during horizontal or vertical
+   retrace;
+5. the raw CRTC HS and VS outputs trigger separate SN74LS123 monostables, whose
+   outputs are the externally shaped horizontal and vertical sync signals;
+6. the shaped sync signals are combined by a NOR gate to form active-low
+   composite sync (NCSYNC) for the PAL/RGB output circuitry.
+
+Vertical blanking is latched when VS starts. CRTC address output MA9 resets the
+blanking latch and permits video again. This makes blanking a property of the
+TVC circuitry driven by CRTC signals, rather than a palette color or an
+implicit range of normal firmware register values.
+
+Software may reprogram the CRTC. The counters and address generator continue
+to run even when a programmed sync-position comparison is unreachable; that
+output simply produces no pulse. A television-facing emulator must therefore
+derive picture lock from the shaped output sync signals, not from R0/R2 or
+R4/R7 values and not from the normal 100-by-314 firmware geometry.
+
 ### Cursor interrupt
 
 The hardware cursor is primarily used as a timing signal. Normal software

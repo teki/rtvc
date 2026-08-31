@@ -2221,7 +2221,7 @@ fn draw_tape_led(ui: &mut egui::Ui, active: bool, level: f32) {
     ui.painter().circle_stroke(
         rect.center(),
         4.5,
-        egui::Stroke::new(1.0, egui::Color32::from_gray(120)),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(120)),
     );
 }
 

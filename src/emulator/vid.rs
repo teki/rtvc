@@ -1,9 +1,39 @@
+//! TVC video pipeline.
+//!
+//! The interleaved renderer deliberately has three hardware boundaries:
+//! [`CrtcState`] emits timing/address signals, [`TvcVideoGenerator`] resolves
+//! those signals and current TVC state into final IGRB video, and
+//! [`TelevisionReceiver`] sees only that final video and its external sync.
+
 #![allow(dead_code)]
 
-const HSYNC: i16 = 0x0400;
-const VSYNC: i16 = 0x0800;
+const CPU_CLOCKS_PER_CHARACTER: u32 = 2;
+const FRAMEBUFFER_WIDTH: usize = 608;
+const FRAMEBUFFER_HEIGHT: usize = 288;
+const FRAMEBUFFER_CHARACTER_CLOCKS: usize = FRAMEBUFFER_WIDTH / 8;
 
-const STREAM_SIZE: usize = 608 * 288 * 2 * 2;
+const SIGNAL_RING_SIZE: usize = 1 << 20;
+const SIGNAL_RING_MASK: usize = SIGNAL_RING_SIZE - 1;
+const MAX_LINE_CHARACTER_CLOCKS: usize = 256;
+
+// Connected PAL-TV policy. These are receiver acceptance/aperture values, not
+// CRTC limits. At 1.5625 MHz, 100 character clocks are a 64 us PAL line.
+const MIN_H_PERIOD: usize = 90;
+const MAX_H_PERIOD: usize = 110;
+const H_LOCK_PERIODS: u8 = 3;
+const H_MISSING_TIMEOUT: usize = MAX_H_PERIOD * 2;
+const H_APERTURE_AFTER_SYNC: usize = 19;
+const V_APERTURE_AFTER_SYNC: usize = 22;
+// Capture starts 22 lines after VS and fills 288 lines, so a locked vertical
+// period must leave room for the full aperture before the next VS.
+const MIN_V_PERIOD: usize = V_APERTURE_AFTER_SYNC + FRAMEBUFFER_HEIGHT;
+const MAX_V_PERIOD: usize = 340;
+
+// The TVC's SN74LS123 circuits reshape raw CRTC sync. Their edge behavior is
+// important here; exact board-variant RC widths remain an explicit
+// approximation until measured component values are available.
+const EXTERNAL_HSYNC_CHARACTER_CLOCKS: u8 = 8;
+const EXTERNAL_VSYNC_LINES: u8 = 4;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum VidModel {
@@ -11,703 +41,817 @@ pub enum VidModel {
     Interleaved,
 }
 
-fn to_rgba(val: u8) -> u32 {
-    let intens: u32 = 0x7F | ((val as u32 & 0x40) << 1);
-    let g = (0x100u32 - ((val as u32 >> 4) & 1)) & intens;
-    let r = (0x100u32 - ((val as u32 >> 2) & 1)) & intens;
-    let b = (0x100u32 - (val as u32 & 1)) & intens;
-    0xFF000000 | (b << 16) | (g << 8) | r
+const fn port_color_to_igrb(value: u8) -> u8 {
+    ((value & 0x40) >> 3) | ((value & 0x10) >> 2) | ((value & 0x04) >> 1) | (value & 0x01)
 }
 
-fn gen_address(ma: u16, rl: u8) -> u16 {
-    let ma = ma & 0xFFF;
-    ((rl as u16 & 0x03) << 6) | (ma & 0x3F) | ((ma & 0x3FC0) << 2)
+const fn igrb_to_rgba(value: u8) -> u32 {
+    let intensity = if value & 8 != 0 { 0xff } else { 0x7f };
+    let green = if value & 4 != 0 { intensity } else { 0 };
+    let red = if value & 2 != 0 { intensity } else { 0 };
+    let blue = if value & 1 != 0 { intensity } else { 0 };
+    0xff00_0000 | (blue << 16) | (green << 8) | red
 }
 
-pub struct Color {
-    pub color: u8,
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
-    pub rgba: u32,
+const IGRB_TO_RGBA: [u32; 16] = {
+    let mut colors = [0; 16];
+    let mut index = 0;
+    while index < 16 {
+        colors[index] = igrb_to_rgba(index as u8);
+        index += 1;
+    }
+    colors
+};
+
+fn gen_address(ma: u16, raster: u8) -> u16 {
+    let ma = ma & 0x0fff;
+    ((raster as u16 & 3) << 6) | (ma & 0x003f) | ((ma & 0x3fc0) << 2)
+}
+
+#[derive(Clone, Copy)]
+struct Color {
+    port_value: u8,
+    igrb: u8,
 }
 
 impl Color {
-    pub fn new() -> Self {
-        Color {
-            color: 0,
-            r: 0,
-            g: 0,
-            b: 0,
-            rgba: 0xFF,
+    const fn new() -> Self {
+        Self {
+            port_value: 0,
+            igrb: 0,
         }
     }
 
-    pub fn set_color(&mut self, val: u8) {
-        self.color = val;
-        let intens: u32 = 0x7F | ((val as u32 & 0x40) << 1);
-        self.r = ((0x100u32 - ((val as u32 >> 2) & 1)) & intens) as u8;
-        self.g = ((0x100u32 - ((val as u32 >> 4) & 1)) & intens) as u8;
-        self.b = ((0x100u32 - (val as u32 & 1)) & intens) as u8;
-        self.rgba = to_rgba(val);
+    fn set(&mut self, value: u8) {
+        self.port_value = value;
+        self.igrb = port_color_to_igrb(value);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct CrtcTick {
+    ma: u16,
+    ra: u8,
+    display_enable: bool,
+    raw_hsync: bool,
+    raw_vsync: bool,
+    line_start: bool,
+    cursor: bool,
+}
+
+struct CrtcState {
+    reg_idx: u8,
+    reg: [u8; 18],
+    configured: bool,
+    h_count: u16,
+    row: u16,
+    raster: u16,
+    adjust_line: u16,
+    in_adjust: bool,
+    row_address: u16,
+    hsync_remaining: u8,
+    vsync_lines_remaining: u8,
+}
+
+impl CrtcState {
+    fn new() -> Self {
+        Self {
+            reg_idx: 0,
+            reg: [0; 18],
+            configured: false,
+            h_count: 0,
+            row: 0,
+            raster: 0,
+            adjust_line: 0,
+            in_adjust: false,
+            row_address: 0,
+            hsync_remaining: 0,
+            vsync_lines_remaining: 0,
+        }
+    }
+
+    fn reset_transient(&mut self) {
+        self.h_count = 0;
+        self.row = 0;
+        self.raster = 0;
+        self.adjust_line = 0;
+        self.in_adjust = false;
+        self.row_address = self.display_start();
+        self.hsync_remaining = 0;
+        self.vsync_lines_remaining = 0;
+    }
+
+    fn display_start(&self) -> u16 {
+        (((self.reg[12] as u16 & 0x3f) << 8) | self.reg[13] as u16) & 0x3fff
+    }
+
+    fn cursor_address(&self) -> u16 {
+        (((self.reg[14] as u16 & 0x3f) << 8) | self.reg[15] as u16) & 0x3fff
+    }
+
+    fn cursor_enabled(&self) -> bool {
+        self.reg[10] & 0x60 != 0x20
+    }
+
+    fn horizontal_total(&self) -> u16 {
+        self.reg[0] as u16
+    }
+
+    fn horizontal_displayed(&self) -> u16 {
+        self.reg[1] as u16
+    }
+
+    fn line_character_clocks(&self) -> u16 {
+        self.horizontal_total() + 1
+    }
+
+    fn max_raster(&self) -> u16 {
+        (self.reg[9] & 0x1f) as u16
+    }
+
+    fn horizontal_sync_width(&self) -> u8 {
+        let width = self.reg[3] & 0x0f;
+        if width == 0 { 16 } else { width }
+    }
+
+    fn tick(&mut self) -> CrtcTick {
+        let line_start = self.h_count == 0;
+        if line_start
+            && !self.in_adjust
+            && self.row == (self.reg[7] & 0x7f) as u16
+            && self.raster == 0
+        {
+            self.vsync_lines_remaining = 16;
+        }
+        if self.h_count == self.reg[2] as u16 {
+            self.hsync_remaining = self.horizontal_sync_width();
+        }
+
+        let ma = self.row_address.wrapping_add(self.h_count) & 0x3fff;
+        let display_enable = !self.in_adjust
+            && self.row < (self.reg[6] & 0x7f) as u16
+            && self.h_count < self.horizontal_displayed();
+        let cursor_start = (self.reg[10] & 0x1f) as u16;
+        let cursor_end = (self.reg[11] & 0x1f) as u16;
+        let cursor = self.cursor_enabled()
+            && display_enable
+            && ma == self.cursor_address()
+            && self.raster >= cursor_start
+            && self.raster <= cursor_end;
+
+        let result = CrtcTick {
+            ma,
+            ra: self.raster as u8,
+            display_enable,
+            raw_hsync: self.hsync_remaining != 0,
+            raw_vsync: self.vsync_lines_remaining != 0,
+            line_start,
+            cursor,
+        };
+
+        self.advance();
+        result
+    }
+
+    fn advance(&mut self) {
+        if self.hsync_remaining != 0 {
+            self.hsync_remaining -= 1;
+        }
+        if self.h_count != self.horizontal_total() {
+            self.h_count = self.h_count.wrapping_add(1) & 0x00ff;
+            return;
+        }
+
+        self.h_count = 0;
+        if self.vsync_lines_remaining != 0 {
+            self.vsync_lines_remaining -= 1;
+        }
+
+        if self.in_adjust {
+            self.adjust_line += 1;
+            if self.adjust_line >= (self.reg[5] & 0x1f) as u16 {
+                self.start_frame();
+            }
+            return;
+        }
+
+        if self.raster != self.max_raster() {
+            self.raster = self.raster.wrapping_add(1) & 0x001f;
+        } else {
+            self.raster = 0;
+            if self.row != (self.reg[4] & 0x7f) as u16 {
+                self.row = self.row.wrapping_add(1) & 0x007f;
+                self.row_address =
+                    self.row_address.wrapping_add(self.horizontal_displayed()) & 0x3fff;
+            } else if self.reg[5] & 0x1f != 0 {
+                self.in_adjust = true;
+                self.adjust_line = 0;
+            } else {
+                self.start_frame();
+            }
+        }
+    }
+
+    fn start_frame(&mut self) {
+        self.row = 0;
+        self.raster = 0;
+        self.adjust_line = 0;
+        self.in_adjust = false;
+        self.row_address = self.display_start();
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct VideoSignal {
+    /// Eight final four-bit IGRB pixels, leftmost pixel in the low nibble.
+    pixels: u32,
+    hsync: bool,
+    vsync: bool,
+    blanked: bool,
+}
+
+impl VideoSignal {
+    fn pixel(self, index: usize) -> u8 {
+        ((self.pixels >> (index * 4)) & 0x0f) as u8
+    }
+}
+
+struct TvcVideoGenerator {
+    mode: u8,
+    palette: [Color; 4],
+    border_port_value: u8,
+    border_igrb: u8,
+    previous_raw_hsync: bool,
+    previous_raw_vsync: bool,
+    external_hsync_remaining: u8,
+    external_vsync_remaining: u8,
+    vertical_blanked: bool,
+}
+
+impl TvcVideoGenerator {
+    fn new() -> Self {
+        Self {
+            mode: 0,
+            palette: [Color::new(); 4],
+            border_port_value: 0,
+            border_igrb: 0,
+            previous_raw_hsync: false,
+            previous_raw_vsync: false,
+            external_hsync_remaining: 0,
+            external_vsync_remaining: 0,
+            vertical_blanked: false,
+        }
+    }
+
+    fn reset_transient(&mut self) {
+        self.previous_raw_hsync = false;
+        self.previous_raw_vsync = false;
+        self.external_hsync_remaining = 0;
+        self.external_vsync_remaining = 0;
+        self.vertical_blanked = false;
+    }
+
+    fn emit(&mut self, tick: CrtcTick, vram: &[u8]) -> VideoSignal {
+        if tick.raw_hsync && !self.previous_raw_hsync {
+            self.external_hsync_remaining = EXTERNAL_HSYNC_CHARACTER_CLOCKS;
+        }
+        if tick.raw_vsync && !self.previous_raw_vsync {
+            self.external_vsync_remaining = EXTERNAL_VSYNC_LINES;
+            self.vertical_blanked = true;
+        }
+        // The TVC blanking latch is set by VS and released by CRTC MA9.
+        if tick.ma & 0x0200 != 0 {
+            self.vertical_blanked = false;
+        }
+
+        let hsync = self.external_hsync_remaining != 0;
+        let vsync = self.external_vsync_remaining != 0;
+        let blanked = hsync || self.vertical_blanked;
+        let pixels = if blanked {
+            0
+        } else if tick.display_enable {
+            let address = gen_address(tick.ma, tick.ra) as usize;
+            self.paper_pixels(vram.get(address).copied().unwrap_or(0))
+        } else {
+            repeat_igrb(self.border_igrb)
+        };
+
+        if self.external_hsync_remaining != 0 {
+            self.external_hsync_remaining -= 1;
+        }
+        if tick.line_start && self.external_vsync_remaining != 0 {
+            self.external_vsync_remaining -= 1;
+        }
+        self.previous_raw_hsync = tick.raw_hsync;
+        self.previous_raw_vsync = tick.raw_vsync;
+        VideoSignal {
+            pixels,
+            hsync,
+            vsync,
+            blanked,
+        }
+    }
+
+    fn paper_pixels(&self, byte: u8) -> u32 {
+        match self.mode {
+            0 => {
+                let mut packed = 0;
+                for pixel in 0..8 {
+                    let index = ((byte >> (7 - pixel)) & 1) as usize;
+                    packed |= (self.palette[index].igrb as u32) << (pixel * 4);
+                }
+                packed
+            }
+            1 => {
+                let mut packed = 0;
+                for source_pixel in 0..4 {
+                    let index = (((byte >> (3 - source_pixel)) & 1) << 1)
+                        | ((byte >> (7 - source_pixel)) & 1);
+                    let color = self.palette[index as usize].igrb as u32;
+                    packed |= color << (source_pixel * 8);
+                    packed |= color << (source_pixel * 8 + 4);
+                }
+                packed
+            }
+            _ => {
+                let left = port_color_to_igrb(byte >> 1) as u32;
+                let right = port_color_to_igrb(byte) as u32;
+                repeat_igrb(left as u8) & 0x0000_ffff | (repeat_igrb(right as u8) & 0xffff_0000)
+            }
+        }
+    }
+}
+
+const fn repeat_igrb(color: u8) -> u32 {
+    (color as u32) * 0x1111_1111
+}
+
+struct SignalRing {
+    samples: Vec<VideoSignal>,
+    head: usize,
+    tail: usize,
+    dropped: bool,
+}
+
+impl SignalRing {
+    fn new() -> Self {
+        Self {
+            samples: vec![VideoSignal::default(); SIGNAL_RING_SIZE],
+            head: 0,
+            tail: 0,
+            dropped: false,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.head = 0;
+        self.tail = 0;
+        self.dropped = false;
+    }
+
+    fn push(&mut self, signal: VideoSignal) {
+        let next = (self.head + 1) & SIGNAL_RING_MASK;
+        if next == self.tail {
+            self.tail = (self.tail + 1) & SIGNAL_RING_MASK;
+            self.dropped = true;
+        }
+        self.samples[self.head] = signal;
+        self.head = next;
+    }
+
+    fn pop(&mut self) -> Option<VideoSignal> {
+        if self.head == self.tail {
+            None
+        } else {
+            let signal = self.samples[self.tail];
+            self.tail = (self.tail + 1) & SIGNAL_RING_MASK;
+            Some(signal)
+        }
+    }
+
+    fn take_dropped(&mut self) -> bool {
+        std::mem::take(&mut self.dropped)
+    }
+}
+
+struct TelevisionReceiver {
+    previous_hsync: bool,
+    previous_vsync: bool,
+    clocks_since_hsync: usize,
+    lines_since_vsync: usize,
+    measured_h_period: Option<usize>,
+    measured_v_period: Option<usize>,
+    stable_h_periods: u8,
+    horizontal_locked: bool,
+    vertical_origin_seen: bool,
+    vertical_locked: bool,
+    line: [VideoSignal; MAX_LINE_CHARACTER_CLOCKS],
+    line_len: usize,
+    output_y: usize,
+}
+
+impl TelevisionReceiver {
+    fn new() -> Self {
+        Self {
+            previous_hsync: false,
+            previous_vsync: false,
+            clocks_since_hsync: 0,
+            lines_since_vsync: 0,
+            measured_h_period: None,
+            measured_v_period: None,
+            stable_h_periods: 0,
+            horizontal_locked: false,
+            vertical_origin_seen: false,
+            vertical_locked: false,
+            line: [VideoSignal::default(); MAX_LINE_CHARACTER_CLOCKS],
+            line_len: 0,
+            output_y: 0,
+        }
+    }
+
+    fn lose_vertical_lock(&mut self) {
+        self.measured_v_period = None;
+        self.vertical_origin_seen = false;
+        self.vertical_locked = false;
+        self.output_y = 0;
+    }
+
+    fn lose_lock(&mut self) {
+        self.previous_hsync = false;
+        self.previous_vsync = false;
+        self.clocks_since_hsync = 0;
+        self.lines_since_vsync = 0;
+        self.measured_h_period = None;
+        self.stable_h_periods = 0;
+        self.horizontal_locked = false;
+        self.line_len = 0;
+        self.lose_vertical_lock();
+    }
+
+    fn consume(&mut self, signal: VideoSignal, framebuffer: &mut [u32], width: usize) -> bool {
+        let hsync_edge = signal.hsync && !self.previous_hsync;
+        let vsync_edge = signal.vsync && !self.previous_vsync;
+        let mut frame_complete = false;
+
+        if hsync_edge {
+            let period = self.clocks_since_hsync;
+            self.observe_horizontal_period(period);
+            if self.horizontal_locked && self.vertical_locked {
+                frame_complete = self.copy_completed_line(framebuffer, width);
+            }
+            self.line_len = 0;
+            self.clocks_since_hsync = 0;
+            if self.horizontal_locked {
+                self.lines_since_vsync += 1;
+                if self.lines_since_vsync > MAX_V_PERIOD {
+                    self.lose_vertical_lock();
+                }
+            }
+        }
+
+        if vsync_edge {
+            self.observe_vertical_period();
+        }
+
+        if self.line_len < MAX_LINE_CHARACTER_CLOCKS {
+            self.line[self.line_len] = signal;
+            self.line_len += 1;
+        }
+        self.clocks_since_hsync += 1;
+        if self.clocks_since_hsync > H_MISSING_TIMEOUT {
+            self.lose_lock();
+        }
+        self.previous_hsync = signal.hsync;
+        self.previous_vsync = signal.vsync;
+        frame_complete
+    }
+
+    fn observe_horizontal_period(&mut self, period: usize) {
+        if !(MIN_H_PERIOD..=MAX_H_PERIOD).contains(&period) {
+            self.measured_h_period = None;
+            self.stable_h_periods = 0;
+            self.horizontal_locked = false;
+            self.lose_vertical_lock();
+            return;
+        }
+        let stable = self
+            .measured_h_period
+            .is_some_and(|old| old.abs_diff(period) <= 1);
+        if stable {
+            self.stable_h_periods = self.stable_h_periods.saturating_add(1);
+        } else {
+            self.stable_h_periods = 1;
+            self.lose_vertical_lock();
+        }
+        self.measured_h_period = Some(period);
+        self.horizontal_locked = self.stable_h_periods >= H_LOCK_PERIODS;
+    }
+
+    fn observe_vertical_period(&mut self) {
+        if !self.horizontal_locked {
+            self.lose_vertical_lock();
+            self.lines_since_vsync = 0;
+            return;
+        }
+        if !self.vertical_origin_seen {
+            self.vertical_origin_seen = true;
+            self.vertical_locked = false;
+            self.measured_v_period = None;
+            self.lines_since_vsync = 0;
+            self.output_y = 0;
+            return;
+        }
+        let period = self.lines_since_vsync;
+        let plausible = (MIN_V_PERIOD..=MAX_V_PERIOD).contains(&period);
+        self.vertical_locked = plausible;
+        self.measured_v_period = plausible.then_some(period);
+        self.lines_since_vsync = 0;
+        self.output_y = 0;
+    }
+
+    fn copy_completed_line(&mut self, framebuffer: &mut [u32], width: usize) -> bool {
+        if self.lines_since_vsync < V_APERTURE_AFTER_SYNC || self.output_y >= FRAMEBUFFER_HEIGHT {
+            return false;
+        }
+        if width < FRAMEBUFFER_WIDTH || framebuffer.len() < width * FRAMEBUFFER_HEIGHT {
+            return false;
+        }
+        let Some(period) = self.measured_h_period else {
+            return false;
+        };
+        if self.line_len < period.min(MAX_LINE_CHARACTER_CLOCKS) {
+            return false;
+        }
+        let base = self.output_y * width;
+        for character in 0..FRAMEBUFFER_CHARACTER_CLOCKS {
+            let source = (H_APERTURE_AFTER_SYNC + character) % period;
+            let signal = self.line[source];
+            for pixel in 0..8 {
+                let igrb = if signal.blanked {
+                    0
+                } else {
+                    signal.pixel(pixel)
+                };
+                framebuffer[base + character * 8 + pixel] = IGRB_TO_RGBA[igrb as usize];
+            }
+        }
+        self.output_y += 1;
+        self.output_y == FRAMEBUFFER_HEIGHT
     }
 }
 
 pub struct Vid {
-    // Video mode (bits 0-1 of port 0x06)
-    mode: u8,
-    // CPU clock info
-    clock_ch: u32,
-    // CRTC register index and registers
-    reg_idx: u8,
-    reg: [u8; 18],
-    // Decoded CRTC register values
-    ht: u8,
-    hd: u8,
-    hsp: u8,
-    hsw: u8,
-    vsw: u8,
-    vt: u8,
-    adj: u8,
-    vd: u8,
-    vsp: u8,
-    im: u8,
-    skec: u8,
-    slr: u8,
-    curend: u8,
-    curstart: u8,
-    curenabled: bool,
-    smem: u16,
-    curaddr: u16,
-    curmemaddr: u16,
-    // Palette
-    palette: [Color; 4],
-    // Border
-    border: u8,
-    border2: u8,
-    // Streaming state
-    mem_start: u16,
-    mem: u16,
-    addr: u16,
-    vlines: i32,
-    alines: u8,
-    row: i32,
-    line: u8,
-    char_x: u8,
+    crtc: CrtcState,
+    generator: TvcVideoGenerator,
+    ring: SignalRing,
+    television: TelevisionReceiver,
     run_for: u32,
-    // Stream ring buffer
-    stream: Vec<i16>,
-    stream_head: usize,
-    stream_tail: usize,
-    // Renderer state
-    render_phase: u8,
-    render_phase_next: u8,
-    render_hcnt: u8,
-    render_vcnt: u16,
-    render_y: u16,
-    render_a: usize,
 }
 
 impl Vid {
     pub fn new() -> Self {
-        Vid {
-            mode: 0,
-            clock_ch: 2,
-            reg_idx: 0,
-            reg: [0; 18],
-            ht: 0,
-            hd: 0,
-            hsp: 0,
-            hsw: 0,
-            vsw: 0,
-            vt: 0,
-            adj: 0,
-            vd: 0,
-            vsp: 0,
-            im: 0,
-            skec: 0,
-            slr: 0,
-            curend: 0,
-            curstart: 0,
-            curenabled: false,
-            smem: 0,
-            curaddr: 0,
-            curmemaddr: 0,
-            palette: [Color::new(), Color::new(), Color::new(), Color::new()],
-            border: 0,
-            border2: 0,
-            mem_start: 0,
-            mem: 0,
-            addr: 0,
-            vlines: -1,
-            alines: 0,
-            row: -1,
-            line: 0,
-            char_x: 0,
+        Self {
+            crtc: CrtcState::new(),
+            generator: TvcVideoGenerator::new(),
+            ring: SignalRing::new(),
+            television: TelevisionReceiver::new(),
             run_for: 0,
-            stream: vec![0; STREAM_SIZE],
-            stream_head: 0,
-            stream_tail: 0,
-            render_phase: 0,
-            render_phase_next: 0,
-            render_hcnt: 0,
-            render_vcnt: 0,
-            render_y: 0,
-            render_a: 0,
         }
     }
 
     pub fn reset(&mut self) {
-        self.reg = [0; 18];
-        self.reg_idx = 0;
-        self.mode = 0;
-        self.border = 0;
-        self.border2 = 0;
-        self.palette = [Color::new(), Color::new(), Color::new(), Color::new()];
+        self.crtc.reg_idx = 0;
+        self.crtc.reg = [0; 18];
+        self.crtc.configured = false;
+        self.crtc.reset_transient();
+        self.generator = TvcVideoGenerator::new();
+        self.ring.clear();
+        self.television.lose_lock();
         self.run_for = 0;
-        self.stream_head = 0;
-        self.stream_tail = 0;
-        self.render_phase = 0;
-        self.render_phase_next = 0;
-        self.render_hcnt = 0;
-        self.render_vcnt = 0;
-        self.render_y = 0;
-        self.render_a = 0;
-        self.row = -1;
-        self.line = 0;
-        self.char_x = 0;
-        self.vlines = -1;
-        self.alines = 0;
-        self.reconfig();
     }
 
-    fn reconfig(&mut self) {
-        self.ht = self.reg[0];
-        self.hd = self.reg[1];
-        self.hsp = self.reg[2];
-        self.hsw = self.reg[3] & 0x0F;
-        self.vsw = (self.reg[3] >> 4) & 0x0F;
-        self.vt = self.reg[4] & 0x7F;
-        self.adj = self.reg[5] & 0x1F;
-        self.vd = self.reg[6] & 0x7F;
-        self.vsp = self.reg[7] & 0x7F;
-        self.im = self.reg[8] & 0x03;
-        self.skec = (self.reg[8] >> 6) & 0x03;
-        self.slr = self.reg[9] & 0x1F;
-        self.curenabled = (self.reg[10] & 0x60) != 0x20;
-        self.curstart = self.reg[10] & 0x1F;
-        self.curend = self.reg[11] & 0x1F;
-        self.smem = (self.reg[12] as u16) << 8 | self.reg[13] as u16;
-        self.curaddr = ((self.reg[14] as u16 & 0x3F) << 8) | self.reg[15] as u16;
-        self.curmemaddr = gen_address(self.curaddr, self.curstart);
+    pub fn set_reg_idx(&mut self, index: u8) {
+        self.crtc.reg_idx = index & 0x1f;
     }
 
-    /// Set the CRTC register address (even CRTC ports in 0x70-0x7F)
-    pub fn set_reg_idx(&mut self, idx: u8) {
-        self.reg_idx = idx & 0x1F;
-    }
-
-    /// Get the current CRTC register address.
     pub fn get_reg_idx(&self) -> u8 {
-        self.reg_idx
+        self.crtc.reg_idx
     }
 
-    /// Return the raw stored value for a CRTC register, including write-only registers.
-    pub fn raw_reg(&self, idx: u8) -> Option<u8> {
-        self.reg.get(idx as usize).copied()
+    pub fn raw_reg(&self, index: u8) -> Option<u8> {
+        self.crtc.reg.get(index as usize).copied()
     }
 
-    /// Write to the selected CRTC data register.
-    pub fn set_reg(&mut self, val: u8) {
-        let idx = self.reg_idx as usize;
-        if idx >= 16 {
-            return;
+    pub fn set_reg(&mut self, value: u8) {
+        let index = self.crtc.reg_idx as usize;
+        if index < 16 {
+            self.crtc.reg[index] = value;
+            self.crtc.configured = true;
+            // Configuration performed before the first tick must use the new
+            // start address immediately. A live mid-frame R12/R13 write is
+            // instead picked up at the next CRTC frame restart.
+            if matches!(index, 12 | 13)
+                && self.crtc.h_count == 0
+                && self.crtc.row == 0
+                && self.crtc.raster == 0
+            {
+                self.crtc.row_address = self.crtc.display_start();
+            }
         }
-        if self.reg[idx] != val {
-            self.reg[idx] = val;
-            self.reconfig();
-        }
     }
 
-    /// Read the selected CRTC data register using TVC/6845-compatible CPU-visible semantics.
     pub fn get_reg(&self) -> u8 {
-        match self.reg_idx {
-            12 | 14 | 16 => self.reg[self.reg_idx as usize] & 0x3F,
-            13 | 15 | 17 => self.reg[self.reg_idx as usize],
-            _ => 0xFF,
+        match self.crtc.reg_idx {
+            12 | 14 | 16 => self.crtc.reg[self.crtc.reg_idx as usize] & 0x3f,
+            13 | 15 | 17 => self.crtc.reg[self.crtc.reg_idx as usize],
+            _ => 0xff,
         }
     }
 
-    /// Write a CPU I/O access to one of the mirrored CRTC ports (0x70-0x7F).
-    pub fn write_crtc_port(&mut self, port: u8, val: u8) {
+    pub fn write_crtc_port(&mut self, port: u8, value: u8) {
         if port & 1 == 0 {
-            self.set_reg_idx(val);
+            self.set_reg_idx(value);
         } else {
-            self.set_reg(val);
+            self.set_reg(value);
         }
     }
 
-    /// Read a CPU I/O access from one of the mirrored CRTC ports (0x70-0x7F).
     pub fn read_crtc_port(&self, port: u8) -> u8 {
-        if port & 1 == 0 { 0xFF } else { self.get_reg() }
+        if port & 1 == 0 { 0xff } else { self.get_reg() }
     }
 
-    /// Set palette entry (port 0x60-0x63)
-    pub fn set_palette(&mut self, idx: u8, color: u8) {
-        if idx < 4 {
-            self.palette[idx as usize].set_color(color);
+    pub fn set_palette(&mut self, index: u8, color: u8) {
+        if let Some(entry) = self.generator.palette.get_mut(index as usize) {
+            entry.set(color);
         }
     }
 
-    /// Get palette entry
-    pub fn get_palette(&self, idx: u8) -> u8 {
-        if idx < 4 {
-            self.palette[idx as usize].color
-        } else {
-            0
-        }
+    pub fn get_palette(&self, index: u8) -> u8 {
+        self.generator
+            .palette
+            .get(index as usize)
+            .map_or(0, |entry| entry.port_value)
     }
 
-    /// Set border color (port 0x00)
     pub fn set_border(&mut self, color: u8) {
-        self.border = color;
-        self.border2 = ((color & 0xAA) >> 1) | (color & 0xAA);
+        self.generator.border_port_value = color;
+        // Unlike palette ports, the border latch uses bits 7,5,3,1.
+        self.generator.border_igrb = port_color_to_igrb(color >> 1);
     }
 
-    /// Returns true when the CRTC has been configured (hd < ht).
+    pub fn set_mode(&mut self, mode: u8) {
+        self.generator.mode = mode & 3;
+    }
+
     pub fn is_initialized(&self) -> bool {
-        self.hd < self.ht
+        self.crtc.configured
+            && self.crtc.horizontal_displayed() <= self.crtc.line_character_clocks()
     }
 
     pub fn cursor_enabled(&self) -> bool {
-        self.curenabled
+        self.crtc.cursor_enabled()
     }
 
-    /// Return the 14-bit CRTC display start address.
     pub fn display_start_address(&self) -> u16 {
-        self.smem & 0x3FFF
+        self.crtc.display_start()
     }
 
-    /// Return the CRTC cursor address and its zero-based raster line in the active screen.
     pub fn cursor_interrupt_setup(&self) -> (u16, Option<u16>) {
-        let start_address = self.display_start_address();
-        let relative_address = self.curaddr.wrapping_sub(start_address) & 0x3FFF;
-        let displayed_addresses = self.hd as u16 * self.vd as u16;
-        let raster_line =
-            (self.hd != 0 && relative_address < displayed_addresses && self.curstart <= self.slr)
-                .then(|| {
-                    let character_row = relative_address / self.hd as u16;
-                    character_row * (self.slr as u16 + 1) + self.curstart as u16
-                });
-        (self.curaddr, raster_line)
+        let cursor = self.crtc.cursor_address();
+        let start = self.display_start_address();
+        let relative = cursor.wrapping_sub(start) & 0x3fff;
+        let hd = self.crtc.horizontal_displayed();
+        let vd = (self.crtc.reg[6] & 0x7f) as u16;
+        let raster = (self.crtc.reg[10] & 0x1f) as u16;
+        let max_raster = self.crtc.max_raster();
+        let line = (hd != 0 && relative < hd * vd && raster <= max_raster)
+            .then(|| relative / hd * (max_raster + 1) + raster);
+        (cursor, line)
     }
 
-    /// Set video mode (port 0x06 bits 0-1)
-    pub fn set_mode(&mut self, mode: u8) {
-        self.mode = mode & 0x03;
-    }
-
-    pub fn write_snapshot(&self, w: &mut crate::snapshot::Writer) {
-        w.u8(self.mode);
-        w.u8(self.reg_idx);
-        w.raw_bytes(&self.reg);
-        for color in &self.palette {
-            w.u8(color.color);
+    pub fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
+        writer.u8(self.generator.mode);
+        writer.u8(self.crtc.reg_idx);
+        writer.raw_bytes(&self.crtc.reg);
+        for color in &self.generator.palette {
+            writer.u8(color.port_value);
         }
-        w.u8(self.border);
+        writer.u8(self.generator.border_port_value);
     }
 
     pub fn read_snapshot(
         &mut self,
-        r: &mut crate::snapshot::Reader<'_>,
+        reader: &mut crate::snapshot::Reader<'_>,
     ) -> crate::snapshot::Result<()> {
         self.reset();
-        self.mode = r.u8()? & 0x03;
-        self.reg_idx = r.u8()? & 0x1F;
-        self.reg.copy_from_slice(r.raw_bytes(18)?);
-        self.reconfig();
-        for idx in 0..4 {
-            let color = r.u8()?;
-            self.set_palette(idx, color);
+        self.generator.mode = reader.u8()? & 3;
+        self.crtc.reg_idx = reader.u8()? & 0x1f;
+        self.crtc.reg.copy_from_slice(reader.raw_bytes(18)?);
+        self.crtc.configured = true;
+        self.crtc.reset_transient();
+        for index in 0..4 {
+            let color = reader.u8()?;
+            self.set_palette(index, color);
         }
-        let border = r.u8()?;
+        let border = reader.u8()?;
         self.set_border(border);
         Ok(())
     }
 
-    fn stream_init_screen(&mut self) {
-        self.mem_start = self.smem;
-        self.vlines = -1;
-        self.alines = 0;
-        self.row = 0;
-        self.char_x = 0;
-        self.line = 0;
-        self.mem = self.mem_start + (self.row as u16) * (self.hd as u16);
-        self.addr = gen_address(self.mem, self.line);
-    }
-
-    /// Stream characters for `run_for` CPU ticks. Returns true if cursor interrupt fired.
-    pub fn stream_some(&mut self, vidmem: &[u8], run_for: u32) -> bool {
-        if self.hd >= self.ht {
-            return false;
-        }
-
-        let mode_val = (self.mode as i16) << 8;
-        let mode16 = 2i16 << 8;
-        let mut cursor_it = false;
-
-        if self.row == -1 {
-            self.stream_init_screen();
-        }
-
-        self.run_for += run_for;
-
-        while !cursor_it && self.run_for >= self.clock_ch {
-            if self.row < self.vd as i32 {
-                if self.char_x < self.hd {
-                    if self.curenabled {
-                        cursor_it = self.curenabled
-                            && self.mem == self.curaddr
-                            && self.line == self.curstart;
-                    }
-                    let addr = self.addr as usize;
-                    self.stream_data(mode_val | (vidmem.get(addr).copied().unwrap_or(0) as i16));
-                    self.char_x += 1;
-                    self.addr += 1;
-                    self.mem += 1;
-                } else if self.char_x <= self.ht {
-                    let hsync = if self.char_x > self.hsp && self.char_x < self.hsp + self.hsw {
-                        HSYNC
-                    } else {
-                        0
-                    };
-                    self.stream_data(hsync | mode16 | self.border2 as i16);
-                    self.char_x += 1;
-                } else {
-                    // should not happen
-                    self.char_x = 0;
-                }
-            } else if self.row <= self.vt as i32 {
-                let vsync;
-                if self.vlines >= 0 {
-                    vsync = if (self.vlines as u8) < self.vsw {
-                        VSYNC
-                    } else {
-                        0
-                    };
-                } else if self.row > self.vsp as i32 {
-                    vsync = VSYNC;
-                    self.vlines = 0;
-                } else {
-                    vsync = 0;
-                }
-
-                if self.char_x <= self.ht {
-                    let hsync = if self.char_x > self.hsp && self.char_x < self.hsp + self.hsw {
-                        HSYNC
-                    } else {
-                        0
-                    };
-                    self.stream_data(vsync | hsync | mode16 | self.border2 as i16);
-                    self.char_x += 1;
-                }
-
-                if vsync != 0 && self.char_x > self.ht {
-                    self.vlines += 1;
-                }
-            } else if self.adj > 0 && self.alines < self.adj {
-                if self.char_x <= self.ht {
-                    let hsync = if self.char_x > self.hsp && self.char_x < self.hsp + self.hsw {
-                        HSYNC
-                    } else {
-                        0
-                    };
-                    self.stream_data(0i16 | hsync | mode16 | self.border2 as i16);
-                    self.char_x += 1;
-                }
-
-                if self.char_x > self.ht {
-                    self.alines += 1;
-                }
-            } else {
-                self.run_for += self.clock_ch;
-                self.stream_init_screen();
+    /// Advance the CRTC and TVC output by CPU clocks. The ring receives only
+    /// final colors and external sync; palette/VRAM cannot leak downstream.
+    pub fn stream_some(&mut self, vram: &[u8], run_for: u32) -> bool {
+        self.run_for = self.run_for.saturating_add(run_for);
+        while self.run_for >= CPU_CLOCKS_PER_CHARACTER {
+            let tick = self.crtc.tick();
+            let cursor_interrupt = tick.cursor && tick.ra == (self.crtc.reg[10] & 0x1f);
+            let signal = self.generator.emit(tick, vram);
+            self.ring.push(signal);
+            self.run_for -= CPU_CLOCKS_PER_CHARACTER;
+            if cursor_interrupt {
+                return true;
             }
-
-            if self.char_x > self.ht {
-                self.char_x = 0;
-                self.line += 1;
-                if self.line > self.slr {
-                    self.line = 0;
-                    self.row += 1;
-                }
-                self.mem = (self.mem_start + (self.row as u16) * (self.hd as u16)) & 0x3FFF;
-                self.addr = gen_address(self.mem, self.line);
-            }
-
-            self.run_for -= self.clock_ch;
         }
-
-        cursor_it
+        false
     }
 
     #[cfg(test)]
-    pub(crate) fn stream_position(&self) -> (i32, u8, u8, u32) {
-        (self.row, self.line, self.char_x, self.run_for)
+    pub(crate) fn stream_position(&self) -> (i32, u16, u16, u32) {
+        (
+            self.crtc.row as i32,
+            self.crtc.raster,
+            self.crtc.h_count,
+            self.run_for,
+        )
     }
 
-    fn stream_data(&mut self, data: i16) {
-        let next = (self.stream_head + 1) % STREAM_SIZE;
-        if next == self.stream_tail {
-            panic!("streamData overflow");
-        }
-        self.stream[self.stream_head] = data;
-        self.stream_head = next;
-    }
-
-    fn read_data(&mut self) -> Option<i16> {
-        if self.stream_head == self.stream_tail {
-            None
-        } else {
-            let res = self.stream[self.stream_tail];
-            self.stream_tail = (self.stream_tail + 1) % STREAM_SIZE;
-            Some(res)
-        }
-    }
-
-    /// Render streamed data into the framebuffer.
-    /// Returns true when a full frame has been rendered.
-    pub fn render_stream(&mut self, framebuffer: &mut [u32], fb_width: usize) -> bool {
-        let mut have_a_frame = false;
-
-        while !have_a_frame {
-            match self.read_data() {
-                None => break,
-                Some(data) => match self.render_phase {
-                    0 => {
-                        if data & VSYNC != 0 {
-                            self.render_phase = 1;
-                            self.render_vcnt = 0;
-                        }
-                    }
-                    1 => {
-                        if data & HSYNC != 0 {
-                            self.render_vcnt += 1;
-                            if self.render_vcnt == 26 {
-                                self.render_phase = 100;
-                                self.render_phase_next = 2;
-                                self.render_hcnt = 1;
-                                self.render_y = 0;
-                                self.render_a = 0;
-                            } else {
-                                self.render_phase = 100;
-                                self.render_phase_next = 1;
-                            }
-                        }
-                    }
-                    100 => {
-                        if data & HSYNC != 0 {
-                            self.render_hcnt += 1;
-                        } else {
-                            self.render_phase = self.render_phase_next;
-                        }
-                    }
-                    2 => {
-                        self.render_hcnt += 1;
-                        if self.render_hcnt == 16 {
-                            self.render_phase = 3;
-                            self.render_hcnt = 0;
-                        }
-                    }
-                    3 => {
-                        self.render_hcnt += 1;
-                        self.render_a = self.write_pixel(framebuffer, self.render_a, data);
-                        if self.render_hcnt == 76 {
-                            self.render_y += 1;
-                            self.render_a = fb_width * self.render_y as usize;
-                            if self.render_y == 288 {
-                                self.render_phase = 0;
-                                have_a_frame = true;
-                            } else {
-                                self.render_phase = 4;
-                            }
-                        }
-                    }
-                    4 => {
-                        if data & HSYNC != 0 {
-                            self.render_phase = 100;
-                            self.render_phase_next = 2;
-                            self.render_hcnt = 1;
-                        }
-                    }
-                    _ => {}
-                },
+    #[cfg(test)]
+    pub(crate) fn rendered_frame_for_test(&mut self, vram: &[u8]) -> Vec<u32> {
+        let mut framebuffer = vec![0u32; FRAMEBUFFER_WIDTH * FRAMEBUFFER_HEIGHT];
+        for _ in 0..4 {
+            self.stream_some(vram, 62_500);
+            if self.render_stream(&mut framebuffer, FRAMEBUFFER_WIDTH) {
+                break;
             }
         }
-
-        have_a_frame
+        framebuffer
     }
 
-    fn write_pixel(&self, fbd: &mut [u32], mut act_pixel: usize, pixel_data: i16) -> usize {
-        let mode = ((pixel_data >> 8) & 3) as u8;
-        let pixel_data = (pixel_data & 0xFF) as u8;
-
-        match mode {
-            0 => {
-                for i in (0..8).rev() {
-                    let idx = ((pixel_data >> i) & 1) as usize;
-                    fbd[act_pixel] = self.palette[idx].rgba;
-                    act_pixel += 1;
-                }
-            }
-            1 => {
-                let pixel_data2 = (pixel_data >> 4) as u16;
-                let mut pd = pixel_data as u16;
-                pd <<= 1;
-                let d3 = (pd & 2) | (pixel_data2 & 1);
-                pd >>= 1;
-                let mut pixel_data2 = pixel_data2 >> 1;
-                let d2 = (pd & 2) | (pixel_data2 & 1);
-                pd >>= 1;
-                pixel_data2 >>= 1;
-                let d1 = (pd & 2) | (pixel_data2 & 1);
-                pd >>= 1;
-                pixel_data2 >>= 1;
-                let d0 = (pd & 2) | (pixel_data2 & 1);
-
-                let rgba = self.palette[d0 as usize].rgba;
-                fbd[act_pixel] = rgba;
-                act_pixel += 1;
-                fbd[act_pixel] = rgba;
-                act_pixel += 1;
-
-                let rgba = self.palette[d1 as usize].rgba;
-                fbd[act_pixel] = rgba;
-                act_pixel += 1;
-                fbd[act_pixel] = rgba;
-                act_pixel += 1;
-
-                let rgba = self.palette[d2 as usize].rgba;
-                fbd[act_pixel] = rgba;
-                act_pixel += 1;
-                fbd[act_pixel] = rgba;
-                act_pixel += 1;
-
-                let rgba = self.palette[d3 as usize].rgba;
-                fbd[act_pixel] = rgba;
-                act_pixel += 1;
-                fbd[act_pixel] = rgba;
-                act_pixel += 1;
-            }
-            _ => {
-                let rgba = to_rgba(pixel_data >> 1);
-                for _ in 0..4 {
-                    fbd[act_pixel] = rgba;
-                    act_pixel += 1;
-                }
-                let rgba = to_rgba(pixel_data);
-                for _ in 0..4 {
-                    fbd[act_pixel] = rgba;
-                    act_pixel += 1;
-                }
+    pub fn render_stream(&mut self, framebuffer: &mut [u32], width: usize) -> bool {
+        if self.ring.take_dropped() {
+            self.television.lose_lock();
+        }
+        while let Some(signal) = self.ring.pop() {
+            if self.television.consume(signal, framebuffer, width) {
+                return true;
             }
         }
-
-        act_pixel
+        false
     }
 
-    /// Simplified once-per-frame drawing (no streaming).
-    /// Draws the current display state directly to the framebuffer.
-    /// The framebuffer should be 608*288 pixels.
+    /// Simplified current-state renderer. It intentionally does not emulate
+    /// sync acquisition, retrace blanking, or mid-frame register changes.
     pub fn draw_frame(&self, vram: &[u8], framebuffer: &mut [u32]) {
-        let hd = self.hd as usize;
-        let vd = self.vd as usize;
-        let slr = self.slr as usize;
-        let scanlines_per_row = slr + 1;
-        let active_height = vd * scanlines_per_row;
-        let top_border = (288 - active_height) / 2;
-        let left_border = (76 - hd) / 2;
-        let border_rgba = to_rgba(self.border2);
+        let programmed_width = self.crtc.horizontal_displayed() as usize;
+        let active_width = programmed_width.min(FRAMEBUFFER_CHARACTER_CLOCKS);
+        let rows = (self.crtc.reg[6] & 0x7f) as usize;
+        let rasters = self.crtc.max_raster() as usize + 1;
+        let active_height = rows.saturating_mul(rasters).min(FRAMEBUFFER_HEIGHT);
+        let top = (FRAMEBUFFER_HEIGHT - active_height) / 2;
+        let left = (FRAMEBUFFER_CHARACTER_CLOCKS - active_width) / 2;
+        let border = IGRB_TO_RGBA[self.generator.border_igrb as usize];
+        framebuffer.fill(border);
 
-        for y in 0..288 {
-            let line_start = y * 608;
-
-            if y < top_border || y >= top_border + active_height {
-                for x in 0..608 {
-                    framebuffer[line_start + x] = border_rgba;
-                }
-                continue;
-            }
-
-            let row = (y - top_border) / scanlines_per_row;
-            let line_offset = (y - top_border) % scanlines_per_row;
-
-            for char_x in 0..76 {
-                let mut pixel_x = char_x * 8;
-                if char_x < left_border || char_x >= left_border + hd {
-                    for p in 0..8 {
-                        framebuffer[line_start + pixel_x + p] = border_rgba;
-                    }
-                    continue;
-                }
-
-                let active_char_x = char_x - left_border;
-                let ma = (self.smem as usize + row * hd + active_char_x) & 0x3FFF;
-                let vram_addr = gen_address(ma as u16, line_offset as u8) as usize;
-                let byte = vram.get(vram_addr).copied().unwrap_or(0);
-
-                // Decode pixels based on current mode
-                match self.mode {
-                    0 => {
-                        for i in (0..8).rev() {
-                            let idx = ((byte >> i) & 1) as usize;
-                            framebuffer[line_start + pixel_x] = self.palette[idx].rgba;
-                            pixel_x += 1;
-                        }
-                        continue;
-                    }
-                    1 => {
-                        let pixel_data2 = (byte >> 4) as u16;
-                        let mut pd = byte as u16;
-                        pd <<= 1;
-                        let d3 = (pd & 2) | (pixel_data2 & 1);
-                        pd >>= 1;
-                        let mut pixel_data2 = pixel_data2 >> 1;
-                        let d2 = (pd & 2) | (pixel_data2 & 1);
-                        pd >>= 1;
-                        pixel_data2 >>= 1;
-                        let d1 = (pd & 2) | (pixel_data2 & 1);
-                        pd >>= 1;
-                        pixel_data2 >>= 1;
-                        let d0 = (pd & 2) | (pixel_data2 & 1);
-
-                        let v = self.palette[d0 as usize].rgba;
-                        framebuffer[line_start + pixel_x + 0] = v;
-                        framebuffer[line_start + pixel_x + 1] = v;
-                        let v = self.palette[d1 as usize].rgba;
-                        framebuffer[line_start + pixel_x + 2] = v;
-                        framebuffer[line_start + pixel_x + 3] = v;
-                        let v = self.palette[d2 as usize].rgba;
-                        framebuffer[line_start + pixel_x + 4] = v;
-                        framebuffer[line_start + pixel_x + 5] = v;
-                        let v = self.palette[d3 as usize].rgba;
-                        framebuffer[line_start + pixel_x + 6] = v;
-                        framebuffer[line_start + pixel_x + 7] = v;
-                    }
-                    _ => {
-                        let v = to_rgba(byte >> 1);
-                        framebuffer[line_start + pixel_x + 0] = v;
-                        framebuffer[line_start + pixel_x + 1] = v;
-                        framebuffer[line_start + pixel_x + 2] = v;
-                        framebuffer[line_start + pixel_x + 3] = v;
-                        let v = to_rgba(byte);
-                        framebuffer[line_start + pixel_x + 4] = v;
-                        framebuffer[line_start + pixel_x + 5] = v;
-                        framebuffer[line_start + pixel_x + 6] = v;
-                        framebuffer[line_start + pixel_x + 7] = v;
-                    }
+        for y in 0..active_height {
+            let row = y / rasters;
+            let raster = y % rasters;
+            for character in 0..active_width {
+                let ma = self
+                    .crtc
+                    .display_start()
+                    .wrapping_add((row * programmed_width + character) as u16)
+                    & 0x3fff;
+                let byte = vram
+                    .get(gen_address(ma, raster as u8) as usize)
+                    .copied()
+                    .unwrap_or(0);
+                let packed = self.generator.paper_pixels(byte);
+                let base = (top + y) * FRAMEBUFFER_WIDTH + (left + character) * 8;
+                for pixel in 0..8 {
+                    let igrb = ((packed >> (pixel * 4)) & 0x0f) as usize;
+                    framebuffer[base + pixel] = IGRB_TO_RGBA[igrb];
                 }
             }
         }
     }
 }
+
+impl Default for Vid {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+#[path = "vid_tests.rs"]
+mod vid_tests;

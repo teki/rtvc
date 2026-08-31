@@ -6,11 +6,11 @@
 // DD/FD and DDCB/FDCB share one generic implementation.
 
 use crate::bus::CpuBus;
-use crate::z80_state::{
-    R_AA, R_AFA, R_AF, R_B, R_BA, R_BC, R_BCA, R_C, R_CA, R_D, R_DA, R_DE, R_DEA, R_E, R_EA, R_F,
-    R_FA, R_H, R_HA, R_HL, R_HLA, R_I, R_IX, R_IY, R_L, R_LA, R_R, R_XH, R_XL, R_YH, R_YL, R_A,
-};
 pub use crate::z80_state::Z80State;
+use crate::z80_state::{
+    R_A, R_AA, R_B, R_BA, R_C, R_CA, R_D, R_DA, R_E, R_EA, R_F, R_FA, R_H, R_HA, R_I, R_IX, R_IY,
+    R_L, R_LA, R_R, R_XH, R_XL, R_YH, R_YL,
+};
 
 // Flag constants — identical to z80.rs
 const F_S: u8 = 0x80;
@@ -1481,14 +1481,14 @@ impl Z80 {
                     self.state.r8[Self::reg_code_to_r8(z)]
                 };
                 let (res, flags) = match y {
-                    0 => self.shl8(val, (val & 0x80) != 0), // RLC
-                    1 => self.shr8(val, (val & 0x01) != 0), // RRC
+                    0 => self.shl8(val, (val & 0x80) != 0),             // RLC
+                    1 => self.shr8(val, (val & 0x01) != 0),             // RRC
                     2 => self.shl8(val, self.state.r8[R_F] & F_C != 0), // RL
                     3 => self.shr8(val, self.state.r8[R_F] & F_C != 0), // RR
-                    4 => self.shl8(val, false),              // SLA
-                    5 => self.shr8(val, (val & 0x80) != 0),  // SRA
-                    6 => self.shl8(val, true),               // SLL
-                    7 => self.shr8(val, false),              // SRL
+                    4 => self.shl8(val, false),                         // SLA
+                    5 => self.shr8(val, (val & 0x80) != 0),             // SRA
+                    6 => self.shl8(val, true),                          // SLL
+                    7 => self.shr8(val, false),                         // SRL
                     _ => unreachable!(),
                 };
                 if is_hl {
@@ -1568,10 +1568,12 @@ impl Z80 {
                     };
                     let val = bus.in8(self.state.r8[R_C], self.state.r8[R_B]);
                     if reg == 255 {
-                        self.state.r8[R_F] = (self.state.r8[R_F] & F_C) | self.sz53p_table[val as usize];
+                        self.state.r8[R_F] =
+                            (self.state.r8[R_F] & F_C) | self.sz53p_table[val as usize];
                     } else {
                         self.state.r8[reg] = val;
-                        self.state.r8[R_F] = (self.state.r8[R_F] & F_C) | self.sz53p_table[val as usize];
+                        self.state.r8[R_F] =
+                            (self.state.r8[R_F] & F_C) | self.sz53p_table[val as usize];
                     }
                     return (12, 2);
                 }
@@ -1619,7 +1621,11 @@ impl Z80 {
                     let rp_idx = p as usize + 1; // BC=1, DE=2, HL=3, SP special
                     if q == 0 {
                         // LD (nn),rp
-                        let val = if p == 3 { self.state.sp } else { self.state.get_reg16(rp_idx) };
+                        let val = if p == 3 {
+                            self.state.sp
+                        } else {
+                            self.state.get_reg16(rp_idx)
+                        };
                         bus.w16(nn, val);
                     } else {
                         // LD rp,(nn)
@@ -1684,14 +1690,16 @@ impl Z80 {
                             let memval = bus.r8(addr);
                             bus.w8(addr, ((self.state.r8[R_A] & 0x0F) << 4) | (memval >> 4));
                             self.state.r8[R_A] = (self.state.r8[R_A] & 0xF0) | (memval & 0x0F);
-                            self.state.r8[R_F] = (self.state.r8[R_F] & F_C) | self.sz53p_table[self.state.r8[R_A] as usize];
+                            self.state.r8[R_F] = (self.state.r8[R_F] & F_C)
+                                | self.sz53p_table[self.state.r8[R_A] as usize];
                         }
                         5 => {
                             let addr = self.state.get_hl();
                             let memval = bus.r8(addr);
                             bus.w8(addr, ((memval & 0x0F) << 4) | (self.state.r8[R_A] & 0x0F));
                             self.state.r8[R_A] = (self.state.r8[R_A] & 0xF0) | (memval >> 4);
-                            self.state.r8[R_F] = (self.state.r8[R_F] & F_C) | self.sz53p_table[self.state.r8[R_A] as usize];
+                            self.state.r8[R_F] = (self.state.r8[R_F] & F_C)
+                                | self.sz53p_table[self.state.r8[R_A] as usize];
                         }
                         _ => {} // fall through to block ops for 0x77, 0x7F NOPs
                     }
@@ -1734,9 +1742,7 @@ impl Z80 {
                 let bc = bc.wrapping_sub(1);
                 self.state.set_hl(hl);
                 self.state.set_bc(bc);
-                let tmp = self
-                    .state
-                    .r8[R_A]
+                let tmp = self.state.r8[R_A]
                     .wrapping_sub(memval)
                     .wrapping_sub(if (flags & F_H) != 0 { 1 } else { 0 });
                 self.state.r8[R_F] = F_N
@@ -1761,7 +1767,10 @@ impl Z80 {
                 self.state.r8[R_F] = (flags & (F_S | F_Z | F_5 | F_3))
                     | (if (regval & 0x80) != 0 { F_N } else { 0 })
                     | (if tmp > 0xFF { F_H | F_C } else { 0 })
-                    | (self.sz53p_table[(((regval.wrapping_add((bc.wrapping_add(1) & 0xFF) as u8)) & 7) ^ self.state.r8[R_B]) as usize] & F_PV);
+                    | (self.sz53p_table[(((regval.wrapping_add((bc.wrapping_add(1) & 0xFF) as u8))
+                        & 7)
+                        ^ self.state.r8[R_B]) as usize]
+                        & F_PV);
                 (16, 2)
             }
             0xA3 => {
@@ -1777,7 +1786,9 @@ impl Z80 {
                 self.state.r8[R_F] = (flags & (F_S | F_Z | F_5 | F_3))
                     | (if (memval & 0x80) != 0 { F_N } else { 0 })
                     | (if tmp > 0xFF { F_H | F_C } else { 0 })
-                    | (self.sz53p_table[(((memval.wrapping_add(self.state.r8[R_L])) & 7) ^ self.state.r8[R_B]) as usize] & F_PV);
+                    | (self.sz53p_table[(((memval.wrapping_add(self.state.r8[R_L])) & 7)
+                        ^ self.state.r8[R_B]) as usize]
+                        & F_PV);
                 (16, 2)
             }
             0xA8 => {
@@ -1810,9 +1821,7 @@ impl Z80 {
                 let bc = bc.wrapping_sub(1);
                 self.state.set_hl(hl);
                 self.state.set_bc(bc);
-                let tmp = self
-                    .state
-                    .r8[R_A]
+                let tmp = self.state.r8[R_A]
                     .wrapping_sub(memval)
                     .wrapping_sub(if (flags & F_H) != 0 { 1 } else { 0 });
                 self.state.r8[R_F] = F_N
@@ -1837,7 +1846,10 @@ impl Z80 {
                 self.state.r8[R_F] = (flags & (F_S | F_Z | F_5 | F_3))
                     | (if (regval & 0x80) != 0 { F_N } else { 0 })
                     | (if tmp > 0xFF { F_H | F_C } else { 0 })
-                    | (self.sz53p_table[(((regval.wrapping_add((bc.wrapping_sub(1) & 0xFF) as u8)) & 7) ^ self.state.r8[R_B]) as usize] & F_PV);
+                    | (self.sz53p_table[(((regval.wrapping_add((bc.wrapping_sub(1) & 0xFF) as u8))
+                        & 7)
+                        ^ self.state.r8[R_B]) as usize]
+                        & F_PV);
                 (16, 2)
             }
             0xAB => {
@@ -1853,7 +1865,9 @@ impl Z80 {
                 self.state.r8[R_F] = (flags & (F_S | F_Z | F_5 | F_3))
                     | (if (memval & 0x80) != 0 { F_N } else { 0 })
                     | (if tmp > 0xFF { F_H | F_C } else { 0 })
-                    | (self.sz53p_table[(((memval.wrapping_add(self.state.r8[R_L])) & 7) ^ self.state.r8[R_B]) as usize] & F_PV);
+                    | (self.sz53p_table[(((memval.wrapping_add(self.state.r8[R_L])) & 7)
+                        ^ self.state.r8[R_B]) as usize]
+                        & F_PV);
                 (16, 2)
             }
             0xB0 => {
@@ -1890,9 +1904,7 @@ impl Z80 {
                 let bc = bc.wrapping_sub(1);
                 self.state.set_hl(hl);
                 self.state.set_bc(bc);
-                let tmp = self
-                    .state
-                    .r8[R_A]
+                let tmp = self.state.r8[R_A]
                     .wrapping_sub(memval)
                     .wrapping_sub(if (flags & F_H) != 0 { 1 } else { 0 });
                 self.state.r8[R_F] = F_N
@@ -1921,7 +1933,10 @@ impl Z80 {
                 self.state.r8[R_F] = (flags & (F_S | F_Z | F_5 | F_3))
                     | (if (regval & 0x80) != 0 { F_N } else { 0 })
                     | (if tmp > 0xFF { F_H | F_C } else { 0 })
-                    | (self.sz53p_table[(((regval.wrapping_add((bc.wrapping_add(1) & 0xFF) as u8)) & 7) ^ self.state.r8[R_B]) as usize] & F_PV);
+                    | (self.sz53p_table[(((regval.wrapping_add((bc.wrapping_add(1) & 0xFF) as u8))
+                        & 7)
+                        ^ self.state.r8[R_B]) as usize]
+                        & F_PV);
                 if self.state.r8[R_B] != 0 {
                     (21, 0)
                 } else {
@@ -1941,7 +1956,9 @@ impl Z80 {
                 self.state.r8[R_F] = (flags & (F_S | F_Z | F_5 | F_3))
                     | (if (memval & 0x80) != 0 { F_N } else { 0 })
                     | (if tmp > 0xFF { F_H | F_C } else { 0 })
-                    | (self.sz53p_table[(((memval.wrapping_add(self.state.r8[R_L])) & 7) ^ self.state.r8[R_B]) as usize] & F_PV);
+                    | (self.sz53p_table[(((memval.wrapping_add(self.state.r8[R_L])) & 7)
+                        ^ self.state.r8[R_B]) as usize]
+                        & F_PV);
                 if self.state.r8[R_B] != 0 {
                     (21, 0)
                 } else {
@@ -1982,9 +1999,7 @@ impl Z80 {
                 let bc = bc.wrapping_sub(1);
                 self.state.set_hl(hl);
                 self.state.set_bc(bc);
-                let tmp = self
-                    .state
-                    .r8[R_A]
+                let tmp = self.state.r8[R_A]
                     .wrapping_sub(memval)
                     .wrapping_sub(if (flags & F_H) != 0 { 1 } else { 0 });
                 self.state.r8[R_F] = F_N
@@ -2013,7 +2028,10 @@ impl Z80 {
                 self.state.r8[R_F] = (flags & (F_S | F_Z | F_5 | F_3))
                     | (if (regval & 0x80) != 0 { F_N } else { 0 })
                     | (if tmp > 0xFF { F_H | F_C } else { 0 })
-                    | (self.sz53p_table[(((regval.wrapping_add((bc.wrapping_sub(1) & 0xFF) as u8)) & 7) ^ self.state.r8[R_B]) as usize] & F_PV);
+                    | (self.sz53p_table[(((regval.wrapping_add((bc.wrapping_sub(1) & 0xFF) as u8))
+                        & 7)
+                        ^ self.state.r8[R_B]) as usize]
+                        & F_PV);
                 if self.state.r8[R_B] != 0 {
                     (21, 0)
                 } else {
@@ -2035,7 +2053,9 @@ impl Z80 {
                 self.state.r8[R_F] = (flags & (F_S | F_Z | F_5 | F_3))
                     | (if (memval & 0x80) != 0 { F_N } else { 0 })
                     | (if tmp > 0xFF { F_H | F_C } else { 0 })
-                    | (self.sz53p_table[(((memval.wrapping_add(self.state.r8[R_L])) & 7) ^ self.state.r8[R_B]) as usize] & F_PV);
+                    | (self.sz53p_table[(((memval.wrapping_add(self.state.r8[R_L])) & 7)
+                        ^ self.state.r8[R_B]) as usize]
+                        & F_PV);
                 if self.state.r8[R_B] != 0 {
                     (21, 0)
                 } else {
@@ -2063,7 +2083,8 @@ impl Z80 {
                 let v = self.state.get_reg16(base);
                 let (res, flags) = self.add16(v, self.state.get_bc(), false);
                 self.state.set_reg16(base, res);
-                self.state.r8[R_F] = (flags & !(F_S | F_Z | F_PV)) | (self.state.r8[R_F] & (F_S | F_Z | F_PV));
+                self.state.r8[R_F] =
+                    (flags & !(F_S | F_Z | F_PV)) | (self.state.r8[R_F] & (F_S | F_Z | F_PV));
                 (15, 2)
             }
             0x19 => {
@@ -2071,7 +2092,8 @@ impl Z80 {
                 let v = self.state.get_reg16(base);
                 let (res, flags) = self.add16(v, self.state.get_de(), false);
                 self.state.set_reg16(base, res);
-                self.state.r8[R_F] = (flags & !(F_S | F_Z | F_PV)) | (self.state.r8[R_F] & (F_S | F_Z | F_PV));
+                self.state.r8[R_F] =
+                    (flags & !(F_S | F_Z | F_PV)) | (self.state.r8[R_F] & (F_S | F_Z | F_PV));
                 (15, 2)
             }
             0x29 => {
@@ -2079,7 +2101,8 @@ impl Z80 {
                 let v = self.state.get_reg16(base);
                 let (res, flags) = self.add16(v, v, false);
                 self.state.set_reg16(base, res);
-                self.state.r8[R_F] = (flags & !(F_S | F_Z | F_PV)) | (self.state.r8[R_F] & (F_S | F_Z | F_PV));
+                self.state.r8[R_F] =
+                    (flags & !(F_S | F_Z | F_PV)) | (self.state.r8[R_F] & (F_S | F_Z | F_PV));
                 (15, 2)
             }
             0x39 => {
@@ -2087,7 +2110,8 @@ impl Z80 {
                 let v = self.state.get_reg16(base);
                 let (res, flags) = self.add16(v, self.state.sp, false);
                 self.state.set_reg16(base, res);
-                self.state.r8[R_F] = (flags & !(F_S | F_Z | F_PV)) | (self.state.r8[R_F] & (F_S | F_Z | F_PV));
+                self.state.r8[R_F] =
+                    (flags & !(F_S | F_Z | F_PV)) | (self.state.r8[R_F] & (F_S | F_Z | F_PV));
                 (15, 2)
             }
             // helper to get IXH/IXL etc mapping
@@ -2111,12 +2135,14 @@ impl Z80 {
             }
             0x23 => {
                 // SLA (IY+d),E
-                self.state.set_reg16(base, self.state.get_reg16(base).wrapping_add(1));
+                self.state
+                    .set_reg16(base, self.state.get_reg16(base).wrapping_add(1));
                 (10, 2)
             }
             0x2B => {
                 // SRA (IY+d),E
-                self.state.set_reg16(base, self.state.get_reg16(base).wrapping_sub(1));
+                self.state
+                    .set_reg16(base, self.state.get_reg16(base).wrapping_sub(1));
                 (10, 2)
             }
             0x34 => {

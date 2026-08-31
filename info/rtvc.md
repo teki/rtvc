@@ -123,18 +123,36 @@ rejected.
 ### Interleaved
 
 After each CPU instruction, `Vid::stream_some()` advances the CRTC at the
-two-T-state character-clock ratio. It writes character state into a circular
-stream and `render_stream()` behaves like a monitor responding to HSYNC and
-VSYNC.
+two-T-state character-clock ratio. The implementation has explicit CRTC, TVC
+video-generator, bounded signal-ring, and television-receiver stages. The ring
+carries eight final packed IGRB pixels per character clock plus shaped sync and
+blanking state; it never carries a VRAM byte that can be recolored later.
 
 This mode preserves mid-frame palette, border, mode, start-address, and CRTC
 changes. A cursor match latches the shared interrupt at the corresponding beam
 position; IRQ service time is also applied to video advancement.
 
-The monitor renderer produces a 608 x 288 surface. It waits for sync, applies
-the expected TVC porch positioning, and draws 76 output character clocks per
-line. If valid sync is absent for several host ticks, rtvc displays a black
-lost-sync surface with moving white stripes while continuing emulation.
+The television stage can see only final IGRB video, blanking, HSYNC, and VSYNC.
+It measures repeated sync edges and accepts PAL-like horizontal periods of
+90-110 character clocks and vertical periods of 280-340 lines. A discontinuity,
+missing sync, or dropped ring samples invalidates lock and discards the partial
+raster. It cannot complete a frame without both horizontal and vertical lock.
+
+The public surface remains 608 x 288. Its 76-character-clock horizontal aperture
+starts 19 character clocks after observed HSYNC; its vertical aperture starts
+22 observed lines after VSYNC. These are connected-TV sampling policy, not CRTC
+line or frame limits. Stable reprogrammed CRTC timing within the receiver's PAL
+tolerances can therefore display without matching the firmware's normal
+register values.
+
+The external SN74LS123 sync widths are currently isolated approximations (eight
+character clocks for horizontal sync and four lines for vertical sync) because
+the available textual hardware description establishes the shaping circuit but
+does not provide verified board-variant RC durations. Edge timing, receiver
+lock, NVRCL vertical blanking set by VS, and MA9 video re-enable are modeled;
+the pulse-width constants should be replaced after schematic-component or
+oscilloscope verification. If valid sync is absent for several host ticks,
+rtvc displays its lost-sync surface while continuing emulation.
 
 Native `Tvc::new()` defaults to Interleaved.
 

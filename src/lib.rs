@@ -37,10 +37,10 @@ pub mod tvc;
 pub mod tvc_snapshot;
 #[path = "emulator/vid.rs"]
 pub mod vid;
-#[path = "emulator/z80_state.rs"]
-pub mod z80_state;
 #[path = "emulator/z80.rs"]
 pub mod z80;
+#[path = "emulator/z80_state.rs"]
+pub mod z80_state;
 #[path = "emulator/zx82.rs"]
 pub mod zx82;
 
