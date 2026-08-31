@@ -28,9 +28,11 @@ implementation order, limitations, and focused validation.
 
 ## Current Plans
 
+- [C80 Compiler and Integrated Source View](c80-compiler.md)
 - [Clean Up the `laser-port1` Porting Effort](cleanup-laser-port1.md)
   ([progress](cleanup-laser-port1-progress.md))
 - [Frame History Debugger](frame-history-debugger.md)
   ([progress](frame-history-debugger-progress.md))
 - [Instruction Trace](instruction-trace-progress.md)
 - [Multi-System Architecture](multi-system-architecture.md)
+- [TVC Video Signal Pipeline and Television Sync](tvc-video-signal-pipeline.md)
