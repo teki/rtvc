@@ -15,6 +15,7 @@ User guide for the Videoton TV Computer BASIC language.
 - [Functions](#functions)
 - [System Variables](#system-variables)
 - [Appendices](#appendices)
+  - [Tokenized program format](#tokenized-program-format)
 
 ---
 
@@ -218,17 +219,46 @@ the current `SET PAPER` setting.
 ### PRINT
 
 ```
-PRINT [#periph:] [AT row, col] [USING format$] expr [[,|;|TAB(n)] expr]...
+PRINT [parameters:] [item [[,|;|TAB(n)] item]...]
 ```
 
-Output data to the screen (default), a peripheral, or a file.
+Parameters are comma-separated and must be followed by `:` before any printed
+items:
 
-- `AT row, col` — set cursor position (works with devices 0, 2, 6).
+```
+#n
+AT row, col
+USING format$
+```
+
+Examples:
+
+```
+PRINT "hello"
+PRINT AT 10,5: "hello"
+PRINT AT 1,1: A; TAB(10); B
+PRINT AT 1,64: "X";
+PRINT USING "###.###": 1
+PRINT #4: A,B,C$
+PRINT #0, AT 24,1, USING "##": N
+```
+
+- `AT row, col` — set the cursor. Rows are 1–24. Columns are 1-based and
+  depend on `GRAPHICS`: 64 in 2-colour, 32 in 4-colour, 16 in 16-colour mode.
+  `AT` and `TAB` work with devices 0, 2, and 6. `PRINT AT 1,1` is the top-left
+  character.
 - `USING format$` — formatted output (see below).
-- `,` (comma) — move to next tab stop (every 8 columns).
-- `;` (semicolon) — no space between items.
-- `TAB(n)` — move to column `n`.
-- A trailing `,` or `;` suppresses the line feed.
+- `,` (comma) in the item list — next tab stop (every 8 columns).
+- `;` (semicolon) — no gap between items.
+- `TAB(n)` — next item at column `n`.
+- A trailing `,` or `;` suppresses the PRINT statement's own CR/LF (`0DH`/`0AH`).
+  It does not stop the editor wrapping after the last column: writing that cell
+  still advances to the next row and, if the next editor line is non-empty,
+  inserts a blank line. There is no PRINT syntax to disable that wrap. A
+  firmware workaround is to raise the editor width byte at `0E6BH` (3691) by
+  one for the last-column write, then restore it (`POKE 3691,65` / `POKE 3691,64`
+  in GRAPHICS 2). `PRINT #0` uses the video device instead and will not insert
+  an editor line, but still CR/LFs the graphics pen after the last column.
 - `PRINT` with no arguments moves to the next line.
 
 **PRINT USING format characters:**
@@ -249,10 +279,11 @@ Output data to the screen (default), a peripheral, or a file.
 ### LPRINT
 
 ```
-LPRINT [AT row, col] [USING format$] expr [[,|;|TAB(n)] expr]...
+LPRINT [AT row, col] [, USING format$]: [item [[,|;|TAB(n)] item]...]
 ```
 
 Same as `PRINT` but output defaults to the printer (same as `PRINT #4:`).
+`AT` and `USING` still take a colon before the item list.
 
 ### INPUT
 
@@ -694,6 +725,39 @@ System variables are accessible via `PEEK` and `POKE`. Key addresses:
 ---
 
 ## Appendices
+
+### Tokenized program format
+
+TVC BASIC stores a program as a sequence of length-prefixed lines at
+[PROGRAM](#system-variables) (`19EFH`). Each line is:
+
+```text
+length    1 byte   size of this line, including the length byte and the FFH terminator
+line      2 bytes  line number, little-endian
+tokens    n bytes  tokenized statement text
+FFH       1 byte   end of line
+```
+
+A `00H` length byte ends the program. Keywords and operators are single-byte
+tokens from the BASIC 1.2 keyword table at SYS `DE6DH`, searched from token
+`FEH` downward so a longer word such as `OUTPUT` matches before `OUT`. Letters
+outside strings and `REM`/`DATA` tails are stored in uppercase. Spaces, string
+literals, and the remainder of a `REM` or `DATA` statement are stored as
+characters. Functions that are not keywords, including `USR`, `SIN`, and
+`CHR$`, remain ASCII identifiers.
+
+`rtvc-basic` compiles numbered source into this payload and wraps it in a CAS
+container. Default headers match BASIC `SAVE` (file type `01H`, autostart
+`00H`). `rtvc-tocas` writes the same CAS image beside the source:
+
+```bash
+cargo run --bin rtvc-basic -- coding/crtc-register-explorer.bas -o target/coding/crtc-register-explorer.cas
+cargo run --bin rtvc-tocas -- coding/crtc-register-explorer.bas
+```
+
+Pass `--auto` to set the CAS autostart byte, or `--format bin` to write the
+raw program bytes without a header. See
+[rtvc.md](rtvc.md#command-line-basic-compiler) for command-line options.
 
 ### Colour numbers and palette codes
 

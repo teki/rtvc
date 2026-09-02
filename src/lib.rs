@@ -3,6 +3,8 @@ compile_error!("features `web-vid-simple` and `web-vid-realistic` are mutually e
 
 #[path = "emulator/asm.rs"]
 pub mod asm;
+#[path = "emulator/basic.rs"]
+pub mod basic;
 #[path = "emulator/bus.rs"]
 pub mod bus;
 #[path = "emulator/cas.rs"]
