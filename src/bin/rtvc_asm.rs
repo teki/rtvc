@@ -5,6 +5,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use rtvc_core::asm::assemble_program;
+use rtvc_core::cas::{TVC_CAS_TYPE_BASIC, encode_tvc_cas};
 
 const FORMAT_VERSION: &str = "rtvc-asm-v1";
 const TVC_BASIC_LOAD_ADDR: u16 = 0x19EF;
@@ -214,28 +215,12 @@ fn render_cas(assembled: &rtvc_core::asm::AssembledProgram) -> Result<Vec<u8>, S
             segment.addr
         ));
     }
-    Ok(tvc_program_cas(&segment.bytes))
-}
-
-fn tvc_program_cas(payload: &[u8]) -> Vec<u8> {
-    let dfsize = 144 + payload.len();
-    let blocks = dfsize / 128;
-    let remainder = dfsize % 128;
-    let mut cas = vec![0; 144 + payload.len()];
-    cas[0] = 0x11;
-    cas[2] = (blocks & 0xFF) as u8;
-    cas[3] = (blocks >> 8) as u8;
-    cas[4] = (remainder & 0xFF) as u8;
-    cas[5] = (remainder >> 8) as u8;
-    cas[0x80] = 0x00;
-    cas[0x81] = 0x01;
-    cas[0x82] = (payload.len() & 0xFF) as u8;
-    cas[0x83] = (payload.len() >> 8) as u8;
-    cas[0x84] = 0xFF;
-    cas[0x87] = (TVC_BASIC_LOAD_ADDR & 0xFF) as u8;
-    cas[0x88] = (TVC_BASIC_LOAD_ADDR >> 8) as u8;
-    cas[0x90..].copy_from_slice(payload);
-    cas
+    Ok(encode_tvc_cas(
+        &segment.bytes,
+        TVC_CAS_TYPE_BASIC,
+        0xFF,
+        TVC_BASIC_LOAD_ADDR,
+    ))
 }
 
 fn render_toml(

@@ -4,6 +4,11 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+- Added `rtvc-basic` to compile numbered TVC BASIC source into CAS cassette
+  images.
+- Added `rtvc-tocas` to convert `.bas` and `.asm` sources into sibling `.cas`
+  files.
+
 ## v0.8.5 - 2026-06-20
 
 - Added ZX Spectrum 48K emulation through the new `zx82` frontend.

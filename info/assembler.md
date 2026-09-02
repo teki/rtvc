@@ -192,9 +192,19 @@ Assemble directly to CAS:
 cargo run --bin rtvc-asm -- --format cas experiment.asm -o experiment.cas
 ```
 
+To convert one or more `.asm` or `.bas` files to sibling `.cas` files, use
+`rtvc-tocas`:
+
+```bash
+cargo run --bin rtvc-tocas -- experiment.asm program.bas
+```
+
 Use `--format toml` when the emitted TOML should be loaded through the debugger
 with `loadasm`, and `--format bin` when only the contiguous machine-code bytes
 are needed.
+
+To compile numbered BASIC source rather than a machine-code helper, use
+`rtvc-basic`. See [basic.md](basic.md#tokenized-program-format).
 
 ## Instruction Coverage
 

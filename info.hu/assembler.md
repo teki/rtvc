@@ -171,8 +171,18 @@ Közvetlen CAS-kimenet:
 rtvc-asm --format cas experiment.asm -o experiment.cas
 ```
 
+Több `.asm` vagy `.bas` fájl mellé írt `.cas` kimenethez az `rtvc-tocas`
+programot használd:
+
+```cmd
+rtvc-tocas experiment.asm program.bas
+```
+
 A `toml` formátum a hibakereső `loadasm` parancsához, a `bin` formátum pedig
 az összefüggő nyers gépi kódhoz használható.
+
+Számozott BASIC forrás CAS-ba fordításához az `rtvc-basic` programot használd.
+Lásd a [basic.md](basic.md#tokenizalt-programformatum) leírást.
 
 ## Utasításkészlet
 

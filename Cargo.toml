@@ -67,6 +67,14 @@ name = "rtvc-asm"
 path = "src/bin/rtvc_asm.rs"
 
 [[bin]]
+name = "rtvc-basic"
+path = "src/bin/rtvc_basic.rs"
+
+[[bin]]
+name = "rtvc-tocas"
+path = "src/bin/rtvc_tocas.rs"
+
+[[bin]]
 name = "rtvc-disasm"
 path = "src/bin/rtvc_disasm.rs"
 

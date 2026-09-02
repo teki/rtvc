@@ -14,6 +14,8 @@ implementation-neutral machine specification, see
 - [Keyboard input](#keyboard-input)
 - [Media handling](#media-handling)
 - [Command-line helper assembler](#command-line-helper-assembler)
+- [Command-line BASIC compiler](#command-line-basic-compiler)
+- [Command-line CAS converter](#command-line-cas-converter)
 - [ZX Spectrum TAP conversion](#zx-spectrum-tap-conversion)
 - [ROM loading and fast boot](#rom-loading-and-fast-boot)
 - [Snapshot format](#snapshot-format)
@@ -38,14 +40,17 @@ and full-web frontends.
 | [src/zx82.rs](../src/zx82.rs) | initial Spectrum 48K memory, ULA, frame timing, and full-frame renderer |
 | [src/key.rs](../src/key.rs) | keyboard matrix and host-key adaptation |
 | [src/sound.rs](../src/sound.rs) | sound divider, timer, DAC, PCM generation |
-| [src/cas.rs](../src/cas.rs) | CAS-to-pulse-interval conversion |
+| [src/cas.rs](../src/cas.rs) | CAS container encoding and CAS-to-pulse-interval conversion |
 | [src/tape.rs](../src/tape.rs) | cassette transport and signal sampling |
 | [src/expansion.rs](../src/expansion.rs) | four-slot expansion routing |
 | [src/hbf.rs](../src/hbf.rs) | HBF card memory and registers |
 | [src/emulator/asm.rs](../src/emulator/asm.rs) | Z80 single-line and two-pass helper assembler |
+| [src/emulator/basic.rs](../src/emulator/basic.rs) | TVC BASIC tokenizer and detokenizer |
 | [src/emulator/disasm.rs](../src/emulator/disasm.rs) | Z80 disassembler and debugger instruction metadata |
 | [src/emulator/instruction_trace.rs](../src/emulator/instruction_trace.rs) | bounded machine-independent instruction trace model |
 | [src/bin/rtvc_asm.rs](../src/bin/rtvc_asm.rs) | command-line assembler that emits `rtvc-asm-v1` TOML |
+| [src/bin/rtvc_basic.rs](../src/bin/rtvc_basic.rs) | command-line BASIC compiler that emits CAS or raw program bytes |
+| [src/bin/rtvc_tocas.rs](../src/bin/rtvc_tocas.rs) | command-line converter that writes sibling `.cas` files from `.bas` and `.asm` sources |
 | [src/bin/rtvc_tap2toml.rs](../src/bin/rtvc_tap2toml.rs) | ZX Spectrum TAP parser that emits structured `rtvc-zx-tap-v1` TOML |
 | [src/fd1793.rs](../src/fd1793.rs) | FD1793 floppy controller with two-drive read/write support |
 | [src/emu.rs](../src/emu.rs) | machine selection, media, run state |
@@ -68,7 +73,7 @@ validation independent from machine emulation.
 | Target | Features | Notes |
 | --- | --- | --- |
 | Native desktop | default `native` | egui/eframe, cpal audio, filesystem media, zip support, TCP debugger |
-| Native CLI tools | `cli-tools` without default features | disk, assembler, disassembler, CAS-to-WAV, and TAP conversion utilities without desktop UI/audio dependencies |
+| Native CLI tools | `cli-tools` without default features | disk, assembler, BASIC compiler, CAS converter, disassembler, CAS-to-WAV, and TAP conversion utilities without desktop UI/audio dependencies |
 | Native headless | default `native`, `--headless` CLI | machine loop and TCP debugger without GUI |
 | Integrated Zx82 | default `native` and `wasm-full` | Spectrum 48K state loading through the shared application and debugger |
 | Standalone Zx82 | default `native`, `cargo run --bin zx82` | focused Spectrum core runner |
@@ -290,6 +295,24 @@ the debugger. It currently emits versioned TOML for later linker and
 injection tooling. The TCP debugger client can load this output with
 `loadasm <path.toml>`. See [assembler.md](assembler.md) for source syntax, TOML
 schema, command-line options, and debugger loading details.
+
+## Command-Line BASIC Compiler
+
+`cargo run --bin rtvc-basic -- input.bas -o output.cas` tokenizes numbered TVC
+BASIC source into a CAS image using the BASIC 1.2 keyword table. Default CAS
+headers match a BASIC `SAVE`. Pass `--format bin` for the raw payload, `--auto`
+to set the autostart byte, and `-` to read source from stdin.
+
+See [basic.md](basic.md#tokenized-program-format) for the in-memory line format
+and tokenization rules.
+
+## Command-Line CAS Converter
+
+`cargo run --bin rtvc-tocas -- input.bas helper.asm` converts one or more
+`.bas` and `.asm` sources to sibling `.cas` files. `.bas` inputs use the same
+path as `rtvc-basic`; `.asm` inputs use the same path as `rtvc-asm --format cas`.
+The output path is the source path with the extension replaced by `.cas`.
+Files with any other extension are printed and skipped.
 
 ## ZX Spectrum TAP Conversion
 

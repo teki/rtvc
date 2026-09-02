@@ -15,6 +15,7 @@ A Videoton TV-Computer BASIC nyelvének használati útmutatója.
 - [Függvények](#fuggvenyek)
 - [Rendszerváltozók](#rendszervaltozok)
 - [Függelék](#fuggelek)
+  - [Tokenizált programformátum](#tokenizalt-programformatum)
 
 ---
 
@@ -220,17 +221,44 @@ beállítása határozza meg.
 ### PRINT
 
 ```
-PRINT [#periféria:] [AT sor, oszlop] [USING formátum$] kif [[,|;|TAB(n)] kif]...
+PRINT [paraméterek:] [elem [[,|;|TAB(n)] elem]...]
 ```
 
-Adatok megjelenítése a képernyőre (alapértelmezés), perifériára vagy fájlba.
+A paraméterek vesszővel válnak el, és a kiírandó elemek előtt kettőspont kell:
 
-- `AT sor, oszlop` — kurzor pozicionálása (0, 2, 6 perifériákon működik).
+```
+#n
+AT sor, oszlop
+USING formátum$
+```
+
+Példák:
+
+```
+PRINT "hello"
+PRINT AT 10,5: "hello"
+PRINT AT 1,1: A; TAB(10); B
+PRINT AT 1,64: "X";
+PRINT USING "###.###": 1
+PRINT #4: A,B,C$
+PRINT #0, AT 24,1, USING "##": N
+```
+
+- `AT sor, oszlop` — kurzorpozíció. A sor 1–24. Az oszlop 1-től indul, és a
+  `GRAPHICS` módtól függ: 64 a 2 színű, 32 a 4 színű, 16 a 16 színű módban.
+  Az `AT` és a `TAB` a 0, 2 és 6 perifériákon hat. A `PRINT AT 1,1` a bal
+  felső karakter.
 - `USING formátum$` — formázott kiírás (lásd alább).
-- `,` (vessző) — következő tabulációs mező (8 karakteres).
-- `;` (pontosvessző) — nincs szóköz az elemek között.
-- `TAB(n)` — kurzor az n. pozícióra.
-- Záró `,` vagy `;` elnyomja a soremelést.
+- `,` (vessző) az elemlistában — következő tabulációs mező (8 karakter).
+- `;` (pontosvessző) — nincs hézag az elemek között.
+- `TAB(n)` — következő elem az n. oszlopban.
+- Záró `,` vagy `;` csak a PRINT saját CR/LF-jét (`0DH`/`0AH`) nyomja el. Az
+  utolsó oszlopba írás után a szerkesztő akkor is a következő sorra lép, és ha
+  az a sor nem üres, üres sort szúr be. Erre nincs PRINT-szintaxis. Kerülőút:
+  a `0E6BH` (3691) szerkesztő-szélesség bájt ideiglenes növelése a kiírás
+  idejére (`POKE 3691,65` / `POKE 3691,64` GRAPHICS 2-ben). A `PRINT #0` a
+  videóeszközt használja, ezért nem szúr be szerkesztősort, de a grafikus
+  tollat az utolsó oszlop után akkor is CR/LF-ezi.
 - Paraméter nélküli `PRINT` a következő sor elejére visz.
 
 **PRINT USING formátumkarakterek:**
@@ -251,10 +279,11 @@ Adatok megjelenítése a képernyőre (alapértelmezés), perifériára vagy fá
 ### LPRINT
 
 ```
-LPRINT [AT sor, oszlop] [USING formátum$] kif [[,|;|TAB(n)] kif]...
+LPRINT [AT sor, oszlop] [, USING formátum$]: [elem [[,|;|TAB(n)] elem]...]
 ```
 
 Mint a `PRINT`, de a kimenet a nyomtatóra kerül (megegyezik a `PRINT #4:`-gyel).
+Az `AT` és a `USING` után itt is kettőspont kell az elemlista előtt.
 
 ### INPUT
 
@@ -703,6 +732,40 @@ címek:
 ---
 
 ## Függelék
+
+### Tokenizált programformátum
+
+A TVC BASIC a programot hossz-prefixelt sorokként tárolja a
+[PROGRAM](#rendszervaltozok) (`19EFH`) címen. Egy sor felépítése:
+
+```text
+hossz     1 bájt   a sor mérete, a hosszbájttal és az FFH lezáróval együtt
+sorszám   2 bájt   sorszám, little-endian
+tokenek   n bájt   tokenizált utasításszöveg
+FFH       1 bájt   sor vége
+```
+
+A programot egy `00H` hosszbájt zárja. A kulcsszavak és operátorok a BASIC 1.2
+kulcsszótábla (SYS `DE6DH`) egybájtos tokenjei; a keresés a `FEH` tokentől
+lefelé halad, ezért a hosszabb szavak (például `OUTPUT`) az `OUT` előtt
+illeszkednek. A stringeken, valamint a `REM`/`DATA` farokrészen kívül a
+betűk nagybetűsen tárolódnak. A szóközök, a string literálok és a `REM` vagy
+`DATA` utasítás maradéka karakterként marad. A kulcsszótáblában nem szereplő
+függvények, például `USR`, `SIN` és `CHR$`, ASCII azonosítók maradnak.
+
+Az `rtvc-basic` számozott forrást fordít erre a payloadra, és CAS tárolóba
+csomagolja. Az alapértelmezett fejléc a BASIC `SAVE` mentésnek felel meg
+(fájltípus `01H`, autostart `00H`). Az `rtvc-tocas` ugyanezt a CAS képet a
+forrás mellé írja:
+
+```bash
+rtvc-basic coding/crtc-register-explorer.bas -o target/coding/crtc-register-explorer.cas
+rtvc-tocas coding/crtc-register-explorer.bas
+```
+
+A `--auto` a CAS autostart bájtot állítja; a `--format bin` fejléc nélküli
+nyers programbájtokat ír. A parancssori opciókat az
+[rtvc.md](rtvc.md#command-line-basic-compiler) ismerteti.
 
 ### Színsorszámok és palettakódok
 

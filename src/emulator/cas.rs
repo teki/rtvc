@@ -1,6 +1,31 @@
+pub const TVC_CAS_HEADER_LEN: usize = 144;
+pub const TVC_CAS_TYPE_BASIC: u8 = 0x01;
+
 pub struct TapeInterval {
     pub level: f32, // 0.0 for low, 1.0 for high, 0.5 for silence
     pub start_cycle: u64,
+}
+
+/// Build a TVC CAS container: 144-byte header followed by payload.
+pub fn encode_tvc_cas(payload: &[u8], file_type: u8, autostart: u8, load_addr: u16) -> Vec<u8> {
+    let dfsize = TVC_CAS_HEADER_LEN + payload.len();
+    let blocks = dfsize / 128;
+    let remainder = dfsize % 128;
+    let mut cas = vec![0; dfsize];
+    cas[0] = 0x11;
+    cas[2] = (blocks & 0xFF) as u8;
+    cas[3] = (blocks >> 8) as u8;
+    cas[4] = (remainder & 0xFF) as u8;
+    cas[5] = (remainder >> 8) as u8;
+    cas[0x80] = 0x00;
+    cas[0x81] = file_type;
+    cas[0x82] = (payload.len() & 0xFF) as u8;
+    cas[0x83] = (payload.len() >> 8) as u8;
+    cas[0x84] = autostart;
+    cas[0x87] = (load_addr & 0xFF) as u8;
+    cas[0x88] = (load_addr >> 8) as u8;
+    cas[TVC_CAS_HEADER_LEN..].copy_from_slice(payload);
+    cas
 }
 
 pub struct TapeBitstreamGenerator {
