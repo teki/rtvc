@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 zip = { version = "2", default-features = false, features = ["deflate"] }
+serde_json = { version = "1", features = ["preserve_order"] }

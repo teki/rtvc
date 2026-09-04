@@ -445,6 +445,8 @@ impl Emu {
         ))
     }
 
+    /// Physical ROM tracepoints as (bank, bank-offset) pairs; each fires
+    /// whenever execution reaches that ROM byte in any paging view.
     pub fn set_tracepoints(&mut self, tracepoints: &[(RomBank, u16)]) {
         if let Some(tvc) = self.tvc_mut() {
             tvc.set_tracepoints(tracepoints);

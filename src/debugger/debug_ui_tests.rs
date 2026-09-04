@@ -10,17 +10,33 @@ fn parses_debugger_addresses_as_hex() {
 }
 
 #[test]
-fn embedded_rom_symbols_load_and_resolve_aliases() {
+fn embedded_rom_symbols_resolve_by_bank_and_offset() {
     let symbols = rom_symbols();
     assert!(!symbols.is_empty());
-    assert_eq!(
-        symbol_at(RomBank::Sys, 0xC229).map(|symbol| symbol.name.as_str()),
-        Some("BASIC_COLD_START")
-    );
+    // (bank, image offset) is the lookup key; the canonical CPU address is
+    // display info, not identity, so no alias table is needed.
     assert_eq!(
         symbol_at(RomBank::Sys, 0x0229).map(|symbol| symbol.name.as_str()),
         Some("BASIC_COLD_START")
     );
+    assert_eq!(
+        symbol_at(RomBank::Sys, 0x0229).map(|symbol| symbol.address),
+        Some(0xC229)
+    );
+    assert!(symbol_at(RomBank::Exth, 0x0229).is_none());
+}
+
+#[test]
+fn stacked_labels_share_one_key_with_stable_primary() {
+    // Three ASM labels share sys offset 0x098F; the curated name stays
+    // primary instead of flipping to whichever sorts last.
+    let symbol = symbol_at(RomBank::Sys, 0x098F).expect("stacked key resolves");
+    assert_eq!(symbol.name.as_str(), "CALL_WITH_SYS_PAGED");
+    assert_eq!(
+        symbol.alt_names,
+        vec!["CALL_WITH_VIDEO_PAGED", "VIDEO_PAGE_GUARD"]
+    );
+    assert!(symbol.matches("video_page_guard"));
 }
 
 #[test]

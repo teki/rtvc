@@ -236,11 +236,19 @@ impl TvcMmu {
     }
 
     pub fn mapped_rom_bank(&self, addr: u16) -> Option<RomBank> {
+        self.mapped_rom_offset(addr).map(|(bank, _)| bank)
+    }
+
+    /// Physical ROM location visible at a CPU address: the bank plus the
+    /// offset into that bank's image (`sys` is the 16 KiB D4+D3 image,
+    /// `exth` is the 8 KiB D7 image). This is the stable identity of a ROM
+    /// byte; the CPU address is only the current paging view of it.
+    pub fn mapped_rom_offset(&self, addr: u16) -> Option<(RomBank, u16)> {
         let page = (addr >> 14) as usize;
-        let offset = (addr & 0x3FFF) as usize;
+        let offset = addr & 0x3FFF;
         match self.map[page] {
-            Some(8) => Some(RomBank::Sys),
-            Some(10) if offset >= 0x2000 => Some(RomBank::Exth),
+            Some(8) => Some((RomBank::Sys, offset)),
+            Some(10) if offset >= 0x2000 => Some((RomBank::Exth, offset - 0x2000)),
             _ => None,
         }
     }

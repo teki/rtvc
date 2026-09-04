@@ -557,6 +557,8 @@ pub struct Tvc {
     pub(crate) clock: u64,
     sync_timeout_frames: u32,
     breakpoints: HashSet<u16>,
+    /// Physical ROM landmarks: (bank, bank-offset) pairs. Offsets are used
+    /// instead of CPU addresses so a landmark fires in any paging view.
     tracepoints: HashSet<(RomBank, u16)>,
     trace_events: Vec<ExecutionTrace>,
     instruction_trace: InstructionTrace,
@@ -566,6 +568,9 @@ pub struct Tvc {
 pub struct ExecutionTrace {
     pub bank: RomBank,
     pub pc: u16,
+    /// Bank offset of `pc`, captured through the live mapping so consumers
+    /// can resolve symbols without knowing the paging view.
+    pub offset: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -766,6 +771,7 @@ impl Tvc {
         list
     }
 
+    /// Physical ROM tracepoints as (bank, bank-offset) pairs.
     pub fn set_tracepoints(&mut self, tracepoints: &[(RomBank, u16)]) {
         self.tracepoints.clear();
         self.tracepoints.extend(tracepoints.iter().copied());
@@ -870,16 +876,16 @@ impl Tvc {
             return;
         }
         let pc = self.z80.state.pc;
-        let Some(bank) = self.bus.mmu.mapped_rom_bank(pc) else {
+        let Some((bank, offset)) = self.bus.mmu.mapped_rom_offset(pc) else {
             return;
         };
-        if self.tracepoints.contains(&(bank, pc))
+        if self.tracepoints.contains(&(bank, offset))
             && self
                 .trace_events
                 .last()
                 .is_none_or(|event| event.bank != bank || event.pc != pc)
         {
-            self.trace_events.push(ExecutionTrace { bank, pc });
+            self.trace_events.push(ExecutionTrace { bank, pc, offset });
         }
     }
 

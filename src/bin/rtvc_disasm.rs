@@ -323,6 +323,21 @@ fn load_symbols(options: &Options) -> Result<BTreeMap<u16, Vec<Symbol>>, String>
             sources,
             confidence,
         });
+        // Stacked labels share one physical key; emit the extra spellings as
+        // bare `NAME:` lines without repeating the comment block.
+        for alt in json_strings(symbol, "alt_names") {
+            out.entry(addr).or_default().push(Symbol {
+                name: label_name(&alt),
+                summary: String::new(),
+                usage: Vec::new(),
+                input: String::new(),
+                output: String::new(),
+                effects: String::new(),
+                tags: Vec::new(),
+                sources: Vec::new(),
+                confidence: String::new(),
+            });
+        }
     }
     Ok(out)
 }

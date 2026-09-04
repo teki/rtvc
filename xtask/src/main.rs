@@ -5,6 +5,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+mod rom_symbols;
+
 fn main() {
     if let Err(err) = run() {
         eprintln!("error: {err}");
@@ -38,8 +40,23 @@ fn run() -> Result<(), String> {
             }
             bundle_web_full(out_dir.as_deref())
         }
+        Some("rom-symbols") => {
+            let check = match args.next().as_deref() {
+                None => false,
+                Some("--check") => true,
+                Some(flag) => {
+                    return Err(format!(
+                        "usage: cargo xtask rom-symbols [--check] (unknown flag `{flag}`)"
+                    ));
+                }
+            };
+            if args.next().is_some() {
+                return Err("usage: cargo xtask rom-symbols [--check]".to_string());
+            }
+            rom_symbols::rom_symbols(check)
+        }
         _ => Err(
-            "usage: cargo bundle-web <snapshot.rtvcsnap>\n       cargo xtask bundle-web-skeleton [out-dir]\n       cargo xtask bundle-web-full [out-dir]"
+            "usage: cargo bundle-web <snapshot.rtvcsnap>\n       cargo xtask bundle-web-skeleton [out-dir]\n       cargo xtask bundle-web-full [out-dir]\n       cargo xtask rom-symbols [--check]"
                 .to_string(),
         ),
     }

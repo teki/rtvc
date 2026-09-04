@@ -221,6 +221,7 @@ fn execution_tracepoints_are_opt_in_and_bank_aware() {
         vec![ExecutionTrace {
             bank: RomBank::Sys,
             pc: 0x0001,
+            offset: 0x0001,
         }]
     );
 }

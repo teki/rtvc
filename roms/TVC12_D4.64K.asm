@@ -362,8 +362,8 @@ ORG C000H, SYS0, 0000H
 ; At power-on the SYS ROM is mapped into page 0, so the processor fetches this instruction at CPU
 ; address 0000H. The same physical byte normally appears at C000H when SYS occupies page 3.
 ;
-; The target is written as 0229H because execution is still using the page-0 SYS mapping. It is
-; the page-0 alias of BASIC_COLD_START at C229H.
+; The target is written as BASIC_COLD_START@SYS0 because execution is still using the
+; page-0 SYS mapping. It is the page-0 alias of BASIC_COLD_START at C229H.
 ;
 ; Entry:
 ;   PC = 0000H after reset, with SYS mapped into page 0.
@@ -375,7 +375,7 @@ ORG C000H, SYS0, 0000H
 ;   Begins machine initialization.
 ; -----------------------------------------------------------------------------
 RESET_VECTOR:
-    JP 0229H
+    JP BASIC_COLD_START@SYS0
 
 ; -----------------------------------------------------------------------------
 ; BCD DIGIT MULTIPLICATION TABLE
@@ -524,7 +524,9 @@ BASIC_COLD_START:
     IM 1
     LD A,40H
     OUT (02H),A
-    JP 0233H
+    JP LC233@SYS0
+; Page-0 SYS continuation: M=40H keeps SYS in page 0, so this lands via the 0233H alias.
+LC233:
     LD A,C0H
     OUT (02H),A
     JP F13DH
@@ -602,11 +604,13 @@ LC28E:
     LD A,40H
     OUT (02H),A
     LD SP,BFFFH
-    JP 02A9H
+    JP LC2A9@SYS0
+; Page-0 SYS continuation: M=40H keeps SYS in page 0, so this lands via the 02A9H alias.
+LC2A9:
     LD A,80H
     OUT (02H),A
     LD HL,C000H
-    CALL 0338H
+    CALL MEMORY_TEST_PAGE0@SYS0
     LD A,00H
     JR Z,C2B8H
     DEC A
@@ -651,7 +655,9 @@ LC2BD:
 WARM_RESET:
     LD A,40H
     OUT (02H),A
-    JP 02C9H
+    JP LC2C9@SYS0
+; Page-0 SYS continuation: M=40H keeps SYS in page 0, so this lands via the 02C9H alias.
+LC2C9:
     LD A,C0H
     OUT (02H),A
     LD SP,16ACH
@@ -713,7 +719,9 @@ LC2F5:
 CARTRIDGE_AUTOSTART:
     LD A,60H
     OUT (02H),A
-    JP 030DH
+    JP LC30D@SYS0
+; Page-0 SYS continuation: M=60H keeps SYS in page 0, so this lands via the 030DH alias.
+LC30D:
     LD A,20H
 
 ; Memory paging: S U U C page layout.
@@ -762,8 +770,11 @@ LC329:
 ; -----------------------------------------------------------------------------
 MOPS_SIGNATURE:
     DB 4DH, 4FH, 50H, 53H                                                           ; |MOPS|
+; Page-0 entry to the RAM page test below: called with HL preset while SYS is in page 0
+; (M=80H), so the call reaches C338H through its 0338H alias.
+MEMORY_TEST_PAGE0:
     PUSH HL
-    CALL 0348H
+    CALL LC348@SYS0
     JR C342H
 
 ; -----------------------------------------------------------------------------

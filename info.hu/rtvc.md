@@ -365,11 +365,16 @@ Az interaktív kliens a [scripts/rtvc_debug.py](../scripts/rtvc_debug.py).
 ## ROM szimbólum adatbázis
 
 A [roms/rom_symbols_1_2.json](../roms/rom_symbols_1_2.json) gondosan válogatott
-BASIC 1.2 végrehajtási tereptárgyakat, hívható rutinokat és adatokat tartalmaz.
+BASIC 1.2 végrehajtási tereptárgyakat, hívható rutinokat és adatokat tartalmaz. A fájlt
+a `cargo xtask rom-symbols` állítja elő a [roms/](../roms/) önálló listáiból;
+a címeket nem szabad kézzel szerkeszteni. A címkék címei a valódi assemblerből
+származnak, a gondozott leírások pedig `(bank, offset)` kulcs alapján egyesülnek.
 
 Egy CPU cím önmagában nem stabil ROM azonosító, mert a SYS és EXTH
-átfedő CPU tartományokat foglalhat el. A felhasználók mind a fizikai bankot, mind az eltolást feloldják.
-A hibakereső csak akkor annotál, ha a releváns bank éppen le van képezve.
+átfedő CPU tartományokat foglalhat el. A bejegyzések kulcsa a fizikai bank és az
+eltolás, a hibakereső pedig az élő CPU címet az MMU-n keresztül oldja fel erre a
+kulcsra, így minden tereptárgy abban a lapozási nézetben is jelez, amelyben a CPU
+eléri. A hibakereső csak akkor annotál, ha a releváns bank éppen le van képezve.
 
 A `usage` értékek: `trace`, `call` és `data`. A `call` címke nem jelent ABI
 garanciát; a szoftvernek továbbra is teljesítenie kell a lapozási, regiszter, BASIC állapot és munka

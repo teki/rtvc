@@ -840,6 +840,9 @@ impl DebuggerUi {
                         }
                         ui.monospace(format!("{}:{:04X}", symbol.bank.name(), symbol.address));
                         ui.strong(&symbol.name);
+                        if !symbol.alt_names.is_empty() {
+                            ui.weak(format!("(aka {})", symbol.alt_names.join(", ")));
+                        }
                     });
                     ui.label(&symbol.summary);
                     if !symbol.input.is_empty() || !symbol.output.is_empty() {
@@ -903,7 +906,7 @@ impl DebuggerUi {
 
     pub fn drain_trace_events(&mut self, emu: &mut Emu) {
         for event in emu.take_trace_events() {
-            let symbol = symbol_at(event.bank, event.pc);
+            let symbol = symbol_at(event.bank, event.offset);
             let summary = symbol
                 .map(|symbol| format!("{}: {}", symbol.name, symbol.summary))
                 .unwrap_or_else(|| "ROM tracepoint".to_string());
@@ -925,18 +928,12 @@ impl DebuggerUi {
             return;
         }
         if should_trace {
+            // Tracepoints are (bank, bank-offset) pairs, so each landmark
+            // fires in whatever paging view the CPU reaches it through.
             let tracepoints: Vec<_> = rom_symbols()
                 .iter()
                 .filter(|symbol| symbol.usage.iter().any(|usage| usage == "trace"))
-                .flat_map(|symbol| {
-                    std::iter::once((symbol.bank, symbol.address)).chain(
-                        symbol
-                            .aliases
-                            .iter()
-                            .copied()
-                            .map(|address| (symbol.bank, address)),
-                    )
-                })
+                .map(|symbol| (symbol.bank, symbol.offset))
                 .collect();
             emu.set_tracepoints(&tracepoints);
         } else {
@@ -989,9 +986,9 @@ struct RomSymbolRaw {
     bank: String,
     address: String,
     offset: String,
-    #[serde(default)]
-    aliases: Vec<String>,
     name: String,
+    #[serde(default)]
+    alt_names: Vec<String>,
     #[serde(default)]
     usage: Vec<String>,
     summary: String,
@@ -1008,8 +1005,9 @@ struct RomSymbol {
     bank: RomBank,
     address: u16,
     offset: u16,
-    aliases: Vec<u16>,
     name: String,
+    /// Other stacked labels for the same physical byte.
+    alt_names: Vec<String>,
     usage: Vec<String>,
     summary: String,
     input: String,
@@ -1021,6 +1019,10 @@ impl RomSymbol {
     fn matches(&self, search: &str) -> bool {
         search.is_empty()
             || self.name.to_ascii_lowercase().contains(search)
+            || self
+                .alt_names
+                .iter()
+                .any(|name| name.to_ascii_lowercase().contains(search))
             || self.summary.to_ascii_lowercase().contains(search)
             || self
                 .tags
@@ -1050,12 +1052,8 @@ fn rom_symbols() -> &'static [RomSymbol] {
                     bank,
                     address: parse_address(&symbol.address)?,
                     offset: parse_address(&symbol.offset)?,
-                    aliases: symbol
-                        .aliases
-                        .iter()
-                        .filter_map(|alias| parse_address(alias))
-                        .collect(),
                     name: symbol.name,
+                    alt_names: symbol.alt_names,
                     usage: symbol.usage,
                     summary: symbol.summary,
                     input: symbol.input,
@@ -1075,13 +1073,27 @@ fn symbol_at_mapped_address(emu: &Emu, address: u16) -> Option<&'static RomSymbo
     if emu.system() != System::Tvc || emu.machine_type.rom_version != RomVersion::V1_2 {
         return None;
     }
-    let bank = emu.tvc()?.bus.mmu.mapped_rom_bank(address)?;
-    symbol_at(bank, address)
+    let (bank, offset) = emu.tvc()?.bus.mmu.mapped_rom_offset(address)?;
+    symbol_at(bank, offset)
 }
 
-fn symbol_at(bank: RomBank, address: u16) -> Option<&'static RomSymbol> {
-    rom_symbols().iter().find(|symbol| {
-        symbol.bank == bank && (symbol.address == address || symbol.aliases.contains(&address))
+/// Offset-keyed lookup: (physical bank, image offset) is the stable identity
+/// of a ROM byte across all paging views.
+fn symbol_at(bank: RomBank, offset: u16) -> Option<&'static RomSymbol> {
+    let index = rom_symbol_index();
+    index
+        .get(&(bank, offset))
+        .and_then(|position| rom_symbols().get(*position))
+}
+
+fn rom_symbol_index() -> &'static HashMap<(RomBank, u16), usize> {
+    static INDEX: OnceLock<HashMap<(RomBank, u16), usize>> = OnceLock::new();
+    INDEX.get_or_init(|| {
+        rom_symbols()
+            .iter()
+            .enumerate()
+            .map(|(position, symbol)| ((symbol.bank, symbol.offset), position))
+            .collect()
     })
 }
 

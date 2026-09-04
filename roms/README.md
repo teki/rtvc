@@ -48,8 +48,9 @@ rtvc-asm --format bin --origin E000H roms/TVC12_D7.64K.asm -o /tmp/TVC12_D7.64K.
 Mapping entries are preserved in TOML output as `[[mappings]]` metadata but do
 not change binary output. The separate
 [rom_symbols_1_2.json](rom_symbols_1_2.json) file is the emulator debugger's
-compact BASIC 1.2 symbol database; it is not an authoring dependency of these
-ASM listings.
+BASIC 1.2 symbol database; it is generated from these listings by
+`cargo xtask rom-symbols` (curated prose is merged by bank and offset), not
+hand-maintained.
 
 When a book diagram and a ROM byte disagree, retain the ROM byte and record the
 uncertainty in an ASM comment. Do not repair executable bytes by copying OCR

@@ -229,7 +229,16 @@ This skill provides step-by-step instructions and references for compiling, exec
   ```
   - Uses the emulator's Z80 disassembler and validates emitted instructions with the helper assembler.
   - Pass `--symbols roms/rom_symbols_1_2.json --bank sys --bank-offset 0000H` to add ROM labels and comments.
+  - Stacked labels from the symbol database (`alt_names`) render as bare `NAME:` lines under the primary entry without repeating its comment block.
   - Pass repeated `--data-range START-END` options for known tables or text regions that should remain `DB` data.
+
+- **Regenerate the ROM symbol database from the ASM listings:**
+  ```bash
+  cargo xtask rom-symbols
+  cargo xtask rom-symbols --check
+  ```
+  - `roms/rom_symbols_1_2.json` is generated, never hand-edited: label addresses come from `rtvc-asm`, keyed by `(bank, image offset)`, with curated prose merged by the same key.
+  - Run `--check` after touching `roms/TVC12_*.asm` (e.g. renames, new labels) to verify the checked-in JSON is current; it exits nonzero when stale.
 
 ### Cross-Target Validation
 

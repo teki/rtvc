@@ -1,4 +1,4 @@
-use super::{FastBootRom, TvcMmu};
+use super::{FastBootRom, RomBank, TvcMmu};
 use crate::bus::FakeBus;
 use crate::z80::Z80;
 
@@ -74,6 +74,23 @@ fn fast_boot_does_not_patch_unexpected_bytes() {
     assert_eq!(mmu.read_raw_bank("sys", 0x0352, 1).unwrap(), [0x00]);
     assert_eq!(mmu.read_raw_bank("sys", 0x0357, 12).unwrap(), [0x00; 12]);
     assert_eq!(mmu.read_raw_bank("sys", 0x0F21, 2).unwrap(), [0x00, 0x00]);
+}
+
+#[test]
+fn mapped_rom_offset_identifies_bytes_across_paging_views() {
+    let mut mmu = TvcMmu::new(false);
+    // Reset mapping: page 0 shows SYS, page 3 shows CART.
+    mmu.set_map(0x00);
+    assert_eq!(mmu.mapped_rom_offset(0x0229), Some((RomBank::Sys, 0x0229)));
+    assert_eq!(mmu.mapped_rom_offset(0xC229), None);
+    // SYS in pages 0 and 3: one physical byte, two CPU addresses.
+    mmu.set_map(0x40);
+    assert_eq!(mmu.mapped_rom_offset(0x0229), Some((RomBank::Sys, 0x0229)));
+    assert_eq!(mmu.mapped_rom_offset(0xC229), Some((RomBank::Sys, 0x0229)));
+    // Normal mapping: page 0 shows U0 RAM, page 3 shows SYS.
+    mmu.set_map(0x50);
+    assert_eq!(mmu.mapped_rom_offset(0x0229), None);
+    assert_eq!(mmu.mapped_rom_offset(0xC229), Some((RomBank::Sys, 0x0229)));
 }
 
 #[test]
