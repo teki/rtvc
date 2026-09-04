@@ -474,6 +474,7 @@ impl DebuggerUi {
     }
 
     pub fn draw_cpu(&mut self, ui: &mut egui::Ui, emu: &mut Emu) {
+        let mut state_changed = false;
         ui.horizontal(|ui| {
             if ui
                 .button(if emu.running { "Pause" } else { "Run" })
@@ -484,16 +485,19 @@ impl DebuggerUi {
                 }
                 emu.running = !emu.running;
                 self.record_control(if emu.running { "Continued" } else { "Paused" });
+                state_changed = true;
             }
             if ui.button("Step").clicked() {
                 self.prepare_history_resume();
                 emu.debug_step(1);
                 self.record_control("Stepped 1 instruction");
+                state_changed = true;
             }
             if ui.button("Step 10").clicked() {
                 self.prepare_history_resume();
                 emu.debug_step(10);
                 self.record_control("Stepped 10 instructions");
+                state_changed = true;
             }
             if ui
                 .button("Run to IRQ")
@@ -513,26 +517,34 @@ impl DebuggerUi {
                         result.elapsed_cycles
                     ));
                 }
+                state_changed = true;
             }
             if ui.button("Reset").clicked() {
                 emu.reset();
                 emu.running = false;
                 self.record_control("Reset and paused");
+                state_changed = true;
             }
         });
+        // The CPU pane may be drawn after the disassembly pane in a docked
+        // workspace. Redraw immediately after a debugger action so Follow PC
+        // observes the post-step state instead of waiting for the idle timer.
+        if state_changed {
+            ui.ctx().request_repaint();
+        }
         ui.separator();
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             let state = emu.z80_state();
             let registers = [
+                ("PC", state.get_reg16(11)),
+                ("SP", state.get_reg16(10)),
                 ("AF", state.get_reg16(0)),
                 ("BC", state.get_reg16(1)),
                 ("DE", state.get_reg16(2)),
                 ("HL", state.get_reg16(3)),
                 ("IX", state.get_reg16(4)),
                 ("IY", state.get_reg16(5)),
-                ("SP", state.get_reg16(10)),
-                ("PC", state.get_reg16(11)),
                 ("AF'", state.get_reg16(6)),
                 ("BC'", state.get_reg16(7)),
                 ("DE'", state.get_reg16(8)),
