@@ -26,7 +26,7 @@ the program area around `19EFH`.
 Use a booted snapshot when testing injected `BASIC_START` programs:
 
 ```bash
-cargo run --bin rtvc -- snapshots/boot12dos.rtvcsnap.zip \
+cargo run --bin rtvc -- data/snapshots/boot12dos.rtvcsnap.zip \
   -i target/coding/tvc-interrupt-raster-probe.cas
 ```
 
@@ -42,6 +42,16 @@ The first bytes at `19EFH` are the one-line `USR(6704)` BASIC launcher emitted
 by `rtvc-asm`; `1A30H` is the machine-code entry point. The maintained probe
 source is
 [coding/tvc-interrupt-raster-probe.asm](../coding/tvc-interrupt-raster-probe.asm).
+
+Numbered BASIC sources use the same injection path after `rtvc-basic`:
+
+```bash
+mkdir -p target/coding
+cargo run --bin rtvc-basic -- coding/crtc-register-explorer.bas \
+  -o target/coding/crtc-register-explorer.cas
+cargo run --bin rtvc -- data/snapshots/boot12dos.rtvcsnap.zip \
+  -i target/coding/crtc-register-explorer.cas
+```
 
 Game-porting and VT-DOS software techniques are maintained in the standalone
 `tvc-ports` knowledge base. This document retains only emulator-specific

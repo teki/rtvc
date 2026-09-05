@@ -67,12 +67,17 @@ megjeleníteni:
 | --- | --- | --- |
 | `rtvc-dsk` | TVC FAT12 lemezképek létrehozása, vizsgálata és módosítása. | `rtvc-dsk dir lemez.dsk` |
 | `rtvc-asm` | Kis Z80 források fordítása TOML, CAS vagy nyers bináris formátumba. | `rtvc-asm --format cas demo.asm -o demo.cas` |
+| `rtvc-basic` | Számozott TVC BASIC forrás fordítása CAS vagy nyers programbájtokká. | `rtvc-basic demo.bas -o demo.cas` |
+| `rtvc-tocas` | `.bas` és `.asm` források fordítása melléjük írt `.cas` fájlokká. | `rtvc-tocas demo.bas helper.asm` |
 | `rtvc-disasm` | Bináris vagy ROM-adatok visszafordítása újra lefordítható assembly forrássá. | `rtvc-disasm --origin C000H rom.bin -o rom.asm` |
 | `rtvc-cas2wav` | TVC CAS kazettakép átalakítása 44,1 kHz-es WAV fájllá. | `rtvc-cas2wav bemenet.cas kimenet.wav` |
 | `rtvc-tap2toml` | ZX Spectrum TAP kazettakép átalakítása elemzési és portolási TOML formátumba. | `rtvc-tap2toml jatek.tap -o jatek.toml` |
 
 Az assembler és disassembler szintaxisát és kimeneti formátumait az
-[assembler referencia](info.hu/assembler.md) ismerteti.
+[assembler referencia](info.hu/assembler.md) ismerteti. Az `rtvc-basic`
+használatát a [TVC BASIC referencia](info.hu/basic.md#tokenizalt-programformatum)
+írja le. Az `rtvc-tocas` `.bas` és `.asm` fájlokat fordít melléjük írt `.cas`
+képekké.
 
 ### Első indítás macOS-en
 

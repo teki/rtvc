@@ -187,7 +187,7 @@ This skill provides step-by-step instructions and references for compiling, exec
   - Release builds use LTO, one codegen unit, stripped symbols, and `panic = "abort"` to keep binaries smaller. Windows and macOS command-line tools are built separately with `--no-default-features --features cli-tools` so they do not include the native UI/audio dependency set.
   - It uploads `rtvc-windows-x64.zip`, `rtvc-macos-x64.zip`, and `rtvc-macos-arm64.zip`.
   - The GitHub release body is extracted from the matching `## v<version>` section in `CHANGES.md`.
-  - The Windows archive expands to an `rtvc-windows-x64/` directory containing `rtvc.exe`, `rtvc-dsk.exe`, `rtvc-asm.exe`, `rtvc-disasm.exe`, `rtvc-cas2wav.exe`, `rtvc-tap2toml.exe`, English and Hungarian READMEs and complete `info/` documentation trees, `LICENSE`, `roms/`, `progs/`, and `web/`.
+  - The Windows archive expands to an `rtvc-windows-x64/` directory containing `rtvc.exe`, `rtvc-dsk.exe`, `rtvc-asm.exe`, `rtvc-basic.exe`, `rtvc-tocas.exe`, `rtvc-disasm.exe`, `rtvc-cas2wav.exe`, `rtvc-tap2toml.exe`, English and Hungarian READMEs and complete `info/` documentation trees, `LICENSE`, `roms/`, `progs/`, and `web/`.
   - Each macOS archive expands to an architecture-named directory containing the ad hoc signed `RTVC.app`, individually ad hoc signed command-line tools under `bin/`, English and Hungarian READMEs and complete `info/` documentation trees, and `LICENSE`. The release workflow does not use paid Developer ID signing or notarization, so users may need to remove the browser quarantine flag from the extracted directory with `xattr -dr com.apple.quarantine rtvc-macos-<arch>` before first use.
   - Native windows use `assets/rtvc-app-icon.png`; Windows release executables embed `assets/rtvc-app-icon.ico`, and macOS app bundles include `assets/rtvc-app-icon.icns`.
   - The app bundle includes `roms/`, `progs/`, and `web/` beside `Contents/MacOS/rtvc` so Finder launches can find runtime assets.
@@ -212,6 +212,22 @@ This skill provides step-by-step instructions and references for compiling, exec
   - Pass repeatable `-d NAME=VALUE` options to replace `%NAME%` placeholders before assembly; unresolved placeholders are errors.
   - Use `-` as the input path to read source from stdin; omit `-o` to write TOML to stdout.
   - In [scripts/rtvc_debug.py](../../../scripts/rtvc_debug.py), use `loadasm helper.toml` to write TOML segments to mapped memory.
+
+- **Compile numbered TVC BASIC source to CAS:**
+  ```bash
+  cargo run --bin rtvc-basic -- coding/crtc-register-explorer.bas -o target/coding/crtc-register-explorer.cas
+  ```
+  - Tokenizes BASIC lines with the BASIC 1.2 keyword table from [src/emulator/basic.rs](../../../src/emulator/basic.rs).
+  - Default `--format cas` matches a BASIC `SAVE` header; `--format bin` writes the raw payload; `--auto` sets the CAS autostart byte.
+  - Use `-` as the input path to read source from stdin; omit `-o` to write output to stdout.
+
+- **Convert `.bas` and `.asm` sources to sibling CAS files:**
+  ```bash
+  cargo run --bin rtvc-tocas -- coding/crtc-register-explorer.bas coding/crtc-register-explorer.asm
+  ```
+  - Compiles `.bas` inputs with the same path as `rtvc-basic`, and assembles `.asm` inputs with the same path as `rtvc-asm --format cas`.
+  - Writes each `.cas` beside its source, replacing the `.bas` or `.asm` extension.
+  - Accepts multiple inputs and converts all of them. Files with any other extension are printed and skipped.
 
 - **Convert a ZX Spectrum TAP tape image to rtvc TOML:**
   ```bash

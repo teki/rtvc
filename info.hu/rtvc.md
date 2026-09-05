@@ -12,6 +12,8 @@ gép-specifikációért lásd a [TVC Műszaki Referencia](tvc.md) dokumentumot.
 - [Hangemuláció](#sound-emulation)
 - [Billentyűzetbemenet](#keyboard-input)
 - [Média kezelése](#media-handling)
+- [Parancssori BASIC-fordító](#command-line-basic-compiler)
+- [Parancssori CAS-konverter](#command-line-cas-converter)
 - [ROM betöltés és gyors rendszerindítás](#rom-loading-and-fast-boot)
 - [Pillanatkép formátum](#snapshot-format)
 - [Natív és webes felhasználói felület](#native-and-web-ui)
@@ -35,7 +37,8 @@ Az `rtvc` egy Rust library crate natív, fej nélküli, könnyűsúlyú WebAssem
 | [src/zx82.rs](../src/zx82.rs) | kezdeti Spectrum 48K memória, ULA, képkocka időzítés és teljes képkockás megjelenítő |
 | [src/key.rs](../src/key.rs) | billentyűzetmátrix és host-billentyű adaptáció |
 | [src/sound.rs](../src/sound.rs) | hangosztó, időzítő, DAC, PCM generálás |
-| [src/cas.rs](../src/cas.rs) | CAS-ból impulzus-intervallum konverzió |
+| [src/cas.rs](../src/cas.rs) | CAS tároló kódolás és CAS-ból impulzus-intervallum konverzió |
+| [src/emulator/basic.rs](../src/emulator/basic.rs) | TVC BASIC tokenizáló és visszafejtő |
 | [src/tape.rs](../src/tape.rs) | kazetta szállítás és jelmintavételezés |
 | [src/expansion.rs](../src/expansion.rs) | négyfoglalatos bővítőkártya-útválasztás |
 | [src/hbf.rs](../src/hbf.rs) | HBF kártya memória és regiszterek |
@@ -60,7 +63,7 @@ validációt függetleníti a gépemulációtól.
 | Cél | Funkciók | Megjegyzések |
 | --- | --- | --- |
 | Natív asztali | alapértelmezett `native` | egui/eframe, cpal hang, fájlrendszer média, zip támogatás, TCP hibakereső |
-| Natív parancssori segédprogramok | `cli-tools` alapértelmezett funkciók nélkül | lemez-, assembler-, disassembler- és CAS–WAV segédprogramok asztali UI- és hangfüggőségek nélkül |
+| Natív parancssori segédprogramok | `cli-tools` alapértelmezett funkciók nélkül | lemez-, assembler-, BASIC-fordító-, CAS-konverter-, disassembler- és CAS–WAV segédprogramok asztali UI- és hangfüggőségek nélkül |
 | Natív fej nélküli | alapértelmezett `native`, `--headless` CLI | gép ciklus és TCP hibakereső GUI nélkül |
 | Integrált Zx82 | alapértelmezett `native` és `wasm-full` | Spectrum 48K állapot betöltés a közös alkalmazáson és hibakeresőn keresztül |
 | Önálló Zx82 | alapértelmezett `native`, `cargo run --bin zx82` | fókuszált Spectrum mag futtató |
@@ -243,6 +246,27 @@ A könnyűsúlyú WASM mag nem tartalmaz zip támogatást.
 A Gamebase indítások betöltik a beágyazott tiszta VT-DOS rendszerindító pillanatképet, kiválasztják a
 megfelelő TVC 1.2 VT-DOS gépet, csatlakoztatják vagy befecskendezik a médiát, elindítják az emulációt, és
 beírják a `RUN`-t CAS esetén vagy a `LOAD "*"`-ot DSK esetén.
+
+## Parancssori BASIC-fordító
+
+Az `rtvc-basic input.bas -o output.cas` számozott TVC BASIC forrást tokenizál a
+BASIC 1.2 kulcsszótábla alapján, és CAS képet ír. Az alapértelmezett fejléc a
+BASIC `SAVE` mentésnek felel meg. A `--format bin` nyers payloadot ír, a
+`--auto` az autostart bájtot állítja, a `-` a szabványos bemenetről olvas.
+A fordító elutasítja a szabványos 64K TVC BASIC 42 256 bájtos mérethatárát
+meghaladó programokat; a határ a lezáróbájtot is tartalmazza. A futásidejű
+foglalások és a gép memóriabeállításai kisebb programot tehetnek szükségessé.
+
+A memóriabeli sorformátumot és a tokenizálási szabályokat a
+[basic.md](basic.md#tokenizalt-programformatum) ismerteti.
+
+## Parancssori CAS-konverter
+
+Az `rtvc-tocas input.bas helper.asm` egy vagy több `.bas` és `.asm` forrást
+fordít melléjük írt `.cas` fájlokká. A `.bas` bemenetek az `rtvc-basic`, az
+`.asm` bemenetek az `rtvc-asm --format cas` útvonalát használják. A kimenet
+a forrás útvonala `.cas` kiterjesztéssel. Az egyéb kiterjesztésű fájlokat
+kiírja és kihagyja.
 
 ## ROM betöltés és gyors rendszerindítás
 

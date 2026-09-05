@@ -29,7 +29,7 @@ jobs:
         run: cargo build --release --bin rtvc
 
       - name: Build command-line tools
-        run: cargo build --release --no-default-features --features cli-tools --bin rtvc-dsk --bin rtvc-asm --bin rtvc-disasm --bin rtvc-cas2wav --bin rtvc-tap2toml
+        run: cargo build --release --no-default-features --features cli-tools --bin rtvc-dsk --bin rtvc-asm --bin rtvc-basic --bin rtvc-tocas --bin rtvc-disasm --bin rtvc-cas2wav --bin rtvc-tap2toml
 
       - name: Build web app
         run: cargo xtask bundle-web-full package/rtvc-windows-x64/web
@@ -42,6 +42,8 @@ jobs:
           Copy-Item target/release/rtvc.exe $PackageDir/
           Copy-Item target/release/rtvc-dsk.exe $PackageDir/
           Copy-Item target/release/rtvc-asm.exe $PackageDir/
+          Copy-Item target/release/rtvc-basic.exe $PackageDir/
+          Copy-Item target/release/rtvc-tocas.exe $PackageDir/
           Copy-Item target/release/rtvc-disasm.exe $PackageDir/
           Copy-Item target/release/rtvc-cas2wav.exe $PackageDir/
           Copy-Item target/release/rtvc-tap2toml.exe $PackageDir/
@@ -92,7 +94,7 @@ jobs:
         run: cargo build --release --bin rtvc --target ${{ matrix.target }}
 
       - name: Build command-line tools
-        run: cargo build --release --no-default-features --features cli-tools --target ${{ matrix.target }} --bin rtvc-dsk --bin rtvc-asm --bin rtvc-disasm --bin rtvc-cas2wav --bin rtvc-tap2toml
+        run: cargo build --release --no-default-features --features cli-tools --target ${{ matrix.target }} --bin rtvc-dsk --bin rtvc-asm --bin rtvc-basic --bin rtvc-tocas --bin rtvc-disasm --bin rtvc-cas2wav --bin rtvc-tap2toml
 
       - name: Build web app
         run: cargo xtask bundle-web-full package/${{ matrix.folder }}/web
