@@ -4,10 +4,17 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+## v0.8.6 - 2026-09-05
+
 - Added `rtvc-basic` to compile numbered TVC BASIC source into CAS cassette
   images.
-- Added `rtvc-tocas` to convert `.bas` and `.asm` sources into sibling `.cas`
+- Added `rtvc-tocas` to bulk convert `.bas` and `.asm` sources into sibling `.cas`
   files.
+- Expanded the TVC debugger with bounded instruction tracing, richer
+  automation, mapped-memory diagnostics, and rewindable frame history.
+- Improved TVC video emulation and diagnostics, and reorganized ROM,
+  snapshot, and local-state resources.
+
 
 ## v0.8.5 - 2026-06-20
 
