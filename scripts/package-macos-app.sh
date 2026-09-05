@@ -14,7 +14,7 @@ app_name="RTVC.app"
 bundle_id="one.teki.rtvc"
 bundle_version="$(awk -F'"' '/^version =/ { print $2; exit }' Cargo.toml)"
 
-cli_tools=(rtvc-dsk rtvc-asm rtvc-disasm rtvc-cas2wav rtvc-tap2toml)
+cli_tools=(rtvc-dsk rtvc-asm rtvc-basic rtvc-tocas rtvc-disasm rtvc-cas2wav rtvc-tap2toml)
 
 if [[ ! -f "$binary_path" ]]; then
   echo "missing binary: $binary_path" >&2
