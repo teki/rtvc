@@ -3,7 +3,8 @@ use std::sync::OnceLock;
 
 use crate::emu::{Emu, RomVersion};
 use crate::frame_history::{
-    FrameHistory, FrameThumbnail, MAX_HISTORY_SECONDS, MIN_HISTORY_SECONDS,
+    FrameHistory, FrameThumbnail, HistoryMode, MAX_HISTORY_SECONDS, MIN_HISTORY_SECONDS,
+    TVC_FRAMES_PER_SECOND,
 };
 use crate::instruction_trace::{DEFAULT_TRACE_CAPACITY, MAX_TRACE_CAPACITY, MIN_TRACE_CAPACITY};
 use crate::machine::System;
@@ -208,18 +209,34 @@ impl DebuggerUi {
             }
 
             ui.separator();
-            ui.label("History:");
-            let mut duration = self.frame_history.duration_seconds();
-            if ui
-                .add(
-                    egui::DragValue::new(&mut duration)
-                        .range(MIN_HISTORY_SECONDS..=MAX_HISTORY_SECONDS)
-                        .suffix(" s"),
-                )
-                .changed()
-            {
-                self.frame_history.set_duration_seconds(duration);
-                self.prune_history_textures();
+            let mut mode = self.frame_history.mode();
+            egui::ComboBox::from_id_salt("frame_history_mode")
+                .selected_text(mode.label())
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut mode, HistoryMode::PerFrame, "Per frame");
+                    ui.selectable_value(&mut mode, HistoryMode::LongTerm, "Long term");
+                });
+            if mode != self.frame_history.mode() {
+                self.frame_history.set_mode(mode);
+                self.frame_history_textures.clear();
+                self.frame_history_error = None;
+            }
+            if mode == HistoryMode::PerFrame {
+                ui.label("History:");
+                let mut duration = self.frame_history.duration_seconds();
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut duration)
+                            .range(MIN_HISTORY_SECONDS..=MAX_HISTORY_SECONDS)
+                            .suffix(" s"),
+                    )
+                    .changed()
+                {
+                    self.frame_history.set_duration_seconds(duration);
+                    self.prune_history_textures();
+                }
+            } else {
+                ui.label("Latest 1 s: every frame · to 10 s: every second · to 30 s: every 10 s");
             }
         });
 
@@ -238,14 +255,14 @@ impl DebuggerUi {
                 .is_some_and(|offset| offset != 0);
 
             if ui
-                .add_enabled(can_back, egui::Button::new("Back Frame"))
+                .add_enabled(can_back, egui::Button::new("Back Snapshot"))
                 .clicked()
                 && self.frame_history.select_previous()
             {
                 self.restore_selected_history_frame(emu);
             }
             if ui
-                .add_enabled(can_forward, egui::Button::new("Forward Frame"))
+                .add_enabled(can_forward, egui::Button::new("Forward Snapshot"))
                 .clicked()
                 && self.frame_history.select_next()
             {
@@ -261,7 +278,7 @@ impl DebuggerUi {
             ui.separator();
             ui.strong(history_position_label(self.frame_history.selected_offset()));
             ui.label(format!(
-                "{} / {} frames, {}",
+                "{} / {} snapshots, {}",
                 self.frame_history.len(),
                 self.frame_history.capacity(),
                 format_memory_size(self.frame_history.memory_bytes())
@@ -289,7 +306,6 @@ impl DebuggerUi {
 
         self.ensure_history_textures(ui.ctx());
         let selected = self.frame_history.selected_index();
-        let newest = self.frame_history.len().saturating_sub(1);
         let mut clicked = None;
         egui::ScrollArea::horizontal()
             .id_salt("frame_history_timeline")
@@ -301,11 +317,15 @@ impl DebuggerUi {
                         let Some(texture) = self.frame_history_textures.get(&frame.id) else {
                             continue;
                         };
-                        let offset = index as isize - newest as isize;
+                        let offset = self.frame_history.frame_offset(index).unwrap_or(0);
                         let label = if offset == 0 {
                             format!("Live  PC {:04X}", frame.pc)
                         } else {
-                            format!("{offset}  PC {:04X}", frame.pc)
+                            format!(
+                                "{}  PC {:04X}",
+                                history_position_label(Some(offset)),
+                                frame.pc
+                            )
                         };
                         ui.vertical(|ui| {
                             let image = egui::Image::new(texture)
@@ -1148,7 +1168,10 @@ fn history_position_label(offset: Option<isize>) -> String {
     match offset {
         Some(0) => "Live".to_string(),
         Some(-1) => "-1 frame".to_string(),
-        Some(offset) => format!("{offset} frames"),
+        Some(offset) => format!(
+            "{offset} frames ({:.2} s)",
+            offset as f64 / TVC_FRAMES_PER_SECOND as f64
+        ),
         None => "No frames".to_string(),
     }
 }

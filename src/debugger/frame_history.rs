@@ -6,6 +6,22 @@ pub const MAX_HISTORY_SECONDS: u32 = 30;
 pub const TVC_FRAMES_PER_SECOND: usize = 50;
 const THUMBNAIL_MAX_WIDTH: usize = 160;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HistoryMode {
+    #[default]
+    PerFrame,
+    LongTerm,
+}
+
+impl HistoryMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::PerFrame => "Per frame",
+            Self::LongTerm => "Long term",
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct FrameThumbnail {
     pub pixels: Vec<u32>,
@@ -63,6 +79,7 @@ pub struct FrameHistory {
     selected: Option<usize>,
     recording: bool,
     duration_seconds: u32,
+    mode: HistoryMode,
     next_id: u64,
     next_frame_number: u64,
 }
@@ -74,6 +91,7 @@ impl Default for FrameHistory {
             selected: None,
             recording: false,
             duration_seconds: DEFAULT_HISTORY_SECONDS,
+            mode: HistoryMode::default(),
             next_id: 1,
             next_frame_number: 0,
         }
@@ -100,6 +118,17 @@ impl FrameHistory {
         self.recording
     }
 
+    pub fn mode(&self) -> HistoryMode {
+        self.mode
+    }
+
+    pub fn set_mode(&mut self, mode: HistoryMode) {
+        if self.mode != mode {
+            self.mode = mode;
+            self.clear();
+        }
+    }
+
     pub fn duration_seconds(&self) -> u32 {
         self.duration_seconds
     }
@@ -110,7 +139,10 @@ impl FrameHistory {
     }
 
     pub fn capacity(&self) -> usize {
-        self.duration_seconds as usize * TVC_FRAMES_PER_SECOND
+        match self.mode {
+            HistoryMode::PerFrame => self.duration_seconds as usize * TVC_FRAMES_PER_SECOND,
+            HistoryMode::LongTerm => TVC_FRAMES_PER_SECOND + 9 + 2,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -134,8 +166,13 @@ impl FrameHistory {
     }
 
     pub fn selected_offset(&self) -> Option<isize> {
-        let selected = self.selected?;
-        Some(selected as isize - self.frames.len() as isize + 1)
+        self.frame_offset(self.selected?)
+    }
+
+    pub fn frame_offset(&self, index: usize) -> Option<isize> {
+        let frame = self.frames.get(index)?;
+        let newest = self.frames.back()?;
+        Some(-((newest.frame_number - frame.frame_number) as isize))
     }
 
     pub fn memory_bytes(&self) -> usize {
@@ -213,11 +250,30 @@ impl FrameHistory {
 
     fn truncate_future(&mut self) {
         if let Some(selected) = self.selected {
-            self.frames.truncate(selected + 1);
+            if selected + 1 < self.frames.len() {
+                self.frames.truncate(selected + 1);
+                self.next_frame_number = self.frames[selected].frame_number + 1;
+            }
         }
     }
 
     fn enforce_capacity(&mut self) {
+        if self.mode == HistoryMode::LongTerm {
+            let Some(newest) = self.frames.back().map(|frame| frame.frame_number) else {
+                return;
+            };
+            let selected_id = self.selected().map(|frame| frame.id);
+            let fps = TVC_FRAMES_PER_SECOND as u64;
+            self.frames.retain(|frame| {
+                let age = newest - frame.frame_number;
+                age < fps
+                    || (age < 10 * fps && frame.frame_number % fps == 0)
+                    || (age < 30 * fps && frame.frame_number % (10 * fps) == 0)
+            });
+            self.selected =
+                selected_id.and_then(|id| self.frames.iter().position(|frame| frame.id == id));
+            return;
+        }
         let excess = self.frames.len().saturating_sub(self.capacity());
         if excess == 0 {
             return;
@@ -328,6 +384,70 @@ mod tests {
 
         assert_eq!(history.len(), 50);
         assert_eq!(history.frames.front().unwrap().snapshot, vec![25]);
+    }
+
+    #[test]
+    fn long_term_history_thins_older_frames_and_expires_them() {
+        let mut history = FrameHistory::default();
+        history.set_mode(HistoryMode::LongTerm);
+        history.start();
+        for frame in 0..=2000 {
+            record(&mut history, (frame % 256) as u8);
+            assert!(history.len() <= history.capacity());
+        }
+        let numbers: Vec<_> = history.frames().iter().map(|f| f.frame_number).collect();
+        let expected: Vec<_> = [1000, 1500]
+            .into_iter()
+            .chain((1550..=1950).step_by(50))
+            .chain(1951..=2000)
+            .collect();
+        assert_eq!(numbers, expected);
+        history.select(0);
+        assert_eq!(history.selected_offset(), Some(-1000));
+        assert!(history.select_next());
+        assert_eq!(history.selected_offset(), Some(-500));
+    }
+
+    #[test]
+    fn long_term_rewind_resumes_at_selected_emulated_time() {
+        let mut history = FrameHistory::default();
+        history.set_mode(HistoryMode::LongTerm);
+        history.start();
+        for frame in 0..=1000 {
+            record(&mut history, (frame % 256) as u8);
+        }
+        let index = history
+            .frames()
+            .iter()
+            .position(|f| f.frame_number == 500)
+            .unwrap();
+        history.select(index);
+        assert!(history.branch_from_selected());
+        record(&mut history, 42);
+        assert_eq!(history.selected().unwrap().frame_number, 501);
+        assert!(history.select_previous());
+        assert_eq!(history.selected_offset(), Some(-1));
+    }
+
+    #[test]
+    fn changing_modes_clears_history_and_preserves_recording_and_duration() {
+        let mut history = FrameHistory::default();
+        history.set_duration_seconds(7);
+        history.start();
+        record(&mut history, 1);
+        history.set_mode(HistoryMode::LongTerm);
+        assert!(history.is_empty());
+        assert_eq!(history.selected_index(), None);
+        assert!(history.is_recording());
+        record(&mut history, 2);
+        assert_eq!(history.selected().unwrap().frame_number, 0);
+        history.set_mode(HistoryMode::LongTerm);
+        assert_eq!(history.len(), 1);
+        history.stop();
+        history.set_mode(HistoryMode::PerFrame);
+        assert!(history.is_empty());
+        assert!(!history.is_recording());
+        assert_eq!(history.duration_seconds(), 7);
     }
 
     #[test]

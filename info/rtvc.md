@@ -421,12 +421,19 @@ The TVC CPU pane shows the configured CRTC display start address, video-interrup
 cursor address, and its zero-based active-screen raster line together as
 `VID START AAAA  IRQ AAAA/R`.
 
-The TVC-only Frame History pane records an adjustable 1–30 seconds of in-memory
-state at one snapshot per completed frame. Record starts a new timeline; Stop
-retains it. Back Frame, Forward Frame, Return to Live, and clickable thumbnails
-restore a selected frame and pause execution. The pane reports negative offsets
-from the newest frame and current memory use. Resuming or instruction-stepping
-from an older frame discards its newer branch.
+The TVC-only Frame History pane offers two in-memory recording modes:
+- **Per frame** keeps an adjustable 1–30 seconds at one snapshot per completed frame.
+- **Long term** keeps every frame for the latest second, one snapshot per second
+  from 1–10 seconds ago, and one per ten seconds from 10–30 seconds ago. Older
+  snapshots expire automatically, bounding history to at most 61 snapshots.
+  Ages use emulated time at 50 frames per second, so pausing does not age history.
+
+Switching modes clears the timeline while preserving the recording/stopped state.
+Record starts a new timeline; Stop retains it. Back Snapshot, Forward Snapshot,
+Return to Live, and clickable thumbnails restore a selected snapshot and pause
+execution. The pane reports actual frame/time offsets from the newest snapshot
+and current memory use. Resuming or instruction-stepping from an older snapshot
+discards its newer branch and continues the timeline from that emulated time.
 
 History restore shares the normal TVC snapshot codec but loads into the current
 machine so attached media remain in place. Keyboard state is released and
