@@ -207,6 +207,14 @@ impl DebuggerUi {
             {
                 self.frame_history.stop();
             }
+            if ui
+                .add_enabled(!self.frame_history.is_empty(), egui::Button::new("Clear"))
+                .clicked()
+            {
+                self.frame_history.clear();
+                self.frame_history_textures.clear();
+                self.frame_history_error = None;
+            }
 
             ui.separator();
             let mut mode = self.frame_history.mode();
@@ -307,38 +315,44 @@ impl DebuggerUi {
         self.ensure_history_textures(ui.ctx());
         let selected = self.frame_history.selected_index();
         let mut clicked = None;
-        egui::ScrollArea::horizontal()
+        let thumbnail_rows = self.frame_history.thumbnail_rows();
+        egui::ScrollArea::both()
             .id_salt("frame_history_timeline")
-            .auto_shrink([false, true])
-            .stick_to_right(self.frame_history.is_recording())
+            .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    for (index, frame) in self.frame_history.frames().iter().enumerate() {
-                        let Some(texture) = self.frame_history_textures.get(&frame.id) else {
-                            continue;
-                        };
-                        let offset = self.frame_history.frame_offset(index).unwrap_or(0);
-                        let label = if offset == 0 {
-                            format!("Live  PC {:04X}", frame.pc)
-                        } else {
-                            format!(
-                                "{}  PC {:04X}",
-                                history_position_label(Some(offset)),
-                                frame.pc
-                            )
-                        };
-                        ui.vertical(|ui| {
-                            let image = egui::Image::new(texture)
-                                .fit_to_exact_size(egui::vec2(160.0, 76.0));
-                            let response = ui.add(
-                                egui::ImageButton::new(image)
-                                    .selected(selected == Some(index))
-                                    .frame(true),
-                            );
-                            if response.clicked() {
-                                clicked = Some(index);
+                ui.vertical(|ui| {
+                    for row in thumbnail_rows {
+                        ui.horizontal(|ui| {
+                            for index in row {
+                                let frame = &self.frame_history.frames()[index];
+                                let Some(texture) = self.frame_history_textures.get(&frame.id)
+                                else {
+                                    continue;
+                                };
+                                let offset = self.frame_history.frame_offset(index).unwrap_or(0);
+                                let label = if offset == 0 {
+                                    format!("Live  PC {:04X}", frame.pc)
+                                } else {
+                                    format!(
+                                        "{}  PC {:04X}",
+                                        history_position_label(Some(offset)),
+                                        frame.pc
+                                    )
+                                };
+                                ui.vertical(|ui| {
+                                    let image = egui::Image::new(texture)
+                                        .fit_to_exact_size(egui::vec2(160.0, 76.0));
+                                    let response = ui.add(
+                                        egui::ImageButton::new(image)
+                                            .selected(selected == Some(index))
+                                            .frame(true),
+                                    );
+                                    if response.clicked() {
+                                        clicked = Some(index);
+                                    }
+                                    ui.small(label);
+                                });
                             }
-                            ui.small(label);
                         });
                     }
                 });

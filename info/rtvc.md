@@ -428,12 +428,17 @@ The TVC-only Frame History pane offers two in-memory recording modes:
   snapshots expire automatically, bounding history to at most 61 snapshots.
   Ages use emulated time at 50 frames per second, so pausing does not age history.
 
+The newest thumbnail is at the top-left. Per-frame mode lays out one second
+(50 frames) per row. Long-term mode uses separate newest-first rows for frames,
+seconds, and tens-of-seconds snapshots.
+
 Switching modes clears the timeline while preserving the recording/stopped state.
-Record starts a new timeline; Stop retains it. Back Snapshot, Forward Snapshot,
-Return to Live, and clickable thumbnails restore a selected snapshot and pause
-execution. The pane reports actual frame/time offsets from the newest snapshot
-and current memory use. Resuming or instruction-stepping from an older snapshot
-discards its newer branch and continues the timeline from that emulated time.
+Record starts a new timeline; Stop retains it; Clear empties it while preserving
+the current recording state. Back Snapshot, Forward Snapshot, Return to Live,
+and clickable thumbnails restore a selected snapshot and pause execution. The
+pane reports actual frame/time offsets from the newest snapshot and current
+memory use. Resuming or instruction-stepping from an older snapshot discards
+its newer branch and continues the timeline from that emulated time.
 
 History restore shares the normal TVC snapshot codec but loads into the current
 machine so attached media remain in place. Keyboard state is released and
