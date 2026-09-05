@@ -157,6 +157,50 @@ impl FrameHistory {
         &self.frames
     }
 
+    /// Returns thumbnail indices arranged for display, with the newest snapshot
+    /// first in every row.
+    ///
+    /// Per-frame history is divided into one-second rows. Long-term history
+    /// separates the three retention resolutions into frames, seconds, and
+    /// tens-of-seconds rows.
+    pub fn thumbnail_rows(&self) -> Vec<Vec<usize>> {
+        let newest = match self.frames.back() {
+            Some(frame) => frame.frame_number,
+            None => return Vec::new(),
+        };
+        let newest_first = (0..self.frames.len()).rev();
+
+        match self.mode {
+            HistoryMode::PerFrame => newest_first
+                .collect::<Vec<_>>()
+                .chunks(TVC_FRAMES_PER_SECOND)
+                .map(|row| row.to_vec())
+                .collect(),
+            HistoryMode::LongTerm => {
+                let mut frame_row = Vec::new();
+                let mut second_row = Vec::new();
+                let mut ten_second_row = Vec::new();
+                let fps = TVC_FRAMES_PER_SECOND as u64;
+
+                for index in newest_first {
+                    let age = newest - self.frames[index].frame_number;
+                    if age < fps {
+                        frame_row.push(index);
+                    } else if age < 10 * fps {
+                        second_row.push(index);
+                    } else {
+                        ten_second_row.push(index);
+                    }
+                }
+
+                [frame_row, second_row, ten_second_row]
+                    .into_iter()
+                    .filter(|row| !row.is_empty())
+                    .collect()
+            }
+        }
+    }
+
     pub fn selected_index(&self) -> Option<usize> {
         self.selected
     }
@@ -316,6 +360,20 @@ mod tests {
     }
 
     #[test]
+    fn clearing_history_keeps_recording_active() {
+        let mut history = FrameHistory::default();
+        history.start();
+        record(&mut history, 1);
+
+        history.clear();
+
+        assert!(history.is_empty());
+        assert!(history.is_recording());
+        record(&mut history, 2);
+        assert_eq!(history.selected().unwrap().snapshot, vec![2]);
+    }
+
+    #[test]
     fn navigation_reports_offsets_from_latest_frame() {
         let mut history = FrameHistory::default();
         history.start();
@@ -406,6 +464,47 @@ mod tests {
         assert_eq!(history.selected_offset(), Some(-1000));
         assert!(history.select_next());
         assert_eq!(history.selected_offset(), Some(-500));
+    }
+
+    #[test]
+    fn thumbnail_rows_put_newest_snapshots_at_the_top_left() {
+        let mut per_frame = FrameHistory::default();
+        per_frame.start();
+        for value in 0..103 {
+            record(&mut per_frame, value);
+        }
+        let rows = per_frame.thumbnail_rows();
+        assert_eq!(rows.iter().map(Vec::len).collect::<Vec<_>>(), [50, 50, 3]);
+        assert_eq!(rows[0][0], 102);
+        assert_eq!(rows[0][49], 53);
+        assert_eq!(rows[1][0], 52);
+        assert_eq!(rows[2], vec![2, 1, 0]);
+
+        let mut long_term = FrameHistory::default();
+        long_term.set_mode(HistoryMode::LongTerm);
+        long_term.start();
+        for value in 0..=2000 {
+            record(&mut long_term, (value % 256) as u8);
+        }
+        let rows = long_term.thumbnail_rows();
+        assert_eq!(rows.iter().map(Vec::len).collect::<Vec<_>>(), [50, 9, 2]);
+        let frame_numbers: Vec<Vec<_>> = rows
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|&index| long_term.frames()[index].frame_number)
+                    .collect()
+            })
+            .collect();
+        assert_eq!(frame_numbers[0], (1951..=2000).rev().collect::<Vec<_>>());
+        assert_eq!(
+            frame_numbers[1],
+            (31_u64..=39)
+                .rev()
+                .map(|second| second * 50)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(frame_numbers[2], vec![1500, 1000]);
     }
 
     #[test]
