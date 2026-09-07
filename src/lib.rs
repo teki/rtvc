@@ -46,6 +46,9 @@ pub mod z80_state;
 #[path = "emulator/zx82.rs"]
 pub mod zx82;
 
+#[cfg(feature = "compiler")]
+pub mod compiler;
+
 #[cfg(any(feature = "native", feature = "wasm-full"))]
 #[path = "ui/app_state.rs"]
 pub mod app_state;

@@ -23,6 +23,7 @@ implementation-neutral machine specification, see
 - [Debugger](#debugger)
 - [ROM symbol database](#rom-symbol-database)
 - [Configuration and persistence](#configuration-and-persistence)
+- [C80 compiler](#c80-compiler)
 - [Testing and validation](#testing-and-validation)
 
 ## Project Architecture
@@ -47,7 +48,7 @@ and full-web frontends.
 | [src/emulator/asm.rs](../src/emulator/asm.rs) | Z80 single-line and two-pass helper assembler |
 | [src/emulator/basic.rs](../src/emulator/basic.rs) | TVC BASIC tokenizer and detokenizer |
 | [src/emulator/disasm.rs](../src/emulator/disasm.rs) | Z80 disassembler and debugger instruction metadata |
-| [src/emulator/instruction_trace.rs](../src/emulator/instruction_trace.rs) | bounded machine-independent instruction trace model |
+| [src/compiler/](../src/compiler/) | C80 compiler frontend (feature `compiler`) |
 | [src/bin/rtvc_asm.rs](../src/bin/rtvc_asm.rs) | command-line assembler that emits `rtvc-asm-v1` TOML |
 | [src/bin/rtvc_basic.rs](../src/bin/rtvc_basic.rs) | command-line BASIC compiler that emits CAS or raw program bytes |
 | [src/bin/rtvc_tocas.rs](../src/bin/rtvc_tocas.rs) | command-line converter that writes sibling `.cas` files from `.bas` and `.asm` sources |
@@ -73,7 +74,7 @@ validation independent from machine emulation.
 | Target | Features | Notes |
 | --- | --- | --- |
 | Native desktop | default `native` | egui/eframe, cpal audio, filesystem media, zip support, TCP debugger |
-| Native CLI tools | `cli-tools` without default features | disk, assembler, BASIC compiler, CAS converter, disassembler, CAS-to-WAV, and TAP conversion utilities without desktop UI/audio dependencies |
+| Native CLI tools | `cli-tools` without default features | disk, assembler, BASIC compiler, C80 compiler library, CAS converter, disassembler, CAS-to-WAV, and TAP conversion utilities without desktop UI/audio dependencies |
 | Native headless | default `native`, `--headless` CLI | machine loop and TCP debugger without GUI |
 | Integrated Zx82 | default `native` and `wasm-full` | Spectrum 48K state loading through the shared application and debugger |
 | Standalone Zx82 | default `native`, `cargo run --bin zx82` | focused Spectrum core runner |
@@ -82,8 +83,9 @@ validation independent from machine emulation.
 | Full web | `wasm-full` | complete egui UI, browser files, IndexedDB, AudioWorklet |
 
 The lightweight WASM target intentionally excludes egui, eframe, cpal, zip,
-and native filesystem code. Browser-only dependencies must remain behind web
-features.
+native filesystem code, and the C80 compiler. Browser-only dependencies must
+remain behind web features. The `compiler` feature is enabled by `native`,
+`cli-tools`, and `wasm-full`.
 
 Rust edition 2024 is used, requiring Rust 1.85 or newer.
 
@@ -564,6 +566,15 @@ The native application searches runtime ROM and program assets in the current
 working directory first and beside the executable second. Packaged macOS apps
 and extracted release archives therefore work without depending on the launch
 directory.
+
+## C80 Compiler
+
+The C80 compiler is a library under [`src/compiler/`](../src/compiler/), gated
+by the `compiler` feature. Implemented language, leaf codegen, branches, and
+scalar globals are described in [C80 Language Reference](c80.md). Generated
+functions are assembled with the existing helper assembler; there is no
+`rtvc-c80` CLI yet. Callers pass owned in-memory source snapshots into
+`compiler::compile`.
 
 ## Testing and Validation
 
