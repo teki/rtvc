@@ -1,4 +1,4 @@
-//! Located C80 syntax tree for the E01 scalar/function subset.
+//! Located C80 syntax tree.
 
 use super::lexer::IntegerLit;
 use super::source::{NodeId, SourceSpan};
@@ -20,6 +20,7 @@ pub enum TypeKind {
     I16,
     Str,
     Ptr(Box<TypeExpr>),
+    Named(Ident),
 }
 
 impl TypeKind {
@@ -46,6 +47,7 @@ impl TypeKind {
             Self::I16 => "i16".to_string(),
             Self::Str => "str".to_string(),
             Self::Ptr(inner) => format!("ptr<{}>", inner.kind.as_str()),
+            Self::Named(name) => name.name.clone(),
         }
     }
 }
@@ -68,6 +70,7 @@ pub enum Item {
     Function(Function),
     Decl(VarDecl),
     Import(Import),
+    Struct(StructDecl),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,6 +113,23 @@ pub struct Param {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StructDecl {
+    pub id: NodeId,
+    pub span: SourceSpan,
+    pub name: Ident,
+    pub fields: Vec<StructFieldDecl>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StructFieldDecl {
+    pub id: NodeId,
+    pub span: SourceSpan,
+    pub ty: TypeExpr,
+    pub name: Ident,
+    pub array_len: Option<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VarDecl {
     pub id: NodeId,
     pub span: SourceSpan,
@@ -135,6 +155,8 @@ pub enum Stmt {
     Expr(ExprStmt),
     If(IfStmt),
     While(WhileStmt),
+    For(ForStmt),
+    DoWhile(DoWhileStmt),
     Return(ReturnStmt),
     Break { id: NodeId, span: SourceSpan },
     Continue { id: NodeId, span: SourceSpan },
@@ -305,6 +327,30 @@ pub struct WhileStmt {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForInit {
+    Decl(VarDecl),
+    Expr(Expr),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForStmt {
+    pub id: NodeId,
+    pub span: SourceSpan,
+    pub init: Option<ForInit>,
+    pub cond: Option<Expr>,
+    pub update: Option<Expr>,
+    pub body: Box<Stmt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DoWhileStmt {
+    pub id: NodeId,
+    pub span: SourceSpan,
+    pub body: Box<Stmt>,
+    pub cond: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReturnStmt {
     pub id: NodeId,
     pub span: SourceSpan,
@@ -342,6 +388,22 @@ pub enum ExprKind {
         lhs: Box<Expr>,
         rhs: Box<Expr>,
     },
+    CompoundAssign {
+        op: BinaryOp,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+    },
+    PrefixInc {
+        op: IncOp,
+        expr: Box<Expr>,
+    },
+    PostfixInc {
+        op: IncOp,
+        expr: Box<Expr>,
+    },
+    InitList {
+        elems: Vec<Expr>,
+    },
     Call {
         callee: Box<Expr>,
         args: Vec<Expr>,
@@ -372,6 +434,21 @@ pub enum UnaryOp {
     BitNot,
     Deref,
     AddrOf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IncOp {
+    Inc,
+    Dec,
+}
+
+impl IncOp {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Inc => "++",
+            Self::Dec => "--",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -411,6 +488,19 @@ impl BinaryOp {
             TokenKind::GtGt => Self::Shr,
             TokenKind::Plus => Self::Add,
             TokenKind::Minus => Self::Sub,
+            _ => return None,
+        })
+    }
+
+    pub fn from_compound(kind: TokenKind) -> Option<Self> {
+        Some(match kind {
+            TokenKind::PlusEq => Self::Add,
+            TokenKind::MinusEq => Self::Sub,
+            TokenKind::AmpEq => Self::BitAnd,
+            TokenKind::PipeEq => Self::BitOr,
+            TokenKind::CaretEq => Self::BitXor,
+            TokenKind::LtLtEq => Self::Shl,
+            TokenKind::GtGtEq => Self::Shr,
             _ => return None,
         })
     }

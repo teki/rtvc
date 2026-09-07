@@ -146,7 +146,7 @@ impl<'a> Parser<'a> {
 
     fn parse_item(&mut self) -> Option<Item> {
         match self.kind() {
-            TokenKind::Struct | TokenKind::Asm | TokenKind::For | TokenKind::Do => {
+            TokenKind::Asm => {
                 let tok = self.bump();
                 self.emit(
                     DiagCode::ParseUnsupported,
@@ -159,6 +159,20 @@ impl<'a> Parser<'a> {
                 self.skip_until_item_sync();
                 None
             }
+            TokenKind::For | TokenKind::Do => {
+                let tok = self.bump();
+                self.emit(
+                    DiagCode::ParseExpected,
+                    tok.span,
+                    format!(
+                        "{} is a statement, not a top-level declaration",
+                        tok.kind.describe()
+                    ),
+                );
+                self.skip_until_item_sync();
+                None
+            }
+            TokenKind::Struct => self.parse_struct().map(Item::Struct),
             TokenKind::Import => self.parse_import().map(Item::Import),
             TokenKind::At
             | TokenKind::Pub
@@ -200,6 +214,64 @@ impl<'a> Parser<'a> {
             id: self.ids.next(),
             span: SourceSpan::new(self.file, start.start, end),
             name,
+        })
+    }
+
+    fn parse_struct(&mut self) -> Option<StructDecl> {
+        let start = self.bump().span;
+        let name = self.parse_ident()?;
+        if self.expect(TokenKind::LBrace, "'{'").is_none() {
+            self.skip_until_item_sync();
+            return None;
+        }
+        let mut fields = Vec::new();
+        while !self.at(TokenKind::RBrace) && !self.at_eof() {
+            if self.at_item_starter() && stmts_look_like_next_function(self) {
+                self.emit(
+                    DiagCode::ParseIncomplete,
+                    self.span(),
+                    "unclosed struct before the next declaration",
+                );
+                break;
+            }
+            let field_start = self.span().start;
+            let Some(ty) = self.parse_type() else {
+                self.recover_item();
+                continue;
+            };
+            let Some(field_name) = self.parse_ident() else {
+                self.skip_until(&[TokenKind::Semicolon, TokenKind::RBrace]);
+                if self.at(TokenKind::Semicolon) {
+                    self.bump();
+                }
+                continue;
+            };
+            let array_len = self.parse_array_len();
+            let semi = self.expect(TokenKind::Semicolon, "';'");
+            let end = semi.map(|t| t.span.end).unwrap_or(field_name.span.end);
+            fields.push(StructFieldDecl {
+                id: self.ids.next(),
+                span: SourceSpan::new(self.file, field_start, end),
+                ty,
+                name: field_name,
+                array_len,
+            });
+        }
+        let end = if self.at(TokenKind::RBrace) {
+            self.bump().span.end
+        } else {
+            self.emit(DiagCode::ParseIncomplete, self.span(), "unclosed struct");
+            self.span().start
+        };
+        let end = self
+            .expect(TokenKind::Semicolon, "';' after struct")
+            .map(|t| t.span.end)
+            .unwrap_or(end);
+        Some(StructDecl {
+            id: self.ids.next(),
+            span: SourceSpan::new(self.file, start.start, end),
+            name,
+            fields,
         })
     }
 
@@ -381,6 +453,16 @@ impl<'a> Parser<'a> {
                 span: SourceSpan::new(self.file, start.start, end),
             });
         }
+        if self.at(TokenKind::Ident) {
+            let tok = self.bump();
+            return Some(TypeExpr {
+                kind: TypeKind::Named(Ident {
+                    name: self.ident_text(tok.span),
+                    span: tok.span,
+                }),
+                span: tok.span,
+            });
+        }
         if self.kind().is_type_start() {
             let tok = self.bump();
             Some(TypeExpr {
@@ -432,6 +514,10 @@ impl<'a> Parser<'a> {
                 if self.nth(*i) != TokenKind::Gt {
                     return false;
                 }
+                *i += 1;
+                true
+            }
+            TokenKind::Ident => {
                 *i += 1;
                 true
             }
@@ -508,6 +594,9 @@ impl<'a> Parser<'a> {
                 | TokenKind::I8
                 | TokenKind::U16
                 | TokenKind::I16
+                | TokenKind::Ptr
+                | TokenKind::Str
+                | TokenKind::Ident
         )
     }
 
@@ -516,6 +605,8 @@ impl<'a> Parser<'a> {
             TokenKind::LBrace => Stmt::Block(self.parse_block()),
             TokenKind::If => self.parse_if(),
             TokenKind::While => self.parse_while(),
+            TokenKind::For => self.parse_for(),
+            TokenKind::Do => self.parse_do_while(),
             TokenKind::Return => self.parse_return(),
             TokenKind::Break => {
                 let tok = self.bump();
@@ -556,7 +647,8 @@ impl<'a> Parser<'a> {
             | TokenKind::U16
             | TokenKind::I16
             | TokenKind::Ptr
-            | TokenKind::Str => {
+            | TokenKind::Str
+            | TokenKind::Ident => {
                 if self.at_local_decl() {
                     if let Some(decl) = self.parse_local_decl() {
                         Stmt::Decl(decl)
@@ -672,6 +764,72 @@ impl<'a> Parser<'a> {
             span: SourceSpan::new(self.file, start, end),
             cond,
             body,
+        })
+    }
+
+    fn parse_for(&mut self) -> Stmt {
+        let start = self.bump().span.start;
+        self.expect(TokenKind::LParen, "'('");
+        let init = if self.at(TokenKind::Semicolon) {
+            self.bump();
+            None
+        } else if self.at_local_decl() {
+            self.parse_local_decl().map(ForInit::Decl)
+        } else {
+            let expr = self.parse_expr();
+            self.expect(TokenKind::Semicolon, "';'");
+            Some(ForInit::Expr(expr))
+        };
+        let cond = if self.at(TokenKind::Semicolon) {
+            self.bump();
+            None
+        } else {
+            let expr = self.parse_expr();
+            self.expect(TokenKind::Semicolon, "';'");
+            Some(expr)
+        };
+        let update = if self.at(TokenKind::RParen) {
+            None
+        } else {
+            Some(self.parse_expr())
+        };
+        if self.expect(TokenKind::RParen, "')'").is_none() {
+            self.skip_until(&[TokenKind::RParen, TokenKind::LBrace, TokenKind::Semicolon]);
+            if self.at(TokenKind::RParen) {
+                self.bump();
+            }
+        }
+        let body = Box::new(self.parse_stmt());
+        let end = stmt_span(&body).end;
+        Stmt::For(ForStmt {
+            id: self.ids.next(),
+            span: SourceSpan::new(self.file, start, end),
+            init,
+            cond,
+            update,
+            body,
+        })
+    }
+
+    fn parse_do_while(&mut self) -> Stmt {
+        let start = self.bump().span.start;
+        let body = Box::new(self.parse_stmt());
+        self.expect(TokenKind::While, "'while'");
+        self.expect(TokenKind::LParen, "'('");
+        let cond = self.parse_expr();
+        if self.expect(TokenKind::RParen, "')'").is_none() {
+            self.skip_until(&[TokenKind::RParen, TokenKind::Semicolon]);
+            if self.at(TokenKind::RParen) {
+                self.bump();
+            }
+        }
+        let semi = self.expect(TokenKind::Semicolon, "';'");
+        let end = semi.map(|t| t.span.end).unwrap_or(cond.span.end);
+        Stmt::DoWhile(DoWhileStmt {
+            id: self.ids.next(),
+            span: SourceSpan::new(self.file, start, end),
+            body,
+            cond,
         })
     }
 
@@ -1019,21 +1177,29 @@ impl<'a> Parser<'a> {
                     };
                     continue;
                 }
+                if let Some(op) = BinaryOp::from_compound(kind) {
+                    self.bump();
+                    let rhs = self.parse_expr_bp(r_bp);
+                    let span = lhs.span.merge(rhs.span);
+                    lhs = Expr {
+                        id: self.ids.next(),
+                        span,
+                        kind: ExprKind::CompoundAssign {
+                            op,
+                            lhs: Box::new(lhs),
+                            rhs: Box::new(rhs),
+                        },
+                    };
+                    continue;
+                }
                 if matches!(
                     kind,
                     TokenKind::Star
                         | TokenKind::Slash
                         | TokenKind::Percent
-                        | TokenKind::PlusEq
-                        | TokenKind::MinusEq
                         | TokenKind::StarEq
                         | TokenKind::SlashEq
                         | TokenKind::PercentEq
-                        | TokenKind::AmpEq
-                        | TokenKind::PipeEq
-                        | TokenKind::CaretEq
-                        | TokenKind::LtLtEq
-                        | TokenKind::GtGtEq
                 ) {
                     let op = self.bump();
                     self.emit(
@@ -1156,20 +1322,44 @@ impl<'a> Parser<'a> {
                         }
                     }
                 }
-                TokenKind::PlusPlus | TokenKind::MinusMinus | TokenKind::Arrow => {
+                TokenKind::Arrow if 30 >= min_bp => {
+                    self.bump();
+                    if let Some(name) = self.parse_ident() {
+                        let span = lhs.span.merge(name.span);
+                        let deref = Expr {
+                            id: self.ids.next(),
+                            span: lhs.span,
+                            kind: ExprKind::Unary {
+                                op: UnaryOp::Deref,
+                                expr: Box::new(lhs),
+                            },
+                        };
+                        lhs = Expr {
+                            id: self.ids.next(),
+                            span,
+                            kind: ExprKind::Field {
+                                base: Box::new(deref),
+                                name,
+                            },
+                        };
+                    } else {
+                        break;
+                    }
+                }
+                TokenKind::PlusPlus | TokenKind::MinusMinus if 30 >= min_bp => {
                     let tok = self.bump();
-                    self.emit(
-                        DiagCode::ParseUnsupported,
-                        tok.span,
-                        format!(
-                            "{} is not accepted in this compiler slice",
-                            tok.kind.describe()
-                        ),
-                    );
+                    let op = if tok.kind == TokenKind::PlusPlus {
+                        IncOp::Inc
+                    } else {
+                        IncOp::Dec
+                    };
                     lhs = Expr {
                         id: self.ids.next(),
                         span: lhs.span.merge(tok.span),
-                        kind: ExprKind::Error,
+                        kind: ExprKind::PostfixInc {
+                            op,
+                            expr: Box::new(lhs),
+                        },
                     };
                 }
                 _ => break,
@@ -1196,6 +1386,23 @@ impl<'a> Parser<'a> {
 
     fn parse_prefix(&mut self) -> Expr {
         match self.kind() {
+            TokenKind::PlusPlus | TokenKind::MinusMinus => {
+                let tok = self.bump();
+                let op = if tok.kind == TokenKind::PlusPlus {
+                    IncOp::Inc
+                } else {
+                    IncOp::Dec
+                };
+                let expr = self.parse_expr_bp(28);
+                Expr {
+                    id: self.ids.next(),
+                    span: tok.span.merge(expr.span),
+                    kind: ExprKind::PrefixInc {
+                        op,
+                        expr: Box::new(expr),
+                    },
+                }
+            }
             TokenKind::Plus | TokenKind::Minus | TokenKind::Bang | TokenKind::Tilde => {
                 let tok = self.bump();
                 let op = match tok.kind {
@@ -1322,6 +1529,7 @@ impl<'a> Parser<'a> {
                 }
             }
             TokenKind::Sizeof => self.parse_sizeof(),
+            TokenKind::LBrace => self.parse_init_list(),
             _ => {
                 let span = self.span();
                 self.emit(
@@ -1342,6 +1550,33 @@ impl<'a> Parser<'a> {
                 }
                 self.error_expr(span)
             }
+        }
+    }
+
+    fn parse_init_list(&mut self) -> Expr {
+        let start = self.bump().span;
+        let mut elems = Vec::new();
+        if !self.at(TokenKind::RBrace) {
+            loop {
+                elems.push(self.parse_expr());
+                if self.at(TokenKind::Comma) {
+                    self.bump();
+                    if self.at(TokenKind::RBrace) {
+                        break;
+                    }
+                    continue;
+                }
+                break;
+            }
+        }
+        let end = self
+            .expect(TokenKind::RBrace, "'}'")
+            .map(|t| t.span.end)
+            .unwrap_or(self.span().start);
+        Expr {
+            id: self.ids.next(),
+            span: SourceSpan::new(self.file, start.start, end),
+            kind: ExprKind::InitList { elems },
         }
     }
 
@@ -1521,6 +1756,8 @@ fn stmt_span(stmt: &Stmt) -> SourceSpan {
         Stmt::Expr(e) => e.span,
         Stmt::If(s) => s.span,
         Stmt::While(s) => s.span,
+        Stmt::For(s) => s.span,
+        Stmt::DoWhile(s) => s.span,
         Stmt::Return(s) => s.span,
         Stmt::Break { span, .. } | Stmt::Continue { span, .. } | Stmt::Error { span, .. } => *span,
         Stmt::Asm(s) => s.span,

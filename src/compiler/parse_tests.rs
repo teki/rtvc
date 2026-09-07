@@ -54,6 +54,17 @@ fn expr_tree(expr: &Expr) -> String {
             format!("({} {} {})", op.as_str(), expr_tree(lhs), expr_tree(rhs))
         }
         ExprKind::Assign { lhs, rhs } => format!("(= {} {})", expr_tree(lhs), expr_tree(rhs)),
+        ExprKind::CompoundAssign { op, lhs, rhs } => {
+            format!("({}= {} {})", op.as_str(), expr_tree(lhs), expr_tree(rhs))
+        }
+        ExprKind::PrefixInc { op, expr } => format!("({} {})", op.as_str(), expr_tree(expr)),
+        ExprKind::PostfixInc { op, expr } => {
+            format!("({}_ {} )", op.as_str(), expr_tree(expr))
+        }
+        ExprKind::InitList { elems } => {
+            let elems = elems.iter().map(expr_tree).collect::<Vec<_>>().join(", ");
+            format!("(init {elems})")
+        }
         ExprKind::Call { callee, args } => {
             let args = args.iter().map(expr_tree).collect::<Vec<_>>().join(", ");
             format!("(call {} {args})", expr_tree(callee))
@@ -326,6 +337,70 @@ u8 f(ptr<u8> p) { return *p + p[1]; }
     assert!(positions.array_len.is_some());
     let f = function_named(&result, "f");
     assert!(matches!(f.params[0].ty.kind, TypeKind::Ptr(_)));
+}
+
+#[test]
+fn struct_for_do_compound_and_arrow_parse() {
+    let result = compile_src(
+        r#"
+struct Sprite { u8 x; u8 y; u16 bitmap; bool visible; };
+Sprite one = { 10, 20, 0x1234, true };
+void move(ptr<Sprite> sprite, i8 dx) {
+    sprite->x += u8(dx);
+    for (u8 i = 0; i < 3; i++) {
+        ++sprite->y;
+    }
+    do { sprite->visible = true; } while (false);
+}
+"#,
+    );
+    assert!(
+        result
+            .units
+            .iter()
+            .flat_map(|u| u.items.iter())
+            .any(|item| matches!(item, Item::Struct(s) if s.name.name == "Sprite")),
+        "{:?}",
+        result.units
+    );
+    let move_fn = function_named(&result, "move");
+    assert!(
+        move_fn.body.stmts.iter().any(|s| matches!(s, Stmt::For(_))),
+        "{:?}",
+        move_fn.body.stmts
+    );
+    assert!(
+        move_fn
+            .body
+            .stmts
+            .iter()
+            .any(|s| matches!(s, Stmt::DoWhile(_))),
+        "{:?}",
+        move_fn.body.stmts
+    );
+    assert_eq!(first_expr_stmt("void f() { x += 1; }"), "(+= x 1)");
+    assert_eq!(first_expr_stmt("void f() { ++x; }"), "(++ x)");
+    assert_eq!(first_expr_stmt("void f() { x++; }"), "(++_ x )");
+    assert_eq!(
+        first_expr_stmt("void f() { p->x = 1; }"),
+        "(= (. (* p) x) 1)"
+    );
+}
+
+#[test]
+fn multiplicative_tokens_remain_unsupported() {
+    let result = compile_src("u8 f(u8 a, u8 b) { return a * b; }");
+    assert!(
+        codes(&result).contains(&"parse-unsupported"),
+        "{:?}",
+        codes(&result)
+    );
+    let result = compile_src("void f() { a *= 2; }");
+    assert!(
+        codes(&result).contains(&"parse-unsupported"),
+        "{:?}",
+        codes(&result)
+    );
 }
 
 #[test]

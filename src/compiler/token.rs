@@ -219,6 +219,7 @@ impl TokenKind {
                 | Self::I16
                 | Self::Ptr
                 | Self::Str
+                | Self::Ident
         )
     }
 }

@@ -5,7 +5,7 @@ use super::diagnostic::{DiagCode, Diagnostic};
 use super::inline_asm::{self, RES_GP, clobber_mask, gpr_mask, out_mask};
 use super::ir::*;
 use super::source::{NodeId, SourceSpan};
-use super::types::{ArrayElem, ArrayType, CType, PtrType};
+use super::types::{ArrayElem, ArrayType, CType, PtrType, StructDef, StructField, StructId};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Copy)]
@@ -70,6 +70,10 @@ pub fn analyze_unit_in_project(
         unit_name: unit_name.to_string(),
         exports,
         stack,
+        structs: Vec::new(),
+        struct_ids: HashMap::new(),
+        pending_structs: HashMap::new(),
+        layouting: HashSet::new(),
     };
     analyzer.collect(unit);
     let program = analyzer.check_unit(unit);
@@ -95,6 +99,10 @@ pub fn collect_exports(unit: &TranslationUnit, diagnostics: &mut Vec<Diagnostic>
         unit_name: String::new(),
         exports: None,
         stack: None,
+        structs: Vec::new(),
+        struct_ids: HashMap::new(),
+        pending_structs: HashMap::new(),
+        layouting: HashSet::new(),
     };
     analyzer.collect(unit);
     let mut symbols = HashMap::new();
@@ -124,6 +132,7 @@ pub fn collect_exports(unit: &TranslationUnit, diagnostics: &mut Vec<Diagnostic>
                     },
                 );
             }
+            SymbolKind::Struct => {}
         }
     }
     UnitExports { symbols }
@@ -181,6 +190,7 @@ enum SymbolKind {
     },
     Global,
     Const,
+    Struct,
 }
 
 enum QSym {
@@ -214,6 +224,10 @@ struct Analyzer<'a> {
     unit_name: String,
     exports: Option<&'a HashMap<String, UnitExports>>,
     stack: Option<StackLayout>,
+    structs: Vec<StructDef>,
+    struct_ids: HashMap<String, StructId>,
+    pending_structs: HashMap<StructId, StructDecl>,
+    layouting: HashSet<StructId>,
 }
 
 struct FnCtx {
@@ -248,10 +262,29 @@ struct LoopCtx {
     assigned_at_entry: HashSet<NodeId>,
 }
 
+#[derive(Clone)]
 struct Value {
     ty: CType,
     reg: VReg,
     bits: Option<u16>,
+}
+
+enum Place {
+    Local {
+        id: LocalId,
+        ty: CType,
+        is_const: bool,
+    },
+    Global {
+        id: GlobalId,
+        ty: CType,
+        is_const: bool,
+    },
+    Indirect {
+        ptr: VReg,
+        ty: CType,
+        immutable: bool,
+    },
 }
 
 enum AsmDest {
@@ -285,6 +318,18 @@ impl<'a> Analyzer<'a> {
                         );
                         CType::Void
                     }
+                }
+            }
+            TypeKind::Named(name) => {
+                if let Some(&id) = self.struct_ids.get(&name.name) {
+                    CType::Struct(id)
+                } else {
+                    self.emit(
+                        DiagCode::TyUnresolvedName,
+                        name.span,
+                        format!("unknown type '{}'", name.name),
+                    );
+                    CType::Void
                 }
             }
             _ => CType::from_ast(&ty.kind),
@@ -336,9 +381,195 @@ impl<'a> Analyzer<'a> {
         id
     }
 
+    fn intern_structs(&mut self, unit: &TranslationUnit) {
+        for item in &unit.items {
+            let Item::Struct(decl) = item else {
+                continue;
+            };
+            if self.symbols.contains_key(&decl.name.name) {
+                self.emit(
+                    DiagCode::TyDuplicateName,
+                    decl.name.span,
+                    format!("duplicate name '{}'", decl.name.name),
+                );
+                continue;
+            }
+            let id = StructId(decl.id);
+            self.symbols.insert(
+                decl.name.name.clone(),
+                Symbol {
+                    kind: SymbolKind::Struct,
+                    ty: CType::Struct(id),
+                    id: decl.id,
+                    span: decl.name.span,
+                    is_const: true,
+                    is_pub: false,
+                    const_bits: None,
+                },
+            );
+            self.struct_ids.insert(decl.name.name.clone(), id);
+            self.pending_structs.insert(id, decl.clone());
+        }
+    }
+
+    fn layout_all_structs(&mut self) {
+        let ids: Vec<StructId> = self.pending_structs.keys().copied().collect();
+        for id in ids {
+            self.ensure_layout(id);
+        }
+    }
+
+    fn ensure_layout(&mut self, id: StructId) {
+        if self.structs.iter().any(|s| s.id == id) {
+            return;
+        }
+        if !self.layouting.insert(id) {
+            if let Some(decl) = self.pending_structs.get(&id) {
+                self.emit(
+                    DiagCode::TyMismatch,
+                    decl.name.span,
+                    format!(
+                        "recursive by-value layout of struct '{}' is not allowed",
+                        decl.name.name
+                    ),
+                );
+            }
+            return;
+        }
+        let Some(decl) = self.pending_structs.get(&id).cloned() else {
+            self.layouting.remove(&id);
+            return;
+        };
+        if decl.fields.is_empty() {
+            self.emit(
+                DiagCode::TyMismatch,
+                decl.name.span,
+                "empty structs are not allowed",
+            );
+            self.layouting.remove(&id);
+            return;
+        }
+        let mut fields = Vec::new();
+        let mut offset: u32 = 0;
+        let mut failed = false;
+        let mut seen_names = HashSet::new();
+        for field in &decl.fields {
+            if !seen_names.insert(field.name.name.clone()) {
+                self.emit(
+                    DiagCode::TyDuplicateName,
+                    field.name.span,
+                    format!("duplicate field '{}'", field.name.name),
+                );
+                failed = true;
+                continue;
+            }
+            let Some(ty) = self.field_type(field) else {
+                failed = true;
+                continue;
+            };
+            if ty == CType::Str {
+                self.emit(
+                    DiagCode::TyMismatch,
+                    field.span,
+                    "str struct fields are not supported",
+                );
+                failed = true;
+                continue;
+            }
+            if let CType::Struct(inner) = ty {
+                self.ensure_layout(inner);
+            }
+            if let CType::Array(arr) = ty {
+                if let ArrayElem::Struct(inner) = arr.elem {
+                    self.ensure_layout(inner);
+                }
+            }
+            let Some(size) = ty.storage_size(&self.structs) else {
+                self.emit(
+                    DiagCode::TyMismatch,
+                    field.span,
+                    format!("incomplete field type '{}'", ty.as_str()),
+                );
+                failed = true;
+                continue;
+            };
+            if offset + u32::from(size) > 65535 {
+                self.emit(
+                    DiagCode::TyLiteralRange,
+                    field.span,
+                    "struct is larger than 65535 bytes",
+                );
+                failed = true;
+                continue;
+            }
+            fields.push(StructField {
+                name: field.name.name.clone(),
+                ty,
+                offset: offset as u16,
+                size,
+                span: field.span,
+            });
+            offset += u32::from(size);
+        }
+        self.layouting.remove(&id);
+        if failed {
+            return;
+        }
+        self.structs.push(StructDef {
+            id,
+            name: decl.name.name.clone(),
+            fields,
+            size: offset as u16,
+            span: decl.span,
+        });
+    }
+
+    fn field_type(&mut self, field: &StructFieldDecl) -> Option<CType> {
+        let mut ty = self.type_of(&field.ty);
+        if let Some(len_expr) = &field.array_len {
+            let Some(len) = self.eval_const_expr(len_expr, Some(CType::U16)) else {
+                self.emit(
+                    DiagCode::TyMismatch,
+                    len_expr.span,
+                    "array length must be a compile-time integer",
+                );
+                return None;
+            };
+            if len == 0 {
+                self.emit(
+                    DiagCode::TyLiteralRange,
+                    len_expr.span,
+                    "array length must be at least 1",
+                );
+                return None;
+            }
+            let Some(elem) = ArrayElem::from_ctype(ty) else {
+                self.emit(
+                    DiagCode::TyMismatch,
+                    field.ty.span,
+                    "arrays of this element type are not supported",
+                );
+                return None;
+            };
+            ty = CType::Array(ArrayType { elem, len });
+        }
+        if ty == CType::Void {
+            self.emit(
+                DiagCode::TyVoidValue,
+                field.ty.span,
+                "void is not a value type",
+            );
+            return None;
+        }
+        Some(ty)
+    }
+
     fn collect(&mut self, unit: &TranslationUnit) {
+        self.intern_structs(unit);
+        self.layout_all_structs();
         for item in &unit.items {
             match item {
+                Item::Struct(_) => {}
                 Item::Function(func) => {
                     let ret = self.type_of(&func.return_ty);
                     let params: Vec<CType> =
@@ -455,6 +686,7 @@ impl<'a> Analyzer<'a> {
         let mut functions = Vec::new();
         for item in &unit.items {
             match item {
+                Item::Struct(_) => {}
                 Item::Decl(decl) => {
                     if let Some(g) = self.check_global(decl) {
                         globals.push(g);
@@ -467,7 +699,11 @@ impl<'a> Analyzer<'a> {
                 Item::Import(_) => {}
             }
         }
-        TypedProgram { globals, functions }
+        TypedProgram {
+            structs: self.structs.clone(),
+            globals,
+            functions,
+        }
     }
 
     fn check_global(&mut self, decl: &VarDecl) -> Option<TypedGlobal> {
@@ -498,7 +734,15 @@ impl<'a> Analyzer<'a> {
                 );
                 return None;
             };
-            let size = u32::from(elem.byte_width()) * u32::from(len);
+            let Some(stride) = elem.stride(&self.structs) else {
+                self.emit(
+                    DiagCode::TyMismatch,
+                    decl.ty.span,
+                    "array element type is incomplete",
+                );
+                return None;
+            };
+            let size = u32::from(stride) * u32::from(len);
             if size > 65535 {
                 self.emit(
                     DiagCode::TyLiteralRange,
@@ -509,6 +753,16 @@ impl<'a> Analyzer<'a> {
             }
             ty = CType::Array(ArrayType { elem, len });
             extra = vec![0; size as usize];
+        } else if let CType::Struct(id) = ty {
+            let Some(def) = self.structs.iter().find(|s| s.id == id) else {
+                self.emit(
+                    DiagCode::TyMismatch,
+                    decl.ty.span,
+                    "struct type is incomplete",
+                );
+                return None;
+            };
+            extra = vec![0; usize::from(def.size)];
         }
         if ty == CType::Str {
             match &decl.init {
@@ -550,7 +804,34 @@ impl<'a> Analyzer<'a> {
         if ty == CType::Void {
             return None;
         }
-        let init = if matches!(ty, CType::Str | CType::Array(_)) {
+        if matches!(ty, CType::Array(_) | CType::Struct(_)) {
+            if decl.is_const {
+                self.emit(
+                    DiagCode::TyMismatch,
+                    decl.span,
+                    "const aggregates are not supported; use a mutable global",
+                );
+            }
+            if let Some(expr) = &decl.init {
+                if !self.write_static_init(&mut extra, 0, ty, expr) {
+                    extra.fill(0);
+                }
+            }
+            if let Some(sym) = self.symbols.get_mut(&decl.name.name) {
+                sym.ty = ty;
+            }
+            return Some(TypedGlobal {
+                id: GlobalId(decl.id),
+                name: decl.name.name.clone(),
+                ty,
+                is_pub: decl.is_pub,
+                is_const: decl.is_const,
+                init: None,
+                extra,
+                span: decl.span,
+            });
+        }
+        let init = if matches!(ty, CType::Str) {
             None
         } else if let Some(expr) = &decl.init {
             match self.eval_const_expr(expr, Some(ty)) {
@@ -593,8 +874,134 @@ impl<'a> Analyzer<'a> {
         })
     }
 
+    fn write_static_init(&mut self, buf: &mut [u8], offset: usize, ty: CType, expr: &Expr) -> bool {
+        let Some(size) = ty.storage_size(&self.structs) else {
+            self.emit(
+                DiagCode::TyMismatch,
+                expr.span,
+                format!("cannot initialize incomplete type '{}'", ty.as_str()),
+            );
+            return false;
+        };
+        let size = usize::from(size);
+        if offset + size > buf.len() {
+            self.emit(
+                DiagCode::TyMismatch,
+                expr.span,
+                "initializer does not fit in the destination",
+            );
+            return false;
+        }
+        match ty {
+            CType::Array(arr) => {
+                let ExprKind::InitList { elems } = &expr.kind else {
+                    self.emit(
+                        DiagCode::TyMismatch,
+                        expr.span,
+                        "array initializers use positional braces",
+                    );
+                    return false;
+                };
+                if elems.len() > usize::from(arr.len) {
+                    self.emit(
+                        DiagCode::TyLiteralRange,
+                        expr.span,
+                        "too many array initializers",
+                    );
+                    return false;
+                }
+                let Some(stride) = arr.elem.stride(&self.structs) else {
+                    return false;
+                };
+                let mut ok = true;
+                for (i, elem) in elems.iter().enumerate() {
+                    ok &= self.write_static_init(
+                        buf,
+                        offset + i * usize::from(stride),
+                        arr.elem.to_ctype(),
+                        elem,
+                    );
+                }
+                ok
+            }
+            CType::Struct(id) => {
+                let ExprKind::InitList { elems } = &expr.kind else {
+                    self.emit(
+                        DiagCode::TyMismatch,
+                        expr.span,
+                        "struct initializers use positional braces",
+                    );
+                    return false;
+                };
+                let Some(def) = self.structs.iter().find(|s| s.id == id).cloned() else {
+                    self.emit(DiagCode::TyMismatch, expr.span, "struct type is incomplete");
+                    return false;
+                };
+                if elems.len() > def.fields.len() {
+                    self.emit(
+                        DiagCode::TyLiteralRange,
+                        expr.span,
+                        "too many struct initializers",
+                    );
+                    return false;
+                }
+                let mut ok = true;
+                for (field, elem) in def.fields.iter().zip(elems.iter()) {
+                    ok &= self.write_static_init(
+                        buf,
+                        offset + usize::from(field.offset),
+                        field.ty,
+                        elem,
+                    );
+                }
+                ok
+            }
+            _ => {
+                if matches!(expr.kind, ExprKind::InitList { .. }) {
+                    self.emit(
+                        DiagCode::TyMismatch,
+                        expr.span,
+                        "brace initializer is only for arrays and structs",
+                    );
+                    return false;
+                }
+                let Some(bits) = self.eval_const_expr(expr, Some(ty)) else {
+                    self.emit(
+                        DiagCode::TyMismatch,
+                        expr.span,
+                        "static initializer must be a compile-time value",
+                    );
+                    return false;
+                };
+                match ty.byte_width() {
+                    Some(1) => buf[offset] = bits as u8,
+                    Some(2) => {
+                        buf[offset] = bits as u8;
+                        buf[offset + 1] = (bits >> 8) as u8;
+                    }
+                    _ => {
+                        self.emit(
+                            DiagCode::TyMismatch,
+                            expr.span,
+                            "cannot initialize this type with a scalar",
+                        );
+                        return false;
+                    }
+                }
+                true
+            }
+        }
+    }
+
     fn check_function(&mut self, func: &Function) -> TypedFunction {
         let ret = self.type_of(&func.return_ty);
+        if ret.is_aggregate() {
+            self.emit(
+                DiagCode::TyMismatch,
+                func.return_ty.span,
+                "by-value aggregate returns are not supported; return a pointer",
+            );
+        }
         let entry = self.block_id();
         let mut ctx = FnCtx {
             ret,
@@ -620,6 +1027,13 @@ impl<'a> Analyzer<'a> {
                     DiagCode::TyVoidValue,
                     param.ty.span,
                     "void parameters are not allowed",
+                );
+            }
+            if ty.is_aggregate() {
+                self.emit(
+                    DiagCode::TyMismatch,
+                    param.ty.span,
+                    "by-value aggregate parameters are not supported; pass a pointer",
                 );
             }
             if !param_names.insert(param.name.name.clone()) {
@@ -699,6 +1113,8 @@ impl<'a> Analyzer<'a> {
             }
             Stmt::If(if_stmt) => self.check_if(ctx, if_stmt),
             Stmt::While(while_stmt) => self.check_while(ctx, while_stmt),
+            Stmt::For(for_stmt) => self.check_for(ctx, for_stmt),
+            Stmt::DoWhile(stmt) => self.check_do_while(ctx, stmt),
             Stmt::Return(ret) => self.check_return(ctx, ret),
             Stmt::Break { span, .. } => {
                 if let Some(loop_ctx) = ctx.loop_stack.last() {
@@ -1044,6 +1460,53 @@ impl<'a> Analyzer<'a> {
                 elem,
             ));
         }
+        if let ExprKind::Field { base, name } = &expr.kind {
+            let place = self.check_field_place(ctx, base, name, expr.span)?;
+            let ty = place_ty(&place);
+            if ty.is_aggregate() {
+                self.emit(
+                    DiagCode::TyNotLvalue,
+                    expr.span,
+                    "asm output needs a writable scalar lvalue",
+                );
+                return None;
+            }
+            return match place {
+                Place::Indirect { ptr, ty, immutable } => {
+                    if immutable {
+                        self.emit(
+                            DiagCode::TyAssignConst,
+                            expr.span,
+                            "cannot mutate this location",
+                        );
+                        return None;
+                    }
+                    Some((AsmDest::Indirect { ptr, ty }, ty))
+                }
+                Place::Local { id, ty, is_const } => {
+                    if is_const {
+                        self.emit(
+                            DiagCode::TyAssignConst,
+                            expr.span,
+                            "cannot assign to a const local",
+                        );
+                        return None;
+                    }
+                    Some((AsmDest::Local(id), ty))
+                }
+                Place::Global { id, ty, is_const } => {
+                    if is_const {
+                        self.emit(
+                            DiagCode::TyAssignConst,
+                            expr.span,
+                            "cannot assign to a const global",
+                        );
+                        return None;
+                    }
+                    Some((AsmDest::Global(id), ty))
+                }
+            };
+        }
         if let ExprKind::Qualified { unit, name } = &expr.kind {
             match self.lookup_qualified(unit, name)? {
                 QSym::Function { qname, .. } => {
@@ -1178,11 +1641,11 @@ impl<'a> Analyzer<'a> {
     }
 
     fn check_local(&mut self, ctx: &mut FnCtx, decl: &VarDecl) {
-        if decl.array_len.is_some() {
+        if decl.array_len.is_some() || self.type_of(&decl.ty).is_aggregate() {
             self.emit(
                 DiagCode::TyMismatch,
                 decl.name.span,
-                "local arrays are not supported; use a global array or a pointer",
+                "local arrays and structs are not supported; use a global or a pointer",
             );
         }
         let ty = self.type_of(&decl.ty);
@@ -1356,6 +1819,134 @@ impl<'a> Analyzer<'a> {
         self.start_block(ctx, after_blk);
     }
 
+    fn check_for(&mut self, ctx: &mut FnCtx, stmt: &ForStmt) {
+        ctx.scopes.push(HashMap::new());
+        match &stmt.init {
+            Some(ForInit::Decl(decl)) => self.check_local(ctx, decl),
+            Some(ForInit::Expr(expr)) => {
+                let _ = self.check_expr(ctx, expr, None);
+            }
+            None => {}
+        }
+        let cond_blk = self.block_id();
+        let body_blk = self.block_id();
+        let update_blk = self.block_id();
+        let after_blk = self.block_id();
+        self.emit_op(
+            ctx,
+            IrOp::Jump {
+                blk: cond_blk,
+                span: stmt.span,
+            },
+        );
+        let assigned_entry = ctx.assigned.clone();
+        self.start_block(ctx, cond_blk);
+        let cond = if let Some(cond) = &stmt.cond {
+            self.check_expr(ctx, cond, Some(CType::Bool))
+        } else {
+            Some(self.const_val(ctx, CType::Bool, 1, stmt.span))
+        };
+        let Some(cond) = cond else {
+            ctx.scopes.pop();
+            return;
+        };
+        self.emit_op(
+            ctx,
+            IrOp::Branch {
+                cond: cond.reg,
+                true_blk: body_blk,
+                false_blk: after_blk,
+                span: stmt.cond.as_ref().map(|c| c.span).unwrap_or(stmt.span),
+            },
+        );
+        ctx.loop_stack.push(LoopCtx {
+            break_blk: after_blk,
+            continue_blk: update_blk,
+            assigned_at_entry: assigned_entry.clone(),
+        });
+        self.start_block(ctx, body_blk);
+        ctx.reachable = true;
+        ctx.assigned = assigned_entry.clone();
+        self.check_stmt(ctx, &stmt.body);
+        if ctx.reachable {
+            self.emit_op(
+                ctx,
+                IrOp::Jump {
+                    blk: update_blk,
+                    span: stmt.span,
+                },
+            );
+        }
+        self.start_block(ctx, update_blk);
+        ctx.reachable = true;
+        if let Some(update) = &stmt.update {
+            let _ = self.check_expr(ctx, update, None);
+        }
+        self.emit_op(
+            ctx,
+            IrOp::Jump {
+                blk: cond_blk,
+                span: stmt.span,
+            },
+        );
+        ctx.loop_stack.pop();
+        ctx.assigned = assigned_entry;
+        ctx.reachable = true;
+        self.start_block(ctx, after_blk);
+        ctx.scopes.pop();
+    }
+
+    fn check_do_while(&mut self, ctx: &mut FnCtx, stmt: &DoWhileStmt) {
+        let body_blk = self.block_id();
+        let cond_blk = self.block_id();
+        let after_blk = self.block_id();
+        self.emit_op(
+            ctx,
+            IrOp::Jump {
+                blk: body_blk,
+                span: stmt.span,
+            },
+        );
+        let assigned_entry = ctx.assigned.clone();
+        ctx.loop_stack.push(LoopCtx {
+            break_blk: after_blk,
+            continue_blk: cond_blk,
+            assigned_at_entry: assigned_entry.clone(),
+        });
+        self.start_block(ctx, body_blk);
+        ctx.reachable = true;
+        ctx.assigned = assigned_entry.clone();
+        self.check_stmt(ctx, &stmt.body);
+        if ctx.reachable {
+            self.emit_op(
+                ctx,
+                IrOp::Jump {
+                    blk: cond_blk,
+                    span: stmt.span,
+                },
+            );
+        }
+        let assigned_after_body = ctx.assigned.clone();
+        ctx.loop_stack.pop();
+        self.start_block(ctx, cond_blk);
+        ctx.reachable = true;
+        let Some(cond) = self.check_expr(ctx, &stmt.cond, Some(CType::Bool)) else {
+            return;
+        };
+        self.emit_op(
+            ctx,
+            IrOp::Branch {
+                cond: cond.reg,
+                true_blk: body_blk,
+                false_blk: after_blk,
+                span: stmt.cond.span,
+            },
+        );
+        ctx.assigned = assigned_after_body;
+        ctx.reachable = true;
+        self.start_block(ctx, after_blk);
+    }
+
     fn check_return(&mut self, ctx: &mut FnCtx, stmt: &ReturnStmt) {
         match (ctx.ret, &stmt.value) {
             (CType::Void, None) => {
@@ -1471,20 +2062,42 @@ impl<'a> Analyzer<'a> {
                 self.check_binary(ctx, *op, lhs, rhs, expr.span, expected)?
             }
             ExprKind::Assign { lhs, rhs } => self.check_assign(ctx, lhs, rhs, expr.span)?,
+            ExprKind::CompoundAssign { op, lhs, rhs } => {
+                self.check_compound(ctx, *op, lhs, rhs, expr.span)?
+            }
+            ExprKind::PrefixInc { op, expr: inner } => {
+                self.check_inc(ctx, *op, inner, true, expr.span)?
+            }
+            ExprKind::PostfixInc { op, expr: inner } => {
+                self.check_inc(ctx, *op, inner, false, expr.span)?
+            }
+            ExprKind::InitList { .. } => {
+                self.emit(
+                    DiagCode::TyMismatch,
+                    expr.span,
+                    "brace initializers are only valid for static arrays and structs",
+                );
+                return None;
+            }
             ExprKind::Call { callee, args } => self.check_call(ctx, callee, args, expr.span)?,
             ExprKind::Index { base, index } => self.check_index(ctx, base, index, expr.span)?,
             ExprKind::Field { base, name } => self.check_field(ctx, base, name, expr.span)?,
             ExprKind::Cast { ty, expr: inner } => self.check_cast(ctx, ty, inner, expr.span)?,
             ExprKind::Sizeof { ty } => {
                 let cty = self.type_of(ty);
-                match cty.byte_width() {
+                let width = if matches!(cty, CType::Struct(_)) {
+                    cty.storage_size(&self.structs)
+                } else {
+                    cty.byte_width().map(u16::from)
+                };
+                match width {
                     Some(w) => {
                         let out_ty = expected.filter(|t| t.is_integer()).unwrap_or(CType::U16);
                         if !out_ty.is_integer() {
                             self.emit(DiagCode::TyMismatch, expr.span, "sizeof result is u16");
                             return None;
                         }
-                        let val = self.const_val(ctx, CType::U16, u16::from(w), expr.span);
+                        let val = self.const_val(ctx, CType::U16, w, expr.span);
                         if out_ty != CType::U16 {
                             self.cast_val(ctx, val, out_ty, expr.span)
                         } else {
@@ -1645,6 +2258,17 @@ impl<'a> Analyzer<'a> {
                     format!(
                         "array '{}' does not decay to a pointer; use &{}[0]",
                         name.name, name.name
+                    ),
+                );
+                return None;
+            }
+            if matches!(ty, CType::Struct(_)) {
+                self.emit(
+                    DiagCode::TyMismatch,
+                    name.span,
+                    format!(
+                        "struct '{}' cannot be used as a value; select a field or take a field address",
+                        name.name
                     ),
                 );
                 return None;
@@ -1971,6 +2595,14 @@ impl<'a> Analyzer<'a> {
                     );
                     return None;
                 };
+                if elem.is_aggregate() {
+                    self.emit(
+                        DiagCode::TyMismatch,
+                        span,
+                        "cannot load an aggregate as a value; select a field",
+                    );
+                    return None;
+                }
                 let dst = self.vreg();
                 self.emit_op(
                     ctx,
@@ -1999,6 +2631,15 @@ impl<'a> Analyzer<'a> {
         span: SourceSpan,
     ) -> Option<Value> {
         let (addr, _) = self.check_index_addr(ctx, base, index, span, false)?;
+        let elem = addr.ty.pointee().unwrap_or(CType::U8);
+        if elem.is_aggregate() {
+            self.emit(
+                DiagCode::TyMismatch,
+                span,
+                "cannot load an aggregate as a value; select a field",
+            );
+            return None;
+        }
         let dst = self.vreg();
         self.emit_op(
             ctx,
@@ -2096,6 +2737,29 @@ impl<'a> Analyzer<'a> {
                 }
                 Some(_) => None,
             }
+        } else if let ExprKind::Field { base: fbase, name } = &base.kind {
+            match self.check_field_place(ctx, fbase, name, base.span) {
+                Some(Place::Indirect {
+                    ptr,
+                    ty: CType::Array(arr),
+                    immutable: imm,
+                }) => {
+                    known_len = Some(u32::from(arr.len));
+                    immutable = imm;
+                    Some(Value {
+                        ty: PtrType::of(arr.elem.to_ctype())
+                            .map(CType::Ptr)
+                            .unwrap_or(CType::Void),
+                        reg: ptr,
+                        bits: None,
+                    })
+                }
+                Some(_) => {
+                    self.emit(DiagCode::TyMismatch, span, "cannot index a non-array field");
+                    return None;
+                }
+                None => return None,
+            }
         } else {
             None
         };
@@ -2161,28 +2825,13 @@ impl<'a> Analyzer<'a> {
         } else {
             base_val.reg
         };
-        let scale = elem.byte_width().unwrap_or(1);
+        let scale = elem.storage_size(&self.structs).unwrap_or(1);
         let idx16 = if idx.ty.byte_width() == Some(2) {
             idx
         } else {
             self.cast_val(ctx, idx, CType::U16, index.span)
         };
-        let mut off = idx16.reg;
-        if scale == 2 {
-            let doubled = self.vreg();
-            self.emit_op(
-                ctx,
-                IrOp::Binary {
-                    dst: doubled,
-                    ty: CType::U16,
-                    op: IrBinary::Add,
-                    lhs: off,
-                    rhs: off,
-                    span,
-                },
-            );
-            off = doubled;
-        }
+        let off = self.scale_index(ctx, idx16, scale, span);
         let addr = self.vreg();
         self.emit_op(
             ctx,
@@ -2369,6 +3018,73 @@ impl<'a> Analyzer<'a> {
                     })
                 }
             },
+            ExprKind::Field { base, name } => {
+                let place = self.check_field_place(ctx, base, name, span)?;
+                if place_immutable(&place) {
+                    self.emit(
+                        DiagCode::TyNotLvalue,
+                        span,
+                        "cannot take the address of this field",
+                    );
+                    return None;
+                }
+                let ty = place_ty(&place);
+                if matches!(ty, CType::Array(_)) {
+                    self.emit(
+                        DiagCode::TyMismatch,
+                        span,
+                        "cannot take the address of an array field; index an element",
+                    );
+                    return None;
+                }
+                let Some(ptr_ty) = PtrType::of(ty).map(CType::Ptr) else {
+                    self.emit(
+                        DiagCode::TyMismatch,
+                        span,
+                        format!("cannot take the address of {}", ty.as_str()),
+                    );
+                    return None;
+                };
+                match place {
+                    Place::Indirect { ptr, .. } => Some(Value {
+                        ty: ptr_ty,
+                        reg: ptr,
+                        bits: None,
+                    }),
+                    Place::Local { id, .. } => {
+                        let dst = self.vreg();
+                        self.emit_op(
+                            ctx,
+                            IrOp::AddrLocal {
+                                dst,
+                                local: id,
+                                span,
+                            },
+                        );
+                        Some(Value {
+                            ty: ptr_ty,
+                            reg: dst,
+                            bits: None,
+                        })
+                    }
+                    Place::Global { id, .. } => {
+                        let dst = self.vreg();
+                        self.emit_op(
+                            ctx,
+                            IrOp::AddrGlobal {
+                                dst,
+                                global: id,
+                                span,
+                            },
+                        );
+                        Some(Value {
+                            ty: ptr_ty,
+                            reg: dst,
+                            bits: None,
+                        })
+                    }
+                }
+            }
             ExprKind::String(_) => {
                 self.emit(
                     DiagCode::TyNotLvalue,
@@ -2395,30 +3111,213 @@ impl<'a> Analyzer<'a> {
         name: &Ident,
         span: SourceSpan,
     ) -> Option<Value> {
-        let base_val = self.check_expr(ctx, base, None)?;
-        if name.name != "len" || base_val.ty != CType::Str {
+        if name.name == "len" {
+            let base_val = self.check_expr(ctx, base, None)?;
+            if base_val.ty == CType::Str {
+                let dst = self.vreg();
+                self.emit_op(
+                    ctx,
+                    IrOp::LoadIndirect {
+                        dst,
+                        ptr: base_val.reg,
+                        ty: CType::U8,
+                        span,
+                    },
+                );
+                return Some(Value {
+                    ty: CType::U8,
+                    reg: dst,
+                    bits: None,
+                });
+            }
+        }
+        let place = self.check_field_place(ctx, base, name, span)?;
+        if place_ty(&place).is_aggregate() {
+            self.emit(
+                DiagCode::TyMismatch,
+                span,
+                "cannot load an aggregate field as a value; index or select a nested field",
+            );
+            return None;
+        }
+        self.load_place(ctx, &place, span)
+    }
+
+    fn check_field_place(
+        &mut self,
+        ctx: &mut FnCtx,
+        base: &Expr,
+        name: &Ident,
+        span: SourceSpan,
+    ) -> Option<Place> {
+        let (addr, sid, immutable) = self.struct_base_addr(ctx, base, span)?;
+        let Some(def) = self.structs.iter().find(|s| s.id == sid).cloned() else {
+            self.emit(DiagCode::TyMismatch, span, "struct type is incomplete");
+            return None;
+        };
+        let Some(field) = def.fields.iter().find(|f| f.name == name.name).cloned() else {
             self.emit(
                 DiagCode::TyMismatch,
                 name.span,
                 format!("unknown field '{}'", name.name),
             );
             return None;
-        }
-        let dst = self.vreg();
-        self.emit_op(
-            ctx,
-            IrOp::LoadIndirect {
-                dst,
-                ptr: base_val.reg,
-                ty: CType::U8,
-                span,
-            },
-        );
-        Some(Value {
-            ty: CType::U8,
-            reg: dst,
-            bits: None,
+        };
+        let ptr = if field.offset == 0 {
+            addr
+        } else {
+            let off = self.const_val(ctx, CType::U16, field.offset, span);
+            let dst = self.vreg();
+            self.emit_op(
+                ctx,
+                IrOp::Binary {
+                    dst,
+                    ty: CType::U16,
+                    op: IrBinary::Add,
+                    lhs: addr,
+                    rhs: off.reg,
+                    span,
+                },
+            );
+            dst
+        };
+        Some(Place::Indirect {
+            ptr,
+            ty: field.ty,
+            immutable,
         })
+    }
+
+    fn struct_base_addr(
+        &mut self,
+        ctx: &mut FnCtx,
+        base: &Expr,
+        span: SourceSpan,
+    ) -> Option<(VReg, StructId, bool)> {
+        match &base.kind {
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                expr,
+            } => {
+                let ptr = self.check_expr(ctx, expr, None)?;
+                match ptr.ty.pointee() {
+                    Some(CType::Struct(id)) => Some((ptr.reg, id, false)),
+                    _ => {
+                        self.emit(
+                            DiagCode::TyMismatch,
+                            span,
+                            "field access requires a struct or pointer to struct",
+                        );
+                        None
+                    }
+                }
+            }
+            ExprKind::Index { base, index } => {
+                let (addr, immutable) =
+                    self.check_index_addr(ctx, base, index, base.span, false)?;
+                match addr.ty.pointee() {
+                    Some(CType::Struct(id)) => Some((addr.reg, id, immutable)),
+                    _ => {
+                        self.emit(
+                            DiagCode::TyMismatch,
+                            span,
+                            "field access requires a struct element",
+                        );
+                        None
+                    }
+                }
+            }
+            ExprKind::Field { base: inner, name } => {
+                let place = self.check_field_place(ctx, inner, name, inner.span)?;
+                match place {
+                    Place::Indirect {
+                        ptr,
+                        ty: CType::Struct(id),
+                        immutable,
+                    } => Some((ptr, id, immutable)),
+                    _ => {
+                        self.emit(
+                            DiagCode::TyMismatch,
+                            span,
+                            "field access requires a nested struct",
+                        );
+                        None
+                    }
+                }
+            }
+            ExprKind::Name(name) => {
+                if let Some(bind) = lookup_local(&ctx.scopes, &name.name).cloned() {
+                    if let CType::Struct(id) = bind.ty {
+                        let dst = self.vreg();
+                        self.emit_op(
+                            ctx,
+                            IrOp::AddrLocal {
+                                dst,
+                                local: bind.id,
+                                span: name.span,
+                            },
+                        );
+                        return Some((dst, id, bind.is_const));
+                    }
+                    self.emit(
+                        DiagCode::TyMismatch,
+                        span,
+                        format!("'{}' is not a struct", name.name),
+                    );
+                    return None;
+                }
+                let global = self.symbols.get(&name.name).map(|sym| {
+                    (
+                        sym.ty,
+                        sym.id,
+                        sym.is_const,
+                        matches!(sym.kind, SymbolKind::Function { .. } | SymbolKind::Struct),
+                    )
+                });
+                if let Some((ty, id, is_const, is_type_or_fn)) = global {
+                    if is_type_or_fn {
+                        self.emit(
+                            DiagCode::TyMismatch,
+                            name.span,
+                            format!("'{}' is not a struct object", name.name),
+                        );
+                        return None;
+                    }
+                    if let CType::Struct(sid) = ty {
+                        let dst = self.vreg();
+                        self.emit_op(
+                            ctx,
+                            IrOp::AddrGlobal {
+                                dst,
+                                global: GlobalId(id),
+                                span: name.span,
+                            },
+                        );
+                        return Some((dst, sid, is_const));
+                    }
+                    self.emit(
+                        DiagCode::TyMismatch,
+                        span,
+                        format!("'{}' is not a struct", name.name),
+                    );
+                    return None;
+                }
+                self.emit(
+                    DiagCode::TyUnresolvedName,
+                    name.span,
+                    format!("unresolved name '{}'", name.name),
+                );
+                None
+            }
+            _ => {
+                self.emit(
+                    DiagCode::TyMismatch,
+                    span,
+                    "field access requires a struct lvalue",
+                );
+                None
+            }
+        }
     }
 
     fn check_binary(
@@ -2677,6 +3576,435 @@ impl<'a> Analyzer<'a> {
         })
     }
 
+    fn scale_index(&mut self, ctx: &mut FnCtx, idx: Value, scale: u16, span: SourceSpan) -> VReg {
+        if scale <= 1 {
+            if scale == 0 {
+                return self.const_val(ctx, CType::U16, 0, span).reg;
+            }
+            return idx.reg;
+        }
+        if let Some(bits) = idx.bits {
+            return self
+                .const_val(ctx, CType::U16, bits.wrapping_mul(scale), span)
+                .reg;
+        }
+        self.scale_u16(ctx, idx.reg, scale, span)
+    }
+
+    fn scale_u16(&mut self, ctx: &mut FnCtx, src: VReg, scale: u16, span: SourceSpan) -> VReg {
+        if scale == 0 {
+            return self.const_val(ctx, CType::U16, 0, span).reg;
+        }
+        if scale == 1 {
+            return src;
+        }
+        let mut acc: Option<VReg> = None;
+        let mut part = src;
+        let mut bits = scale;
+        loop {
+            if bits & 1 != 0 {
+                acc = Some(match acc {
+                    None => part,
+                    Some(a) => {
+                        let dst = self.vreg();
+                        self.emit_op(
+                            ctx,
+                            IrOp::Binary {
+                                dst,
+                                ty: CType::U16,
+                                op: IrBinary::Add,
+                                lhs: a,
+                                rhs: part,
+                                span,
+                            },
+                        );
+                        dst
+                    }
+                });
+            }
+            bits >>= 1;
+            if bits == 0 {
+                break;
+            }
+            let doubled = self.vreg();
+            self.emit_op(
+                ctx,
+                IrOp::Binary {
+                    dst: doubled,
+                    ty: CType::U16,
+                    op: IrBinary::Add,
+                    lhs: part,
+                    rhs: part,
+                    span,
+                },
+            );
+            part = doubled;
+        }
+        acc.unwrap_or(src)
+    }
+
+    fn load_place(&mut self, ctx: &mut FnCtx, place: &Place, span: SourceSpan) -> Option<Value> {
+        let ty = place_ty(place);
+        match *place {
+            Place::Local { id, is_const, .. } => {
+                if !is_const && !ctx.assigned.contains(&id.0) {
+                    self.emit(
+                        DiagCode::TyUseBeforeAssign,
+                        span,
+                        "value is used before assignment",
+                    );
+                    return None;
+                }
+                let dst = self.vreg();
+                self.emit_op(
+                    ctx,
+                    IrOp::LoadLocal {
+                        dst,
+                        local: id,
+                        span,
+                    },
+                );
+                Some(Value {
+                    ty,
+                    reg: dst,
+                    bits: None,
+                })
+            }
+            Place::Global { id, .. } => {
+                let dst = self.vreg();
+                self.emit_op(
+                    ctx,
+                    IrOp::LoadGlobal {
+                        dst,
+                        global: id,
+                        span,
+                    },
+                );
+                Some(Value {
+                    ty,
+                    reg: dst,
+                    bits: None,
+                })
+            }
+            Place::Indirect { ptr, ty, .. } => {
+                let dst = self.vreg();
+                self.emit_op(ctx, IrOp::LoadIndirect { dst, ptr, ty, span });
+                Some(Value {
+                    ty,
+                    reg: dst,
+                    bits: None,
+                })
+            }
+        }
+    }
+
+    fn store_place(&mut self, ctx: &mut FnCtx, place: &Place, src: VReg, span: SourceSpan) -> bool {
+        if place_immutable(place) {
+            self.emit(
+                DiagCode::TyAssignConst,
+                span,
+                "cannot assign to a const lvalue",
+            );
+            return false;
+        }
+        match *place {
+            Place::Local { id, is_const, .. } => {
+                if is_const {
+                    self.emit(
+                        DiagCode::TyAssignConst,
+                        span,
+                        "cannot assign to a const local",
+                    );
+                    return false;
+                }
+                self.emit_op(
+                    ctx,
+                    IrOp::StoreLocal {
+                        local: id,
+                        src,
+                        span,
+                    },
+                );
+                ctx.assigned.insert(id.0);
+                true
+            }
+            Place::Global { id, is_const, .. } => {
+                if is_const {
+                    self.emit(
+                        DiagCode::TyAssignConst,
+                        span,
+                        "cannot assign to a const global",
+                    );
+                    return false;
+                }
+                self.emit_op(
+                    ctx,
+                    IrOp::StoreGlobal {
+                        global: id,
+                        src,
+                        span,
+                    },
+                );
+                true
+            }
+            Place::Indirect { ptr, ty, immutable } => {
+                if immutable {
+                    self.emit(DiagCode::TyAssignConst, span, "cannot mutate this location");
+                    return false;
+                }
+                self.emit_op(ctx, IrOp::StoreIndirect { ptr, src, ty, span });
+                true
+            }
+        }
+    }
+
+    fn prepare_lvalue(&mut self, ctx: &mut FnCtx, expr: &Expr) -> Option<Place> {
+        match &expr.kind {
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                expr: inner,
+            } => {
+                let ptr = self.check_expr(ctx, inner, None)?;
+                let Some(elem) = ptr.ty.pointee() else {
+                    self.emit(
+                        DiagCode::TyMismatch,
+                        expr.span,
+                        format!("cannot dereference {}", ptr.ty.as_str()),
+                    );
+                    return None;
+                };
+                Some(Place::Indirect {
+                    ptr: ptr.reg,
+                    ty: elem,
+                    immutable: false,
+                })
+            }
+            ExprKind::Index { base, index } => {
+                let (addr, immutable) =
+                    self.check_index_addr(ctx, base, index, expr.span, false)?;
+                let elem = addr.ty.pointee().unwrap_or(CType::U8);
+                Some(Place::Indirect {
+                    ptr: addr.reg,
+                    ty: elem,
+                    immutable,
+                })
+            }
+            ExprKind::Field { base, name } => self.check_field_place(ctx, base, name, expr.span),
+            ExprKind::Name(name) => {
+                if let Some(bind) = lookup_local(&ctx.scopes, &name.name).cloned() {
+                    return Some(Place::Local {
+                        id: bind.id,
+                        ty: bind.ty,
+                        is_const: bind.is_const,
+                    });
+                }
+                let global = self.symbols.get(&name.name).map(|sym| {
+                    (
+                        matches!(sym.kind, SymbolKind::Function { .. } | SymbolKind::Struct),
+                        sym.ty,
+                        sym.id,
+                        sym.is_const,
+                    )
+                });
+                if let Some((is_fn, ty, id, is_const)) = global {
+                    if is_fn {
+                        self.emit(
+                            DiagCode::TyNotLvalue,
+                            expr.span,
+                            "cannot assign to a type or function",
+                        );
+                        return None;
+                    }
+                    Some(Place::Global {
+                        id: GlobalId(id),
+                        ty,
+                        is_const,
+                    })
+                } else {
+                    self.emit(
+                        DiagCode::TyUnresolvedName,
+                        name.span,
+                        format!("unresolved name '{}'", name.name),
+                    );
+                    None
+                }
+            }
+            ExprKind::Qualified { unit, name } => match self.lookup_qualified(unit, name)? {
+                QSym::Function { qname, .. } => {
+                    self.emit(
+                        DiagCode::TyNotLvalue,
+                        expr.span,
+                        format!("cannot assign to function '{qname}'"),
+                    );
+                    None
+                }
+                QSym::Value {
+                    id, ty, is_const, ..
+                } => Some(Place::Global { id, ty, is_const }),
+            },
+            _ => {
+                self.emit(
+                    DiagCode::TyNotLvalue,
+                    expr.span,
+                    "assignment needs a writable scalar lvalue",
+                );
+                None
+            }
+        }
+    }
+
+    fn check_compound(
+        &mut self,
+        ctx: &mut FnCtx,
+        op: BinaryOp,
+        lhs: &Expr,
+        rhs: &Expr,
+        span: SourceSpan,
+    ) -> Option<Value> {
+        let place = self.prepare_lvalue(ctx, lhs)?;
+        let ty = place_ty(&place);
+        if ty.is_aggregate() || ty == CType::Str {
+            self.emit(
+                DiagCode::TyNotLvalue,
+                lhs.span,
+                "compound assignment needs a scalar or pointer lvalue",
+            );
+            return None;
+        }
+        let old = self.load_place(ctx, &place, lhs.span)?;
+        if ty.pointee().is_some() {
+            if !matches!(op, BinaryOp::Add | BinaryOp::Sub) {
+                self.emit(
+                    DiagCode::TyMismatch,
+                    span,
+                    "pointer compound assignment only allows += and -=",
+                );
+                return None;
+            }
+            let rhs_val = self.check_expr(ctx, rhs, None)?;
+            if !rhs_val.ty.is_integer() {
+                self.emit(
+                    DiagCode::TyMismatch,
+                    rhs.span,
+                    "pointer offset must be an integer",
+                );
+                return None;
+            }
+            let result = self.ptr_offset(ctx, old, rhs_val, op == BinaryOp::Sub, span)?;
+            if !self.store_place(ctx, &place, result.reg, span) {
+                return None;
+            }
+            return Some(result);
+        }
+        if !ty.is_integer() {
+            self.emit(
+                DiagCode::TyMismatch,
+                lhs.span,
+                "compound assignment needs an integer or pointer lvalue",
+            );
+            return None;
+        }
+        let rhs_ty = if matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
+            Some(CType::U8)
+        } else {
+            Some(ty)
+        };
+        let rhs_val = self.check_expr(ctx, rhs, rhs_ty)?;
+        if matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
+            if rhs_val.ty != CType::U8 {
+                self.emit(DiagCode::TyMismatch, rhs.span, "shift count must be u8");
+                return None;
+            }
+        } else if rhs_val.ty != ty {
+            self.emit(
+                DiagCode::TyMismatch,
+                span,
+                format!("expected {}, found {}", ty.as_str(), rhs_val.ty.as_str()),
+            );
+            return None;
+        }
+        let dst = self.vreg();
+        self.emit_op(
+            ctx,
+            IrOp::Binary {
+                dst,
+                ty,
+                op: ir_binary(op),
+                lhs: old.reg,
+                rhs: rhs_val.reg,
+                span,
+            },
+        );
+        let result = Value {
+            ty,
+            reg: dst,
+            bits: None,
+        };
+        if !self.store_place(ctx, &place, result.reg, span) {
+            return None;
+        }
+        Some(result)
+    }
+
+    fn check_inc(
+        &mut self,
+        ctx: &mut FnCtx,
+        op: IncOp,
+        expr: &Expr,
+        prefix: bool,
+        span: SourceSpan,
+    ) -> Option<Value> {
+        let place = self.prepare_lvalue(ctx, expr)?;
+        let ty = place_ty(&place);
+        if ty.is_aggregate() || ty == CType::Str {
+            self.emit(
+                DiagCode::TyNotLvalue,
+                expr.span,
+                "++/-- needs an integer or pointer lvalue",
+            );
+            return None;
+        }
+        let old = self.load_place(ctx, &place, expr.span)?;
+        let updated = if ty.pointee().is_some() {
+            let one = self.const_val(ctx, CType::U16, 1, span);
+            self.ptr_offset(ctx, old.clone(), one, matches!(op, IncOp::Dec), span)?
+        } else if ty.is_integer() {
+            let one = self.const_val(ctx, ty, 1, span);
+            let dst = self.vreg();
+            self.emit_op(
+                ctx,
+                IrOp::Binary {
+                    dst,
+                    ty,
+                    op: if matches!(op, IncOp::Dec) {
+                        IrBinary::Sub
+                    } else {
+                        IrBinary::Add
+                    },
+                    lhs: old.reg,
+                    rhs: one.reg,
+                    span,
+                },
+            );
+            Value {
+                ty,
+                reg: dst,
+                bits: None,
+            }
+        } else {
+            self.emit(
+                DiagCode::TyMismatch,
+                expr.span,
+                "++/-- needs an integer or pointer lvalue",
+            );
+            return None;
+        };
+        if !self.store_place(ctx, &place, updated.reg, span) {
+            return None;
+        }
+        if prefix { Some(updated) } else { Some(old) }
+    }
+
     fn ptr_offset(
         &mut self,
         ctx: &mut FnCtx,
@@ -2686,28 +4014,13 @@ impl<'a> Analyzer<'a> {
         span: SourceSpan,
     ) -> Option<Value> {
         let elem = ptr.ty.pointee()?;
-        let scale = elem.byte_width().unwrap_or(1);
+        let scale = elem.storage_size(&self.structs).unwrap_or(1);
         let idx16 = if offset.ty.byte_width() == Some(2) {
             offset
         } else {
             self.cast_val(ctx, offset, CType::U16, span)
         };
-        let mut off = idx16.reg;
-        if scale == 2 {
-            let doubled = self.vreg();
-            self.emit_op(
-                ctx,
-                IrOp::Binary {
-                    dst: doubled,
-                    ty: CType::U16,
-                    op: IrBinary::Add,
-                    lhs: off,
-                    rhs: off,
-                    span,
-                },
-            );
-            off = doubled;
-        }
+        let off = self.scale_index(ctx, idx16, scale, span);
         let dst = self.vreg();
         self.emit_op(
             ctx,
@@ -2738,6 +4051,23 @@ impl<'a> Analyzer<'a> {
         rhs: &Expr,
         span: SourceSpan,
     ) -> Option<Value> {
+        if let ExprKind::Field { base, name } = &lhs.kind {
+            let place = self.check_field_place(ctx, base, name, lhs.span)?;
+            let ty = place_ty(&place);
+            if ty.is_aggregate() {
+                self.emit(
+                    DiagCode::TyNotLvalue,
+                    lhs.span,
+                    "cannot assign to an aggregate as a whole",
+                );
+                return None;
+            }
+            let val = self.check_expr(ctx, rhs, Some(ty))?;
+            if !self.store_place(ctx, &place, val.reg, span) {
+                return None;
+            }
+            return Some(val);
+        }
         if let ExprKind::Unary {
             op: UnaryOp::Deref,
             expr: inner,
@@ -2752,6 +4082,14 @@ impl<'a> Analyzer<'a> {
                 );
                 return None;
             };
+            if elem.is_aggregate() {
+                self.emit(
+                    DiagCode::TyNotLvalue,
+                    lhs.span,
+                    "cannot assign to an aggregate as a whole",
+                );
+                return None;
+            }
             let val = self.check_expr(ctx, rhs, Some(elem))?;
             self.emit_op(
                 ctx,
@@ -2775,6 +4113,14 @@ impl<'a> Analyzer<'a> {
                 return None;
             }
             let elem = addr.ty.pointee().unwrap_or(CType::U8);
+            if elem.is_aggregate() {
+                self.emit(
+                    DiagCode::TyNotLvalue,
+                    lhs.span,
+                    "cannot assign to an aggregate as a whole",
+                );
+                return None;
+            }
             let val = self.check_expr(ctx, rhs, Some(elem))?;
             self.emit_op(
                 ctx,
@@ -2808,11 +4154,11 @@ impl<'a> Analyzer<'a> {
                         );
                         return None;
                     }
-                    if matches!(ty, CType::Array(_)) {
+                    if matches!(ty, CType::Array(_) | CType::Struct(_)) {
                         self.emit(
                             DiagCode::TyNotLvalue,
                             lhs.span,
-                            "cannot assign to an array as a whole",
+                            "cannot assign to an aggregate as a whole",
                         );
                         return None;
                     }
@@ -2884,7 +4230,7 @@ impl<'a> Analyzer<'a> {
                 );
                 return None;
             }
-            if matches!(sym.ty, CType::Array(_)) {
+            if matches!(sym.ty, CType::Array(_) | CType::Struct(_)) {
                 self.emit(
                     DiagCode::TyNotLvalue,
                     lhs.span,
@@ -3148,6 +4494,19 @@ impl<'a> Analyzer<'a> {
                 );
             }
         }
+    }
+}
+
+fn place_ty(place: &Place) -> CType {
+    match *place {
+        Place::Local { ty, .. } | Place::Global { ty, .. } | Place::Indirect { ty, .. } => ty,
+    }
+}
+
+fn place_immutable(place: &Place) -> bool {
+    match *place {
+        Place::Local { is_const, .. } | Place::Global { is_const, .. } => is_const,
+        Place::Indirect { immutable, .. } => immutable,
     }
 }
 

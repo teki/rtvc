@@ -1,6 +1,6 @@
 //! Listing provenance, symbols, timing, and stack reports for compiled code.
 
-use super::ast::{Item, Stmt, TranslationUnit};
+use super::ast::{ForInit, Item, Stmt, TranslationUnit};
 use super::source::{FileId, SourceMap, SourceSpan};
 use super::types::CType;
 use super::z80::{
@@ -425,6 +425,23 @@ fn collect_no_code(stmts: &[Stmt], entries: &[MappedInstruction], out: &mut Vec<
                 }
             }
             Stmt::While(s) => collect_no_code(std::slice::from_ref(s.body.as_ref()), entries, out),
+            Stmt::For(s) => {
+                if let Some(ForInit::Decl(decl)) = &s.init {
+                    if !entries
+                        .iter()
+                        .any(|e| !e.synthetic && span_inside(e, decl.span))
+                    {
+                        out.push(NoCodeSpan {
+                            span: decl.span,
+                            reason: NoCodeReason::Eliminated,
+                        });
+                    }
+                }
+                collect_no_code(std::slice::from_ref(s.body.as_ref()), entries, out);
+            }
+            Stmt::DoWhile(s) => {
+                collect_no_code(std::slice::from_ref(s.body.as_ref()), entries, out)
+            }
             Stmt::Decl(decl) => {
                 if !entries
                     .iter()
