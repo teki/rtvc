@@ -102,3 +102,25 @@ implementation is not an open design choice.
 **Affected:** T05 bound vs high-water comparison  
 **Impact:** Count depth only when `0 < entry.wrapping_sub(sp) < 0x8000`.  
 **Resolution authority:** implementer (E05).
+
+## F-010 — Untyped integer beside a pointer is an offset, not a pointer
+
+**Status:** resolved in E06  
+**Evidence:** `p = p + 1` typed the literal `1` with the assignment's `ptr<T>`
+expected type (`integer literal used in a non-integer context`). F003 says a
+pointer ± integer offset is scaled addressing, not a general conversion.  
+**Affected:** E06 pointer arithmetic  
+**Impact:** When the typed peer is a pointer, give the untyped integer `u16`
+context, then scale.  
+**Resolution authority:** implementer (E06).
+
+## F-011 — `ADD HL,imm` must not require a second register pair
+
+**Status:** resolved in E06  
+**Evidence:** `p = p + 1` in a loop with byte locals occupying `BC` and `p` in
+`DE` failed with register pressure because `word_src_rr` tried to materialize
+the immediate in `DE`/`BC`.  
+**Affected:** E06 pointer walks / T06 buffer-fill fixture  
+**Impact:** Immediate word adds use `INC HL` for 1/2 and `ADD`/`ADC A` for other
+constants, so a pointer increment can stay in registers without an IX frame.  
+**Resolution authority:** implementer (E06).

@@ -44,6 +44,8 @@ fn expr_tree(expr: &Expr) -> String {
                 UnaryOp::Minus => "-",
                 UnaryOp::Not => "!",
                 UnaryOp::BitNot => "~",
+                UnaryOp::Deref => "*",
+                UnaryOp::AddrOf => "&",
             };
             format!("({op} {})", expr_tree(expr))
         }
@@ -299,6 +301,30 @@ fn lexer_keeps_comment_bytes_out_of_tokens() {
             TokenKind::Eof,
         ]
     );
+}
+
+#[test]
+fn ptr_str_array_and_deref_parse() {
+    let result = compile_src(
+        r#"
+u8 positions[16];
+pub str enemy_name = "hi";
+u8 f(ptr<u8> p) { return *p + p[1]; }
+"#,
+    );
+    assert!(!result.has_errors(), "{:?}", result.diagnostics);
+    let positions = result
+        .units
+        .iter()
+        .flat_map(|u| u.items.iter())
+        .find_map(|item| match item {
+            Item::Decl(d) if d.name.name == "positions" => Some(d),
+            _ => None,
+        })
+        .unwrap();
+    assert!(positions.array_len.is_some());
+    let f = function_named(&result, "f");
+    assert!(matches!(f.params[0].ty.kind, TypeKind::Ptr(_)));
 }
 
 #[test]

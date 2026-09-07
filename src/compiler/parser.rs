@@ -150,9 +150,7 @@ impl<'a> Parser<'a> {
             | TokenKind::Struct
             | TokenKind::Asm
             | TokenKind::For
-            | TokenKind::Do
-            | TokenKind::Ptr
-            | TokenKind::Str => {
+            | TokenKind::Do => {
                 let tok = self.bump();
                 self.emit(
                     DiagCode::ParseUnsupported,
@@ -174,7 +172,9 @@ impl<'a> Parser<'a> {
             | TokenKind::U8
             | TokenKind::I8
             | TokenKind::U16
-            | TokenKind::I16 => self.parse_decl_or_function(),
+            | TokenKind::I16
+            | TokenKind::Ptr
+            | TokenKind::Str => self.parse_decl_or_function(),
             TokenKind::RBrace => {
                 let tok = self.bump();
                 self.emit(DiagCode::ParseExpected, tok.span, "unexpected '}'");
@@ -241,6 +241,7 @@ impl<'a> Parser<'a> {
                 "calling-convention attributes apply only to functions",
             );
         }
+        let array_len = self.parse_array_len();
         let init = if self.at(TokenKind::Eq) {
             self.bump();
             Some(self.parse_expr())
@@ -256,6 +257,7 @@ impl<'a> Parser<'a> {
             is_const,
             ty,
             name,
+            array_len,
             init,
         }))
     }
@@ -355,6 +357,19 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type(&mut self) -> Option<TypeExpr> {
+        if self.at(TokenKind::Ptr) {
+            let start = self.bump().span;
+            self.expect(TokenKind::Lt, "'<'");
+            let inner = self.parse_type()?;
+            let end = self
+                .expect(TokenKind::Gt, "'>'")
+                .map(|t| t.span.end)
+                .unwrap_or(inner.span.end);
+            return Some(TypeExpr {
+                kind: TypeKind::Ptr(Box::new(inner)),
+                span: SourceSpan::new(self.file, start.start, end),
+            });
+        }
         if self.kind().is_type_start() {
             let tok = self.bump();
             Some(TypeExpr {
@@ -368,6 +383,52 @@ impl<'a> Parser<'a> {
                 format!("expected type, found {}", self.kind().describe()),
             );
             None
+        }
+    }
+
+    fn parse_array_len(&mut self) -> Option<Expr> {
+        if !self.at(TokenKind::LBracket) {
+            return None;
+        }
+        self.bump();
+        let len = self.parse_expr();
+        self.expect(TokenKind::RBracket, "']'");
+        Some(len)
+    }
+
+    fn at_local_decl(&self) -> bool {
+        let mut i = 0usize;
+        if self.nth(i) == TokenKind::Const {
+            i += 1;
+        }
+        if !self.skip_type_tokens(&mut i) {
+            return false;
+        }
+        self.nth(i) == TokenKind::Ident
+    }
+
+    fn skip_type_tokens(&self, i: &mut usize) -> bool {
+        match self.nth(*i) {
+            TokenKind::Ptr => {
+                *i += 1;
+                if self.nth(*i) != TokenKind::Lt {
+                    return false;
+                }
+                *i += 1;
+                if !self.skip_type_tokens(i) {
+                    return false;
+                }
+                if self.nth(*i) != TokenKind::Gt {
+                    return false;
+                }
+                *i += 1;
+                true
+            }
+            k if k.is_type_start() => {
+                *i += 1;
+                true
+            }
+            _ => false,
         }
     }
 
@@ -481,8 +542,10 @@ impl<'a> Parser<'a> {
             | TokenKind::U8
             | TokenKind::I8
             | TokenKind::U16
-            | TokenKind::I16 => {
-                if self.nth(1) == TokenKind::Ident {
+            | TokenKind::I16
+            | TokenKind::Ptr
+            | TokenKind::Str => {
+                if self.at_local_decl() {
                     if let Some(decl) = self.parse_local_decl() {
                         Stmt::Decl(decl)
                     } else {
@@ -529,6 +592,7 @@ impl<'a> Parser<'a> {
         };
         let ty = self.parse_type()?;
         let name = self.parse_ident()?;
+        let array_len = self.parse_array_len();
         let init = if self.at(TokenKind::Eq) {
             self.bump();
             Some(self.parse_expr())
@@ -544,6 +608,7 @@ impl<'a> Parser<'a> {
             is_const,
             ty,
             name,
+            array_len,
             init,
         })
     }
@@ -816,19 +881,19 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Star | TokenKind::Amp => {
                 let tok = self.bump();
-                self.emit(
-                    DiagCode::ParseUnsupported,
-                    tok.span,
-                    format!(
-                        "{} is not accepted in this compiler slice",
-                        tok.kind.describe()
-                    ),
-                );
+                let op = if tok.kind == TokenKind::Star {
+                    UnaryOp::Deref
+                } else {
+                    UnaryOp::AddrOf
+                };
                 let expr = self.parse_expr_bp(28);
                 Expr {
                     id: self.ids.next(),
                     span: tok.span.merge(expr.span),
-                    kind: ExprKind::Error,
+                    kind: ExprKind::Unary {
+                        op,
+                        expr: Box::new(expr),
+                    },
                 }
             }
             TokenKind::Void
@@ -836,7 +901,9 @@ impl<'a> Parser<'a> {
             | TokenKind::U8
             | TokenKind::I8
             | TokenKind::U16
-            | TokenKind::I16 => {
+            | TokenKind::I16
+            | TokenKind::Ptr
+            | TokenKind::Str => {
                 if self.nth(1) == TokenKind::Ident && self.nth(2) == TokenKind::LParen {
                     let span = self.span();
                     self.emit(
@@ -920,18 +987,6 @@ impl<'a> Parser<'a> {
                 }
             }
             TokenKind::Sizeof => self.parse_sizeof(),
-            TokenKind::Ptr | TokenKind::Str => {
-                let tok = self.bump();
-                self.emit(
-                    DiagCode::ParseUnsupported,
-                    tok.span,
-                    format!(
-                        "{} is not accepted in this compiler slice",
-                        tok.kind.describe()
-                    ),
-                );
-                self.error_expr(tok.span)
-            }
             _ => {
                 let span = self.span();
                 self.emit(
@@ -956,10 +1011,8 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_cast(&mut self) -> Expr {
-        let ty_tok = self.bump();
-        let ty = TypeExpr {
-            kind: TypeKind::from_token(ty_tok.kind).unwrap(),
-            span: ty_tok.span,
+        let Some(ty) = self.parse_type() else {
+            return self.error_expr(self.span());
         };
         if !self.at(TokenKind::LParen) {
             self.emit(

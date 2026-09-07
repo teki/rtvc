@@ -1,4 +1,4 @@
-//! C80 compiler library: source model, parser, scalar semantics, and leaf codegen.
+//! C80 compiler library: source model, parser, typed IR, and Z80 codegen.
 
 mod abi;
 mod ast;
@@ -64,8 +64,8 @@ impl CompilationResult {
 /// Compile in-memory C80 sources to AST, diagnostics, typed IR, and Z80 when possible.
 ///
 /// Parse/type errors yield `program: None` and `code: None`. Codegen errors
-/// yield `code: None`. Scalar functions, control flow, globals, and calls
-/// produce assembled code when lowering succeeds.
+/// yield `code: None`. Scalar functions, control flow, globals, calls, arrays,
+/// pointers, and strings produce assembled code when lowering succeeds.
 pub fn compile(input: CompileInput<'_>) -> CompilationResult {
     let mut sources = SourceMap::new();
     let mut diagnostics = Vec::new();

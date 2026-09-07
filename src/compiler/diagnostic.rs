@@ -33,6 +33,7 @@ pub enum DiagCode {
     TyInvalidConversion,
     TyVoidValue,
     TyAssignConst,
+    TyReturnLocalAddr,
     CgUnsupported,
     CgInternal,
 }
@@ -62,6 +63,7 @@ impl DiagCode {
             Self::TyInvalidConversion => "ty-invalid-conversion",
             Self::TyVoidValue => "ty-void-value",
             Self::TyAssignConst => "ty-assign-const",
+            Self::TyReturnLocalAddr => "ty-return-local-addr",
             Self::CgUnsupported => "cg-unsupported",
             Self::CgInternal => "cg-internal",
         }
@@ -87,6 +89,16 @@ impl Diagnostic {
     pub fn error(code: DiagCode, span: SourceSpan, message: impl Into<String>) -> Self {
         Self {
             severity: Severity::Error,
+            code,
+            message: message.into(),
+            span,
+            related: Vec::new(),
+        }
+    }
+
+    pub fn warning(code: DiagCode, span: SourceSpan, message: impl Into<String>) -> Self {
+        Self {
+            severity: Severity::Warning,
             code,
             message: message.into(),
             span,

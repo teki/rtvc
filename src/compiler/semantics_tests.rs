@@ -238,3 +238,72 @@ fn sizeof_scalar() {
     assert!(consts.contains(&1), "{consts:?}");
     assert!(consts.contains(&2), "{consts:?}");
 }
+
+#[test]
+fn sizeof_ptr_and_str() {
+    let result = ok("u16 f() { return sizeof(ptr<u8>) + sizeof(str); }");
+    let f = function_by_name(result.program.as_ref().unwrap(), "f").unwrap();
+    let consts: Vec<u16> = f
+        .blocks
+        .iter()
+        .flat_map(|b| b.ops.iter())
+        .filter_map(|op| match op {
+            IrOp::Const { bits, .. } => Some(*bits),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(consts.iter().filter(|&&c| c == 2).count(), 2, "{consts:?}");
+}
+
+#[test]
+fn array_and_string_constant_bounds() {
+    let result = compile_src("u8 a[4]; u8 f() { return a[4]; }");
+    assert!(
+        codes(&result).contains(&"ty-literal-range"),
+        "{:?}",
+        codes(&result)
+    );
+    let result = compile_src("u8 a[4]; u8 f() { return a[-1]; }");
+    assert!(
+        codes(&result).contains(&"ty-literal-range"),
+        "{:?}",
+        codes(&result)
+    );
+    let result = compile_src(r#"str s = "hi"; u8 f() { return s[2]; }"#);
+    assert!(
+        codes(&result).contains(&"ty-literal-range"),
+        "{:?}",
+        codes(&result)
+    );
+    let result = compile_src(r#"u8 f(str s) { return s[200]; }"#);
+    assert!(!result.has_errors(), "{:?}", result.diagnostics);
+}
+
+#[test]
+fn str_payload_length_limits() {
+    let empty = ok(r#"str s = ""; u8 f() { return s.len; }"#);
+    assert!(empty.program.is_some());
+    let too_long = "x".repeat(256);
+    let src = format!(r#"str s = "{too_long}";"#);
+    let result = compile_src(&src);
+    assert!(
+        codes(&result).contains(&"ty-literal-range"),
+        "{:?}",
+        codes(&result)
+    );
+}
+
+#[test]
+fn returning_local_address_is_a_warning() {
+    let result = compile_src("ptr<u8> f() { u8 x = 1; return &x; }");
+    assert!(!result.has_errors(), "{:?}", result.diagnostics);
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.code.as_str() == "ty-return-local-addr" && !d.is_error()),
+        "{:?}",
+        result.diagnostics
+    );
+    assert!(result.code.is_some());
+}

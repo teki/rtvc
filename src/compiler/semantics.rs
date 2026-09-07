@@ -4,7 +4,7 @@ use super::ast::*;
 use super::diagnostic::{DiagCode, Diagnostic};
 use super::ir::*;
 use super::source::{NodeId, SourceSpan};
-use super::types::CType;
+use super::types::{ArrayElem, ArrayType, CType, PtrType};
 use std::collections::{HashMap, HashSet};
 
 pub fn analyze_unit(unit: &TranslationUnit, diagnostics: &mut Vec<Diagnostic>) -> TypedProgram {
@@ -15,6 +15,9 @@ pub fn analyze_unit(unit: &TranslationUnit, diagnostics: &mut Vec<Diagnostic>) -
         calls: Vec::new(),
         next_vreg: 1,
         next_block: 1,
+        next_anon: 0,
+        anon_globals: Vec::new(),
+        str_lens: HashMap::new(),
     };
     analyzer.collect(unit);
     let program = analyzer.check_unit(unit);
@@ -48,6 +51,9 @@ struct Analyzer<'a> {
     calls: Vec<(String, String, SourceSpan)>,
     next_vreg: u32,
     next_block: u32,
+    next_anon: u32,
+    anon_globals: Vec<TypedGlobal>,
+    str_lens: HashMap<NodeId, u8>,
 }
 
 struct FnCtx {
@@ -61,6 +67,7 @@ struct FnCtx {
     current: BlockId,
     loop_stack: Vec<LoopCtx>,
     reachable: bool,
+    owner_span: SourceSpan,
 }
 
 #[derive(Clone)]
@@ -93,6 +100,64 @@ impl<'a> Analyzer<'a> {
             .push(Diagnostic::error(code, span, message));
     }
 
+    fn warn(&mut self, code: DiagCode, span: SourceSpan, message: impl Into<String>) {
+        self.diagnostics
+            .push(Diagnostic::warning(code, span, message));
+    }
+
+    fn type_of(&mut self, ty: &TypeExpr) -> CType {
+        match &ty.kind {
+            TypeKind::Ptr(inner) => {
+                let inner = self.type_of(inner);
+                match PtrType::of(inner) {
+                    Some(p) => CType::Ptr(p),
+                    None => {
+                        self.emit(
+                            DiagCode::TyMismatch,
+                            ty.span,
+                            format!("ptr<{}> is not a supported pointer type", inner.as_str()),
+                        );
+                        CType::Void
+                    }
+                }
+            }
+            _ => CType::from_ast(&ty.kind),
+        }
+    }
+
+    fn intern_string(
+        &mut self,
+        bytes: &[u8],
+        lit_span: SourceSpan,
+        owner: SourceSpan,
+    ) -> Option<GlobalId> {
+        if bytes.len() > 255 {
+            self.emit(
+                DiagCode::TyLiteralRange,
+                lit_span,
+                "str payload is limited to 255 bytes",
+            );
+            return None;
+        }
+        self.next_anon += 1;
+        let id = NodeId(0x8000_0000 + self.next_anon);
+        let mut extra = Vec::with_capacity(bytes.len() + 1);
+        extra.push(bytes.len() as u8);
+        extra.extend_from_slice(bytes);
+        self.str_lens.insert(id, bytes.len() as u8);
+        self.anon_globals.push(TypedGlobal {
+            id: GlobalId(id),
+            name: format!("s{}", self.next_anon),
+            ty: CType::Str,
+            is_pub: false,
+            is_const: true,
+            init: None,
+            extra,
+            span: SourceSpan::new(owner.file, owner.end, owner.end),
+        });
+        Some(GlobalId(id))
+    }
+
     fn vreg(&mut self) -> VReg {
         let id = VReg(self.next_vreg);
         self.next_vreg += 1;
@@ -109,12 +174,9 @@ impl<'a> Analyzer<'a> {
         for item in &unit.items {
             match item {
                 Item::Function(func) => {
-                    let ret = CType::from_ast(func.return_ty.kind);
-                    let params: Vec<CType> = func
-                        .params
-                        .iter()
-                        .map(|p| CType::from_ast(p.ty.kind))
-                        .collect();
+                    let ret = self.type_of(&func.return_ty);
+                    let params: Vec<CType> =
+                        func.params.iter().map(|p| self.type_of(&p.ty)).collect();
                     if self.symbols.contains_key(&func.name.name) {
                         self.emit(
                             DiagCode::TyDuplicateName,
@@ -140,7 +202,17 @@ impl<'a> Analyzer<'a> {
                         .insert(func.name.name.clone(), FuncId(func.id));
                 }
                 Item::Decl(decl) => {
-                    let ty = CType::from_ast(decl.ty.kind);
+                    let mut ty = self.type_of(&decl.ty);
+                    if let Some(len_expr) = &decl.array_len {
+                        if let ExprKind::Int(lit) = &len_expr.kind {
+                            if let (Some(n), Some(elem)) = (
+                                lit.value.and_then(|v| u16::try_from(v).ok()),
+                                ArrayElem::from_ctype(ty),
+                            ) {
+                                ty = CType::Array(ArrayType { elem, len: n });
+                            }
+                        }
+                    }
                     if self.symbols.contains_key(&decl.name.name) {
                         self.emit(
                             DiagCode::TyDuplicateName,
@@ -188,6 +260,7 @@ impl<'a> Analyzer<'a> {
                 }
                 Item::Function(func) => {
                     functions.push(self.check_function(func));
+                    globals.extend(self.anon_globals.drain(..));
                 }
             }
         }
@@ -195,11 +268,88 @@ impl<'a> Analyzer<'a> {
     }
 
     fn check_global(&mut self, decl: &VarDecl) -> Option<TypedGlobal> {
-        let ty = CType::from_ast(decl.ty.kind);
+        let mut ty = self.type_of(&decl.ty);
+        let mut extra = Vec::new();
+        if let Some(len_expr) = &decl.array_len {
+            let Some(len) = self.eval_const_expr(len_expr, Some(CType::U16)) else {
+                self.emit(
+                    DiagCode::TyMismatch,
+                    len_expr.span,
+                    "array length must be a compile-time integer",
+                );
+                return None;
+            };
+            if len == 0 {
+                self.emit(
+                    DiagCode::TyLiteralRange,
+                    len_expr.span,
+                    "array length must be at least 1",
+                );
+                return None;
+            }
+            let Some(elem) = ArrayElem::from_ctype(ty) else {
+                self.emit(
+                    DiagCode::TyMismatch,
+                    decl.ty.span,
+                    "arrays of this element type are not supported",
+                );
+                return None;
+            };
+            let size = u32::from(elem.byte_width()) * u32::from(len);
+            if size > 65535 {
+                self.emit(
+                    DiagCode::TyLiteralRange,
+                    decl.span,
+                    "array is larger than 65535 bytes",
+                );
+                return None;
+            }
+            ty = CType::Array(ArrayType { elem, len });
+            extra = vec![0; size as usize];
+        }
+        if ty == CType::Str {
+            match &decl.init {
+                Some(Expr {
+                    kind: ExprKind::String(bytes),
+                    span: init_span,
+                    ..
+                }) => {
+                    if bytes.len() > 255 {
+                        self.emit(
+                            DiagCode::TyLiteralRange,
+                            *init_span,
+                            "str payload is limited to 255 bytes",
+                        );
+                        return None;
+                    }
+                    extra.push(bytes.len() as u8);
+                    extra.extend_from_slice(bytes);
+                    self.str_lens.insert(decl.id, bytes.len() as u8);
+                }
+                Some(expr) => {
+                    self.emit(
+                        DiagCode::TyMismatch,
+                        expr.span,
+                        "str globals require a string literal initializer",
+                    );
+                    return None;
+                }
+                None => {
+                    self.emit(
+                        DiagCode::TyMismatch,
+                        decl.span,
+                        "str globals require a string literal initializer",
+                    );
+                    return None;
+                }
+            }
+        }
         if ty == CType::Void {
             return None;
         }
-        let init = if let Some(expr) = &decl.init {
+        let init = if matches!(ty, CType::Str | CType::Array(_)) {
+            None
+        } else if let Some(expr) = &decl.init {
             match self.eval_const_expr(expr, Some(ty)) {
                 Some(bits) => Some(bits),
                 None => {
@@ -230,12 +380,13 @@ impl<'a> Analyzer<'a> {
             is_pub: decl.is_pub,
             is_const: decl.is_const,
             init,
+            extra,
             span: decl.span,
         })
     }
 
     fn check_function(&mut self, func: &Function) -> TypedFunction {
-        let ret = CType::from_ast(func.return_ty.kind);
+        let ret = self.type_of(&func.return_ty);
         let entry = self.block_id();
         let mut ctx = FnCtx {
             ret,
@@ -251,10 +402,11 @@ impl<'a> Analyzer<'a> {
             current: entry,
             loop_stack: Vec::new(),
             reachable: true,
+            owner_span: func.span,
         };
         let mut param_names = HashSet::new();
         for param in &func.params {
-            let ty = CType::from_ast(param.ty.kind);
+            let ty = self.type_of(&param.ty);
             if ty == CType::Void {
                 self.emit(
                     DiagCode::TyVoidValue,
@@ -375,7 +527,14 @@ impl<'a> Analyzer<'a> {
     }
 
     fn check_local(&mut self, ctx: &mut FnCtx, decl: &VarDecl) {
-        let ty = CType::from_ast(decl.ty.kind);
+        if decl.array_len.is_some() {
+            self.emit(
+                DiagCode::TyMismatch,
+                decl.name.span,
+                "local arrays are not supported; use a global array or a pointer",
+            );
+        }
+        let ty = self.type_of(&decl.ty);
         if ty == CType::Void {
             self.emit(
                 DiagCode::TyVoidValue,
@@ -566,6 +725,19 @@ impl<'a> Analyzer<'a> {
                 let _ = self.check_expr(ctx, expr, None);
             }
             (ty, Some(expr)) => {
+                if matches!(
+                    &expr.kind,
+                    ExprKind::Unary {
+                        op: UnaryOp::AddrOf,
+                        expr: inner
+                    } if matches!(&inner.kind, ExprKind::Name(name) if lookup_local(&ctx.scopes, &name.name).is_some())
+                ) {
+                    self.warn(
+                        DiagCode::TyReturnLocalAddr,
+                        expr.span,
+                        "returning the address of a local; the pointer is only valid for this call",
+                    );
+                }
                 if let Some(val) = self.check_expr(ctx, expr, Some(ty)) {
                     self.emit_op(
                         ctx,
@@ -614,13 +786,31 @@ impl<'a> Analyzer<'a> {
                 }
                 self.const_val(ctx, CType::Bool, u16::from(*b), expr.span)
             }
-            ExprKind::String(_) => {
-                self.emit(
-                    DiagCode::TyMismatch,
-                    expr.span,
-                    "string literals are not a scalar value in this slice",
+            ExprKind::String(bytes) => {
+                let want = expected.unwrap_or(CType::Str);
+                if want != CType::Str {
+                    self.emit(
+                        DiagCode::TyMismatch,
+                        expr.span,
+                        format!("string literal used where {} was expected", want.as_str()),
+                    );
+                    return None;
+                }
+                let id = self.intern_string(bytes, expr.span, ctx.owner_span)?;
+                let dst = self.vreg();
+                self.emit_op(
+                    ctx,
+                    IrOp::AddrGlobal {
+                        dst,
+                        global: id,
+                        span: expr.span,
+                    },
                 );
-                return None;
+                Value {
+                    ty: CType::Str,
+                    reg: dst,
+                    bits: None,
+                }
             }
             ExprKind::Unary { op, expr: inner } => {
                 self.check_unary(ctx, *op, inner, expr.span, expected)?
@@ -630,9 +820,11 @@ impl<'a> Analyzer<'a> {
             }
             ExprKind::Assign { lhs, rhs } => self.check_assign(ctx, lhs, rhs, expr.span)?,
             ExprKind::Call { callee, args } => self.check_call(ctx, callee, args, expr.span)?,
+            ExprKind::Index { base, index } => self.check_index(ctx, base, index, expr.span)?,
+            ExprKind::Field { base, name } => self.check_field(ctx, base, name, expr.span)?,
             ExprKind::Cast { ty, expr: inner } => self.check_cast(ctx, ty, inner, expr.span)?,
             ExprKind::Sizeof { ty } => {
-                let cty = CType::from_ast(ty.kind);
+                let cty = self.type_of(ty);
                 match cty.byte_width() {
                     Some(w) => {
                         let out_ty = expected.filter(|t| t.is_integer()).unwrap_or(CType::U16);
@@ -640,7 +832,6 @@ impl<'a> Analyzer<'a> {
                             self.emit(DiagCode::TyMismatch, expr.span, "sizeof result is u16");
                             return None;
                         }
-                        // sizeof is u16; convert if expected integer
                         let val = self.const_val(ctx, CType::U16, u16::from(w), expr.span);
                         if out_ty != CType::U16 {
                             self.cast_val(ctx, val, out_ty, expr.span)
@@ -648,7 +839,7 @@ impl<'a> Analyzer<'a> {
                             val
                         }
                     }
-                    None => {
+                    None if cty == CType::Void => {
                         self.emit(
                             DiagCode::TyVoidValue,
                             ty.span,
@@ -656,15 +847,15 @@ impl<'a> Analyzer<'a> {
                         );
                         return None;
                     }
+                    None => {
+                        self.emit(
+                            DiagCode::TyMismatch,
+                            ty.span,
+                            format!("sizeof({}) is not defined in this slice", cty.as_str()),
+                        );
+                        return None;
+                    }
                 }
-            }
-            ExprKind::Index { .. } | ExprKind::Field { .. } => {
-                self.emit(
-                    DiagCode::TyMismatch,
-                    expr.span,
-                    "index and field expressions are not accepted in this slice",
-                );
-                return None;
             }
         };
         if let Some(want) = expected {
@@ -793,15 +984,37 @@ impl<'a> Analyzer<'a> {
                 );
                 return None;
             }
+            if matches!(ty, CType::Array(_)) {
+                self.emit(
+                    DiagCode::TyMismatch,
+                    name.span,
+                    format!(
+                        "array '{}' does not decay to a pointer; use &{}[0]",
+                        name.name, name.name
+                    ),
+                );
+                return None;
+            }
             let dst = self.vreg();
-            self.emit_op(
-                ctx,
-                IrOp::LoadGlobal {
-                    dst,
-                    global: GlobalId(id),
-                    span: name.span,
-                },
-            );
+            if ty == CType::Str {
+                self.emit_op(
+                    ctx,
+                    IrOp::AddrGlobal {
+                        dst,
+                        global: GlobalId(id),
+                        span: name.span,
+                    },
+                );
+            } else {
+                self.emit_op(
+                    ctx,
+                    IrOp::LoadGlobal {
+                        dst,
+                        global: GlobalId(id),
+                        span: name.span,
+                    },
+                );
+            }
             return Some(Value {
                 ty,
                 reg: dst,
@@ -868,7 +1081,7 @@ impl<'a> Analyzer<'a> {
                     UnaryOp::Plus => IrUnary::Plus,
                     UnaryOp::Minus => IrUnary::Neg,
                     UnaryOp::BitNot => IrUnary::BitNot,
-                    UnaryOp::Not => unreachable!(),
+                    UnaryOp::Not | UnaryOp::Deref | UnaryOp::AddrOf => unreachable!(),
                 };
                 let bits = inner.bits.map(|b| {
                     let v = inner.ty.interpret_bits(b);
@@ -876,7 +1089,7 @@ impl<'a> Analyzer<'a> {
                         UnaryOp::Plus => v,
                         UnaryOp::Minus => v.wrapping_neg(),
                         UnaryOp::BitNot => !v,
-                        UnaryOp::Not => unreachable!(),
+                        UnaryOp::Not | UnaryOp::Deref | UnaryOp::AddrOf => unreachable!(),
                     };
                     inner.ty.wrap_bits(out)
                 });
@@ -896,7 +1109,381 @@ impl<'a> Analyzer<'a> {
                     bits,
                 })
             }
+            UnaryOp::Deref => {
+                let inner = self.check_expr(ctx, inner, None)?;
+                let Some(elem) = inner.ty.pointee() else {
+                    self.emit(
+                        DiagCode::TyMismatch,
+                        span,
+                        format!("cannot dereference {}", inner.ty.as_str()),
+                    );
+                    return None;
+                };
+                let dst = self.vreg();
+                self.emit_op(
+                    ctx,
+                    IrOp::LoadIndirect {
+                        dst,
+                        ptr: inner.reg,
+                        ty: elem,
+                        span,
+                    },
+                );
+                Some(Value {
+                    ty: elem,
+                    reg: dst,
+                    bits: None,
+                })
+            }
+            UnaryOp::AddrOf => self.check_addr_of(ctx, inner, span),
         }
+    }
+
+    fn check_index(
+        &mut self,
+        ctx: &mut FnCtx,
+        base: &Expr,
+        index: &Expr,
+        span: SourceSpan,
+    ) -> Option<Value> {
+        let (addr, _) = self.check_index_addr(ctx, base, index, span, false)?;
+        let dst = self.vreg();
+        self.emit_op(
+            ctx,
+            IrOp::LoadIndirect {
+                dst,
+                ptr: addr.reg,
+                ty: addr.ty.pointee().unwrap_or(CType::U8),
+                span,
+            },
+        );
+        Some(Value {
+            ty: addr.ty.pointee().unwrap_or(CType::U8),
+            reg: dst,
+            bits: None,
+        })
+    }
+
+    fn check_index_addr(
+        &mut self,
+        ctx: &mut FnCtx,
+        base: &Expr,
+        index: &Expr,
+        span: SourceSpan,
+        for_addr_of: bool,
+    ) -> Option<(Value, bool)> {
+        let idx = self.check_expr(ctx, index, None)?;
+        if !idx.ty.is_integer() {
+            self.emit(
+                DiagCode::TyMismatch,
+                index.span,
+                "array and pointer indexes must be integers",
+            );
+            return None;
+        }
+        let const_idx = const_index_i32(index);
+        let mut known_len: Option<u32> = None;
+        let mut immutable = false;
+        if let ExprKind::String(bytes) = &base.kind {
+            known_len = Some(bytes.len() as u32);
+        }
+        let base_val = if let ExprKind::Name(name) = &base.kind {
+            let array = self.symbols.get(&name.name).and_then(|sym| {
+                if let CType::Array(arr) = sym.ty {
+                    Some((arr, sym.id, name.span))
+                } else {
+                    None
+                }
+            });
+            if let Some((arr, id, name_span)) = array {
+                known_len = Some(u32::from(arr.len));
+                let addr = self.vreg();
+                self.emit_op(
+                    ctx,
+                    IrOp::AddrGlobal {
+                        dst: addr,
+                        global: GlobalId(id),
+                        span: name_span,
+                    },
+                );
+                Some(Value {
+                    ty: PtrType::of(arr.elem.to_ctype())
+                        .map(CType::Ptr)
+                        .unwrap_or(CType::Void),
+                    reg: addr,
+                    bits: None,
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let base_val = match base_val {
+            Some(v) => v,
+            None => self.check_expr(ctx, base, None)?,
+        };
+        let elem = if let Some(elem) = base_val.ty.pointee() {
+            elem
+        } else if base_val.ty == CType::Str {
+            immutable = true;
+            if let ExprKind::Name(name) = &base.kind {
+                if let Some(sym) = self.symbols.get(&name.name) {
+                    if let Some(&len) = self.str_lens.get(&sym.id) {
+                        known_len = Some(u32::from(len));
+                    }
+                }
+            }
+            CType::U8
+        } else {
+            self.emit(
+                DiagCode::TyMismatch,
+                span,
+                format!("cannot index {}", base_val.ty.as_str()),
+            );
+            return None;
+        };
+        if let Some(len) = known_len {
+            if let Some(v) = const_idx {
+                if v < 0 || v as u32 >= len {
+                    self.emit(
+                        DiagCode::TyLiteralRange,
+                        index.span,
+                        "constant index is outside the array or string",
+                    );
+                    return None;
+                }
+            }
+        }
+        if for_addr_of && immutable {
+            self.emit(
+                DiagCode::TyNotLvalue,
+                span,
+                "cannot take the address of a string payload",
+            );
+            return None;
+        }
+        let ptr = if base_val.ty == CType::Str {
+            let one = self.const_val(ctx, CType::U16, 1, span);
+            let with_prefix = self.vreg();
+            self.emit_op(
+                ctx,
+                IrOp::Binary {
+                    dst: with_prefix,
+                    ty: CType::U16,
+                    op: IrBinary::Add,
+                    lhs: base_val.reg,
+                    rhs: one.reg,
+                    span,
+                },
+            );
+            with_prefix
+        } else {
+            base_val.reg
+        };
+        let scale = elem.byte_width().unwrap_or(1);
+        let idx16 = if idx.ty.byte_width() == Some(2) {
+            idx
+        } else {
+            self.cast_val(ctx, idx, CType::U16, index.span)
+        };
+        let mut off = idx16.reg;
+        if scale == 2 {
+            let doubled = self.vreg();
+            self.emit_op(
+                ctx,
+                IrOp::Binary {
+                    dst: doubled,
+                    ty: CType::U16,
+                    op: IrBinary::Add,
+                    lhs: off,
+                    rhs: off,
+                    span,
+                },
+            );
+            off = doubled;
+        }
+        let addr = self.vreg();
+        self.emit_op(
+            ctx,
+            IrOp::Binary {
+                dst: addr,
+                ty: CType::U16,
+                op: IrBinary::Add,
+                lhs: ptr,
+                rhs: off,
+                span,
+            },
+        );
+        Some((
+            Value {
+                ty: PtrType::of(elem).map(CType::Ptr).unwrap_or(CType::Void),
+                reg: addr,
+                bits: None,
+            },
+            immutable,
+        ))
+    }
+
+    fn check_addr_of(&mut self, ctx: &mut FnCtx, inner: &Expr, span: SourceSpan) -> Option<Value> {
+        match &inner.kind {
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                expr,
+            } => self.check_expr(ctx, expr, None),
+            ExprKind::Index { base, index } => {
+                let (addr, _) = self.check_index_addr(ctx, base, index, span, true)?;
+                Some(addr)
+            }
+            ExprKind::Name(name) => {
+                if let Some(bind) = lookup_local(&ctx.scopes, &name.name).cloned() {
+                    if bind.is_const {
+                        self.emit(
+                            DiagCode::TyNotLvalue,
+                            span,
+                            "cannot take the address of a constant",
+                        );
+                        return None;
+                    }
+                    let Some(ptr_ty) = PtrType::of(bind.ty).map(CType::Ptr) else {
+                        self.emit(
+                            DiagCode::TyMismatch,
+                            span,
+                            format!("cannot take the address of {}", bind.ty.as_str()),
+                        );
+                        return None;
+                    };
+                    let dst = self.vreg();
+                    self.emit_op(
+                        ctx,
+                        IrOp::AddrLocal {
+                            dst,
+                            local: bind.id,
+                            span,
+                        },
+                    );
+                    return Some(Value {
+                        ty: ptr_ty,
+                        reg: dst,
+                        bits: None,
+                    });
+                }
+                let global = self.symbols.get(&name.name).map(|sym| {
+                    (
+                        matches!(sym.kind, SymbolKind::Function { .. }),
+                        sym.ty,
+                        sym.id,
+                        sym.is_const,
+                    )
+                });
+                if let Some((is_fn, ty, id, is_const)) = global {
+                    if is_fn {
+                        self.emit(
+                            DiagCode::TyNotLvalue,
+                            span,
+                            "cannot take the address of a function",
+                        );
+                        return None;
+                    }
+                    if is_const {
+                        self.emit(
+                            DiagCode::TyNotLvalue,
+                            span,
+                            "cannot take the address of a constant",
+                        );
+                        return None;
+                    }
+                    if matches!(ty, CType::Array(_)) {
+                        self.emit(
+                            DiagCode::TyMismatch,
+                            span,
+                            format!(
+                                "cannot take the address of array '{}'; use &{}[0]",
+                                name.name, name.name
+                            ),
+                        );
+                        return None;
+                    }
+                    let Some(ptr_ty) = PtrType::of(ty).map(CType::Ptr) else {
+                        self.emit(
+                            DiagCode::TyMismatch,
+                            span,
+                            format!("cannot take the address of {}", ty.as_str()),
+                        );
+                        return None;
+                    };
+                    let dst = self.vreg();
+                    self.emit_op(
+                        ctx,
+                        IrOp::AddrGlobal {
+                            dst,
+                            global: GlobalId(id),
+                            span,
+                        },
+                    );
+                    return Some(Value {
+                        ty: ptr_ty,
+                        reg: dst,
+                        bits: None,
+                    });
+                }
+                self.emit(
+                    DiagCode::TyUnresolvedName,
+                    name.span,
+                    format!("unresolved name '{}'", name.name),
+                );
+                None
+            }
+            ExprKind::String(_) => {
+                self.emit(
+                    DiagCode::TyNotLvalue,
+                    span,
+                    "cannot take the address of a string payload",
+                );
+                None
+            }
+            _ => {
+                self.emit(
+                    DiagCode::TyNotLvalue,
+                    span,
+                    "address-of requires a scalar or array-element lvalue",
+                );
+                None
+            }
+        }
+    }
+
+    fn check_field(
+        &mut self,
+        ctx: &mut FnCtx,
+        base: &Expr,
+        name: &Ident,
+        span: SourceSpan,
+    ) -> Option<Value> {
+        let base_val = self.check_expr(ctx, base, None)?;
+        if name.name != "len" || base_val.ty != CType::Str {
+            self.emit(
+                DiagCode::TyMismatch,
+                name.span,
+                format!("unknown field '{}'", name.name),
+            );
+            return None;
+        }
+        let dst = self.vreg();
+        self.emit_op(
+            ctx,
+            IrOp::LoadIndirect {
+                dst,
+                ptr: base_val.reg,
+                ty: CType::U8,
+                span,
+            },
+        );
+        Some(Value {
+            ty: CType::U8,
+            reg: dst,
+            bits: None,
+        })
     }
 
     fn check_binary(
@@ -944,11 +1531,23 @@ impl<'a> Analyzer<'a> {
             )
         } else if lhs_untyped.is_some() {
             let right = self.check_expr(ctx, rhs, int_expected)?;
-            let left = self.check_expr(ctx, lhs, Some(right.ty))?;
+            let left_ty =
+                if right.ty.pointee().is_some() && matches!(op, BinaryOp::Add | BinaryOp::Sub) {
+                    Some(CType::U16)
+                } else {
+                    Some(right.ty)
+                };
+            let left = self.check_expr(ctx, lhs, left_ty)?;
             (left, right)
         } else if rhs_untyped.is_some() {
             let left = self.check_expr(ctx, lhs, int_expected)?;
-            let right = self.check_expr(ctx, rhs, Some(left.ty))?;
+            let right_ty =
+                if left.ty.pointee().is_some() && matches!(op, BinaryOp::Add | BinaryOp::Sub) {
+                    Some(CType::U16)
+                } else {
+                    Some(left.ty)
+                };
+            let right = self.check_expr(ctx, rhs, right_ty)?;
             (left, right)
         } else {
             (
@@ -956,6 +1555,14 @@ impl<'a> Analyzer<'a> {
                 self.check_expr(ctx, rhs, int_expected)?,
             )
         };
+        if matches!(op, BinaryOp::Add | BinaryOp::Sub) {
+            if left.ty.pointee().is_some() && right.ty.is_integer() {
+                return self.ptr_offset(ctx, left, right, op == BinaryOp::Sub, span);
+            }
+            if op == BinaryOp::Add && right.ty.pointee().is_some() && left.ty.is_integer() {
+                return self.ptr_offset(ctx, right, left, false, span);
+            }
+        }
         if left.ty != right.ty {
             self.emit(
                 DiagCode::TyMismatch,
@@ -969,6 +1576,10 @@ impl<'a> Analyzer<'a> {
             return None;
         }
         if cmp {
+            if left.ty == CType::Str {
+                self.emit(DiagCode::TyMismatch, span, "str values cannot be compared");
+                return None;
+            }
             if matches!(
                 op,
                 BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge
@@ -1131,6 +1742,60 @@ impl<'a> Analyzer<'a> {
         })
     }
 
+    fn ptr_offset(
+        &mut self,
+        ctx: &mut FnCtx,
+        ptr: Value,
+        offset: Value,
+        subtract: bool,
+        span: SourceSpan,
+    ) -> Option<Value> {
+        let elem = ptr.ty.pointee()?;
+        let scale = elem.byte_width().unwrap_or(1);
+        let idx16 = if offset.ty.byte_width() == Some(2) {
+            offset
+        } else {
+            self.cast_val(ctx, offset, CType::U16, span)
+        };
+        let mut off = idx16.reg;
+        if scale == 2 {
+            let doubled = self.vreg();
+            self.emit_op(
+                ctx,
+                IrOp::Binary {
+                    dst: doubled,
+                    ty: CType::U16,
+                    op: IrBinary::Add,
+                    lhs: off,
+                    rhs: off,
+                    span,
+                },
+            );
+            off = doubled;
+        }
+        let dst = self.vreg();
+        self.emit_op(
+            ctx,
+            IrOp::Binary {
+                dst,
+                ty: CType::U16,
+                op: if subtract {
+                    IrBinary::Sub
+                } else {
+                    IrBinary::Add
+                },
+                lhs: ptr.reg,
+                rhs: off,
+                span,
+            },
+        );
+        Some(Value {
+            ty: ptr.ty,
+            reg: dst,
+            bits: None,
+        })
+    }
+
     fn check_assign(
         &mut self,
         ctx: &mut FnCtx,
@@ -1138,6 +1803,55 @@ impl<'a> Analyzer<'a> {
         rhs: &Expr,
         span: SourceSpan,
     ) -> Option<Value> {
+        if let ExprKind::Unary {
+            op: UnaryOp::Deref,
+            expr: inner,
+        } = &lhs.kind
+        {
+            let ptr = self.check_expr(ctx, inner, None)?;
+            let Some(elem) = ptr.ty.pointee() else {
+                self.emit(
+                    DiagCode::TyMismatch,
+                    lhs.span,
+                    format!("cannot dereference {}", ptr.ty.as_str()),
+                );
+                return None;
+            };
+            let val = self.check_expr(ctx, rhs, Some(elem))?;
+            self.emit_op(
+                ctx,
+                IrOp::StoreIndirect {
+                    ptr: ptr.reg,
+                    src: val.reg,
+                    ty: elem,
+                    span,
+                },
+            );
+            return Some(val);
+        }
+        if let ExprKind::Index { base, index } = &lhs.kind {
+            let (addr, immutable) = self.check_index_addr(ctx, base, index, lhs.span, false)?;
+            if immutable {
+                self.emit(
+                    DiagCode::TyAssignConst,
+                    lhs.span,
+                    "cannot mutate a str payload",
+                );
+                return None;
+            }
+            let elem = addr.ty.pointee().unwrap_or(CType::U8);
+            let val = self.check_expr(ctx, rhs, Some(elem))?;
+            self.emit_op(
+                ctx,
+                IrOp::StoreIndirect {
+                    ptr: addr.reg,
+                    src: val.reg,
+                    ty: elem,
+                    span,
+                },
+            );
+            return Some(val);
+        }
         let ExprKind::Name(name) = &lhs.kind else {
             self.emit(
                 DiagCode::TyNotLvalue,
@@ -1182,6 +1896,22 @@ impl<'a> Analyzer<'a> {
                     DiagCode::TyAssignConst,
                     lhs.span,
                     format!("cannot assign to const '{}'", name.name),
+                );
+                return None;
+            }
+            if matches!(sym.ty, CType::Array(_)) {
+                self.emit(
+                    DiagCode::TyNotLvalue,
+                    lhs.span,
+                    "cannot assign to an array as a whole",
+                );
+                return None;
+            }
+            if sym.ty == CType::Str {
+                self.emit(
+                    DiagCode::TyAssignConst,
+                    lhs.span,
+                    "cannot replace an owned str global",
                 );
                 return None;
             }
@@ -1288,12 +2018,20 @@ impl<'a> Analyzer<'a> {
         inner: &Expr,
         span: SourceSpan,
     ) -> Option<Value> {
-        let to = CType::from_ast(ty.kind);
+        let to = self.type_of(ty);
         if to == CType::Void {
             self.emit(DiagCode::TyVoidValue, ty.span, "cannot convert to void");
             return None;
         }
         let inner = self.check_expr(ctx, inner, None)?;
+        if !conversion_ok(inner.ty, to) {
+            self.emit(
+                DiagCode::TyInvalidConversion,
+                span,
+                format!("cannot convert {} to {}", inner.ty.as_str(), to.as_str()),
+            );
+            return None;
+        }
         Some(self.cast_val(ctx, inner, to, span))
     }
 
@@ -1361,6 +2099,7 @@ impl<'a> Analyzer<'a> {
             current: BlockId(0),
             loop_stack: Vec::new(),
             reachable: true,
+            owner_span: expr.span,
         };
         let val = self.check_expr(&mut dummy, expr, expected)?;
         val.bits
@@ -1404,6 +2143,47 @@ impl<'a> Analyzer<'a> {
 
 fn lookup_local<'a>(scopes: &'a [HashMap<String, LocalBind>], name: &str) -> Option<&'a LocalBind> {
     scopes.iter().rev().find_map(|scope| scope.get(name))
+}
+
+fn const_index_i32(expr: &Expr) -> Option<i32> {
+    match &expr.kind {
+        ExprKind::Int(lit) => lit.value.and_then(|v| i32::try_from(v).ok()),
+        ExprKind::Char(b) => Some(i32::from(*b)),
+        ExprKind::Unary {
+            op: UnaryOp::Minus,
+            expr: inner,
+        } => const_index_i32(inner).map(i32::wrapping_neg),
+        ExprKind::Unary {
+            op: UnaryOp::Plus,
+            expr: inner,
+        } => const_index_i32(inner),
+        _ => None,
+    }
+}
+
+fn conversion_ok(from: CType, to: CType) -> bool {
+    if from == to {
+        return true;
+    }
+    if from == CType::Void || to == CType::Void {
+        return false;
+    }
+    if from == CType::Str || to == CType::Str {
+        return false;
+    }
+    if to == CType::Bool {
+        return from.is_integer() || from.pointee().is_some();
+    }
+    if from == CType::Bool {
+        return to.is_integer();
+    }
+    if from.pointee().is_some() {
+        return to.pointee().is_some() || to == CType::U16;
+    }
+    if to.pointee().is_some() {
+        return from == CType::U16 || from.pointee().is_some();
+    }
+    from.is_integer() && to.is_integer()
 }
 
 fn ir_binary(op: BinaryOp) -> IrBinary {
