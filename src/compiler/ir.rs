@@ -1,5 +1,6 @@
 //! Typed control-flow IR for scalar C80.
 
+use super::ast::CallConv;
 use super::source::{NodeId, SourceSpan};
 use super::types::CType;
 use std::collections::BTreeMap;
@@ -41,6 +42,7 @@ pub struct TypedFunction {
     pub id: FuncId,
     pub name: String,
     pub is_pub: bool,
+    pub conv: CallConv,
     pub ret: CType,
     pub params: Vec<TypedParam>,
     pub locals: Vec<TypedLocal>,

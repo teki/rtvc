@@ -64,11 +64,24 @@ pub enum Item {
     Decl(VarDecl),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallConv {
+    Register,
+    Stack,
+}
+
+impl Default for CallConv {
+    fn default() -> Self {
+        Self::Register
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Function {
     pub id: NodeId,
     pub span: SourceSpan,
     pub is_pub: bool,
+    pub conv: CallConv,
     pub return_ty: TypeExpr,
     pub name: Ident,
     pub params: Vec<Param>,

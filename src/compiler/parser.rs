@@ -165,7 +165,8 @@ impl<'a> Parser<'a> {
                 self.skip_until_item_sync();
                 None
             }
-            TokenKind::Pub
+            TokenKind::At
+            | TokenKind::Pub
             | TokenKind::Const
             | TokenKind::Ident
             | TokenKind::Void
@@ -193,11 +194,33 @@ impl<'a> Parser<'a> {
 
     fn parse_decl_or_function(&mut self) -> Option<Item> {
         let start = self.span().start;
+        let conv_before = self.parse_call_conv();
         let is_pub = if self.at(TokenKind::Pub) {
             self.bump();
             true
         } else {
             false
+        };
+        let conv_after = self.parse_call_conv();
+        let conv = match (conv_before, conv_after) {
+            (Some(a), Some(b)) if a != b => {
+                self.emit(
+                    DiagCode::ParseExpected,
+                    self.span(),
+                    "conflicting calling-convention attributes",
+                );
+                a
+            }
+            (Some(a), Some(_)) => {
+                self.emit(
+                    DiagCode::ParseExpected,
+                    self.span(),
+                    "duplicate calling-convention attribute",
+                );
+                a
+            }
+            (Some(c), None) | (None, Some(c)) => c,
+            (None, None) => CallConv::Register,
         };
         let is_const = if self.at(TokenKind::Const) {
             self.bump();
@@ -208,8 +231,15 @@ impl<'a> Parser<'a> {
         let ty = self.parse_type()?;
         let name = self.parse_ident()?;
         if self.at(TokenKind::LParen) && !is_const {
-            let func = self.parse_function_rest(start, is_pub, ty, name)?;
+            let func = self.parse_function_rest(start, is_pub, conv, ty, name)?;
             return Some(Item::Function(func));
+        }
+        if conv_before.is_some() || conv_after.is_some() {
+            self.emit(
+                DiagCode::ParseExpected,
+                name.span,
+                "calling-convention attributes apply only to functions",
+            );
         }
         let init = if self.at(TokenKind::Eq) {
             self.bump();
@@ -230,10 +260,47 @@ impl<'a> Parser<'a> {
         }))
     }
 
+    fn parse_call_conv(&mut self) -> Option<CallConv> {
+        let mut conv = None;
+        while self.at(TokenKind::At) {
+            let at = self.bump();
+            let Some(ident) = self.parse_ident() else {
+                continue;
+            };
+            let next = match ident.name.as_str() {
+                "stackcall" => CallConv::Stack,
+                "fastcall" => CallConv::Register,
+                other => {
+                    self.emit(
+                        DiagCode::ParseExpected,
+                        ident.span,
+                        format!("unknown attribute '@{other}'"),
+                    );
+                    continue;
+                }
+            };
+            match conv {
+                None => conv = Some(next),
+                Some(prev) if prev == next => self.emit(
+                    DiagCode::ParseExpected,
+                    at.span,
+                    "duplicate calling-convention attribute",
+                ),
+                Some(_) => self.emit(
+                    DiagCode::ParseExpected,
+                    at.span,
+                    "conflicting calling-convention attributes",
+                ),
+            }
+        }
+        conv
+    }
+
     fn parse_function_rest(
         &mut self,
         start: u32,
         is_pub: bool,
+        conv: CallConv,
         return_ty: TypeExpr,
         name: Ident,
     ) -> Option<Function> {
@@ -267,6 +334,7 @@ impl<'a> Parser<'a> {
             id: self.ids.next(),
             span: SourceSpan::new(self.file, start, end),
             is_pub,
+            conv,
             return_ty,
             name,
             params,
@@ -997,7 +1065,9 @@ impl<'a> Parser<'a> {
                     self.bump();
                     return;
                 }
-                TokenKind::Pub | TokenKind::Const if depth == 0 && self.pos > 0 => return,
+                TokenKind::Pub | TokenKind::Const | TokenKind::At if depth == 0 && self.pos > 0 => {
+                    return;
+                }
                 k if depth == 0 && k.is_type_start() && self.pos > 0 => return,
                 _ => {
                     self.bump();

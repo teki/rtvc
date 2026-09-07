@@ -16,8 +16,8 @@ mod z80;
 pub mod harness;
 
 pub use ast::{
-    BinaryOp, Block, Expr, ExprKind, Function, Ident, Item, Param, Stmt, TranslationUnit, TypeExpr,
-    TypeKind, UnaryOp, VarDecl,
+    BinaryOp, Block, CallConv, Expr, ExprKind, Function, Ident, Item, Param, Stmt, TranslationUnit,
+    TypeExpr, TypeKind, UnaryOp, VarDecl,
 };
 pub use diagnostic::{DiagCode, Diagnostic, RelatedSpan, Severity};
 pub use ir::{IrBinary, IrOp, TypedFunction, TypedProgram, function_by_name};
@@ -63,9 +63,9 @@ impl CompilationResult {
 
 /// Compile in-memory C80 sources to AST, diagnostics, typed IR, and Z80 when possible.
 ///
-/// Parse/type errors yield `program: None` and `code: None`. Straight-line leaf
-/// functions also produce assembled code. Control-flow, calls, and globals are
-/// skipped without failing the compile (those wait for later increments).
+/// Parse/type errors yield `program: None` and `code: None`. Codegen errors
+/// yield `code: None`. Scalar functions, control flow, globals, and calls
+/// produce assembled code when lowering succeeds.
 pub fn compile(input: CompileInput<'_>) -> CompilationResult {
     let mut sources = SourceMap::new();
     let mut diagnostics = Vec::new();

@@ -32,7 +32,11 @@ struct Symbol {
 }
 
 enum SymbolKind {
-    Function { params: Vec<CType> },
+    Function {
+        params: Vec<CType>,
+        #[allow(dead_code)]
+        conv: CallConv,
+    },
     Global,
     Const,
 }
@@ -124,6 +128,7 @@ impl<'a> Analyzer<'a> {
                         Symbol {
                             kind: SymbolKind::Function {
                                 params: params.clone(),
+                                conv: func.conv,
                             },
                             ty: ret,
                             id: func.id,
@@ -305,6 +310,7 @@ impl<'a> Analyzer<'a> {
             id: FuncId(func.id),
             name: func.name.name.clone(),
             is_pub: func.is_pub,
+            conv: func.conv,
             ret,
             params: ctx.params,
             locals: ctx.locals,
@@ -1223,7 +1229,7 @@ impl<'a> Analyzer<'a> {
             );
             return None;
         };
-        let SymbolKind::Function { params } = &sym.kind else {
+        let SymbolKind::Function { params, conv: _ } = &sym.kind else {
             self.emit(
                 DiagCode::TyMismatch,
                 name.span,
