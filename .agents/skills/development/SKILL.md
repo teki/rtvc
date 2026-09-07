@@ -274,6 +274,13 @@ The lightweight web dependency tree should contain `wasm-bindgen` but not cpal, 
 
 ### Testing
 
+- **Run C80 compiler tests:**
+  ```bash
+  cargo test --lib --no-default-features --features cli-tools compiler::
+  ```
+  - Requires a non-zero test count. The assembler filter `asm::` also matches
+    `disasm::`; unique assembler runs use `asm::tests:: -- --skip disasm`.
+
 - **Run FUSE tests (1334 tests):**
   These tests are adapted from the FUSE ZX Spectrum emulator test vectors. They are **fast to run** and are the primary validation suite used to verify correctness during active development.
   - Build the test binary:
