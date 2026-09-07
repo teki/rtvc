@@ -1192,3 +1192,219 @@ u8 ext() {
     .unwrap();
     assert_eq!(ext.return_byte(), 42);
 }
+
+#[test]
+fn listing_maps_bytes_spans_timing_and_identity() {
+    let src = r#"
+u8 g;
+u8 add1(u8 x) { return x + 1; }
+u8 dead_local() {
+    u8 unused;
+    return 1;
+}
+"#;
+    let result = compile_ok(src);
+    let code = result.code.as_ref().unwrap();
+    let map = result.map().expect("successful compile has a listing map");
+    assert!(map.every_byte_mapped(&code.assembled), "unmapped bytes");
+    assert_eq!(map.identity.origin, DEFAULT_CODE_ORIGIN);
+    assert_eq!(map.identity.crate_version, env!("CARGO_PKG_VERSION"));
+    assert_eq!(
+        map.symbol("add1").map(|s| s.kind),
+        Some(SymbolKind::Function)
+    );
+    assert_eq!(map.symbol("g").map(|s| s.kind), Some(SymbolKind::Global));
+    assert_eq!(
+        map.symbol("g").map(|s| s.addr),
+        Some(code.global("g").unwrap().addr)
+    );
+
+    let add1 = code.function("add1").unwrap();
+    assert!(
+        add1.mapped
+            .iter()
+            .any(|m| m.timing == StaticTiming::Exact(7) || m.text.contains("ADD")),
+        "{:?}",
+        add1.mapped
+    );
+    assert!(
+        add1.mapped
+            .iter()
+            .any(|m| m.timing == StaticTiming::Exact(10)),
+        "RET timing {:?}",
+        add1.mapped.iter().map(|m| m.timing).collect::<Vec<_>>()
+    );
+    let plus = src.find("x + 1").unwrap() as u32;
+    let hits = map.covering(result.sources.files()[0].id, plus);
+    assert!(
+        !hits.is_empty(),
+        "source offset {plus} should map to generated ops"
+    );
+    let selected = map.select(result.sources.files()[0].id, plus).unwrap();
+    assert_eq!(
+        map.at_address(selected.address).map(|m| m.id),
+        Some(selected.id)
+    );
+    assert_eq!(
+        map.by_id(selected.id).map(|m| m.address),
+        Some(selected.address)
+    );
+
+    assert!(
+        map.no_code
+            .iter()
+            .any(|n| n.reason == NoCodeReason::Eliminated),
+        "unused local should be no-code: {:?}",
+        map.no_code
+    );
+
+    let other = compile(CompileInput {
+        files: vec![SourceInput {
+            name: "test.c80",
+            text: src,
+        }],
+        origin: 0x9000,
+    });
+    assert!(!other.has_errors(), "{:?}", other.diagnostics);
+    let other_map = other.map().unwrap();
+    assert_eq!(other_map.identity.origin, 0x9000);
+    let delta = other_map
+        .symbol("add1")
+        .unwrap()
+        .addr
+        .wrapping_sub(map.symbol("add1").unwrap().addr);
+    assert_eq!(delta, 0x1000);
+    assert_ne!(other_map.identity.source_hash, 0);
+}
+
+#[test]
+fn synthetic_frame_and_inline_asm_spans() {
+    let src = r#"
+u8 frame(u16 x) {
+    u8 slot;
+    ptr<u8> p;
+    p = &slot;
+    *p = 1;
+    return u8(x);
+}
+u8 inc_asm(u8 value) {
+    u8 result;
+    asm(in: a = value, out: a = result, clobber: flags) {
+        inc a
+    }
+    return result;
+}
+"#;
+    let result = compile_ok(src);
+    let map = result.map().unwrap();
+    let frame_fn = result.code.as_ref().unwrap().function("frame").unwrap();
+    assert!(
+        frame_fn
+            .mapped
+            .iter()
+            .any(|m| m.synthetic && m.text.contains("IX")),
+        "{:?}",
+        frame_fn.mapped
+    );
+    let asm_off = src.find("inc a").unwrap() as u32;
+    let file = result.sources.files()[0].id;
+    let hits = map.covering(file, asm_off);
+    assert!(
+        hits.iter()
+            .any(|m| m.text.to_ascii_lowercase().contains("inc")),
+        "{hits:?}"
+    );
+}
+
+#[test]
+fn call_and_repeat_timing_are_not_false_totals() {
+    let result = compile_ok(
+        r#"
+u8 id(u8 x) { return x; }
+u8 wrap(u8 x) { return id(x); }
+void copy(ptr<u8> d, ptr<u8> s, u16 n) {
+    asm(in: hl = s, in: de = d, in: bc = n, clobber: hl, de, bc, flags, memory) {
+        ldir
+    }
+}
+"#,
+    );
+    let wrap = result.code.as_ref().unwrap().function("wrap").unwrap();
+    let call = wrap
+        .mapped
+        .iter()
+        .find(|m| m.text.contains("CALL"))
+        .expect("call");
+    assert_eq!(call.timing, StaticTiming::Exact(17));
+    let map = result.map().unwrap();
+    let cost = map.span_cost(&wrap.mapped.iter().collect::<Vec<_>>());
+    assert!(cost.has_call, "{cost:?}");
+    assert!(!cost.complete, "{cost:?}");
+
+    let copy = result.code.as_ref().unwrap().function("copy").unwrap();
+    assert!(
+        copy.mapped
+            .iter()
+            .any(|m| matches!(m.timing, StaticTiming::Repeating { .. })),
+        "{:?}",
+        copy.mapped
+            .iter()
+            .map(|m| (m.text.clone(), m.timing))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(copy.stack_provenance, StackProvenance::Proven);
+}
+
+#[test]
+fn failed_compile_has_no_loadable_program() {
+    let result = compile_source("bad.c80", "u8 f() { return; }");
+    assert!(result.has_errors());
+    assert!(result.code.is_none());
+    assert!(result.map().is_none());
+}
+
+#[test]
+fn unknown_asm_call_stack_is_not_proven() {
+    let result = compile_ok(
+        r#"
+u8 ext() {
+    u8 r;
+    asm(out: a = r, clobber: flags, stack: 2) {
+        call 0x9000
+    }
+    return r;
+}
+"#,
+    );
+    assert_eq!(
+        result
+            .code
+            .as_ref()
+            .unwrap()
+            .function("ext")
+            .unwrap()
+            .stack_provenance,
+        StackProvenance::Declared
+    );
+    let unknown = compile_ok(
+        r#"
+u8 ext() {
+    u8 r;
+    asm(out: a = r, clobber: flags) {
+        call 0x9000
+    }
+    return r;
+}
+"#,
+    );
+    assert_eq!(
+        unknown
+            .code
+            .as_ref()
+            .unwrap()
+            .function("ext")
+            .unwrap()
+            .stack_provenance,
+        StackProvenance::Unknown
+    );
+}

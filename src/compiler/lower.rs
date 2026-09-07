@@ -9,17 +9,105 @@ use super::ir::{
     TypedFunction, TypedGlobal, TypedProgram, VReg,
 };
 use super::source::{FileId, IdGen, NodeId, SourceSpan};
+use super::source_map::static_timing;
 use super::types::{CType, PtrType};
 use super::z80::{
     AluSrc, AsmInstructionId, Cc, GeneratedFunction, GeneratedGlobal, GeneratedProgram,
-    MappedInstruction, R8, RegHome, Rr, Z80Item, Z80Op, asm_block_label, asm_global_label,
-    asm_label, bytes_in_segments, render_items,
+    MappedInstruction, MappedKind, R8, RegHome, Rr, StackProvenance, Z80Item, Z80Op,
+    asm_block_label, asm_global_label, asm_label, bytes_in_segments, render_items,
 };
 use crate::asm::assemble_program;
 use crate::disasm::disassemble_at;
 use std::collections::{HashMap, HashSet};
 
 pub const DEFAULT_CODE_ORIGIN: u16 = 0x8000;
+
+fn map_z80_item(
+    item: &Z80Item,
+    addr: u16,
+    bytes: Vec<u8>,
+    func: Option<FuncId>,
+) -> Option<MappedInstruction> {
+    let mut bus = crate::bus::FakeBus::new();
+    for (i, b) in bytes.iter().enumerate() {
+        bus.mem[addr.wrapping_add(i as u16) as usize] = *b;
+    }
+    let (id, text, span, expr, synthetic, node, kind, t_states) = match item {
+        Z80Item::Instruction {
+            id,
+            op,
+            span,
+            expr,
+            synthetic,
+            node,
+        } => {
+            let d = disassemble_at(&mut bus, addr);
+            (
+                *id,
+                op.render(),
+                *span,
+                *expr,
+                *synthetic,
+                *node,
+                MappedKind::Instruction,
+                d.t_states,
+            )
+        }
+        Z80Item::Raw {
+            id,
+            text,
+            span,
+            expr,
+            synthetic,
+            node,
+        } => {
+            let d = disassemble_at(&mut bus, addr);
+            (
+                *id,
+                text.clone(),
+                *span,
+                *expr,
+                *synthetic,
+                *node,
+                MappedKind::Instruction,
+                d.t_states,
+            )
+        }
+        Z80Item::Data {
+            id,
+            text,
+            span,
+            node,
+            ..
+        } => (
+            *id,
+            text.clone(),
+            *span,
+            None,
+            false,
+            Some(*node),
+            MappedKind::Data,
+            None,
+        ),
+        Z80Item::Label { .. } | Z80Item::Directive { .. } => return None,
+    };
+    let timing = static_timing(&bytes, t_states);
+    Some(MappedInstruction {
+        id,
+        address: addr,
+        bytes,
+        text,
+        t_states,
+        timing,
+        kind,
+        synthetic,
+        expression_span: expr,
+        statement_span: Some(span),
+        function: func,
+        span,
+        node,
+    })
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Loc {
@@ -142,6 +230,9 @@ struct Lowerer<'a> {
     call_sites: Vec<(FuncId, u16)>,
     param_moves: Vec<(Loc, Loc)>,
     asm_stack: u16,
+    synthetic: bool,
+    stack_unknown: bool,
+    stack_declared: bool,
 }
 
 struct CalleeInfo {
@@ -287,9 +378,16 @@ pub(crate) fn finish_generated(
                     param_types: part.param_types,
                     ret: part.ret,
                     stack_bound: part.stack_bound,
+                    stack_provenance: part.stack_provenance,
                     frame_bytes: part.frame_bytes,
                     instruction_ids: code_mapped.iter().map(|m| m.id).collect(),
-                    mapped: code_mapped,
+                    mapped: {
+                        let mut mapped = code_mapped;
+                        for m in &mut mapped {
+                            m.function = Some(part.id);
+                        }
+                        mapped
+                    },
                 });
             }
             EmitChunk::Global(part) => {
@@ -305,6 +403,7 @@ pub(crate) fn finish_generated(
                     addr,
                     size,
                     ty: part.ty,
+                    span: part.span,
                 });
             }
         }
@@ -360,42 +459,9 @@ pub(crate) fn map_item_lines(
                     .unwrap_or(&[])
                     .to_vec()
             });
-        let mut bus = crate::bus::FakeBus::new();
-        for (i, b) in bytes.iter().enumerate() {
-            bus.mem[line.addr.wrapping_add(i as u16) as usize] = *b;
+        if let Some(mapped) = map_z80_item(item, line.addr, bytes, None) {
+            mapped_all.push(mapped);
         }
-        let (id, text, span, node, t_states) = match item {
-            Z80Item::Instruction { id, op, span, node } => {
-                let d = disassemble_at(&mut bus, line.addr);
-                (*id, op.render(), *span, *node, d.t_states)
-            }
-            Z80Item::Raw {
-                id,
-                text,
-                span,
-                node,
-            } => {
-                let d = disassemble_at(&mut bus, line.addr);
-                (*id, text.clone(), *span, *node, d.t_states)
-            }
-            Z80Item::Data {
-                id,
-                text,
-                span,
-                node,
-                ..
-            } => (*id, text.clone(), *span, Some(*node), None),
-            Z80Item::Label { .. } | Z80Item::Directive { .. } => continue,
-        };
-        mapped_all.push(MappedInstruction {
-            id,
-            address: line.addr,
-            bytes,
-            text,
-            t_states,
-            span,
-            node,
-        });
     }
     Some(mapped_all)
 }
@@ -423,42 +489,9 @@ pub(crate) fn map_chunks_from_lines(
         let bytes = bytes_in_segments(assembled, line.addr, line.len)
             .map(|b| b.to_vec())
             .unwrap_or_default();
-        let mut bus = crate::bus::FakeBus::new();
-        for (i, b) in bytes.iter().enumerate() {
-            bus.mem[line.addr.wrapping_add(i as u16) as usize] = *b;
+        if let Some(mapped) = map_z80_item(item, line.addr, bytes, None) {
+            mapped_all.push(mapped);
         }
-        let (id, text, span, node, t_states) = match item {
-            Z80Item::Instruction { id, op, span, node } => {
-                let d = disassemble_at(&mut bus, line.addr);
-                (*id, op.render(), *span, *node, d.t_states)
-            }
-            Z80Item::Raw {
-                id,
-                text,
-                span,
-                node,
-            } => {
-                let d = disassemble_at(&mut bus, line.addr);
-                (*id, text.clone(), *span, *node, d.t_states)
-            }
-            Z80Item::Data {
-                id,
-                text,
-                span,
-                node,
-                ..
-            } => (*id, text.clone(), *span, Some(*node), None),
-            Z80Item::Label { .. } | Z80Item::Directive { .. } => continue,
-        };
-        mapped_all.push(MappedInstruction {
-            id,
-            address: line.addr,
-            bytes,
-            text,
-            t_states,
-            span,
-            node,
-        });
     }
     let mut functions = Vec::new();
     let mut globals = Vec::new();
@@ -499,9 +532,16 @@ pub(crate) fn map_chunks_from_lines(
                     param_types: part.param_types.clone(),
                     ret: part.ret,
                     stack_bound: part.stack_bound,
+                    stack_provenance: part.stack_provenance,
                     frame_bytes: part.frame_bytes,
                     instruction_ids: code_mapped.iter().map(|m| m.id).collect(),
-                    mapped: code_mapped,
+                    mapped: {
+                        let mut mapped = code_mapped;
+                        for m in &mut mapped {
+                            m.function = Some(part.id);
+                        }
+                        mapped
+                    },
                 });
             }
             EmitChunk::Global(part) => {
@@ -517,6 +557,7 @@ pub(crate) fn map_chunks_from_lines(
                     addr,
                     size,
                     ty: part.ty,
+                    span: part.span,
                 });
             }
         }
@@ -586,6 +627,7 @@ pub(crate) struct FnPart {
     param_types: Vec<CType>,
     ret: Option<RegHome>,
     stack_bound: u16,
+    stack_provenance: StackProvenance,
     frame_bytes: u16,
     call_sites: Vec<(FuncId, u16)>,
     asm_stack: u16,
@@ -789,13 +831,18 @@ fn lower_function(
         call_sites: Vec::new(),
         param_moves: Vec::new(),
         asm_stack: 0,
+        synthetic: false,
+        stack_unknown: false,
+        stack_declared: false,
     };
     lowerer.emit_label(&label, func.span, func.id.0);
     lowerer.plan_homes(&param_homes)?;
+    lowerer.synthetic = true;
     if uses_ix {
         lowerer.emit_prologue(&param_homes, func.span)?;
     }
     lowerer.emit_param_setup(&param_homes, func.span)?;
+    lowerer.synthetic = false;
 
     let mut index = 0usize;
     for block in &func.blocks {
@@ -840,6 +887,7 @@ fn lower_function(
         }
         if needs_fallthrough(ops) {
             if let Some(next) = next_block(func, block.id) {
+                lowerer.synthetic = true;
                 lowerer.emit(
                     Z80Op::Jp {
                         cc: None,
@@ -847,6 +895,7 @@ fn lower_function(
                     },
                     func.span,
                 );
+                lowerer.synthetic = false;
             } else {
                 lowerer.emit_epilogue(func.span);
             }
@@ -858,6 +907,7 @@ fn lower_function(
     } else {
         0
     };
+    let stack_provenance = lowerer.stack_provenance();
     Ok(FnPart {
         name: func.name.clone(),
         label,
@@ -869,6 +919,7 @@ fn lower_function(
         param_types: param_tys,
         ret: return_home(func.ret),
         stack_bound: 0,
+        stack_provenance,
         frame_bytes,
         call_sites: lowerer.call_sites,
         asm_stack: lowerer.asm_stack,
@@ -1214,10 +1265,13 @@ impl Lowerer<'_> {
 
     fn emit(&mut self, op: Z80Op, span: SourceSpan) {
         let id = self.next_id();
+        let synthetic = self.synthetic;
         self.items.push(Z80Item::Instruction {
             id,
             op,
             span,
+            expr: if synthetic { None } else { Some(span) },
+            synthetic,
             node: Some(self.func.id.0),
         });
     }
@@ -1228,6 +1282,8 @@ impl Lowerer<'_> {
             id,
             text,
             span,
+            expr: None,
+            synthetic: self.synthetic,
             node: Some(self.func.id.0),
         });
     }
@@ -2475,11 +2531,24 @@ impl Lowerer<'_> {
     }
 
     fn emit_epilogue(&mut self, span: SourceSpan) {
+        let was = self.synthetic;
         if self.uses_ix {
+            self.synthetic = true;
             self.emit(Z80Op::LdSpIx, span);
             self.emit(Z80Op::PopIx, span);
+            self.synthetic = was;
         }
         self.emit(Z80Op::Ret, span);
+    }
+
+    fn stack_provenance(&self) -> StackProvenance {
+        if self.stack_unknown {
+            StackProvenance::Unknown
+        } else if self.stack_declared {
+            StackProvenance::Declared
+        } else {
+            StackProvenance::Proven
+        }
     }
 
     fn emit_parallel_moves(
@@ -2654,11 +2723,17 @@ impl Lowerer<'_> {
         clobbers: &[AsmClobber],
         lines: &[String],
         stack: Option<u16>,
-        _unknown_stack: bool,
+        unknown_stack: bool,
         plain: bool,
         span: SourceSpan,
         node: NodeId,
     ) -> Result<(), Diagnostic> {
+        if unknown_stack {
+            self.stack_unknown = true;
+        }
+        if stack.is_some() {
+            self.stack_declared = true;
+        }
         let flag_out = outputs
             .iter()
             .any(|o| matches!(o.kind, IrAsmOutKind::Carry | IrAsmOutKind::Zero));
@@ -2960,6 +3035,7 @@ impl Lowerer<'_> {
                 }
             }
         }
+        self.synthetic = true;
         self.emit(
             Z80Op::Jp {
                 cc: None,
@@ -2967,6 +3043,7 @@ impl Lowerer<'_> {
             },
             span,
         );
+        self.synthetic = false;
         Ok(())
     }
 

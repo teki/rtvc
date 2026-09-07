@@ -10,6 +10,7 @@ mod lower;
 mod parser;
 mod semantics;
 mod source;
+mod source_map;
 mod token;
 mod types;
 mod z80;
@@ -26,10 +27,14 @@ pub use diagnostic::{DiagCode, Diagnostic, RelatedSpan, Severity};
 pub use ir::{IrBinary, IrOp, TypedFunction, TypedProgram, function_by_name};
 pub use lower::DEFAULT_CODE_ORIGIN;
 pub use source::{FileId, IdGen, NodeId, SourceFile, SourceMap, SourceSpan};
+pub use source_map::{
+    BuildIdentity, CompilerMap, CompilerSymbol, FnStack, NoCodeReason, NoCodeSpan, SpanCost,
+    StackReport, SymbolKind,
+};
 pub use types::CType;
 pub use z80::{
-    AsmInstructionId, GeneratedFunction, GeneratedGlobal, GeneratedProgram, MappedInstruction, R8,
-    RegHome, Rr, Z80Item, Z80Op,
+    AsmInstructionId, GeneratedFunction, GeneratedGlobal, GeneratedProgram, MappedInstruction,
+    MappedKind, R8, RegHome, Rr, StackProvenance, StaticTiming, Z80Item, Z80Op,
 };
 
 use parser::parse_file;
@@ -61,6 +66,15 @@ impl CompilationResult {
 
     pub fn error_count(&self) -> usize {
         self.diagnostics.iter().filter(|d| d.is_error()).count()
+    }
+
+    pub fn map(&self) -> Option<CompilerMap> {
+        let code = self.code.as_ref()?;
+        Some(CompilerMap::from_generated(
+            code,
+            &self.units,
+            &self.sources,
+        ))
     }
 }
 
