@@ -220,6 +220,7 @@ This skill provides step-by-step instructions and references for compiling, exec
   ```
   - `.c80` uses the file stem as the unit name (ASCII identifier). `--origin` is required when the unit emits bytes.
   - A `.toml` manifest is version 1; paths are relative to the manifest file. `--origin` is invalid on a manifest.
+  - `target = "tvc"` may include one `[basic]` table (`path`, `origin`, `size`). Tokenized BASIC is in-process only.
   - At least one of `--emit-asm`, `--emit-segments`, `--emit-bin` is required. Segment output is `rtvc-asm-v1`. Raw binary requires a contiguous union of emitted ranges.
   - Diagnostics go to stderr. Exit 0 includes warnings; errors do not replace existing outputs.
 
@@ -293,7 +294,7 @@ The lightweight web dependency tree should contain `wasm-bindgen` but not cpal, 
   - Requires a non-zero `compiler::` test count. The assembler filter `asm::` also matches
     `disasm::`; unique assembler runs use `asm::tests:: -- --skip disasm`.
   - `tests/rtvc_c80.rs` covers CLI origin/manifest path, compile-error output
-    preservation, and multi-unit `--emit-segments`.
+    preservation, multi-unit `--emit-segments`, and TVC `[basic]` path resolution.
 
 - **Run FUSE tests (1334 tests):**
   These tests are adapted from the FUSE ZX Spectrum emulator test vectors. They are **fast to run** and are the primary validation suite used to verify correctness during active development.

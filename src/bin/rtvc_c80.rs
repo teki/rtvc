@@ -192,7 +192,17 @@ fn compile_input(options: &Options) -> Result<CompilationResult, String> {
                 },
             )
             .collect();
-        return Ok(compile_project(&manifest, &inputs));
+        let basic_text = match &manifest.basic {
+            Some(spec) => {
+                let path = resolve_manifest_path(dir, &spec.path);
+                Some(
+                    fs::read_to_string(&path)
+                        .map_err(|e| format!("cannot read BASIC '{}': {e}", path.display()))?,
+                )
+            }
+            None => None,
+        };
+        return Ok(compile_project(&manifest, &inputs, basic_text.as_deref()));
     }
     if ext != "c80" {
         return Err("input must be a .c80 file or a .toml manifest".to_string());

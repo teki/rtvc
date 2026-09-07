@@ -14,6 +14,26 @@ pub struct StackLayout {
     pub size: u16,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct BasicLayout {
+    pub origin: u16,
+    pub size: u16,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ReserveLayout<'a> {
+    pub name: &'a str,
+    pub base: u16,
+    pub size: u16,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ProjectBuiltins<'a> {
+    pub stack: Option<StackLayout>,
+    pub basic: Option<BasicLayout>,
+    pub reserves: &'a [ReserveLayout<'a>],
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct UnitExports {
     pub symbols: HashMap<String, ExportedSymbol>,
@@ -53,7 +73,7 @@ pub fn analyze_unit_in_project(
     unit: &TranslationUnit,
     unit_name: &str,
     exports: Option<&HashMap<String, UnitExports>>,
-    stack: Option<StackLayout>,
+    builtins: Option<ProjectBuiltins<'_>>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> (TypedProgram, Vec<(String, String, SourceSpan)>) {
     let mut analyzer = Analyzer {
@@ -69,7 +89,7 @@ pub fn analyze_unit_in_project(
         imports: HashSet::new(),
         unit_name: unit_name.to_string(),
         exports,
-        stack,
+        builtins,
         structs: Vec::new(),
         struct_ids: HashMap::new(),
         pending_structs: HashMap::new(),
@@ -98,7 +118,7 @@ pub fn collect_exports(unit: &TranslationUnit, diagnostics: &mut Vec<Diagnostic>
         imports: HashSet::new(),
         unit_name: String::new(),
         exports: None,
-        stack: None,
+        builtins: None,
         structs: Vec::new(),
         struct_ids: HashMap::new(),
         pending_structs: HashMap::new(),
@@ -223,7 +243,7 @@ struct Analyzer<'a> {
     imports: HashSet<String>,
     unit_name: String,
     exports: Option<&'a HashMap<String, UnitExports>>,
-    stack: Option<StackLayout>,
+    builtins: Option<ProjectBuiltins<'a>>,
     structs: Vec<StructDef>,
     struct_ids: HashMap<String, StructId>,
     pending_structs: HashMap<StructId, StructDecl>,
@@ -2462,32 +2482,22 @@ impl<'a> Analyzer<'a> {
     }
 
     fn lookup_project(&mut self, name: &Ident) -> Option<QSym> {
-        let Some(stack) = self.stack else {
-            self.emit(
-                DiagCode::TyUnresolvedName,
-                name.span,
-                "project stack is not configured",
-            );
-            return None;
-        };
-        let base = u32::from(stack.base);
-        let size = u32::from(stack.size);
-        let end = base + size;
         let bits = match name.name.as_str() {
-            "stack_base" => stack.base,
-            "stack_size" => stack.size,
-            "stack_top" => (end % 65536) as u16,
-            "stack_end" => {
-                if end == 65536 {
-                    self.emit(
-                        DiagCode::TyLiteralRange,
-                        name.span,
-                        "project::stack_end is 65536 and is not a u16 value",
-                    );
-                    return None;
-                }
-                end as u16
+            "stack_base" | "stack_size" | "stack_top" | "stack_end" => {
+                self.project_stack_bits(name)?
             }
+            "basic_program_size" => {
+                self.emit(
+                    DiagCode::TyLiteralRange,
+                    name.span,
+                    "project::basic_program_size is determined after BASIC substitution and is not a C80 value",
+                );
+                return None;
+            }
+            "basic_base" | "basic_size" | "basic_end" | "basic_himem" => {
+                self.project_basic_bits(name)?
+            }
+            other if other.starts_with("reserve_") => self.project_reserve_bits(name)?,
             _ => {
                 self.emit(
                     DiagCode::TyUnresolvedName,
@@ -2503,6 +2513,104 @@ impl<'a> Analyzer<'a> {
             is_const: true,
             bits: Some(bits),
         })
+    }
+
+    fn project_stack_bits(&mut self, name: &Ident) -> Option<u16> {
+        let Some(stack) = self.builtins.and_then(|b| b.stack) else {
+            self.emit(
+                DiagCode::TyUnresolvedName,
+                name.span,
+                "project stack is not configured",
+            );
+            return None;
+        };
+        let end = u32::from(stack.base) + u32::from(stack.size);
+        Some(match name.name.as_str() {
+            "stack_base" => stack.base,
+            "stack_size" => stack.size,
+            "stack_top" => (end % 65536) as u16,
+            "stack_end" => {
+                if end == 65536 {
+                    self.emit(
+                        DiagCode::TyLiteralRange,
+                        name.span,
+                        "project::stack_end is 65536 and is not a u16 value",
+                    );
+                    return None;
+                }
+                end as u16
+            }
+            _ => unreachable!(),
+        })
+    }
+
+    fn project_basic_bits(&mut self, name: &Ident) -> Option<u16> {
+        let Some(basic) = self.builtins.and_then(|b| b.basic) else {
+            self.emit(
+                DiagCode::TyUnresolvedName,
+                name.span,
+                "project BASIC region is not configured",
+            );
+            return None;
+        };
+        let end = u32::from(basic.origin) + u32::from(basic.size);
+        Some(match name.name.as_str() {
+            "basic_base" => basic.origin,
+            "basic_size" => basic.size,
+            "basic_himem" => (end - 1) as u16,
+            "basic_end" => {
+                if end == 65536 {
+                    self.emit(
+                        DiagCode::TyLiteralRange,
+                        name.span,
+                        "project::basic_end is 65536 and is not a u16 value",
+                    );
+                    return None;
+                }
+                end as u16
+            }
+            _ => unreachable!(),
+        })
+    }
+
+    fn project_reserve_bits(&mut self, name: &Ident) -> Option<u16> {
+        let Some(builtins) = self.builtins else {
+            self.emit(
+                DiagCode::TyUnresolvedName,
+                name.span,
+                format!("unknown project builtin '{}'", name.name),
+            );
+            return None;
+        };
+        for reserve in builtins.reserves {
+            let end = u32::from(reserve.base) + u32::from(reserve.size);
+            let base_name = format!("reserve_{}_base", reserve.name);
+            let size_name = format!("reserve_{}_size", reserve.name);
+            let end_name = format!("reserve_{}_end", reserve.name);
+            if name.name == base_name {
+                return Some(reserve.base);
+            }
+            if name.name == size_name {
+                return Some(reserve.size);
+            }
+            if name.name == end_name {
+                if end == 65536 {
+                    self.emit(
+                        DiagCode::TyLiteralRange,
+                        name.span,
+                        format!("project::{end_name} is 65536 and is not a u16 value"),
+                    );
+                    return None;
+                }
+                return Some(end as u16);
+            }
+        }
+        self.emit(
+            DiagCode::TyUnresolvedName,
+            name.span,
+            format!("unknown project builtin '{}'", name.name),
+        );
+        None
     }
 
     fn check_unary(

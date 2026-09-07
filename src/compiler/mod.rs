@@ -26,6 +26,7 @@ pub use ast::{
 pub use diagnostic::{DiagCode, Diagnostic, RelatedSpan, Severity};
 pub use ir::{IrBinary, IrOp, TypedFunction, TypedProgram, function_by_name};
 pub use lower::DEFAULT_CODE_ORIGIN;
+pub use project::CompiledBasic;
 pub use source::{FileId, IdGen, NodeId, SourceFile, SourceMap, SourceSpan};
 pub use source_map::{
     BuildIdentity, CompilerMap, CompilerSymbol, FnStack, NoCodeReason, NoCodeSpan, SpanCost,
@@ -57,6 +58,7 @@ pub struct CompilationResult {
     pub units: Vec<TranslationUnit>,
     pub program: Option<TypedProgram>,
     pub code: Option<GeneratedProgram>,
+    pub basic: Option<CompiledBasic>,
 }
 
 impl CompilationResult {
@@ -118,6 +120,7 @@ pub fn compile(input: CompileInput<'_>) -> CompilationResult {
         units,
         program,
         code,
+        basic: None,
     }
 }
 

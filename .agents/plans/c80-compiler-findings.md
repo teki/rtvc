@@ -172,3 +172,14 @@ ALU (`park_live_src`). Variable `enemies[i]` indexing in a tight register leaf
 can still trip register pressure; use a pointer walk (`p += 1`) or a constant
 index for stride tests.  
 **Resolution authority:** implementer (E10).
+
+## F-016 — BASIC `-32768` is not a typed integer literal
+
+**Status:** resolved in E11 (fixture spelling)
+**Evidence:** `LET R=USR(addr,-32768)` stops the interpreter; `42`, `-1`,
+`32767`, and `-32767` round-trip through USR/`HL`. Negating `32768` overflows
+the BASIC 1.2 integer range before the call.
+**Affected:** T11 USR signed-boundary fixture
+**Impact:** Use `-32767` as the BASIC-source negative boundary. `i16` `0x8000`
+remains representable in HL if constructed without that literal.
+**Resolution authority:** implementer (E11); ROM contract unchanged.

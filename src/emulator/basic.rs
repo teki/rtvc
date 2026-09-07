@@ -148,6 +148,14 @@ impl fmt::Display for BasicError {
 
 impl std::error::Error for BasicError {}
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BasicCopyMode {
+    Normal,
+    String,
+    Data { quoted: bool },
+    Literal,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CopyMode {
     Normal,
@@ -201,6 +209,70 @@ pub fn tokenize_program(source: &str) -> Result<Vec<u8>, BasicError> {
     }
     out.push(0x00);
     Ok(out)
+}
+
+/// Copy mode of each source byte using the tokenizer's quote, `REM`/`!`, and
+/// `DATA` rules. Newlines reset to [`BasicCopyMode::Normal`].
+pub fn basic_copy_modes(source: &str) -> Vec<BasicCopyMode> {
+    let bytes = source.as_bytes();
+    let mut modes = vec![BasicCopyMode::Normal; bytes.len()];
+    let mut index = 0;
+    let mut copy = CopyMode::Normal;
+    while index < bytes.len() {
+        if bytes[index] == b'\n' {
+            modes[index] = BasicCopyMode::Normal;
+            copy = CopyMode::Normal;
+            index += 1;
+            continue;
+        }
+        match copy {
+            CopyMode::Normal => {
+                if bytes[index] == b'"' {
+                    modes[index] = BasicCopyMode::Normal;
+                    copy = CopyMode::String;
+                    index += 1;
+                    continue;
+                }
+                if let Some((token, len)) = match_keyword(&bytes[index..]) {
+                    for offset in 0..len {
+                        if index + offset < bytes.len() && bytes[index + offset] != b'\n' {
+                            modes[index + offset] = BasicCopyMode::Normal;
+                        }
+                    }
+                    index += len;
+                    if token == TOKEN_REM || token == TOKEN_BASE {
+                        copy = CopyMode::Literal;
+                    } else if token == TOKEN_DATA {
+                        copy = CopyMode::Data { quoted: false };
+                    }
+                    continue;
+                }
+                modes[index] = BasicCopyMode::Normal;
+                index += 1;
+            }
+            CopyMode::String => {
+                modes[index] = BasicCopyMode::String;
+                if bytes[index] == b'"' {
+                    copy = CopyMode::Normal;
+                }
+                index += 1;
+            }
+            CopyMode::Data { quoted } => {
+                modes[index] = BasicCopyMode::Data { quoted };
+                if bytes[index] == b':' && !quoted {
+                    copy = CopyMode::Normal;
+                } else if bytes[index] == b'"' {
+                    copy = CopyMode::Data { quoted: !quoted };
+                }
+                index += 1;
+            }
+            CopyMode::Literal => {
+                modes[index] = BasicCopyMode::Literal;
+                index += 1;
+            }
+        }
+    }
+    modes
 }
 
 /// Reconstruct numbered BASIC source from a tokenized program payload.
