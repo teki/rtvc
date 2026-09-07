@@ -132,6 +132,23 @@ impl Cc {
             Self::M => "M",
         }
     }
+
+    pub fn jr_ok(self) -> bool {
+        matches!(self, Self::Nz | Self::Z | Self::Nc | Self::C)
+    }
+
+    pub fn invert(self) -> Option<Cc> {
+        Some(match self {
+            Self::Nz => Self::Z,
+            Self::Z => Self::Nz,
+            Self::Nc => Self::C,
+            Self::C => Self::Nc,
+            Self::Po => Self::Pe,
+            Self::Pe => Self::Po,
+            Self::P => Self::M,
+            Self::M => Self::P,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,6 +172,7 @@ pub enum Z80Op {
     Neg,
     ExDeHl,
     Jp { cc: Option<Cc>, target: String },
+    Jr { cc: Option<Cc>, target: String },
     LdAbs8 { dst: R8, symbol: String },
     StAbs8 { src: R8, symbol: String },
     LdAbs16 { dst: Rr, symbol: String },
@@ -208,6 +226,11 @@ impl Z80Op {
                 cc: Some(cc),
                 target,
             } => format!("JP {},{}", cc.name(), target),
+            Self::Jr { cc: None, target } => format!("JR {target}"),
+            Self::Jr {
+                cc: Some(cc),
+                target,
+            } => format!("JR {},{}", cc.name(), target),
             Self::LdAbs8 { dst, symbol } => format!("LD {},({})", dst.name(), symbol),
             Self::StAbs8 { src, symbol } => format!("LD ({}),{}", symbol, src.name()),
             Self::LdAbs16 { dst, symbol } => format!("LD {},({})", dst.name(), symbol),

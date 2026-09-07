@@ -7,6 +7,7 @@ mod inline_asm;
 mod ir;
 mod lexer;
 mod lower;
+mod optimize;
 mod parser;
 mod semantics;
 mod source;
@@ -45,6 +46,9 @@ use semantics::analyze_unit;
 pub struct CompileInput<'a> {
     pub files: Vec<SourceInput<'a>>,
     pub origin: u16,
+    /// When true (the default for `compile_source` and the CLI), drop identity
+    /// moves, fallthrough jumps, and shorten in-range `JP` to `JR`.
+    pub optimize: bool,
 }
 
 pub struct SourceInput<'a> {
@@ -112,7 +116,13 @@ pub fn compile(input: CompileInput<'_>) -> CompilationResult {
         Some(program)
     };
     let code = program.as_ref().and_then(|program| {
-        lower::lower_program(program, input.origin, &mut ids, &mut diagnostics)
+        lower::lower_program(
+            program,
+            input.origin,
+            &mut ids,
+            &mut diagnostics,
+            input.optimize,
+        )
     });
     CompilationResult {
         sources,
@@ -128,6 +138,7 @@ pub fn compile_source(name: &str, text: &str) -> CompilationResult {
     compile(CompileInput {
         files: vec![SourceInput { name, text }],
         origin: DEFAULT_CODE_ORIGIN,
+        optimize: true,
     })
 }
 

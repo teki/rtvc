@@ -288,11 +288,21 @@ pub fn compile_project(
     units: &[ProjectUnitInput<'_>],
     basic_source: Option<&str>,
 ) -> CompilationResult {
+    compile_project_opt(manifest, units, basic_source, true)
+}
+
+pub fn compile_project_opt(
+    manifest: &Manifest,
+    units: &[ProjectUnitInput<'_>],
+    basic_source: Option<&str>,
+    optimize: bool,
+) -> CompilationResult {
     use super::ast::CallConv;
     use super::ir::{FuncId, TypedProgram};
     use super::lower::{
         chunks_emit_bytes, lower_to_chunks, map_chunks_from_lines, max_stack_bound, render_chunks,
     };
+    use super::optimize::optimize_chunks;
     use super::parser::parse_file;
     use super::semantics::{
         BasicLayout, ProjectBuiltins, ReserveLayout, StackLayout, UnitExports,
@@ -407,6 +417,34 @@ pub fn compile_project(
             .entry(chunk.file_id())
             .or_default()
             .push(chunk);
+    }
+
+    if optimize {
+        for (file, unit) in &parsed_units {
+            if unit.kind != UnitKind::C80 {
+                continue;
+            }
+            let Some(origin) = unit.origin else {
+                continue;
+            };
+            let Some(unit_chunks) = chunks_by_file.get_mut(file) else {
+                continue;
+            };
+            if !chunks_emit_bytes(unit_chunks) {
+                continue;
+            }
+            optimize_chunks(unit_chunks, origin, &mut diagnostics);
+        }
+        if diagnostics.iter().any(Diagnostic::is_error) {
+            return CompilationResult {
+                sources,
+                diagnostics,
+                units: ast_list,
+                program: Some(program),
+                code: None,
+                basic: None,
+            };
+        }
     }
 
     let mut subst = HashMap::new();

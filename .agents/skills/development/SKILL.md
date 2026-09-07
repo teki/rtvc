@@ -222,6 +222,7 @@ This skill provides step-by-step instructions and references for compiling, exec
   - A `.toml` manifest is version 1; paths are relative to the manifest file. `--origin` is invalid on a manifest.
   - `target = "tvc"` may include one `[basic]` table (`path`, `origin`, `size`). Tokenized BASIC is in-process only.
   - At least one of `--emit-asm`, `--emit-segments`, `--emit-bin` is required. Segment output is `rtvc-asm-v1`. Raw binary requires a contiguous union of emitted ranges.
+  - Optimization (identity moves, fallthrough jumps, in-range `JP`→`JR`) is on by default; `--no-optimize` keeps baseline lowering.
   - Diagnostics go to stderr. Exit 0 includes warnings; errors do not replace existing outputs.
 
 - **Compile numbered TVC BASIC source to CAS:**
