@@ -572,7 +572,8 @@ directory.
 The C80 compiler is a library under [`src/compiler/`](../src/compiler/), gated
 by the `compiler` feature. Implemented language, leaf codegen, branches,
 scalar globals, calls (register and `@stackcall`), arrays, pointers,
-prefixed strings, multi-unit projects, manual assembly entry, explicit
+prefixed strings, packed structs, `for`/`do-while`, compound assignment,
+increment/decrement, multi-unit projects, manual assembly entry, explicit
 inline `asm` operands, listing maps, instruction timing, and stack
 provenance are described
 in [C80 Language Reference](c80.md). Generated

@@ -159,3 +159,16 @@ timeout.
 **Impact:** Assert extra memory writes, not `timed_out`. Do not special-case
 `BC=0` in codegen.  
 **Resolution authority:** implementer (E08).
+
+## F-015 — In-place 8-bit ALU clobbers a live binary `lhs` in `A`
+
+**Status:** resolved in E10  
+**Evidence:** `a[i++] += 5` lowered the old index into a vreg still live across
+the `ADD`, but `ADD A,n` reused `A` for the byte result. The later store used
+the clobbered index (`a[1]`).  
+**Affected:** T10 dest-once compound/inc  
+**Impact:** Copy a still-live 8/16-bit binary `lhs` off `A`/`HL` before in-place
+ALU (`park_live_src`). Variable `enemies[i]` indexing in a tight register leaf
+can still trip register pressure; use a pointer walk (`p += 1`) or a constant
+index for stride tests.  
+**Resolution authority:** implementer (E10).

@@ -1,7 +1,11 @@
-//! Scalar, pointer, string-reference, and global-array types.
+//! Scalar, pointer, string-reference, aggregate, and packed-struct types.
 //! Storage width is independent of signed interpretation.
 
 use super::ast::TypeKind;
+use super::source::{NodeId, SourceSpan};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct StructId(pub NodeId);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CType {
@@ -14,6 +18,7 @@ pub enum CType {
     Str,
     Ptr(PtrType),
     Array(ArrayType),
+    Struct(StructId),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -29,6 +34,7 @@ pub enum PtrBase {
     I8,
     U16,
     I16,
+    Struct(StructId),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -44,6 +50,7 @@ pub enum ArrayElem {
     I8,
     U16,
     I16,
+    Struct(StructId),
 }
 
 impl PtrBase {
@@ -54,6 +61,7 @@ impl PtrBase {
             CType::I8 => Self::I8,
             CType::U16 => Self::U16,
             CType::I16 => Self::I16,
+            CType::Struct(id) => Self::Struct(id),
             _ => return None,
         })
     }
@@ -65,6 +73,7 @@ impl PtrBase {
             Self::I8 => CType::I8,
             Self::U16 => CType::U16,
             Self::I16 => CType::I16,
+            Self::Struct(id) => CType::Struct(id),
         }
     }
 
@@ -75,6 +84,7 @@ impl PtrBase {
             Self::I8 => "i8",
             Self::U16 => "u16",
             Self::I16 => "i16",
+            Self::Struct(_) => "struct",
         }
     }
 }
@@ -87,6 +97,7 @@ impl ArrayElem {
             CType::I8 => Self::I8,
             CType::U16 => Self::U16,
             CType::I16 => Self::I16,
+            CType::Struct(id) => Self::Struct(id),
             _ => return None,
         })
     }
@@ -98,6 +109,7 @@ impl ArrayElem {
             Self::I8 => CType::I8,
             Self::U16 => CType::U16,
             Self::I16 => CType::I16,
+            Self::Struct(id) => CType::Struct(id),
         }
     }
 
@@ -105,6 +117,14 @@ impl ArrayElem {
         match self {
             Self::Bool | Self::U8 | Self::I8 => 1,
             Self::U16 | Self::I16 => 2,
+            Self::Struct(_) => 0,
+        }
+    }
+
+    pub fn stride(self, structs: &[StructDef]) -> Option<u16> {
+        match self {
+            Self::Struct(id) => structs.iter().find(|s| s.id == id).map(|s| s.size),
+            other => Some(u16::from(other.byte_width())),
         }
     }
 }
@@ -149,6 +169,7 @@ impl CType {
                 let inner = Self::from_ast(&inner.kind);
                 PtrType::of(inner).map(Self::Ptr).unwrap_or(Self::Void)
             }
+            TypeKind::Named(_) => Self::Void,
         }
     }
 
@@ -169,6 +190,7 @@ impl CType {
                 s
             }
             Self::Array(a) => format!("{}[{}]", a.elem.to_ctype().as_str(), a.len),
+            Self::Struct(_) => "struct".to_string(),
         }
     }
 
@@ -193,7 +215,7 @@ impl CType {
 
     pub fn byte_width(self) -> Option<u8> {
         match self {
-            Self::Void | Self::Array(_) => None,
+            Self::Void | Self::Array(_) | Self::Struct(_) => None,
             Self::Bool | Self::U8 | Self::I8 => Some(1),
             Self::U16 | Self::I16 | Self::Str | Self::Ptr(_) => Some(2),
         }
@@ -201,10 +223,28 @@ impl CType {
 
     pub fn data_size(self) -> Option<u16> {
         match self {
-            Self::Array(a) => Some(u16::from(a.elem.byte_width()).saturating_mul(a.len)),
+            Self::Array(a) if !matches!(a.elem, ArrayElem::Struct(_)) => {
+                Some(u16::from(a.elem.byte_width()).saturating_mul(a.len))
+            }
+            Self::Array(_) | Self::Struct(_) | Self::Str => None,
+            other => other.byte_width().map(u16::from),
+        }
+    }
+
+    pub fn storage_size(self, structs: &[StructDef]) -> Option<u16> {
+        match self {
+            Self::Struct(id) => structs.iter().find(|s| s.id == id).map(|s| s.size),
+            Self::Array(a) => a
+                .elem
+                .stride(structs)
+                .map(|stride| stride.saturating_mul(a.len)),
             Self::Str => None,
             other => other.byte_width().map(u16::from),
         }
+    }
+
+    pub fn is_aggregate(self) -> bool {
+        matches!(self, Self::Array(_) | Self::Struct(_))
     }
 
     pub fn bit_width(self) -> Option<u32> {
@@ -227,7 +267,8 @@ impl CType {
             | Self::Void
             | Self::Str
             | Self::Ptr(_)
-            | Self::Array(_) => 0,
+            | Self::Array(_)
+            | Self::Struct(_) => 0,
             Self::I8 => -128,
             Self::I16 => -32768,
         }
@@ -235,7 +276,7 @@ impl CType {
 
     pub fn max_value(self) -> i32 {
         match self {
-            Self::Void | Self::Array(_) => 0,
+            Self::Void | Self::Array(_) | Self::Struct(_) => 0,
             Self::Bool => 1,
             Self::U8 => 255,
             Self::I8 => 127,
@@ -261,4 +302,22 @@ impl CType {
             _ => i32::from(bits),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StructDef {
+    pub id: StructId,
+    pub name: String,
+    pub fields: Vec<StructField>,
+    pub size: u16,
+    pub span: SourceSpan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StructField {
+    pub name: String,
+    pub ty: CType,
+    pub offset: u16,
+    pub size: u16,
+    pub span: SourceSpan,
 }

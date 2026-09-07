@@ -223,6 +223,61 @@ fn rejected_c_syntax() {
 }
 
 #[test]
+fn sizeof_named_struct() {
+    let result = ok(r#"
+struct Sprite { u8 x; u8 y; u16 bitmap; bool visible; };
+u16 size() { return sizeof(Sprite); }
+"#);
+    let f = function_by_name(result.program.as_ref().unwrap(), "size").unwrap();
+    let consts: Vec<u16> = f
+        .blocks
+        .iter()
+        .flat_map(|b| b.ops.iter())
+        .filter_map(|op| match op {
+            IrOp::Const { bits, .. } => Some(*bits),
+            _ => None,
+        })
+        .collect();
+    assert!(consts.contains(&5), "{consts:?}");
+}
+
+#[test]
+fn unsupported_aggregates_and_layout() {
+    let local = compile_src("struct S { u8 x; }; void f() { S s; }");
+    assert!(
+        codes(&local).contains(&"ty-mismatch"),
+        "{:?}",
+        codes(&local)
+    );
+    let by_value = compile_src("struct S { u8 x; }; void f(S s) {}");
+    assert!(
+        codes(&by_value).contains(&"ty-mismatch"),
+        "{:?}",
+        codes(&by_value)
+    );
+    let empty = compile_src("struct Empty {};");
+    assert!(
+        codes(&empty).contains(&"ty-mismatch"),
+        "{:?}",
+        codes(&empty)
+    );
+    let recursive = compile_src("struct Node { Node n; };");
+    assert!(
+        codes(&recursive).contains(&"ty-mismatch"),
+        "{:?}",
+        codes(&recursive)
+    );
+    let excess = compile_src("u8 a[2] = { 1, 2, 3 };");
+    assert!(
+        codes(&excess).contains(&"ty-literal-range"),
+        "{:?}",
+        codes(&excess)
+    );
+    let ok_ptr = ok("struct Node { ptr<Node> next; u8 v; }; Node n;");
+    assert!(ok_ptr.program.is_some());
+}
+
+#[test]
 fn sizeof_scalar() {
     let result = ok("u16 f() { return sizeof(u8) + sizeof(u16); }");
     let f = function_by_name(result.program.as_ref().unwrap(), "f").unwrap();

@@ -278,6 +278,7 @@ pub fn compile_project(manifest: &Manifest, units: &[ProjectUnitInput<'_>]) -> C
     }
 
     let mut program = TypedProgram {
+        structs: Vec::new(),
         globals: Vec::new(),
         functions: Vec::new(),
     };
@@ -289,6 +290,7 @@ pub fn compile_project(manifest: &Manifest, units: &[ProjectUnitInput<'_>]) -> C
         if let Some(slot) = exports.get_mut(&name) {
             apply_const_bits(slot, &part);
         }
+        program.structs.extend(part.structs);
         program.globals.extend(part.globals);
         program.functions.extend(part.functions);
         all_calls.extend(calls);

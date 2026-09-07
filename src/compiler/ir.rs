@@ -22,6 +22,7 @@ pub struct FuncId(pub NodeId);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypedProgram {
+    pub structs: Vec<super::types::StructDef>,
     pub globals: Vec<TypedGlobal>,
     pub functions: Vec<TypedFunction>,
 }

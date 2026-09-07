@@ -1621,6 +1621,35 @@ impl Lowerer<'_> {
         self.ensure_in_rr(v, Rr::Hl, span)
     }
 
+    fn park_live_src(&mut self, src: VReg, dst: VReg, span: SourceSpan) -> Result<(), Diagnostic> {
+        if src == dst || !self.vreg_live(src) {
+            return Ok(());
+        }
+        match self.loc_of(src, span)? {
+            Loc::Byte(cur) => {
+                const ORDER: [R8; 7] = [R8::C, R8::B, R8::E, R8::D, R8::L, R8::H, R8::A];
+                let tmp = ORDER
+                    .into_iter()
+                    .find(|&r| r != cur && self.reg_free(r, Some(Key::V(src))))
+                    .ok_or_else(|| self.pressure(span))?;
+                self.claim_r8(tmp, Some(Key::V(src)), span)?;
+                self.emit_move(Loc::Byte(cur), Loc::Byte(tmp), span)?;
+                self.vreg_loc.insert(src, Loc::Byte(tmp));
+            }
+            Loc::Word(cur) => {
+                let tmp = [Rr::De, Rr::Bc, Rr::Hl]
+                    .into_iter()
+                    .find(|&rr| rr != cur && self.pair_free(rr, Some(Key::V(src))))
+                    .ok_or_else(|| self.pressure(span))?;
+                self.claim_rr(tmp, Some(Key::V(src)), span)?;
+                self.emit_move(Loc::Word(cur), Loc::Word(tmp), span)?;
+                self.vreg_loc.insert(src, Loc::Word(tmp));
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     fn alu_src_of(&mut self, v: VReg, span: SourceSpan) -> Result<AluSrc, Diagnostic> {
         match self.loc_of(v, span)? {
             Loc::Imm8(n) => Ok(AluSrc::Imm(n)),
@@ -1970,6 +1999,7 @@ impl Lowerer<'_> {
             }
         }
         self.ensure_a(lhs, span)?;
+        self.park_live_src(lhs, dst, span)?;
         let src = self.alu_src_of(rhs, span)?;
         let zop = match op {
             IrBinary::Add => Z80Op::AddA(src),
@@ -1997,6 +2027,7 @@ impl Lowerer<'_> {
             IrBinary::Add => {
                 if let Loc::Imm16(n) = self.loc_of(rhs, span)? {
                     self.ensure_hl(lhs, span)?;
+                    self.park_live_src(lhs, dst, span)?;
                     self.add_hl_imm(n, span)?;
                     self.bind_vreg(dst, Loc::Word(Rr::Hl), ty);
                     return Ok(());
@@ -2006,17 +2037,20 @@ impl Lowerer<'_> {
                 {
                     self.ensure_hl(rhs, span)?;
                     self.ensure_in_rr(lhs, Rr::De, span)?;
+                    self.park_live_src(lhs, dst, span)?;
                     self.emit(Z80Op::AddHl(Rr::De), span);
                     self.bind_vreg(dst, Loc::Word(Rr::Hl), ty);
                     return Ok(());
                 }
                 self.ensure_hl(lhs, span)?;
+                self.park_live_src(lhs, dst, span)?;
                 let src = self.word_src_rr(rhs, span)?;
                 self.emit(Z80Op::AddHl(src), span);
                 self.bind_vreg(dst, Loc::Word(Rr::Hl), ty);
             }
             IrBinary::Sub => {
                 self.ensure_hl(lhs, span)?;
+                self.park_live_src(lhs, dst, span)?;
                 let src = self.word_src_rr(rhs, span)?;
                 self.claim_r8(R8::A, Some(Key::V(lhs)), span)?;
                 self.emit(Z80Op::Or(AluSrc::Reg(R8::A)), span);
@@ -2025,6 +2059,7 @@ impl Lowerer<'_> {
             }
             IrBinary::BitAnd | IrBinary::BitXor | IrBinary::BitOr => {
                 self.ensure_hl(lhs, span)?;
+                self.park_live_src(lhs, dst, span)?;
                 let src = self.word_src_rr(rhs, span)?;
                 let (sh, sl) = src.halves();
                 self.claim_r8(R8::A, Some(Key::V(lhs)), span)?;

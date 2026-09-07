@@ -94,11 +94,13 @@ pub fn compile(input: CompileInput<'_>) -> CompilationResult {
         units.push(unit);
     }
     let mut program = TypedProgram {
+        structs: Vec::new(),
         globals: Vec::new(),
         functions: Vec::new(),
     };
     for unit in &units {
         let part = analyze_unit(unit, &mut diagnostics);
+        program.structs.extend(part.structs);
         program.globals.extend(part.globals);
         program.functions.extend(part.functions);
     }

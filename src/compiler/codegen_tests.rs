@@ -1408,3 +1408,219 @@ u8 ext() {
         StackProvenance::Unknown
     );
 }
+
+fn global_bytes<'a>(result: &'a CompilationResult, name: &str) -> &'a [u8] {
+    let code = result.code.as_ref().unwrap();
+    let g = code.global(name).unwrap();
+    super::z80::bytes_in_segments(&code.assembled, g.addr, g.size as usize)
+        .unwrap_or_else(|| panic!("missing bytes for global {name}"))
+}
+
+#[test]
+fn packed_struct_layout_static_data_and_stride() {
+    let result = compile_ok(
+        r#"
+struct Sprite { u8 x; u8 y; u16 bitmap; bool visible; };
+Sprite one = { 10, 20, 0x1234, true };
+Sprite enemies[2] = { { 1 }, { 2, 3 } };
+void step(ptr<Sprite> p, u8 n) {
+    u8 i = 0;
+    while (i < n) {
+        p += 1;
+        i = i + 1;
+    }
+    p->x = 99;
+}
+void set_second_x(u8 v) { enemies[1].x = v; }
+u8 get_second_x() { return enemies[1].x; }
+u16 size() { return sizeof(Sprite); }
+"#,
+    );
+    let code = result.code.as_ref().unwrap();
+    assert_eq!(global_bytes(&result, "one"), [10, 20, 0x34, 0x12, 1]);
+    assert_eq!(
+        global_bytes(&result, "enemies"),
+        [1, 0, 0, 0, 0, 2, 3, 0, 0, 0]
+    );
+    assert_eq!(code.global("one").unwrap().size, 5);
+    assert_eq!(code.global("enemies").unwrap().size, 10);
+    let size = execute_function(code, "size", &[]).unwrap();
+    assert_eq!(size.return_word(), 5);
+
+    let base = code.global("enemies").unwrap().addr;
+    let second = execute_function(code, "set_second_x", &[7]).unwrap();
+    let writes: Vec<_> = second
+        .data_accesses()
+        .filter(|a| a.kind == AccessKind::DataWrite)
+        .collect();
+    assert!(
+        writes
+            .iter()
+            .any(|a| a.addr == base.wrapping_add(5) && a.value == 7),
+        "{writes:?}"
+    );
+    let got = execute_function_with(
+        code,
+        "get_second_x",
+        &[],
+        &ExecConfig {
+            initial_mem: vec![(base.wrapping_add(5), 7)],
+            ..ExecConfig::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(got.return_byte(), 7);
+    let stepped = execute_function(code, "step", &[base, 1]).unwrap();
+    let step_writes: Vec<_> = stepped
+        .data_accesses()
+        .filter(|a| a.kind == AccessKind::DataWrite)
+        .collect();
+    assert!(
+        step_writes
+            .iter()
+            .any(|a| a.addr == base.wrapping_add(5) && a.value == 99),
+        "{step_writes:?}"
+    );
+}
+
+#[test]
+fn pointer_struct_fields_and_move() {
+    let result = compile_ok(
+        r#"
+struct Sprite { u8 x; u8 y; u16 bitmap; bool visible; };
+Sprite enemies[8];
+void move(ptr<Sprite> sprite, i8 dx) {
+    sprite->x = sprite->x + u8(dx);
+}
+ptr<Sprite> player = ptr<Sprite>(0x9000);
+u8 read_player() { return player->x; }
+"#,
+    );
+    let code = result.code.as_ref().unwrap();
+    let enemies = code.global("enemies").unwrap().addr;
+    execute_function(code, "move", &[enemies, 3]).unwrap();
+    let out = execute_function_with(
+        code,
+        "move",
+        &[enemies, 3],
+        &ExecConfig {
+            initial_mem: vec![(enemies, 10)],
+            ..ExecConfig::default()
+        },
+    )
+    .unwrap();
+    let writes: Vec<_> = out
+        .data_accesses()
+        .filter(|a| a.kind == AccessKind::DataWrite && a.addr == enemies)
+        .collect();
+    assert_eq!(writes.last().map(|a| a.value), Some(13), "{writes:?}");
+
+    let peek = execute_function_with(
+        code,
+        "read_player",
+        &[],
+        &ExecConfig {
+            initial_mem: vec![(0x9000, 42)],
+            ..ExecConfig::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(peek.return_byte(), 42);
+}
+
+#[test]
+fn compound_and_inc_evaluate_dest_once() {
+    let result = compile_ok(
+        r#"
+u8 i;
+u8 a[4];
+u8 bump() {
+    i = 0;
+    a[i++] += 5;
+    return i;
+}
+u8 pre() {
+    i = 1;
+    return ++i;
+}
+u8 post() {
+    i = 1;
+    return i++;
+}
+"#,
+    );
+    let code = result.code.as_ref().unwrap();
+    let a = code.global("a").unwrap().addr;
+    let bump = execute_function(code, "bump", &[]).unwrap();
+    assert_eq!(bump.return_byte(), 1);
+    let writes: Vec<_> = bump
+        .data_accesses()
+        .filter(|w| w.kind == AccessKind::DataWrite && w.addr == a)
+        .collect();
+    assert_eq!(writes.last().map(|w| w.value), Some(5), "{writes:?}");
+    assert_eq!(execute_function(code, "pre", &[]).unwrap().return_byte(), 2);
+    assert_eq!(
+        execute_function(code, "post", &[]).unwrap().return_byte(),
+        1
+    );
+}
+
+#[test]
+fn for_continue_runs_update_and_do_while_reaches_condition() {
+    let result = compile_ok(
+        r#"
+u8 n;
+u8 for_cont() {
+    n = 0;
+    for (u8 i = 0; i < 3; i += 1) {
+        if (i == 1) continue;
+        n = n + 1;
+    }
+    return n;
+}
+u8 do_cont() {
+    u8 i = 0;
+    n = 0;
+    do {
+        i = i + 1;
+        if (i == 1) continue;
+        n = n + 1;
+    } while (i < 3);
+    return n;
+}
+u8 nested_break() {
+    n = 0;
+    u8 i = 0;
+    while (i < 3) {
+        u8 j = 0;
+        while (j < 3) {
+            if (j == 1) break;
+            n = n + 1;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+"#,
+    );
+    let code = result.code.as_ref().unwrap();
+    assert_eq!(
+        execute_function(code, "for_cont", &[])
+            .unwrap()
+            .return_byte(),
+        2
+    );
+    assert_eq!(
+        execute_function(code, "do_cont", &[])
+            .unwrap()
+            .return_byte(),
+        2
+    );
+    assert_eq!(
+        execute_function(code, "nested_break", &[])
+            .unwrap()
+            .return_byte(),
+        3
+    );
+}
