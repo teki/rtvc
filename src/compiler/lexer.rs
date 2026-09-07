@@ -134,6 +134,7 @@ impl<'a> Lexer<'a> {
             return Token::new(TokenKind::Eof, self.span(start, start));
         };
         let kind = match b {
+            b'@' => TokenKind::At,
             b'(' => TokenKind::LParen,
             b')' => TokenKind::RParen,
             b'{' => TokenKind::LBrace,

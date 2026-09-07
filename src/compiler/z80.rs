@@ -1,7 +1,9 @@
 //! Structured Z80 items, register names, and assembler rendering.
 
+use super::ast::CallConv;
 use super::ir::FuncId;
 use super::source::{NodeId, SourceSpan};
+use super::types::CType;
 use crate::asm::AssembledProgram;
 use std::fmt::Write;
 
@@ -155,6 +157,23 @@ pub enum Z80Op {
     StAbs8 { src: R8, symbol: String },
     LdAbs16 { dst: Rr, symbol: String },
     StAbs16 { src: Rr, symbol: String },
+    Call { target: String },
+    Push(Rr),
+    Pop(Rr),
+    PushAf,
+    PopAf,
+    PushIx,
+    PopIx,
+    LdIxImm(u16),
+    AddIxSp,
+    AddHlSp,
+    LdSpHl,
+    LdSpIx,
+    IncSp,
+    Ld8Ix { dst: R8, disp: i8 },
+    St8Ix { src: R8, disp: i8 },
+    Ld8IxImm { disp: i8, imm: u8 },
+    Rla,
 }
 
 impl Z80Op {
@@ -185,6 +204,23 @@ impl Z80Op {
             Self::StAbs8 { src, symbol } => format!("LD ({}),{}", symbol, src.name()),
             Self::LdAbs16 { dst, symbol } => format!("LD {},({})", dst.name(), symbol),
             Self::StAbs16 { src, symbol } => format!("LD ({}),{}", symbol, src.name()),
+            Self::Call { target } => format!("CALL {target}"),
+            Self::Push(rr) => format!("PUSH {}", rr.name()),
+            Self::Pop(rr) => format!("POP {}", rr.name()),
+            Self::PushAf => "PUSH AF".to_string(),
+            Self::PopAf => "POP AF".to_string(),
+            Self::PushIx => "PUSH IX".to_string(),
+            Self::PopIx => "POP IX".to_string(),
+            Self::LdIxImm(imm) => format!("LD IX,{imm}"),
+            Self::AddIxSp => "ADD IX,SP".to_string(),
+            Self::AddHlSp => "ADD HL,SP".to_string(),
+            Self::LdSpHl => "LD SP,HL".to_string(),
+            Self::LdSpIx => "LD SP,IX".to_string(),
+            Self::IncSp => "INC SP".to_string(),
+            Self::Ld8Ix { dst, disp } => format!("LD {},{}", dst.name(), ix_addr(*disp)),
+            Self::St8Ix { src, disp } => format!("LD {},{}", ix_addr(*disp), src.name()),
+            Self::Ld8IxImm { disp, imm } => format!("LD {},{imm}", ix_addr(*disp)),
+            Self::Rla => "RLA".to_string(),
         }
     }
 }
@@ -193,6 +229,14 @@ fn alu_src(src: &AluSrc) -> String {
     match src {
         AluSrc::Reg(r) => r.name().to_string(),
         AluSrc::Imm(n) => n.to_string(),
+    }
+}
+
+fn ix_addr(disp: i8) -> String {
+    if disp >= 0 {
+        format!("(IX+{disp})")
+    } else {
+        format!("(IX{disp})")
     }
 }
 
@@ -269,8 +313,12 @@ pub struct GeneratedFunction {
     pub span: SourceSpan,
     pub addr: u16,
     pub size: u16,
+    pub conv: CallConv,
     pub param_homes: Vec<RegHome>,
+    pub param_types: Vec<CType>,
     pub ret: Option<RegHome>,
+    pub stack_bound: u16,
+    pub frame_bytes: u16,
     pub instruction_ids: Vec<AsmInstructionId>,
     pub mapped: Vec<MappedInstruction>,
 }

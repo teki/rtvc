@@ -1,6 +1,7 @@
 //! Straight-line register-leaf lowering from typed IR to structured Z80 items.
 
 use super::abi::{assign_params, return_home};
+use super::ast::CallConv;
 use super::diagnostic::{DiagCode, Diagnostic};
 use super::ir::{
     BlockId, FuncId, GlobalId, IrBinary, IrOp, IrUnary, LocalId, TypedFunction, TypedGlobal,
@@ -15,7 +16,7 @@ use super::z80::{
 };
 use crate::asm::assemble_program;
 use crate::disasm::disassemble_at;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub const DEFAULT_CODE_ORIGIN: u16 = 0x8000;
 
@@ -25,6 +26,7 @@ enum Loc {
     Word(Rr),
     Imm8(u8),
     Imm16(u16),
+    Frame { disp: i8, width: u8 },
 }
 
 impl Loc {
@@ -49,7 +51,7 @@ impl Loc {
             Self::Word(Rr::Bc) => &[R8::B, R8::C],
             Self::Word(Rr::De) => &[R8::D, R8::E],
             Self::Word(Rr::Hl) => &[R8::H, R8::L],
-            Self::Imm8(_) | Self::Imm16(_) => &[],
+            Self::Imm8(_) | Self::Imm16(_) | Self::Frame { .. } => &[],
         }
     }
 
@@ -58,6 +60,14 @@ impl Loc {
             Self::Byte(r) => Some(RegHome::Byte(r)),
             Self::Word(rr) => Some(RegHome::Word(rr)),
             _ => None,
+        }
+    }
+
+    fn width(self) -> u8 {
+        match self {
+            Self::Byte(_) | Self::Imm8(_) => 1,
+            Self::Word(_) | Self::Imm16(_) => 2,
+            Self::Frame { width, .. } => width,
         }
     }
 }
@@ -81,8 +91,21 @@ struct Lowerer<'a> {
     op_index: usize,
     func_label: String,
     globals: HashMap<GlobalId, (String, CType)>,
+    callees: &'a HashMap<FuncId, CalleeInfo>,
     next_aux: u32,
     stable: bool,
+    uses_ix: bool,
+    frame_used: u8,
+    spill_bytes: u8,
+    call_sites: Vec<(FuncId, u16)>,
+    param_moves: Vec<(Loc, Loc)>,
+}
+
+struct CalleeInfo {
+    label: String,
+    conv: CallConv,
+    params: Vec<CType>,
+    ret: CType,
 }
 
 pub fn lower_program(
@@ -92,6 +115,7 @@ pub fn lower_program(
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Option<GeneratedProgram> {
     let global_map = global_symbols(program);
+    let callee_map = callee_map(program);
     let mut order: Vec<OrderItem<'_>> = program.globals.iter().map(OrderItem::Global).collect();
     order.extend(program.functions.iter().map(OrderItem::Func));
     order.sort_by_key(|item| item.span_key());
@@ -107,37 +131,20 @@ pub fn lower_program(
                     failed = true;
                 }
             },
-            OrderItem::Func(func) => {
-                if !can_lower(func) {
-                    continue;
+            OrderItem::Func(func) => match lower_function(func, &callee_map, &global_map, ids) {
+                Ok(part) => chunks.push(EmitChunk::Func(part)),
+                Err(diag) => {
+                    diagnostics.push(diag);
+                    failed = true;
                 }
-                match assign_params(&func.params.iter().map(|p| p.ty).collect::<Vec<_>>()) {
-                    None => {
-                        diagnostics.push(Diagnostic::error(
-                            DiagCode::CgUnsupported,
-                            func.span,
-                            format!(
-                                "register signature of '{}' does not fit; use explicit @stackcall",
-                                func.name
-                            ),
-                        ));
-                        failed = true;
-                    }
-                    Some(homes) => match lower_function(func, homes, &global_map, ids) {
-                        Ok(part) => chunks.push(EmitChunk::Func(part)),
-                        Err(diag) => {
-                            diagnostics.push(diag);
-                            failed = true;
-                        }
-                    },
-                }
-            }
+            },
         }
     }
 
     if failed {
         return None;
     }
+    fill_stack_bounds(&mut chunks);
     if chunks.is_empty() {
         return None;
     }
@@ -240,8 +247,12 @@ pub fn lower_program(
                     span: part.span,
                     addr,
                     size,
+                    conv: part.conv,
                     param_homes: part.param_homes,
+                    param_types: part.param_types,
                     ret: part.ret,
+                    stack_bound: part.stack_bound,
+                    frame_bytes: part.frame_bytes,
                     instruction_ids: code_mapped.iter().map(|m| m.id).collect(),
                     mapped: code_mapped,
                 });
@@ -316,8 +327,13 @@ struct FnPart {
     id: FuncId,
     span: SourceSpan,
     items: Vec<Z80Item>,
+    conv: CallConv,
     param_homes: Vec<RegHome>,
+    param_types: Vec<CType>,
     ret: Option<RegHome>,
+    stack_bound: u16,
+    frame_bytes: u16,
+    call_sites: Vec<(FuncId, u16)>,
 }
 
 struct GlobalPart {
@@ -328,6 +344,24 @@ struct GlobalPart {
     items: Vec<Z80Item>,
 }
 
+fn callee_map(program: &TypedProgram) -> HashMap<FuncId, CalleeInfo> {
+    program
+        .functions
+        .iter()
+        .map(|f| {
+            (
+                f.id,
+                CalleeInfo {
+                    label: asm_label(f.id, &f.name),
+                    conv: f.conv,
+                    params: f.params.iter().map(|p| p.ty).collect(),
+                    ret: f.ret,
+                },
+            )
+        })
+        .collect()
+}
+
 fn global_symbols(program: &TypedProgram) -> HashMap<GlobalId, (String, CType)> {
     program
         .globals
@@ -336,10 +370,57 @@ fn global_symbols(program: &TypedProgram) -> HashMap<GlobalId, (String, CType)> 
         .collect()
 }
 
-fn can_lower(func: &TypedFunction) -> bool {
-    func.blocks
+fn fill_stack_bounds(chunks: &mut [EmitChunk]) {
+    let mut ids: HashMap<FuncId, usize> = HashMap::new();
+    for (i, chunk) in chunks.iter().enumerate() {
+        if let EmitChunk::Func(part) = chunk {
+            ids.insert(part.id, i);
+        }
+    }
+    let mut memo: HashMap<FuncId, u16> = HashMap::new();
+    fn bound_of(
+        chunks: &[EmitChunk],
+        ids: &HashMap<FuncId, usize>,
+        memo: &mut HashMap<FuncId, u16>,
+        id: FuncId,
+    ) -> u16 {
+        if let Some(&b) = memo.get(&id) {
+            return b;
+        }
+        memo.insert(id, 0);
+        let Some(&idx) = ids.get(&id) else {
+            return 0;
+        };
+        let EmitChunk::Func(part) = &chunks[idx] else {
+            return 0;
+        };
+        let mut extra = 0u16;
+        let sites = part.call_sites.clone();
+        let frame = part.frame_bytes;
+        for (callee, arg_slots) in sites {
+            extra = extra.max(
+                arg_slots
+                    .saturating_add(2)
+                    .saturating_add(bound_of(chunks, ids, memo, callee)),
+            );
+        }
+        let bound = frame.saturating_add(extra);
+        memo.insert(id, bound);
+        bound
+    }
+    let computed: Vec<(usize, u16)> = chunks
         .iter()
-        .all(|b| b.ops.iter().all(|op| !matches!(op, IrOp::Call { .. })))
+        .enumerate()
+        .filter_map(|(i, chunk)| match chunk {
+            EmitChunk::Func(part) => Some((i, bound_of(chunks, &ids, &mut memo, part.id))),
+            _ => None,
+        })
+        .collect();
+    for (i, bound) in computed {
+        if let EmitChunk::Func(part) = &mut chunks[i] {
+            part.stack_bound = bound;
+        }
+    }
 }
 
 fn lower_global(global: &TypedGlobal, ids: &mut IdGen) -> Result<GlobalPart, Diagnostic> {
@@ -380,10 +461,26 @@ fn lower_global(global: &TypedGlobal, ids: &mut IdGen) -> Result<GlobalPart, Dia
 
 fn lower_function(
     func: &TypedFunction,
-    param_homes: Vec<RegHome>,
+    callees: &HashMap<FuncId, CalleeInfo>,
     globals: &HashMap<GlobalId, (String, CType)>,
     ids: &mut IdGen,
 ) -> Result<FnPart, Diagnostic> {
+    let param_tys: Vec<CType> = func.params.iter().map(|p| p.ty).collect();
+    let param_homes = if func.conv == CallConv::Stack {
+        Vec::new()
+    } else {
+        assign_params(&param_tys).ok_or_else(|| {
+            Diagnostic::error(
+                DiagCode::CgUnsupported,
+                func.span,
+                format!(
+                    "register signature of '{}' does not fit; use explicit @stackcall",
+                    func.name
+                ),
+            )
+        })?
+    };
+
     let (vreg_last, local_last) = liveness_fn(func);
     let mut local_ty = HashMap::new();
     for p in &func.params {
@@ -393,7 +490,11 @@ fn lower_function(
         local_ty.insert(l.id, l.ty);
     }
     let label = asm_label(func.id, &func.name);
-    let stable = func.blocks.len() > 1;
+    let live_across = live_across_any_call(func, &vreg_last, &local_last);
+    let spill_bytes = max_call_spill_bytes(func, &vreg_last, &local_last);
+    let pressure = !fits_stable_registers(func, func.conv);
+    let uses_ix = func.conv == CallConv::Stack || live_across || spill_bytes > 0 || pressure;
+    let stable = func.blocks.len() > 1 || uses_ix;
     let mut lowerer = Lowerer {
         func,
         ids,
@@ -407,19 +508,21 @@ fn lower_function(
         op_index: 0,
         func_label: label.clone(),
         globals: globals.clone(),
+        callees,
         next_aux: 0,
         stable,
+        uses_ix,
+        frame_used: 0,
+        spill_bytes,
+        call_sites: Vec::new(),
+        param_moves: Vec::new(),
     };
     lowerer.emit_label(&label, func.span, func.id.0);
-    if stable {
-        lowerer.assign_stable_homes(&param_homes)?;
-    } else {
-        for (param, home) in func.params.iter().zip(param_homes.iter()) {
-            if lowerer.local_last.contains_key(&param.id) {
-                lowerer.local_loc.insert(param.id, Loc::from_home(*home));
-            }
-        }
+    lowerer.plan_homes(&param_homes)?;
+    if uses_ix {
+        lowerer.emit_prologue(func.span)?;
     }
+    lowerer.emit_param_setup(&param_homes, func.span)?;
 
     let mut index = 0usize;
     for block in &func.blocks {
@@ -472,20 +575,145 @@ fn lower_function(
                     func.span,
                 );
             } else {
-                lowerer.emit(Z80Op::Ret, func.span);
+                lowerer.emit_epilogue(func.span);
             }
         }
     }
 
+    let frame_bytes = if uses_ix {
+        2u16.saturating_add(u16::from(lowerer.frame_used))
+    } else {
+        0
+    };
     Ok(FnPart {
         name: func.name.clone(),
         label,
         id: func.id,
         span: func.span,
         items: lowerer.items,
+        conv: func.conv,
         param_homes,
+        param_types: param_tys,
         ret: return_home(func.ret),
+        stack_bound: 0,
+        frame_bytes,
+        call_sites: lowerer.call_sites,
     })
+}
+
+fn fits_stable_registers(func: &TypedFunction, conv: CallConv) -> bool {
+    let mut byte_i = 0usize;
+    let mut word_i = 0usize;
+    const BYTES: usize = 6;
+    const WORDS: usize = 2;
+    let params: Box<dyn Iterator<Item = CType>> = if conv == CallConv::Stack {
+        Box::new(std::iter::empty())
+    } else {
+        Box::new(func.params.iter().map(|p| p.ty))
+    };
+    for ty in params.chain(func.locals.iter().map(|l| l.ty)) {
+        match ty.byte_width() {
+            Some(1) => {
+                if byte_i >= BYTES {
+                    return false;
+                }
+                byte_i += 1;
+            }
+            Some(2) => {
+                if word_i >= WORDS {
+                    return false;
+                }
+                word_i += 1;
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+fn live_across_any_call(
+    func: &TypedFunction,
+    vreg_last: &HashMap<VReg, usize>,
+    local_last: &HashMap<LocalId, usize>,
+) -> bool {
+    let mut assigned: HashSet<LocalId> = func.params.iter().map(|p| p.id).collect();
+    let mut i = 0usize;
+    for block in &func.blocks {
+        for op in &block.ops {
+            if let IrOp::Call { args, dst, .. } = op {
+                for id in &assigned {
+                    if local_last.get(id).is_some_and(|&last| last > i) {
+                        return true;
+                    }
+                }
+                for (&v, &last) in vreg_last {
+                    if last > i && Some(v) != *dst {
+                        let dying = args.contains(&v) && last == i;
+                        if !dying {
+                            return true;
+                        }
+                    }
+                }
+            }
+            if let IrOp::StoreLocal { local, .. } = op {
+                assigned.insert(*local);
+            }
+            i += 1;
+        }
+    }
+    false
+}
+
+fn locals_needing_frame(
+    func: &TypedFunction,
+    local_last: &HashMap<LocalId, usize>,
+) -> HashSet<LocalId> {
+    let mut assigned: HashSet<LocalId> = func.params.iter().map(|p| p.id).collect();
+    let mut need = HashSet::new();
+    let mut i = 0usize;
+    for block in &func.blocks {
+        for op in &block.ops {
+            if matches!(op, IrOp::Call { .. }) {
+                for id in &assigned {
+                    if local_last.get(id).is_some_and(|&last| last > i) {
+                        need.insert(*id);
+                    }
+                }
+            }
+            if let IrOp::StoreLocal { local, .. } = op {
+                assigned.insert(*local);
+            }
+            i += 1;
+        }
+    }
+    need
+}
+
+fn max_call_spill_bytes(
+    func: &TypedFunction,
+    vreg_last: &HashMap<VReg, usize>,
+    _local_last: &HashMap<LocalId, usize>,
+) -> u8 {
+    let mut i = 0usize;
+    let mut max = 0u8;
+    for block in &func.blocks {
+        for op in &block.ops {
+            if let IrOp::Call { args, dst, .. } = op {
+                let mut bytes = 0u8;
+                for (&v, &last) in vreg_last {
+                    if last > i && Some(v) != *dst {
+                        let dies_here = args.contains(&v) && last == i;
+                        if !dies_here {
+                            bytes = bytes.saturating_add(2);
+                        }
+                    }
+                }
+                max = max.max(bytes);
+            }
+            i += 1;
+        }
+    }
+    max
 }
 
 fn is_compare(op: IrBinary) -> bool {
@@ -509,6 +737,9 @@ fn vreg_use_count(func: &TypedFunction, v: VReg) -> usize {
                 IrOp::Return {
                     value: Some(src), ..
                 } if *src == v => 1,
+                IrOp::Call { dst, args, .. } => {
+                    usize::from(dst.as_ref() == Some(&v)) + args.iter().filter(|a| **a == v).count()
+                }
                 _ => 0,
             };
         }
@@ -569,6 +800,14 @@ fn liveness_fn(func: &TypedFunction) -> (HashMap<VReg, usize>, HashMap<LocalId, 
                 } => {
                     vreg_last.insert(*src, i);
                 }
+                IrOp::Call { dst, args, .. } => {
+                    for arg in args {
+                        vreg_last.insert(*arg, i);
+                    }
+                    if let Some(dst) = dst {
+                        vreg_last.insert(*dst, i);
+                    }
+                }
                 _ => {}
             }
             i += 1;
@@ -586,7 +825,17 @@ impl Lowerer<'_> {
         self.error(
             span,
             format!(
-                "register pressure in '{}' needs a frame or @stackcall (not in this increment)",
+                "register pressure in '{}' needs a larger IX frame or @stackcall",
+                self.func.name
+            ),
+        )
+    }
+
+    fn frame_error(&self, span: SourceSpan) -> Diagnostic {
+        self.error(
+            span,
+            format!(
+                "indexed frame of '{}' does not fit a signed displacement",
                 self.func.name
             ),
         )
@@ -725,7 +974,7 @@ impl Lowerer<'_> {
                     .ok_or_else(|| self.pressure(span))?;
                 Loc::Word(rr)
             }
-            Loc::Imm8(_) | Loc::Imm16(_) => return Ok(()),
+            Loc::Imm8(_) | Loc::Imm16(_) | Loc::Frame { .. } => return Ok(()),
         };
         self.emit_move(loc, new_loc, span)?;
         match key {
@@ -789,6 +1038,80 @@ impl Lowerer<'_> {
                     span,
                 );
             }
+            (Loc::Frame { disp, width: 1 }, Loc::Byte(d)) => {
+                self.emit(Z80Op::Ld8Ix { dst: d, disp }, span);
+            }
+            (Loc::Frame { disp, width: 2 }, Loc::Byte(d)) => {
+                self.emit(Z80Op::Ld8Ix { dst: d, disp }, span);
+            }
+            (Loc::Frame { disp, width: 1 }, Loc::Word(d)) => {
+                let (h, l) = d.halves();
+                self.emit(Z80Op::Ld8Ix { dst: l, disp }, span);
+                self.emit(Z80Op::Ld8Imm { dst: h, imm: 0 }, span);
+            }
+            (Loc::Frame { disp, width: 2 }, Loc::Word(d)) => {
+                let hi = disp.checked_add(1).ok_or_else(|| self.frame_error(span))?;
+                let (h, l) = d.halves();
+                self.emit(Z80Op::Ld8Ix { dst: l, disp }, span);
+                self.emit(Z80Op::Ld8Ix { dst: h, disp: hi }, span);
+            }
+            (Loc::Byte(s), Loc::Frame { disp, width: 1 }) => {
+                self.emit(Z80Op::St8Ix { src: s, disp }, span);
+            }
+            (Loc::Byte(s), Loc::Frame { disp, width: 2 }) => {
+                self.emit(Z80Op::St8Ix { src: s, disp }, span);
+                let hi = disp.checked_add(1).ok_or_else(|| self.frame_error(span))?;
+                self.emit(Z80Op::Ld8IxImm { disp: hi, imm: 0 }, span);
+            }
+            (Loc::Word(s), Loc::Frame { disp, width: 2 }) => {
+                let hi = disp.checked_add(1).ok_or_else(|| self.frame_error(span))?;
+                let (h, l) = s.halves();
+                self.emit(Z80Op::St8Ix { src: l, disp }, span);
+                self.emit(Z80Op::St8Ix { src: h, disp: hi }, span);
+            }
+            (Loc::Imm8(n), Loc::Frame { disp, width: 1 }) => {
+                self.emit(Z80Op::Ld8IxImm { disp, imm: n }, span);
+            }
+            (Loc::Imm8(n), Loc::Frame { disp, width: 2 }) => {
+                let hi = disp.checked_add(1).ok_or_else(|| self.frame_error(span))?;
+                self.emit(Z80Op::Ld8IxImm { disp, imm: n }, span);
+                self.emit(Z80Op::Ld8IxImm { disp: hi, imm: 0 }, span);
+            }
+            (Loc::Imm16(n), Loc::Frame { disp, width: 2 }) => {
+                let hi = disp.checked_add(1).ok_or_else(|| self.frame_error(span))?;
+                self.emit(Z80Op::Ld8IxImm { disp, imm: n as u8 }, span);
+                self.emit(
+                    Z80Op::Ld8IxImm {
+                        disp: hi,
+                        imm: (n >> 8) as u8,
+                    },
+                    span,
+                );
+            }
+            (src, dst @ Loc::Frame { .. }) => match src.width() {
+                1 => {
+                    self.claim_r8(R8::A, None, span)?;
+                    self.emit_move(src, Loc::Byte(R8::A), span)?;
+                    self.emit_move(Loc::Byte(R8::A), dst, span)?;
+                }
+                _ => {
+                    self.claim_rr(Rr::Hl, None, span)?;
+                    self.emit_move(src, Loc::Word(Rr::Hl), span)?;
+                    self.emit_move(Loc::Word(Rr::Hl), dst, span)?;
+                }
+            },
+            (src @ Loc::Frame { .. }, dst) => match dst.width() {
+                1 => {
+                    self.claim_r8(R8::A, None, span)?;
+                    self.emit_move(src, Loc::Byte(R8::A), span)?;
+                    self.emit_move(Loc::Byte(R8::A), dst, span)?;
+                }
+                _ => {
+                    self.claim_rr(Rr::Hl, None, span)?;
+                    self.emit_move(src, Loc::Word(Rr::Hl), span)?;
+                    self.emit_move(Loc::Word(Rr::Hl), dst, span)?;
+                }
+            },
             _ => {
                 return Err(self.error(span, "cannot move between these locations"));
             }
@@ -849,7 +1172,9 @@ impl Lowerer<'_> {
                 },
                 span,
             ),
-            Loc::Imm16(_) | Loc::Word(_) => self.emit_move(src, Loc::Word(dst), span)?,
+            Loc::Imm16(_) | Loc::Word(_) | Loc::Frame { .. } => {
+                self.emit_move(src, Loc::Word(dst), span)?
+            }
         }
         self.vreg_loc.insert(v, Loc::Word(dst));
         Ok(())
@@ -887,6 +1212,15 @@ impl Lowerer<'_> {
             }
             Loc::Word(rr) => Ok(AluSrc::Reg(rr.halves().1)),
             Loc::Imm16(n) => Ok(AluSrc::Imm(n as u8)),
+            Loc::Frame { .. } => {
+                let tmp = self
+                    .alloc_r8(Some(R8::C), Some(Key::V(v)))
+                    .ok_or_else(|| self.pressure(span))?;
+                self.claim_r8(tmp, Some(Key::V(v)), span)?;
+                self.emit_move(self.loc_of(v, span)?, Loc::Byte(tmp), span)?;
+                self.vreg_loc.insert(v, Loc::Byte(tmp));
+                Ok(AluSrc::Reg(tmp))
+            }
         }
     }
 
@@ -1011,9 +1345,12 @@ impl Lowerer<'_> {
             IrOp::StoreGlobal { global, src, span } => {
                 self.lower_store_global(*global, *src, *span)?
             }
-            _ => {
-                return Err(self.error(self.func.span, "internal: unexpected IR in lowering"));
-            }
+            IrOp::Call {
+                dst,
+                func,
+                args,
+                span,
+            } => self.lower_call(*dst, *func, args, *span)?,
         }
         Ok(())
     }
@@ -1313,6 +1650,10 @@ impl Lowerer<'_> {
                 Loc::Imm16(n) => self.bind_vreg(dst, Loc::Imm8(n as u8), to),
                 Loc::Byte(r) => self.bind_vreg(dst, Loc::Byte(r), to),
                 Loc::Imm8(n) => self.bind_vreg(dst, Loc::Imm8(n), to),
+                Loc::Frame { .. } => {
+                    self.ensure_hl(src, span)?;
+                    self.bind_vreg(dst, Loc::Byte(R8::L), to);
+                }
             }
             return Ok(());
         }
@@ -1355,6 +1696,19 @@ impl Lowerer<'_> {
                 }
                 Loc::Word(rr) => self.bind_vreg(dst, Loc::Word(rr), to),
                 Loc::Imm16(n) => self.bind_vreg(dst, Loc::Imm16(n), to),
+                Loc::Frame { .. } => {
+                    self.ensure_a(src, span)?;
+                    self.claim_rr(Rr::Hl, Some(Key::V(src)), span)?;
+                    self.emit(
+                        Z80Op::Ld8 {
+                            dst: R8::L,
+                            src: R8::A,
+                        },
+                        span,
+                    );
+                    self.emit(Z80Op::Ld8Imm { dst: R8::H, imm: 0 }, span);
+                    self.bind_vreg(dst, Loc::Word(Rr::Hl), to);
+                }
             }
             return Ok(());
         }
@@ -1377,7 +1731,7 @@ impl Lowerer<'_> {
                 None => return Err(self.error(span, "void function returned a value")),
             }
         }
-        self.emit(Z80Op::Ret, span);
+        self.emit_epilogue(span);
         Ok(())
     }
 
@@ -1447,6 +1801,406 @@ impl Lowerer<'_> {
                 _ => return Err(self.error(local.span, "void local")),
             };
             self.local_loc.insert(local.id, home);
+        }
+        Ok(())
+    }
+
+    fn plan_homes(&mut self, param_homes: &[RegHome]) -> Result<(), Diagnostic> {
+        if !self.uses_ix {
+            if self.stable {
+                self.assign_stable_homes(param_homes)?;
+            } else {
+                for (param, home) in self.func.params.iter().zip(param_homes.iter()) {
+                    if self.local_last.contains_key(&param.id) {
+                        self.local_loc.insert(param.id, Loc::from_home(*home));
+                    }
+                }
+            }
+            return Ok(());
+        }
+        let need_frame = locals_needing_frame(self.func, &self.local_last);
+        const BYTES: [R8; 6] = [R8::C, R8::B, R8::E, R8::D, R8::L, R8::H];
+        const WORDS: [Rr; 2] = [Rr::De, Rr::Bc];
+        let mut byte_i = 0usize;
+        let mut word_i = 0usize;
+        let span = self.func.span;
+        if self.func.conv == CallConv::Stack {
+            for (i, param) in self.func.params.iter().enumerate() {
+                let disp = 4i16 + 2 * i as i16;
+                let hi = disp + 1;
+                let disp = i8::try_from(disp).map_err(|_| self.frame_error(param.span))?;
+                let _ = i8::try_from(hi).map_err(|_| self.frame_error(param.span))?;
+                if self.local_last.contains_key(&param.id) {
+                    self.local_loc
+                        .insert(param.id, Loc::Frame { disp, width: 2 });
+                }
+            }
+        } else {
+            for (param, abi) in self.func.params.iter().zip(param_homes.iter()) {
+                let width = param.ty.byte_width().unwrap_or(1);
+                let home = if need_frame.contains(&param.id) {
+                    Loc::Frame {
+                        disp: self.alloc_neg(width, param.span)?,
+                        width,
+                    }
+                } else {
+                    self.take_reg_home(width, &mut byte_i, &mut word_i, &BYTES, &WORDS, param.span)?
+                };
+                self.param_moves.push((Loc::from_home(*abi), home));
+                if self.local_last.contains_key(&param.id) {
+                    self.local_loc.insert(param.id, home);
+                }
+            }
+        }
+        for local in &self.func.locals {
+            if self.local_loc.contains_key(&local.id) {
+                continue;
+            }
+            let width = local.ty.byte_width().unwrap_or(1);
+            let home = if need_frame.contains(&local.id) {
+                Loc::Frame {
+                    disp: self.alloc_neg(width, local.span)?,
+                    width,
+                }
+            } else {
+                match self.try_reg_home(width, byte_i, word_i, &BYTES, &WORDS) {
+                    Some((home, b, w)) => {
+                        byte_i = b;
+                        word_i = w;
+                        home
+                    }
+                    None => Loc::Frame {
+                        disp: self.alloc_neg(width, local.span)?,
+                        width,
+                    },
+                }
+            };
+            self.local_loc.insert(local.id, home);
+        }
+        let spill = self.spill_bytes;
+        if spill > 0 {
+            let _ = self.alloc_neg(spill, span)?;
+        }
+        Ok(())
+    }
+
+    fn try_reg_home(
+        &self,
+        width: u8,
+        byte_i: usize,
+        word_i: usize,
+        bytes: &[R8; 6],
+        words: &[Rr; 2],
+    ) -> Option<(Loc, usize, usize)> {
+        match width {
+            1 if byte_i < bytes.len() => Some((Loc::Byte(bytes[byte_i]), byte_i + 1, word_i)),
+            2 if word_i < words.len() => Some((Loc::Word(words[word_i]), byte_i, word_i + 1)),
+            _ => None,
+        }
+    }
+
+    fn take_reg_home(
+        &mut self,
+        width: u8,
+        byte_i: &mut usize,
+        word_i: &mut usize,
+        bytes: &[R8; 6],
+        words: &[Rr; 2],
+        span: SourceSpan,
+    ) -> Result<Loc, Diagnostic> {
+        match self.try_reg_home(width, *byte_i, *word_i, bytes, words) {
+            Some((home, b, w)) => {
+                *byte_i = b;
+                *word_i = w;
+                Ok(home)
+            }
+            None => Ok(Loc::Frame {
+                disp: self.alloc_neg(width, span)?,
+                width,
+            }),
+        }
+    }
+
+    fn alloc_neg(&mut self, width: u8, span: SourceSpan) -> Result<i8, Diagnostic> {
+        let next = u16::from(self.frame_used).saturating_add(u16::from(width));
+        if next > 128 {
+            return Err(self.frame_error(span));
+        }
+        self.frame_used = next as u8;
+        i8::try_from(-(next as i16)).map_err(|_| self.frame_error(span))
+    }
+
+    fn emit_param_setup(
+        &mut self,
+        _param_homes: &[RegHome],
+        span: SourceSpan,
+    ) -> Result<(), Diagnostic> {
+        let moves = self.param_moves.clone();
+        self.emit_parallel_moves(moves, span)
+    }
+
+    fn emit_prologue(&mut self, span: SourceSpan) -> Result<(), Diagnostic> {
+        self.emit(Z80Op::PushIx, span);
+        self.emit(Z80Op::LdIxImm(0), span);
+        self.emit(Z80Op::AddIxSp, span);
+        if self.frame_used > 0 {
+            let n = u16::from(self.frame_used);
+            self.emit(
+                Z80Op::Ld16Imm {
+                    dst: Rr::Hl,
+                    imm: n.wrapping_neg(),
+                },
+                span,
+            );
+            self.emit(Z80Op::AddHlSp, span);
+            self.emit(Z80Op::LdSpHl, span);
+        }
+        Ok(())
+    }
+
+    fn emit_epilogue(&mut self, span: SourceSpan) {
+        if self.uses_ix {
+            self.emit(Z80Op::LdSpIx, span);
+            self.emit(Z80Op::PopIx, span);
+        }
+        self.emit(Z80Op::Ret, span);
+    }
+
+    fn emit_parallel_moves(
+        &mut self,
+        mut pending: Vec<(Loc, Loc)>,
+        span: SourceSpan,
+    ) -> Result<(), Diagnostic> {
+        pending.retain(|(s, d)| s != d);
+        while !pending.is_empty() {
+            if let Some(i) = pending.iter().position(|(_, dst)| {
+                !pending
+                    .iter()
+                    .any(|(src, _)| dst.regs().iter().any(|r| src.regs().contains(r)))
+            }) {
+                let (src, dst) = pending.remove(i);
+                self.emit_move(src, dst, span)?;
+                continue;
+            }
+            if pending.len() == 2 {
+                let (a, b) = (pending[0], pending[1]);
+                if matches!(
+                    (a, b),
+                    (
+                        (Loc::Word(Rr::Hl), Loc::Word(Rr::De)),
+                        (Loc::Word(Rr::De), Loc::Word(Rr::Hl))
+                    ) | (
+                        (Loc::Word(Rr::De), Loc::Word(Rr::Hl)),
+                        (Loc::Word(Rr::Hl), Loc::Word(Rr::De))
+                    )
+                ) {
+                    self.emit(Z80Op::ExDeHl, span);
+                    pending.clear();
+                    continue;
+                }
+            }
+            let (src, dst) = pending.remove(0);
+            match (src, dst) {
+                (Loc::Word(s), Loc::Word(d)) => {
+                    self.emit(Z80Op::Push(s), span);
+                    self.emit_parallel_moves(pending, span)?;
+                    self.emit(Z80Op::Pop(d), span);
+                    return Ok(());
+                }
+                (src, dst) => {
+                    self.emit_move(src, Loc::Byte(R8::A), span)?;
+                    self.emit(Z80Op::PushAf, span);
+                    self.emit_parallel_moves(pending, span)?;
+                    self.emit(Z80Op::PopAf, span);
+                    self.emit_move(Loc::Byte(R8::A), dst, span)?;
+                    return Ok(());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn lower_call(
+        &mut self,
+        dst: Option<VReg>,
+        func: FuncId,
+        args: &[VReg],
+        span: SourceSpan,
+    ) -> Result<(), Diagnostic> {
+        let callee = self
+            .callees
+            .get(&func)
+            .ok_or_else(|| self.error(span, "call to unknown function"))?;
+        let label = callee.label.clone();
+        let conv = callee.conv;
+        let params = callee.params.clone();
+        let ret = callee.ret;
+        if args.len() != params.len() {
+            return Err(self.error(span, "call argument count mismatch"));
+        }
+
+        let mut next_spill = if self.spill_bytes > 0 {
+            Some(-(self.frame_used as i8))
+        } else {
+            None
+        };
+        let mut live_keys = Vec::new();
+        for (&v, loc) in &self.vreg_loc.clone() {
+            if Some(v) == dst {
+                continue;
+            }
+            let last = self.vreg_last.get(&v).copied().unwrap_or(0);
+            let dying = args.contains(&v) && last == self.op_index;
+            if last > self.op_index
+                && !dying
+                && !matches!(loc, Loc::Imm8(_) | Loc::Imm16(_) | Loc::Frame { .. })
+            {
+                live_keys.push(Key::V(v));
+            }
+        }
+        for (&l, loc) in &self.local_loc.clone() {
+            let last = self.local_last.get(&l).copied().unwrap_or(0);
+            if last > self.op_index
+                && !matches!(loc, Loc::Frame { .. } | Loc::Imm8(_) | Loc::Imm16(_))
+            {
+                live_keys.push(Key::L(l));
+            }
+        }
+        for key in live_keys {
+            let loc = match key {
+                Key::V(v) => self.vreg_loc[&v],
+                Key::L(l) => self.local_loc[&l],
+            };
+            let width = loc.width().max(1);
+            let disp = next_spill.ok_or_else(|| self.pressure(span))?;
+            let hi = (disp as i16) + i16::from(width) - 1;
+            if i8::try_from(hi).is_err() {
+                return Err(self.frame_error(span));
+            }
+            let slot = Loc::Frame { disp, width };
+            self.emit_move(loc, slot, span)?;
+            match key {
+                Key::V(v) => {
+                    self.vreg_loc.insert(v, slot);
+                }
+                Key::L(l) => {
+                    self.local_loc.insert(l, slot);
+                }
+            }
+            next_spill = Some(disp.saturating_add(width as i8));
+        }
+
+        let arg_slots = if conv == CallConv::Stack {
+            2u16.saturating_mul(args.len() as u16)
+        } else {
+            0
+        };
+        self.call_sites.push((func, arg_slots));
+
+        if conv == CallConv::Stack {
+            for i in (0..args.len()).rev() {
+                self.push_stack_arg(args[i], params[i], &args[..i], span)?;
+            }
+        } else {
+            let homes = assign_params(&params)
+                .ok_or_else(|| self.error(span, "callee register signature does not fit"))?;
+            let mut moves = Vec::new();
+            for (arg, home) in args.iter().zip(homes.iter()) {
+                let src = self.loc_of(*arg, span)?;
+                moves.push((src, Loc::from_home(*home)));
+            }
+            self.emit_parallel_moves(moves, span)?;
+        }
+
+        self.emit(Z80Op::Call { target: label }, span);
+
+        if conv == CallConv::Stack {
+            for _ in 0..arg_slots {
+                self.emit(Z80Op::IncSp, span);
+            }
+        }
+
+        if let Some(dst) = dst {
+            match return_home(ret) {
+                Some(RegHome::Byte(R8::A)) => self.bind_vreg(dst, Loc::Byte(R8::A), ret),
+                Some(RegHome::Word(Rr::Hl)) => self.bind_vreg(dst, Loc::Word(Rr::Hl), ret),
+                None => {}
+                Some(_) => return Err(self.error(span, "unexpected return home")),
+            }
+        }
+        Ok(())
+    }
+
+    fn remaining_regs(&self, remaining: &[VReg]) -> Vec<R8> {
+        let mut regs = Vec::new();
+        for &v in remaining {
+            if let Some(loc) = self.vreg_loc.get(&v) {
+                for &r in loc.regs() {
+                    if !regs.contains(&r) {
+                        regs.push(r);
+                    }
+                }
+            }
+        }
+        regs
+    }
+
+    fn push_pair_free(&self, remaining: &[VReg]) -> Option<Rr> {
+        let busy = self.remaining_regs(remaining);
+        [Rr::Hl, Rr::De, Rr::Bc].into_iter().find(|&rr| {
+            let (h, l) = rr.halves();
+            !busy.contains(&h) && !busy.contains(&l)
+        })
+    }
+
+    fn push_stack_arg(
+        &mut self,
+        arg: VReg,
+        ty: CType,
+        remaining: &[VReg],
+        span: SourceSpan,
+    ) -> Result<(), Diagnostic> {
+        let loc = self.loc_of(arg, span)?;
+        match (ty.byte_width(), loc) {
+            (Some(2), Loc::Word(rr)) => self.emit(Z80Op::Push(rr), span),
+            (Some(2), _) => {
+                let rr = self
+                    .push_pair_free(remaining)
+                    .ok_or_else(|| self.pressure(span))?;
+                self.ensure_in_rr(arg, rr, span)?;
+                self.emit(Z80Op::Push(rr), span);
+            }
+            (Some(1), _) => {
+                let rr = self
+                    .push_pair_free(remaining)
+                    .ok_or_else(|| self.pressure(span))?;
+                self.ensure_a(arg, span)?;
+                let (h, l) = rr.halves();
+                if l != R8::A {
+                    self.emit(Z80Op::Ld8 { dst: l, src: R8::A }, span);
+                }
+                if ty.is_signed() {
+                    self.emit(Z80Op::Rla, span);
+                    self.emit(Z80Op::SbcA(AluSrc::Reg(R8::A)), span);
+                    self.emit(Z80Op::Ld8 { dst: h, src: R8::A }, span);
+                    if l == R8::A {
+                        // A was overwritten by sign extend; restore low from L after if needed.
+                    }
+                } else {
+                    self.emit(Z80Op::Ld8Imm { dst: h, imm: 0 }, span);
+                }
+                if l == R8::A {
+                    self.emit(
+                        Z80Op::Ld8 {
+                            dst: R8::A,
+                            src: R8::L,
+                        },
+                        span,
+                    );
+                }
+                self.emit(Z80Op::Push(rr), span);
+            }
+            _ => return Err(self.error(span, "void argument")),
         }
         Ok(())
     }

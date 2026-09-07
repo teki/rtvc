@@ -546,3 +546,158 @@ u8 poll() { u8 a = g; u8 b = g; return a + b; }
         .collect();
     assert_eq!(g_reads.len(), 2, "{g_reads:?}");
 }
+
+fn assert_ix_iy_sp(exec: &crate::compiler::harness::ExecResult) {
+    assert_eq!(exec.sp, crate::compiler::harness::DEFAULT_SP);
+    assert_eq!(exec.ix, 0x1111);
+    assert_eq!(exec.iy, 0x2222);
+}
+
+#[test]
+fn register_calls_execute_and_leaves_stay_frame_free() {
+    let result = compile_ok(
+        r#"
+u8 id(u8 x) { return x; }
+u8 add8(u8 a, u8 b) { return a + b; }
+u16 add(u16 a, u16 b) { return a + b; }
+u8 nest(u8 x) { return add8(x, id(1)); }
+u16 swapped(u16 a, u16 b) { return add(b, a); }
+u8 sibling(u8 x) { u8 a = id(x); u8 b = id(1); return add8(a, b); }
+u8 nested_args(u8 x) { return add8(id(x), id(2)); }
+"#,
+    );
+    let code = result.code.as_ref().unwrap();
+    let id_text = assembly_of(&result).to_ascii_uppercase();
+    let id_asm = code.function("id").unwrap();
+    let id_fn_asm = code
+        .function("id")
+        .unwrap()
+        .mapped
+        .iter()
+        .map(|m| m.text.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(id_fn_asm.contains("RET"), "{id_fn_asm}");
+    assert!(!id_fn_asm.contains("IX"), "{id_fn_asm}");
+    assert!(!id_fn_asm.contains("PUSH"), "{id_fn_asm}");
+    assert_eq!(func_bytes(&result, "id"), &[0xC9]);
+
+    let exec_id = execute_function(code, "id", &[9]).unwrap();
+    assert_eq!(exec_id.return_byte(), 9);
+    assert_ix_iy_sp(&exec_id);
+    assert_eq!(exec_id.sp_used, 0);
+    assert_eq!(code.function("id").unwrap().stack_bound, 0);
+
+    let nest = execute_function(code, "nest", &[5]).unwrap();
+    assert_eq!(nest.return_byte(), 6);
+    assert_ix_iy_sp(&nest);
+    let nest_fn = code.function("nest").unwrap();
+    assert!(
+        nest.sp_used <= nest_fn.stack_bound,
+        "{} > {}",
+        nest.sp_used,
+        nest_fn.stack_bound
+    );
+
+    let swapped = execute_function(code, "swapped", &[0x0011, 0x2200]).unwrap();
+    assert_eq!(swapped.return_word(), 0x2211);
+    assert_ix_iy_sp(&swapped);
+
+    let sib = execute_function(code, "sibling", &[3]).unwrap();
+    assert_eq!(sib.return_byte(), 4);
+    assert_ix_iy_sp(&sib);
+    let sib_fn = code.function("sibling").unwrap();
+    assert!(sib.sp_used <= sib_fn.stack_bound);
+
+    let nested = execute_function(code, "nested_args", &[7]).unwrap();
+    assert_eq!(nested.return_byte(), 9);
+    assert_ix_iy_sp(&nested);
+    let _ = id_text;
+    let _ = id_asm;
+}
+
+#[test]
+fn stackcall_args_and_cleanup() {
+    let result = compile_ok(
+        r#"
+@stackcall pub u16 add(u16 a, u16 b) { return a + b; }
+@stackcall u8 mix(u8 a, u16 b, u8 c) { return a + c; }
+@stackcall i8 s8(i8 x, i8 y) { return x + y; }
+u16 use_add() { return add(2, 3); }
+u8 use_mix() { return mix(1, 0x1111, 4); }
+"#,
+    );
+    let code = result.code.as_ref().unwrap();
+    assert_eq!(code.function("add").unwrap().conv, CallConv::Stack);
+    let add = execute_function(code, "add", &[2, 3]).unwrap();
+    assert_eq!(add.return_word(), 5);
+    assert_ix_iy_sp(&add);
+    assert!(add.sp_used <= code.function("add").unwrap().stack_bound);
+
+    let mix = execute_function(code, "mix", &[1, 0x1111, 4]).unwrap();
+    assert_eq!(mix.return_byte(), 5);
+    assert_ix_iy_sp(&mix);
+
+    let s8 = execute_function(code, "s8", &[0xFF, 1]).unwrap();
+    assert_eq!(s8.return_byte() as i8, 0);
+
+    let via = execute_function(code, "use_add", &[]).unwrap();
+    assert_eq!(via.return_word(), 5);
+    assert_ix_iy_sp(&via);
+    let via_fn = code.function("use_add").unwrap();
+    assert!(
+        via.sp_used <= via_fn.stack_bound,
+        "{} > {}",
+        via.sp_used,
+        via_fn.stack_bound
+    );
+    assert!(
+        via_fn.stack_bound >= 6,
+        "caller should count two stack slots plus CALL"
+    );
+
+    let mix_via = execute_function(code, "use_mix", &[]).unwrap();
+    assert_eq!(mix_via.return_byte(), 5);
+    assert_ix_iy_sp(&mix_via);
+}
+
+#[test]
+fn stackcall_fits_rejected_register_signature() {
+    let result =
+        compile_ok("@stackcall u16 too_many(u16 a, u16 b, u16 c, u16 d) { return a + d; }");
+    let exec = execute_function(result.code.as_ref().unwrap(), "too_many", &[1, 0, 0, 4]).unwrap();
+    assert_eq!(exec.return_word(), 5);
+    assert_ix_iy_sp(&exec);
+}
+
+#[test]
+fn indexed_frame_boundary_is_rejected() {
+    let mut src = String::from("u8 id(u8 x) { return x; }\nu8 f() {\n");
+    for i in 0..70 {
+        src.push_str(&format!("  u16 v{i} = {i};\n"));
+    }
+    src.push_str("  u8 t = id(1);\n");
+    for i in 0..70 {
+        src.push_str(&format!("  t = t + u8(v{i});\n"));
+    }
+    src.push_str("  return t;\n}\n");
+    let result = compile_source("test.c80", &src);
+    assert!(result.has_errors(), "expected frame displacement error");
+    assert!(
+        codes(&result).contains(&"cg-unsupported"),
+        "{:?}",
+        codes(&result)
+    );
+    assert!(result.code.is_none());
+}
+
+#[test]
+fn recursion_still_rejected_with_calls_enabled() {
+    let result = compile_source("test.c80", "u8 rec(u8 x) { return rec(x); }");
+    assert!(
+        codes(&result).contains(&"ty-recursion"),
+        "{:?}",
+        codes(&result)
+    );
+    assert!(result.code.is_none());
+}

@@ -300,3 +300,40 @@ fn lexer_keeps_comment_bytes_out_of_tokens() {
         ]
     );
 }
+
+#[test]
+fn attributes_before_and_after_pub() {
+    let a = compile_src("@stackcall pub u16 add(u16 a, u16 b) { return a + b; }");
+    let b = compile_src("pub @stackcall u16 add(u16 a, u16 b) { return a + b; }");
+    let c = compile_src("@fastcall u8 id(u8 x) { return x; }");
+    assert!(!a.has_errors(), "{:?}", a.diagnostics);
+    assert!(!b.has_errors(), "{:?}", b.diagnostics);
+    assert!(!c.has_errors(), "{:?}", c.diagnostics);
+    assert_eq!(first_function(&a).conv, CallConv::Stack);
+    assert_eq!(first_function(&b).conv, CallConv::Stack);
+    assert_eq!(first_function(&c).conv, CallConv::Register);
+}
+
+#[test]
+fn attribute_errors_are_located() {
+    let unknown = compile_src("@nope u8 f() { return 1; }");
+    assert!(
+        codes(&unknown).contains(&"parse-expected"),
+        "{:?}",
+        codes(&unknown)
+    );
+    let dup = compile_src("@stackcall @stackcall u8 f() { return 1; }");
+    assert!(codes(&dup).contains(&"parse-expected"), "{:?}", codes(&dup));
+    let conflict = compile_src("@stackcall @fastcall u8 f() { return 1; }");
+    assert!(
+        codes(&conflict).contains(&"parse-expected"),
+        "{:?}",
+        codes(&conflict)
+    );
+    let on_data = compile_src("@stackcall u8 x;");
+    assert!(
+        codes(&on_data).contains(&"parse-expected"),
+        "{:?}",
+        codes(&on_data)
+    );
+}

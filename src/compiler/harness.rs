@@ -1,5 +1,6 @@
 //! Bounded Z80 execution for compiled C80 functions.
 
+use super::ast::CallConv;
 use super::z80::{GeneratedProgram, R8, RegHome, Rr};
 use crate::bus::CpuBus;
 use crate::disasm::disassemble_at;
@@ -64,6 +65,8 @@ pub struct ExecResult {
     pub insns: u32,
     pub accesses: Vec<MemAccess>,
     pub timed_out: bool,
+    /// Extra bytes below the function's entry SP (return address already pushed).
+    pub sp_used: u16,
 }
 
 impl ExecResult {
@@ -170,10 +173,14 @@ pub fn execute_function_with(
     let func = code
         .function(name)
         .ok_or_else(|| ExecError(format!("no generated function '{name}'")))?;
-    if args.len() != func.param_homes.len() {
+    let expected_args = if func.conv == CallConv::Stack {
+        func.param_types.len()
+    } else {
+        func.param_homes.len()
+    };
+    if args.len() != expected_args {
         return Err(ExecError(format!(
-            "function '{name}' expects {} args, got {}",
-            func.param_homes.len(),
+            "function '{name}' expects {expected_args} args, got {}",
             args.len()
         )));
     }
@@ -201,14 +208,25 @@ pub fn execute_function_with(
     cpu.state.sp = config.sp;
     cpu.state.pc = func.addr;
 
-    for (home, value) in func.param_homes.iter().zip(args.iter()) {
-        set_home(&mut cpu, *home, *value);
+    if func.conv == CallConv::Stack {
+        for (ty, value) in func.param_types.iter().zip(args.iter()).rev() {
+            let slot = stack_slot(*ty, *value);
+            cpu.state.sp = cpu.state.sp.wrapping_sub(2);
+            bus.mem[cpu.state.sp as usize] = slot as u8;
+            bus.mem[cpu.state.sp.wrapping_add(1) as usize] = (slot >> 8) as u8;
+        }
+    } else {
+        for (home, value) in func.param_homes.iter().zip(args.iter()) {
+            set_home(&mut cpu, *home, *value);
+        }
     }
 
-    let ret_sp = config.sp.wrapping_sub(2);
+    let ret_sp = cpu.state.sp.wrapping_sub(2);
     bus.mem[ret_sp as usize] = config.sentinel as u8;
     bus.mem[ret_sp.wrapping_add(1) as usize] = (config.sentinel >> 8) as u8;
     cpu.state.sp = ret_sp;
+    let entry_sp = ret_sp;
+    let mut min_sp = ret_sp;
 
     let mut tstates = 0u64;
     let mut insns = 0u32;
@@ -229,6 +247,10 @@ pub fn execute_function_with(
         bus.fetch_hi = cpu.state.pc.wrapping_add(u16::from(peek.len));
         tstates += u64::from(cpu.step(&mut bus, 0));
         insns += 1;
+        let depth = entry_sp.wrapping_sub(cpu.state.sp);
+        if depth > 0 && depth < 0x8000 && depth > entry_sp.wrapping_sub(min_sp) {
+            min_sp = cpu.state.sp;
+        }
     }
 
     if timed_out {
@@ -236,6 +258,13 @@ pub fn execute_function_with(
             "execution timed out after {insns} instructions / {tstates} T-states (pc={:04X})",
             cpu.state.pc
         )));
+    }
+
+    if func.conv == CallConv::Stack {
+        cpu.state.sp = cpu
+            .state
+            .sp
+            .wrapping_add(2u16.wrapping_mul(args.len() as u16));
     }
 
     Ok(ExecResult {
@@ -252,7 +281,16 @@ pub fn execute_function_with(
         insns,
         accesses: bus.accesses,
         timed_out,
+        sp_used: entry_sp.wrapping_sub(min_sp),
     })
+}
+
+fn stack_slot(ty: super::types::CType, value: u16) -> u16 {
+    match ty {
+        super::types::CType::I8 => value as u8 as i8 as i16 as u16,
+        super::types::CType::U8 | super::types::CType::Bool => u16::from(value as u8),
+        _ => value,
+    }
 }
 
 fn set_home(cpu: &mut Z80, home: RegHome, value: u16) {

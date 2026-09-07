@@ -86,3 +86,19 @@ implementation is not an open design choice.
 **Impact:** Argument rehomes after entry must be ordered so a destination is not a still-pending source (cycle-breaking belongs to E05).  
 **Proposed resolution:** emit pending ABI-to-stable moves in dest-not-a-source order. Implemented in `assign_stable_homes`.  
 **Resolution authority:** implementer (E04).
+
+## F-008 — IX frame size 128 is a valid `-128` displacement
+
+**Status:** resolved in E05  
+**Evidence:** `-(frame_used as i8)` panics in debug when `frame_used == 128` because `128 as i8` wraps to `-128` and negation overflows. A 128-byte frame is encodable as `IX-128`.  
+**Affected:** E05 indexed-frame boundary  
+**Impact:** Reject only sizes above 128; convert through `i16` (`i8::try_from(-(next as i16))`).  
+**Resolution authority:** implementer (E05).
+
+## F-009 — Harness stack high-water must ignore SP above entry
+
+**Status:** resolved in E05  
+**Evidence:** `RET` raises SP above the function entry SP. `entry.wrapping_sub(sp)` then looks like a huge depth (`65534`) and inflates `sp_used`.  
+**Affected:** T05 bound vs high-water comparison  
+**Impact:** Count depth only when `0 < entry.wrapping_sub(sp) < 0x8000`.  
+**Resolution authority:** implementer (E05).

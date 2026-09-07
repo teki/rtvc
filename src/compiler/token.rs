@@ -36,6 +36,7 @@ pub enum TokenKind {
     For,
     Do,
     // Punctuation
+    At,
     LParen,
     RParen,
     LBrace,
@@ -157,6 +158,7 @@ impl TokenKind {
             Self::Asm => "'asm'",
             Self::For => "'for'",
             Self::Do => "'do'",
+            Self::At => "'@'",
             Self::LParen => "'('",
             Self::RParen => "')'",
             Self::LBrace => "'{'",
