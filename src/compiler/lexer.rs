@@ -148,13 +148,7 @@ impl<'a> Lexer<'a> {
                 if self.match_byte(b':') {
                     TokenKind::ColonColon
                 } else {
-                    self.error(
-                        DiagCode::LexUnexpectedCharacter,
-                        start,
-                        self.pos,
-                        "unexpected ':'",
-                    );
-                    return self.next_token();
+                    TokenKind::Colon
                 }
             }
             b'.' => TokenKind::Dot,

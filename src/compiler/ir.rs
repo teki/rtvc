@@ -1,6 +1,6 @@
 //! Typed control-flow IR for scalar C80.
 
-use super::ast::CallConv;
+use super::ast::{AsmClobber, AsmGpr, CallConv};
 use super::source::{NodeId, SourceSpan};
 use super::types::CType;
 use std::collections::BTreeMap;
@@ -151,6 +151,17 @@ pub enum IrOp {
         args: Vec<VReg>,
         span: SourceSpan,
     },
+    InlineAsm {
+        inputs: Vec<(AsmGpr, VReg)>,
+        outputs: Vec<IrAsmOutput>,
+        clobbers: Vec<AsmClobber>,
+        lines: Vec<String>,
+        stack: Option<u16>,
+        unknown_stack: bool,
+        plain: bool,
+        span: SourceSpan,
+        node: NodeId,
+    },
     Branch {
         cond: VReg,
         true_blk: BlockId,
@@ -165,6 +176,20 @@ pub enum IrOp {
         value: Option<VReg>,
         span: SourceSpan,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IrAsmOutput {
+    pub dst: VReg,
+    pub ty: CType,
+    pub kind: IrAsmOutKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrAsmOutKind {
+    Gpr(AsmGpr),
+    Carry,
+    Zero,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

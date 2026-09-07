@@ -947,3 +947,248 @@ fn array_name_does_not_decay() {
         codes(&result)
     );
 }
+
+#[test]
+fn inline_asm_inc_and_flag_capture() {
+    let result = compile_ok(
+        r#"
+u8 inc8(u8 value) {
+    u8 result;
+    asm(in: a = value, out: a = result, clobber: flags) {
+        inc a
+    }
+    return result;
+}
+u8 add_carry(u16 left, u16 right) {
+    u16 sum;
+    bool carry_set;
+    asm(in: hl = left, in: de = right, out: hl = sum,
+        out: carry = carry_set, clobber: flags) {
+        add hl,de
+    }
+    return u8(carry_set);
+}
+"#,
+    );
+    let code = result.code.as_ref().unwrap();
+    assert_eq!(
+        execute_function(code, "inc8", &[41]).unwrap().return_byte(),
+        42
+    );
+    assert_eq!(
+        execute_function(code, "add_carry", &[1, 2])
+            .unwrap()
+            .return_byte(),
+        0
+    );
+    assert_eq!(
+        execute_function(code, "add_carry", &[0xFFFF, 1])
+            .unwrap()
+            .return_byte(),
+        1
+    );
+}
+
+#[test]
+fn ix_frame_preserves_hl_argument() {
+    let result = compile_ok(
+        r#"
+u16 echo(u16 x) {
+    u8 slot;
+    ptr<u8> p;
+    p = &slot;
+    *p = 1;
+    return x;
+}
+"#,
+    );
+    assert_eq!(
+        execute_function(result.code.as_ref().unwrap(), "echo", &[0x1234])
+            .unwrap()
+            .return_word(),
+        0x1234
+    );
+}
+
+#[test]
+fn inline_asm_register_permutation_and_live_preserve() {
+    let result = compile_ok(
+        r#"
+u8 perm(u8 x, u8 y) {
+    u8 xo;
+    u8 yo;
+    asm(in: d = x, in: e = y, out: d = yo, out: e = xo, clobber: a) {
+        ld a, d
+        ld d, e
+        ld e, a
+    }
+    return xo + yo;
+}
+u8 keep(u8 x, u8 y) {
+    u8 r;
+    asm(in: b = 1, out: b = r, clobber: flags) {
+        inc b
+    }
+    return x + y + r;
+}
+"#,
+    );
+    let code = result.code.as_ref().unwrap();
+    assert_eq!(
+        execute_function(code, "perm", &[3, 7])
+            .unwrap()
+            .return_byte(),
+        10
+    );
+    assert_eq!(
+        execute_function(code, "keep", &[10, 20])
+            .unwrap()
+            .return_byte(),
+        32
+    );
+}
+
+#[test]
+fn inline_asm_indexed_output_evaluated_once() {
+    let result = compile_ok(
+        r#"
+u8 buf[4];
+u8 idx;
+u8 bump() {
+    idx = idx + 1;
+    return idx;
+}
+u8 once() {
+    idx = 0;
+    buf[0] = 0;
+    buf[1] = 0;
+    buf[2] = 0;
+    asm(in: a = 9, out: a = buf[bump()], clobber: flags) {
+        nop
+    }
+    return buf[1];
+}
+"#,
+    );
+    assert_eq!(
+        execute_function(result.code.as_ref().unwrap(), "once", &[])
+            .unwrap()
+            .return_byte(),
+        9
+    );
+}
+
+#[test]
+fn inline_asm_ldir_counts_and_raw_zero() {
+    let result = compile_ok(
+        r#"
+u8 src[4];
+u8 dst[4];
+void copy(u16 n) {
+    src[0] = 1;
+    src[1] = 2;
+    src[2] = 3;
+    src[3] = 4;
+    asm(in: hl = &src[0], in: de = &dst[0], in: bc = n,
+        clobber: hl, de, bc, flags, memory) {
+        ldir
+    }
+}
+u8 get(u8 i) { return dst[i]; }
+u8 copy_get(u16 n, u8 i) {
+    copy(n);
+    return get(i);
+}
+"#,
+    );
+    let text = assembly_of(&result).to_ascii_uppercase();
+    assert!(text.contains("LDIR"), "{text}");
+    let code = result.code.as_ref().unwrap();
+    assert_eq!(
+        execute_function(code, "copy_get", &[1, 0])
+            .unwrap()
+            .return_byte(),
+        1
+    );
+    assert_eq!(
+        execute_function(code, "copy_get", &[3, 2])
+            .unwrap()
+            .return_byte(),
+        3
+    );
+    let zero = execute_function_with(
+        code,
+        "copy",
+        &[0],
+        &ExecConfig {
+            insn_limit: 200,
+            ..ExecConfig::default()
+        },
+    )
+    .expect("BC=0 LDIR may smash code and still return");
+    let extra_writes = zero
+        .accesses
+        .iter()
+        .filter(|a| a.kind == AccessKind::DataWrite)
+        .count();
+    assert!(
+        extra_writes > 8,
+        "BC=0 LDIR must copy many bytes, not skip: writes={extra_writes}"
+    );
+}
+
+#[test]
+fn inline_asm_port_io_and_external_stub() {
+    let result = compile_ok(
+        r#"
+u8 ports() {
+    u8 r;
+    asm(in: a = 7, in: c = 0x12, clobber: flags) {
+        out (c), a
+    }
+    asm(in: c = 0x12, out: a = r, clobber: flags) {
+        in a, (c)
+    }
+    return r;
+}
+u8 ext() {
+    u8 r;
+    asm(out: a = r, clobber: flags, stack: 2) {
+        call 0x9000
+    }
+    return r;
+}
+"#,
+    );
+    let code = result.code.as_ref().unwrap();
+    let ports = execute_function_with(
+        code,
+        "ports",
+        &[],
+        &ExecConfig {
+            scripted_ports: vec![(0x12, vec![42])],
+            ..ExecConfig::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(ports.return_byte(), 42);
+    assert!(
+        ports
+            .accesses
+            .iter()
+            .any(|a| a.kind == AccessKind::PortOut && a.addr == 0x12 && a.value == 7),
+        "{:?}",
+        ports.accesses
+    );
+    let ext = execute_function_with(
+        code,
+        "ext",
+        &[],
+        &ExecConfig {
+            initial_mem: vec![(0x9000, 0x3E), (0x9001, 42), (0x9002, 0xC9)],
+            ..ExecConfig::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(ext.return_byte(), 42);
+}

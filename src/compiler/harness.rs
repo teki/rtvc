@@ -18,6 +18,8 @@ pub enum AccessKind {
     Fetch,
     DataRead,
     DataWrite,
+    PortIn,
+    PortOut,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +37,7 @@ pub struct ExecConfig {
     pub tstate_limit: u64,
     pub initial_mem: Vec<(u16, u8)>,
     pub scripted_reads: Vec<(u16, Vec<u8>)>,
+    pub scripted_ports: Vec<(u8, Vec<u8>)>,
 }
 
 impl Default for ExecConfig {
@@ -46,6 +49,7 @@ impl Default for ExecConfig {
             tstate_limit: DEFAULT_TSTATE_LIMIT,
             initial_mem: Vec::new(),
             scripted_reads: Vec::new(),
+            scripted_ports: Vec::new(),
         }
     }
 }
@@ -85,6 +89,7 @@ struct TraceBus {
     fetch_hi: u16,
     accesses: Vec<MemAccess>,
     scripted: HashMap<u16, Vec<u8>>,
+    scripted_ports: HashMap<u8, Vec<u8>>,
 }
 
 impl TraceBus {
@@ -143,6 +148,32 @@ impl CpuBus for TraceBus {
         });
         self.mem[addr as usize] = val;
     }
+
+    fn out8(&mut self, port: u8, val: u8, _expected_val: u8) {
+        self.accesses.push(MemAccess {
+            kind: AccessKind::PortOut,
+            addr: u16::from(port),
+            value: val,
+        });
+    }
+
+    fn in8(&mut self, port: u8, val: u8) -> u8 {
+        let value = if let Some(queue) = self.scripted_ports.get_mut(&port) {
+            if !queue.is_empty() {
+                queue.remove(0)
+            } else {
+                val
+            }
+        } else {
+            val
+        };
+        self.accesses.push(MemAccess {
+            kind: AccessKind::PortIn,
+            addr: u16::from(port),
+            value,
+        });
+        value
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -191,6 +222,7 @@ pub fn execute_function_with(
         fetch_hi: 0,
         accesses: Vec::new(),
         scripted: config.scripted_reads.iter().cloned().collect(),
+        scripted_ports: config.scripted_ports.iter().cloned().collect(),
     };
     for segment in &code.assembled.segments {
         for (i, byte) in segment.bytes.iter().enumerate() {

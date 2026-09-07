@@ -541,6 +541,7 @@ impl<'a> Parser<'a> {
                     ),
                 }
             }
+            TokenKind::Asm => self.parse_asm_stmt(),
             TokenKind::Const => {
                 if let Some(decl) = self.parse_local_decl() {
                     Stmt::Decl(decl)
@@ -691,6 +692,306 @@ impl<'a> Parser<'a> {
             span: SourceSpan::new(self.file, start_tok.span.start, end),
             value,
         })
+    }
+
+    fn parse_asm_stmt(&mut self) -> Stmt {
+        let start = self.bump().span;
+        let mut has_header = false;
+        let mut clauses = Vec::new();
+        if self.at(TokenKind::LParen) {
+            has_header = true;
+            self.bump();
+            loop {
+                if self.at(TokenKind::RParen) {
+                    self.bump();
+                    break;
+                }
+                match self.parse_asm_clause() {
+                    Some(clause) => clauses.push(clause),
+                    None => {
+                        self.skip_until(&[TokenKind::RParen, TokenKind::LBrace]);
+                        if self.at(TokenKind::RParen) {
+                            self.bump();
+                        }
+                        break;
+                    }
+                }
+                if self.at(TokenKind::Comma) {
+                    self.bump();
+                    if self.at(TokenKind::RParen) {
+                        self.bump();
+                        break;
+                    }
+                    continue;
+                }
+                if self.at(TokenKind::RParen) {
+                    self.bump();
+                    break;
+                }
+                self.emit(
+                    DiagCode::ParseExpected,
+                    self.span(),
+                    format!(
+                        "expected ',' or ')' in asm header, found {}",
+                        self.kind().describe()
+                    ),
+                );
+                self.skip_until(&[TokenKind::RParen, TokenKind::LBrace]);
+                if self.at(TokenKind::RParen) {
+                    self.bump();
+                }
+                break;
+            }
+        }
+        let Some(lbrace) = self.expect(TokenKind::LBrace, "'{'") else {
+            return Stmt::Error {
+                id: self.ids.next(),
+                span: start,
+            };
+        };
+        let Some(rbrace_off) = scan_asm_body(&self.source.text, lbrace.span.end as usize) else {
+            self.emit(DiagCode::ParseIncomplete, lbrace.span, "unclosed asm block");
+            return Stmt::Error {
+                id: self.ids.next(),
+                span: start.merge(lbrace.span),
+            };
+        };
+        let body_span = SourceSpan::new(self.file, lbrace.span.end, rbrace_off as u32);
+        let body = self.source.slice(body_span).to_string();
+        self.diagnostics.retain(|d| {
+            if d.span.file != self.file {
+                return true;
+            }
+            if d.span.end <= body_span.start || d.span.start >= body_span.end {
+                return true;
+            }
+            !matches!(
+                d.code,
+                DiagCode::LexUnexpectedCharacter
+                    | DiagCode::LexInvalidIdentifier
+                    | DiagCode::LexUnterminatedString
+                    | DiagCode::LexUnterminatedChar
+                    | DiagCode::LexInvalidEscape
+                    | DiagCode::LexMalformedLiteral
+                    | DiagCode::LexIntegerOverflow
+            )
+        });
+        while !self.at_eof() && (self.span().start as usize) < rbrace_off {
+            self.bump();
+        }
+        let rbrace = self.expect(TokenKind::RBrace, "'}'");
+        let end = rbrace.map(|t| t.span.end).unwrap_or(rbrace_off as u32 + 1);
+        Stmt::Asm(AsmStmt {
+            id: self.ids.next(),
+            span: SourceSpan::new(self.file, start.start, end),
+            has_header,
+            clauses,
+            body,
+            body_span,
+        })
+    }
+
+    fn parse_asm_clause(&mut self) -> Option<AsmClause> {
+        if !self.at(TokenKind::Ident) {
+            self.emit(
+                DiagCode::ParseExpected,
+                self.span(),
+                format!(
+                    "expected asm clause keyword, found {}",
+                    self.kind().describe()
+                ),
+            );
+            return None;
+        }
+        let kw_tok = self.bump();
+        let kw = self.ident_text(kw_tok.span);
+        if !self.at(TokenKind::Colon) {
+            self.emit(
+                DiagCode::ParseExpected,
+                self.span(),
+                format!("expected ':' after '{kw}'"),
+            );
+            return None;
+        }
+        let colon = self.bump();
+        match kw.as_str() {
+            "in" => {
+                let (reg, expr, end) = self.parse_asm_in_operand()?;
+                Some(AsmClause::In {
+                    reg,
+                    expr,
+                    span: kw_tok.span.merge(end),
+                })
+            }
+            "out" => {
+                let (reg, dest, end) = self.parse_asm_out_operand()?;
+                Some(AsmClause::Out {
+                    reg,
+                    dest,
+                    span: kw_tok.span.merge(end),
+                })
+            }
+            "inout" => {
+                let (reg, dest, end) = self.parse_asm_inout_operand()?;
+                Some(AsmClause::Inout {
+                    reg,
+                    dest,
+                    span: kw_tok.span.merge(end),
+                })
+            }
+            "clobber" => {
+                let (names, end) = self.parse_asm_clobber_names(colon.span)?;
+                Some(AsmClause::Clobber {
+                    names,
+                    span: kw_tok.span.merge(end),
+                })
+            }
+            "stack" => {
+                if !self.at(TokenKind::Integer) {
+                    self.emit(
+                        DiagCode::ParseExpected,
+                        self.span(),
+                        "stack: needs a nonnegative integer literal",
+                    );
+                    return None;
+                }
+                let idx = self.pos;
+                let tok = self.bump();
+                let lit = self.integers[self.integer_index_of(idx)].clone();
+                let Some(value) = lit.value else {
+                    self.emit(
+                        DiagCode::ParseExpected,
+                        tok.span,
+                        "stack: integer is not a valid literal",
+                    );
+                    return None;
+                };
+                if value > u32::from(u16::MAX) {
+                    self.emit(
+                        DiagCode::ParseExpected,
+                        tok.span,
+                        "stack: value does not fit in 16 bits",
+                    );
+                    return None;
+                }
+                Some(AsmClause::Stack {
+                    bytes: value as u16,
+                    span: kw_tok.span.merge(tok.span),
+                })
+            }
+            _ => {
+                self.emit(
+                    DiagCode::ParseExpected,
+                    kw_tok.span,
+                    format!("unknown asm clause '{kw}'"),
+                );
+                None
+            }
+        }
+    }
+
+    fn parse_asm_in_operand(&mut self) -> Option<(AsmGpr, Expr, SourceSpan)> {
+        let (name, span) = self.parse_asm_name()?;
+        let Some(reg) = AsmGpr::parse(&name) else {
+            self.emit(
+                DiagCode::ParseExpected,
+                span,
+                format!("unknown asm register '{name}'"),
+            );
+            return None;
+        };
+        self.expect(TokenKind::Eq, "'='")?;
+        let expr = self.parse_expr();
+        let end = expr.span;
+        Some((reg, expr, end))
+    }
+
+    fn parse_asm_out_operand(&mut self) -> Option<(AsmOutReg, Expr, SourceSpan)> {
+        let (name, span) = self.parse_asm_name()?;
+        let Some(reg) = AsmOutReg::parse(&name) else {
+            self.emit(
+                DiagCode::ParseExpected,
+                span,
+                format!("unknown asm output '{name}'"),
+            );
+            return None;
+        };
+        self.expect(TokenKind::Eq, "'='")?;
+        let dest = self.parse_expr();
+        let end = dest.span;
+        Some((reg, dest, end))
+    }
+
+    fn parse_asm_inout_operand(&mut self) -> Option<(AsmGpr, Expr, SourceSpan)> {
+        self.parse_asm_in_operand()
+    }
+
+    fn parse_asm_clobber_names(
+        &mut self,
+        at_least: SourceSpan,
+    ) -> Option<(Vec<(AsmClobber, SourceSpan)>, SourceSpan)> {
+        let (name, span) = self.parse_asm_name()?;
+        let Some(clobber) = AsmClobber::parse(&name) else {
+            self.emit(
+                DiagCode::ParseExpected,
+                span,
+                format!("unknown asm clobber '{name}'"),
+            );
+            return None;
+        };
+        let mut names = vec![(clobber, span)];
+        let mut end = at_least.merge(span);
+        loop {
+            if !self.at(TokenKind::Comma) {
+                break;
+            }
+            if self.looks_like_asm_clause_after_comma() {
+                break;
+            }
+            self.bump();
+            if self.at(TokenKind::RParen) {
+                break;
+            }
+            let (name, span) = self.parse_asm_name()?;
+            let Some(clobber) = AsmClobber::parse(&name) else {
+                self.emit(
+                    DiagCode::ParseExpected,
+                    span,
+                    format!("unknown asm clobber '{name}'"),
+                );
+                return None;
+            };
+            end = span;
+            names.push((clobber, span));
+        }
+        Some((names, end))
+    }
+
+    fn looks_like_asm_clause_after_comma(&self) -> bool {
+        if self.nth(1) != TokenKind::Ident || self.nth(2) != TokenKind::Colon {
+            return false;
+        }
+        let tok = &self.tokens[self.pos + 1];
+        matches!(
+            self.source.slice(tok.span),
+            "in" | "out" | "inout" | "clobber" | "stack"
+        )
+    }
+
+    fn parse_asm_name(&mut self) -> Option<(String, SourceSpan)> {
+        if !self.at(TokenKind::Ident) {
+            self.emit(
+                DiagCode::ParseExpected,
+                self.span(),
+                format!(
+                    "expected register or clobber name, found {}",
+                    self.kind().describe()
+                ),
+            );
+            return None;
+        }
+        let tok = self.bump();
+        Some((self.ident_text(tok.span), tok.span))
     }
 
     fn parse_expr(&mut self) -> Expr {
@@ -1222,7 +1523,66 @@ fn stmt_span(stmt: &Stmt) -> SourceSpan {
         Stmt::While(s) => s.span,
         Stmt::Return(s) => s.span,
         Stmt::Break { span, .. } | Stmt::Continue { span, .. } | Stmt::Error { span, .. } => *span,
+        Stmt::Asm(s) => s.span,
     }
+}
+
+fn scan_asm_body(text: &str, start: usize) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let mut i = start;
+    let mut depth = 1i32;
+    let mut quote: Option<u8> = None;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if let Some(q) = quote {
+            if b == b'\\' && i + 1 < bytes.len() {
+                i += 2;
+                continue;
+            }
+            if b == q {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        if b == b'@' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+            i += 2;
+            let mut inner = 1i32;
+            while i < bytes.len() && inner > 0 {
+                match bytes[i] {
+                    b'{' => inner += 1,
+                    b'}' => inner -= 1,
+                    _ => {}
+                }
+                i += 1;
+            }
+            continue;
+        }
+        match b {
+            b';' => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'"' | b'\'' => {
+                quote = Some(b);
+                i += 1;
+            }
+            b'{' => {
+                depth += 1;
+                i += 1;
+            }
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    None
 }
 
 fn infix_binding(kind: TokenKind) -> Option<(u8, u8, TokenKind)> {

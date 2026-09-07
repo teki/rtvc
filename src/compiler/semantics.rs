@@ -2,6 +2,7 @@
 
 use super::ast::*;
 use super::diagnostic::{DiagCode, Diagnostic};
+use super::inline_asm::{self, RES_GP, clobber_mask, gpr_mask, out_mask};
 use super::ir::*;
 use super::source::{NodeId, SourceSpan};
 use super::types::{ArrayElem, ArrayType, CType, PtrType};
@@ -251,6 +252,12 @@ struct Value {
     ty: CType,
     reg: VReg,
     bits: Option<u16>,
+}
+
+enum AsmDest {
+    Local(LocalId),
+    Global(GlobalId),
+    Indirect { ptr: VReg, ty: CType },
 }
 
 impl<'a> Analyzer<'a> {
@@ -723,8 +730,451 @@ impl<'a> Analyzer<'a> {
                     self.emit(DiagCode::TyMismatch, *span, "'continue' outside of a loop");
                 }
             }
+            Stmt::Asm(stmt) => self.check_asm(ctx, stmt),
             Stmt::Error { .. } => {}
         }
+    }
+
+    fn check_asm(&mut self, ctx: &mut FnCtx, stmt: &AsmStmt) {
+        let mut in_mask = 0u16;
+        let mut out_bits = 0u16;
+        let mut clobber_bits = 0u16;
+        let mut inputs = Vec::new();
+        let mut pending_outs: Vec<(IrAsmOutput, AsmDest)> = Vec::new();
+        let mut stack: Option<u16> = None;
+        let mut failed = false;
+
+        if !stmt.has_header {
+            clobber_bits = inline_asm::RES_GP | inline_asm::RES_FLAGS | inline_asm::RES_MEMORY;
+        }
+
+        for clause in &stmt.clauses {
+            match clause {
+                AsmClause::In { reg, expr, span } => {
+                    let m = gpr_mask(*reg);
+                    if in_mask & m != 0 {
+                        self.emit(
+                            DiagCode::TyMismatch,
+                            *span,
+                            format!("asm input '{}' overlaps another input", reg.as_str()),
+                        );
+                        failed = true;
+                    }
+                    in_mask |= m;
+                    let expected = literal_gpr_context(expr, *reg);
+                    let Some(val) = self.check_expr(ctx, expr, expected) else {
+                        failed = true;
+                        continue;
+                    };
+                    if !gpr_type_ok(*reg, val.ty) {
+                        self.emit(
+                            DiagCode::TyMismatch,
+                            expr.span,
+                            format!(
+                                "asm input '{}' needs {}, found {}",
+                                reg.as_str(),
+                                gpr_expect_desc(*reg),
+                                val.ty.as_str()
+                            ),
+                        );
+                        failed = true;
+                        continue;
+                    }
+                    inputs.push((*reg, val.reg));
+                }
+                AsmClause::Out { reg, dest, span } => {
+                    let m = out_mask(*reg);
+                    if out_bits & m != 0 {
+                        self.emit(
+                            DiagCode::TyMismatch,
+                            *span,
+                            format!("asm output '{}' overlaps another output", reg.as_str()),
+                        );
+                        failed = true;
+                    }
+                    out_bits |= m;
+                    let Some((dest_info, ty)) = self.eval_asm_dest(ctx, dest, false) else {
+                        failed = true;
+                        continue;
+                    };
+                    if !out_type_ok(*reg, ty) {
+                        self.emit(
+                            DiagCode::TyMismatch,
+                            dest.span,
+                            format!(
+                                "asm output '{}' needs {}, found {}",
+                                reg.as_str(),
+                                out_expect_desc(*reg),
+                                ty.as_str()
+                            ),
+                        );
+                        failed = true;
+                        continue;
+                    }
+                    self.mark_asm_assigned(ctx, &dest_info);
+                    let dst = self.vreg();
+                    pending_outs.push((
+                        IrAsmOutput {
+                            dst,
+                            ty,
+                            kind: out_kind(*reg),
+                        },
+                        dest_info,
+                    ));
+                }
+                AsmClause::Inout { reg, dest, span } => {
+                    let m = gpr_mask(*reg);
+                    if in_mask & m != 0 {
+                        self.emit(
+                            DiagCode::TyMismatch,
+                            *span,
+                            format!("asm inout '{}' overlaps another input", reg.as_str()),
+                        );
+                        failed = true;
+                    }
+                    if out_bits & m != 0 {
+                        self.emit(
+                            DiagCode::TyMismatch,
+                            *span,
+                            format!("asm inout '{}' overlaps another output", reg.as_str()),
+                        );
+                        failed = true;
+                    }
+                    in_mask |= m;
+                    out_bits |= m;
+                    let Some((dest_info, ty, loaded)) = self.eval_asm_inout(ctx, dest) else {
+                        failed = true;
+                        continue;
+                    };
+                    if !gpr_type_ok(*reg, ty) {
+                        self.emit(
+                            DiagCode::TyMismatch,
+                            dest.span,
+                            format!(
+                                "asm inout '{}' needs {}, found {}",
+                                reg.as_str(),
+                                gpr_expect_desc(*reg),
+                                ty.as_str()
+                            ),
+                        );
+                        failed = true;
+                        continue;
+                    }
+                    inputs.push((*reg, loaded));
+                    self.mark_asm_assigned(ctx, &dest_info);
+                    let dst = self.vreg();
+                    pending_outs.push((
+                        IrAsmOutput {
+                            dst,
+                            ty,
+                            kind: IrAsmOutKind::Gpr(*reg),
+                        },
+                        dest_info,
+                    ));
+                }
+                AsmClause::Clobber { names, span } => {
+                    let _ = span;
+                    for (name, nspan) in names {
+                        let m = clobber_mask(*name);
+                        if clobber_bits & m != 0 {
+                            self.emit(
+                                DiagCode::TyMismatch,
+                                *nspan,
+                                format!("duplicate asm clobber '{}'", name.as_str()),
+                            );
+                            failed = true;
+                        }
+                        clobber_bits |= m;
+                    }
+                }
+                AsmClause::Stack { bytes, span } => {
+                    if stack.is_some() {
+                        self.emit(
+                            DiagCode::TyMismatch,
+                            *span,
+                            "asm stack: specified more than once",
+                        );
+                        failed = true;
+                    }
+                    stack = Some(*bytes);
+                }
+            }
+        }
+
+        let gp_out = out_bits & RES_GP;
+        let gp_clobber = clobber_bits & RES_GP;
+        if gp_out & gp_clobber != 0 {
+            self.emit(
+                DiagCode::TyMismatch,
+                stmt.span,
+                "asm clobber overlaps an output register",
+            );
+            failed = true;
+        }
+
+        let validated = match inline_asm::validate_body(&stmt.body, stmt.body_span) {
+            Ok(v) => v,
+            Err(ds) => {
+                self.diagnostics.extend(ds);
+                return;
+            }
+        };
+        if let Some(n) = stack {
+            if validated.evident_stack > n {
+                self.emit(
+                    DiagCode::CgUnsupported,
+                    stmt.span,
+                    format!(
+                        "inline asm uses at least {} stack bytes, more than stack:{n}",
+                        validated.evident_stack
+                    ),
+                );
+                failed = true;
+            }
+        }
+        let unknown_stack = validated.has_call && stack.is_none();
+        if unknown_stack {
+            self.warn(
+                DiagCode::LnStack,
+                stmt.span,
+                "opaque CALL/RST in inline asm without stack:N leaves stack usage unknown",
+            );
+        }
+        if failed {
+            return;
+        }
+        let prefix = format!("IA{}_", stmt.id.0);
+        let lines = inline_asm::rewrite_lines(&validated.lines, &validated.labels, &prefix);
+        let outputs: Vec<IrAsmOutput> = pending_outs.iter().map(|(o, _)| o.clone()).collect();
+        self.emit_op(
+            ctx,
+            IrOp::InlineAsm {
+                inputs,
+                outputs,
+                clobbers: clobbers_of(&stmt.clauses),
+                lines,
+                stack,
+                unknown_stack,
+                plain: !stmt.has_header,
+                span: stmt.span,
+                node: stmt.id,
+            },
+        );
+        for (out, dest) in pending_outs {
+            match dest {
+                AsmDest::Local(local) => self.emit_op(
+                    ctx,
+                    IrOp::StoreLocal {
+                        local,
+                        src: out.dst,
+                        span: stmt.span,
+                    },
+                ),
+                AsmDest::Global(global) => self.emit_op(
+                    ctx,
+                    IrOp::StoreGlobal {
+                        global,
+                        src: out.dst,
+                        span: stmt.span,
+                    },
+                ),
+                AsmDest::Indirect { ptr, ty } => self.emit_op(
+                    ctx,
+                    IrOp::StoreIndirect {
+                        ptr,
+                        src: out.dst,
+                        ty,
+                        span: stmt.span,
+                    },
+                ),
+            }
+        }
+    }
+
+    fn mark_asm_assigned(&self, ctx: &mut FnCtx, dest: &AsmDest) {
+        if let AsmDest::Local(id) = dest {
+            ctx.assigned.insert(id.0);
+        }
+    }
+
+    fn eval_asm_dest(
+        &mut self,
+        ctx: &mut FnCtx,
+        expr: &Expr,
+        _read: bool,
+    ) -> Option<(AsmDest, CType)> {
+        if let ExprKind::Unary {
+            op: UnaryOp::Deref,
+            expr: inner,
+        } = &expr.kind
+        {
+            let ptr = self.check_expr(ctx, inner, None)?;
+            let Some(elem) = ptr.ty.pointee() else {
+                self.emit(
+                    DiagCode::TyMismatch,
+                    expr.span,
+                    format!("cannot dereference {}", ptr.ty.as_str()),
+                );
+                return None;
+            };
+            return Some((
+                AsmDest::Indirect {
+                    ptr: ptr.reg,
+                    ty: elem,
+                },
+                elem,
+            ));
+        }
+        if let ExprKind::Index { base, index } = &expr.kind {
+            let (addr, immutable) = self.check_index_addr(ctx, base, index, expr.span, false)?;
+            if immutable {
+                self.emit(
+                    DiagCode::TyAssignConst,
+                    expr.span,
+                    "cannot mutate a str payload",
+                );
+                return None;
+            }
+            let elem = addr.ty.pointee().unwrap_or(CType::U8);
+            return Some((
+                AsmDest::Indirect {
+                    ptr: addr.reg,
+                    ty: elem,
+                },
+                elem,
+            ));
+        }
+        if let ExprKind::Qualified { unit, name } = &expr.kind {
+            match self.lookup_qualified(unit, name)? {
+                QSym::Function { qname, .. } => {
+                    self.emit(
+                        DiagCode::TyNotLvalue,
+                        expr.span,
+                        format!("cannot assign to function '{qname}'"),
+                    );
+                    return None;
+                }
+                QSym::Value {
+                    id, ty, is_const, ..
+                } => {
+                    if is_const {
+                        self.emit(
+                            DiagCode::TyAssignConst,
+                            expr.span,
+                            format!("cannot assign to const '{}::{}'", unit.name, name.name),
+                        );
+                        return None;
+                    }
+                    if matches!(ty, CType::Array(_)) || ty == CType::Str {
+                        self.emit(
+                            DiagCode::TyNotLvalue,
+                            expr.span,
+                            "asm output needs a writable scalar lvalue",
+                        );
+                        return None;
+                    }
+                    return Some((AsmDest::Global(id), ty));
+                }
+            }
+        }
+        let ExprKind::Name(name) = &expr.kind else {
+            self.emit(
+                DiagCode::TyNotLvalue,
+                expr.span,
+                "asm output needs a writable scalar lvalue",
+            );
+            return None;
+        };
+        if let Some(bind) = lookup_local(&ctx.scopes, &name.name).cloned() {
+            if bind.is_const {
+                self.emit(
+                    DiagCode::TyAssignConst,
+                    name.span,
+                    format!("cannot assign to const '{}'", name.name),
+                );
+                return None;
+            }
+            return Some((AsmDest::Local(bind.id), bind.ty));
+        }
+        if let Some(sym) = self.symbols.get(&name.name) {
+            if matches!(sym.kind, SymbolKind::Function { .. }) {
+                self.emit(
+                    DiagCode::TyNotLvalue,
+                    name.span,
+                    "cannot assign to a function",
+                );
+                return None;
+            }
+            if sym.is_const || matches!(sym.ty, CType::Array(_)) || sym.ty == CType::Str {
+                self.emit(
+                    DiagCode::TyNotLvalue,
+                    name.span,
+                    "asm output needs a writable scalar lvalue",
+                );
+                return None;
+            }
+            return Some((AsmDest::Global(GlobalId(sym.id)), sym.ty));
+        }
+        self.emit(
+            DiagCode::TyUnresolvedName,
+            name.span,
+            format!("unresolved name '{}'", name.name),
+        );
+        None
+    }
+
+    fn eval_asm_inout(&mut self, ctx: &mut FnCtx, expr: &Expr) -> Option<(AsmDest, CType, VReg)> {
+        let (dest, ty) = self.eval_asm_dest(ctx, expr, true)?;
+        let loaded = match &dest {
+            AsmDest::Local(local) => {
+                if let Some(bind) = lookup_local_id(&ctx.scopes, *local) {
+                    if !bind.is_const && !ctx.assigned.contains(&local.0) {
+                        self.emit(
+                            DiagCode::TyUseBeforeAssign,
+                            expr.span,
+                            "inout operand is used before assignment",
+                        );
+                        return None;
+                    }
+                }
+                let dst = self.vreg();
+                self.emit_op(
+                    ctx,
+                    IrOp::LoadLocal {
+                        dst,
+                        local: *local,
+                        span: expr.span,
+                    },
+                );
+                dst
+            }
+            AsmDest::Global(global) => {
+                let dst = self.vreg();
+                self.emit_op(
+                    ctx,
+                    IrOp::LoadGlobal {
+                        dst,
+                        global: *global,
+                        span: expr.span,
+                    },
+                );
+                dst
+            }
+            AsmDest::Indirect { ptr, ty } => {
+                let dst = self.vreg();
+                self.emit_op(
+                    ctx,
+                    IrOp::LoadIndirect {
+                        dst,
+                        ptr: *ptr,
+                        ty: *ty,
+                        span: expr.span,
+                    },
+                );
+                dst
+            }
+        };
+        Some((dest, ty, loaded))
     }
 
     fn check_local(&mut self, ctx: &mut FnCtx, decl: &VarDecl) {
@@ -2703,6 +3153,73 @@ impl<'a> Analyzer<'a> {
 
 fn lookup_local<'a>(scopes: &'a [HashMap<String, LocalBind>], name: &str) -> Option<&'a LocalBind> {
     scopes.iter().rev().find_map(|scope| scope.get(name))
+}
+
+fn lookup_local_id(scopes: &[HashMap<String, LocalBind>], id: LocalId) -> Option<&LocalBind> {
+    scopes
+        .iter()
+        .rev()
+        .flat_map(|scope| scope.values())
+        .find(|bind| bind.id == id)
+}
+
+fn literal_gpr_context(expr: &Expr, reg: AsmGpr) -> Option<CType> {
+    match &expr.kind {
+        ExprKind::Int(_) | ExprKind::Char(_) => {
+            Some(if reg.is_pair() { CType::U16 } else { CType::U8 })
+        }
+        _ => None,
+    }
+}
+
+fn gpr_type_ok(reg: AsmGpr, ty: CType) -> bool {
+    match (reg.is_pair(), ty.byte_width()) {
+        (false, Some(1)) => true,
+        (true, Some(2)) => true,
+        _ => false,
+    }
+}
+
+fn out_type_ok(reg: AsmOutReg, ty: CType) -> bool {
+    match reg {
+        AsmOutReg::Carry | AsmOutReg::Zero => ty == CType::Bool,
+        AsmOutReg::Gpr(r) => gpr_type_ok(r, ty),
+    }
+}
+
+fn gpr_expect_desc(reg: AsmGpr) -> &'static str {
+    if reg.is_pair() {
+        "a word, pointer, or str"
+    } else {
+        "a byte or bool"
+    }
+}
+
+fn out_expect_desc(reg: AsmOutReg) -> &'static str {
+    match reg {
+        AsmOutReg::Carry | AsmOutReg::Zero => "bool",
+        AsmOutReg::Gpr(r) => gpr_expect_desc(r),
+    }
+}
+
+fn out_kind(reg: AsmOutReg) -> IrAsmOutKind {
+    match reg {
+        AsmOutReg::Gpr(r) => IrAsmOutKind::Gpr(r),
+        AsmOutReg::Carry => IrAsmOutKind::Carry,
+        AsmOutReg::Zero => IrAsmOutKind::Zero,
+    }
+}
+
+fn clobbers_of(clauses: &[AsmClause]) -> Vec<AsmClobber> {
+    let mut out = Vec::new();
+    for clause in clauses {
+        if let AsmClause::Clobber { names, .. } = clause {
+            for (name, _) in names {
+                out.push(*name);
+            }
+        }
+    }
+    out
 }
 
 fn const_index_i32(expr: &Expr) -> Option<i32> {
