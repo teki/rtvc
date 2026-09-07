@@ -12,7 +12,7 @@ use super::types::{CType, PtrType};
 use super::z80::{
     AluSrc, AsmInstructionId, Cc, GeneratedFunction, GeneratedGlobal, GeneratedProgram,
     MappedInstruction, R8, RegHome, Rr, Z80Item, Z80Op, asm_block_label, asm_global_label,
-    asm_label, render_items,
+    asm_label, bytes_in_segments, render_items,
 };
 use crate::asm::assemble_program;
 use crate::disasm::disassemble_at;
@@ -114,6 +114,39 @@ pub fn lower_program(
     ids: &mut IdGen,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Option<GeneratedProgram> {
+    let chunks = lower_to_chunks(program, ids, diagnostics)?;
+    let (items, assembly) = render_chunks(&chunks);
+    let assembled = match assemble_program(&assembly, origin) {
+        Ok(assembled) => assembled,
+        Err(err) => {
+            let span = chunks
+                .first()
+                .map(|c| c.span())
+                .unwrap_or_else(|| SourceSpan::point(FileId(0), 0));
+            diagnostics.push(Diagnostic::error(
+                DiagCode::CgInternal,
+                span,
+                format!("assembler rejected generated code: {err}"),
+            ));
+            return None;
+        }
+    };
+    finish_generated(
+        chunks,
+        items,
+        assembly,
+        assembled,
+        origin,
+        Vec::new(),
+        diagnostics,
+    )
+}
+
+pub(crate) fn lower_to_chunks(
+    program: &TypedProgram,
+    ids: &mut IdGen,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<Vec<EmitChunk>> {
     let global_map = global_symbols(program);
     let callee_map = callee_map(program);
     let mut order: Vec<OrderItem<'_>> = program.globals.iter().map(OrderItem::Global).collect();
@@ -124,6 +157,7 @@ pub fn lower_program(
     let mut failed = false;
     for item in order {
         match item {
+            OrderItem::Global(global) if global.is_const && global.extra.is_empty() => {}
             OrderItem::Global(global) => match lower_global(global, ids) {
                 Ok(part) => chunks.push(EmitChunk::Global(part)),
                 Err(diag) => {
@@ -145,79 +179,37 @@ pub fn lower_program(
         return None;
     }
     fill_stack_bounds(&mut chunks);
-    if chunks.is_empty() {
-        return None;
-    }
+    Some(chunks)
+}
 
+pub(crate) fn chunks_emit_bytes(chunks: &[EmitChunk]) -> bool {
+    chunks
+        .iter()
+        .any(|chunk| chunk.items().iter().any(|item| item.emits_bytes()))
+}
+
+pub(crate) fn render_chunks(chunks: &[EmitChunk]) -> (Vec<Z80Item>, String) {
     let mut items = Vec::new();
-    for chunk in &chunks {
+    for chunk in chunks {
         items.extend(chunk.items().iter().cloned());
     }
     let assembly = render_items(&items);
-    let assembled = match assemble_program(&assembly, origin) {
-        Ok(assembled) => assembled,
-        Err(err) => {
-            let span = chunks
-                .first()
-                .map(|c| c.span())
-                .unwrap_or_else(|| SourceSpan::point(FileId(0), 0));
-            diagnostics.push(Diagnostic::error(
-                DiagCode::CgInternal,
-                span,
-                format!("assembler rejected generated code: {err}"),
-            ));
-            return None;
-        }
-    };
+    (items, assembly)
+}
 
+pub(crate) fn finish_generated(
+    chunks: Vec<EmitChunk>,
+    items: Vec<Z80Item>,
+    assembly: String,
+    assembled: crate::asm::AssembledProgram,
+    origin: u16,
+    extra_functions: Vec<GeneratedFunction>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<GeneratedProgram> {
     let emitting: Vec<&Z80Item> = items.iter().filter(|i| i.emits_bytes()).collect();
-    if emitting.len() != assembled.lines.len() {
-        diagnostics.push(Diagnostic::error(
-            DiagCode::CgInternal,
-            chunks[0].span(),
-            format!(
-                "assembled line count {} does not match generated items {}",
-                assembled.lines.len(),
-                emitting.len()
-            ),
-        ));
-        return None;
-    }
+    let mapped_all = map_emitting_items(&emitting, &assembled, &chunks, diagnostics)?;
 
-    let mut mapped_all = Vec::new();
-    for (item, line) in emitting.into_iter().zip(assembled.lines.iter()) {
-        let start = line.addr.wrapping_sub(assembled.origin) as usize;
-        let bytes = assembled.bytes[start..start + line.len].to_vec();
-        let mut bus = crate::bus::FakeBus::new();
-        for (i, b) in bytes.iter().enumerate() {
-            bus.mem[line.addr.wrapping_add(i as u16) as usize] = *b;
-        }
-        let (id, text, span, node, t_states) = match item {
-            Z80Item::Instruction { id, op, span, node } => {
-                let d = disassemble_at(&mut bus, line.addr);
-                (*id, op.render(), *span, *node, d.t_states)
-            }
-            Z80Item::Data {
-                id,
-                text,
-                span,
-                node,
-                ..
-            } => (*id, text.clone(), *span, Some(*node), None),
-            Z80Item::Label { .. } => continue,
-        };
-        mapped_all.push(MappedInstruction {
-            id,
-            address: line.addr,
-            bytes,
-            text,
-            t_states,
-            span,
-            node,
-        });
-    }
-
-    let mut functions = Vec::new();
+    let mut functions = extra_functions;
     let mut globals = Vec::new();
     let mut map_i = 0usize;
     for chunk in chunks {
@@ -285,6 +277,203 @@ pub fn lower_program(
     })
 }
 
+fn map_emitting_items(
+    emitting: &[&Z80Item],
+    assembled: &crate::asm::AssembledProgram,
+    chunks: &[EmitChunk],
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<Vec<MappedInstruction>> {
+    if emitting.len() != assembled.lines.len() {
+        diagnostics.push(Diagnostic::error(
+            DiagCode::CgInternal,
+            chunks
+                .first()
+                .map(|c| c.span())
+                .unwrap_or_else(|| SourceSpan::point(FileId(0), 0)),
+            format!(
+                "assembled line count {} does not match generated items {}",
+                assembled.lines.len(),
+                emitting.len()
+            ),
+        ));
+        return None;
+    }
+    map_item_lines(emitting, assembled)
+}
+
+pub(crate) fn map_item_lines(
+    emitting: &[&Z80Item],
+    assembled: &crate::asm::AssembledProgram,
+) -> Option<Vec<MappedInstruction>> {
+    let mut mapped_all = Vec::new();
+    for (item, line) in emitting.iter().zip(assembled.lines.iter()) {
+        let bytes = bytes_in_segments(assembled, line.addr, line.len)
+            .map(|b| b.to_vec())
+            .unwrap_or_else(|| {
+                let start = line.addr.wrapping_sub(assembled.origin) as usize;
+                assembled
+                    .bytes
+                    .get(start..start + line.len)
+                    .unwrap_or(&[])
+                    .to_vec()
+            });
+        let mut bus = crate::bus::FakeBus::new();
+        for (i, b) in bytes.iter().enumerate() {
+            bus.mem[line.addr.wrapping_add(i as u16) as usize] = *b;
+        }
+        let (id, text, span, node, t_states) = match item {
+            Z80Item::Instruction { id, op, span, node } => {
+                let d = disassemble_at(&mut bus, line.addr);
+                (*id, op.render(), *span, *node, d.t_states)
+            }
+            Z80Item::Data {
+                id,
+                text,
+                span,
+                node,
+                ..
+            } => (*id, text.clone(), *span, Some(*node), None),
+            Z80Item::Label { .. } => continue,
+        };
+        mapped_all.push(MappedInstruction {
+            id,
+            address: line.addr,
+            bytes,
+            text,
+            t_states,
+            span,
+            node,
+        });
+    }
+    Some(mapped_all)
+}
+
+pub(crate) fn map_chunks_from_lines(
+    chunks: &[EmitChunk],
+    assembled: &crate::asm::AssembledProgram,
+    line_lo: usize,
+    line_hi: usize,
+    origin: u16,
+) -> (Vec<GeneratedFunction>, Vec<GeneratedGlobal>) {
+    let emitting: Vec<&Z80Item> = chunks
+        .iter()
+        .flat_map(|c| c.items().iter())
+        .filter(|i| i.emits_bytes())
+        .collect();
+    let unit_lines: Vec<_> = assembled
+        .lines
+        .iter()
+        .filter(|line| line.line >= line_lo && line.line < line_hi)
+        .cloned()
+        .collect();
+    let mut mapped_all = Vec::new();
+    for (item, line) in emitting.iter().zip(unit_lines.iter()) {
+        let bytes = bytes_in_segments(assembled, line.addr, line.len)
+            .map(|b| b.to_vec())
+            .unwrap_or_default();
+        let mut bus = crate::bus::FakeBus::new();
+        for (i, b) in bytes.iter().enumerate() {
+            bus.mem[line.addr.wrapping_add(i as u16) as usize] = *b;
+        }
+        let (id, text, span, node, t_states) = match item {
+            Z80Item::Instruction { id, op, span, node } => {
+                let d = disassemble_at(&mut bus, line.addr);
+                (*id, op.render(), *span, *node, d.t_states)
+            }
+            Z80Item::Data {
+                id,
+                text,
+                span,
+                node,
+                ..
+            } => (*id, text.clone(), *span, Some(*node), None),
+            Z80Item::Label { .. } => continue,
+        };
+        mapped_all.push(MappedInstruction {
+            id,
+            address: line.addr,
+            bytes,
+            text,
+            t_states,
+            span,
+            node,
+        });
+    }
+    let mut functions = Vec::new();
+    let mut globals = Vec::new();
+    let mut map_i = 0usize;
+    for chunk in chunks {
+        let emit_count = chunk.items().iter().filter(|i| i.emits_bytes()).count();
+        let mapped = mapped_all
+            .get(map_i..map_i + emit_count)
+            .unwrap_or(&[])
+            .to_vec();
+        map_i += emit_count;
+        match chunk {
+            EmitChunk::Func(part) => {
+                let code_mapped: Vec<_> = mapped
+                    .iter()
+                    .filter(|m| {
+                        part.items
+                            .iter()
+                            .any(|item| item.is_instruction() && item.id() == m.id)
+                    })
+                    .cloned()
+                    .collect();
+                let addr = code_mapped
+                    .first()
+                    .map(|m| m.address)
+                    .or_else(|| assembled.symbols.get(&part.label).copied())
+                    .unwrap_or(origin);
+                let size = code_mapped.iter().map(|m| m.bytes.len() as u16).sum();
+                functions.push(GeneratedFunction {
+                    name: part.name.clone(),
+                    label: part.label.clone(),
+                    id: part.id,
+                    span: part.span,
+                    addr,
+                    size,
+                    conv: part.conv,
+                    param_homes: part.param_homes.clone(),
+                    param_types: part.param_types.clone(),
+                    ret: part.ret,
+                    stack_bound: part.stack_bound,
+                    frame_bytes: part.frame_bytes,
+                    instruction_ids: code_mapped.iter().map(|m| m.id).collect(),
+                    mapped: code_mapped,
+                });
+            }
+            EmitChunk::Global(part) => {
+                let addr = mapped
+                    .first()
+                    .map(|m| m.address)
+                    .or_else(|| assembled.symbols.get(&part.label).copied())
+                    .unwrap_or(origin);
+                let size = mapped.iter().map(|m| m.bytes.len() as u16).sum();
+                globals.push(GeneratedGlobal {
+                    name: part.name.clone(),
+                    label: part.label.clone(),
+                    addr,
+                    size,
+                    ty: part.ty,
+                });
+            }
+        }
+    }
+    (functions, globals)
+}
+
+pub(crate) fn max_stack_bound(chunks: &[EmitChunk]) -> u16 {
+    chunks
+        .iter()
+        .filter_map(|chunk| match chunk {
+            EmitChunk::Func(part) => Some(part.stack_bound),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0)
+}
+
 enum OrderItem<'a> {
     Global(&'a TypedGlobal),
     Func(&'a TypedFunction),
@@ -300,28 +489,32 @@ impl OrderItem<'_> {
     }
 }
 
-enum EmitChunk {
+pub(crate) enum EmitChunk {
     Func(FnPart),
     Global(GlobalPart),
 }
 
 impl EmitChunk {
-    fn items(&self) -> &[Z80Item] {
+    pub(crate) fn items(&self) -> &[Z80Item] {
         match self {
             Self::Func(p) => &p.items,
             Self::Global(p) => &p.items,
         }
     }
 
-    fn span(&self) -> SourceSpan {
+    pub(crate) fn span(&self) -> SourceSpan {
         match self {
             Self::Func(p) => p.span,
             Self::Global(p) => p.span,
         }
     }
+
+    pub(crate) fn file_id(&self) -> FileId {
+        self.span().file
+    }
 }
 
-struct FnPart {
+pub(crate) struct FnPart {
     name: String,
     label: String,
     id: FuncId,
@@ -336,7 +529,7 @@ struct FnPart {
     call_sites: Vec<(FuncId, u16)>,
 }
 
-struct GlobalPart {
+pub(crate) struct GlobalPart {
     name: String,
     label: String,
     ty: CType,

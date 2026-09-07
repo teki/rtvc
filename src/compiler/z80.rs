@@ -363,10 +363,25 @@ impl GeneratedProgram {
 
     pub fn function_bytes(&self, name: &str) -> Option<&[u8]> {
         let func = self.function(name)?;
-        let start = func.addr.wrapping_sub(self.assembled.origin) as usize;
-        let end = start + func.size as usize;
-        self.assembled.bytes.get(start..end)
+        bytes_in_segments(&self.assembled, func.addr, func.size as usize)
     }
+}
+
+pub fn bytes_in_segments(assembled: &AssembledProgram, addr: u16, len: usize) -> Option<&[u8]> {
+    if len == 0 {
+        return Some(&[]);
+    }
+    for seg in &assembled.segments {
+        let off = addr.wrapping_sub(seg.addr) as usize;
+        if addr >= seg.addr
+            && off
+                .checked_add(len)
+                .is_some_and(|end| end <= seg.bytes.len())
+        {
+            return Some(&seg.bytes[off..off + len]);
+        }
+    }
+    None
 }
 
 pub fn asm_label(func_id: FuncId, name: &str) -> String {

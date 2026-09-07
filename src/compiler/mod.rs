@@ -14,10 +14,11 @@ mod types;
 mod z80;
 
 pub mod harness;
+pub mod project;
 
 pub use ast::{
-    BinaryOp, Block, CallConv, Expr, ExprKind, Function, Ident, Item, Param, Stmt, TranslationUnit,
-    TypeExpr, TypeKind, UnaryOp, VarDecl,
+    BinaryOp, Block, CallConv, Expr, ExprKind, Function, Ident, Import, Item, Param, Stmt,
+    TranslationUnit, TypeExpr, TypeKind, UnaryOp, VarDecl,
 };
 pub use diagnostic::{DiagCode, Diagnostic, RelatedSpan, Severity};
 pub use ir::{IrBinary, IrOp, TypedFunction, TypedProgram, function_by_name};

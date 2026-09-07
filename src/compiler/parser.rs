@@ -146,11 +146,7 @@ impl<'a> Parser<'a> {
 
     fn parse_item(&mut self) -> Option<Item> {
         match self.kind() {
-            TokenKind::Import
-            | TokenKind::Struct
-            | TokenKind::Asm
-            | TokenKind::For
-            | TokenKind::Do => {
+            TokenKind::Struct | TokenKind::Asm | TokenKind::For | TokenKind::Do => {
                 let tok = self.bump();
                 self.emit(
                     DiagCode::ParseUnsupported,
@@ -163,6 +159,7 @@ impl<'a> Parser<'a> {
                 self.skip_until_item_sync();
                 None
             }
+            TokenKind::Import => self.parse_import().map(Item::Import),
             TokenKind::At
             | TokenKind::Pub
             | TokenKind::Const
@@ -190,6 +187,20 @@ impl<'a> Parser<'a> {
                 None
             }
         }
+    }
+
+    fn parse_import(&mut self) -> Option<Import> {
+        let start = self.bump().span;
+        let name = self.parse_ident()?;
+        let end = self
+            .expect(TokenKind::Semicolon, "';'")
+            .map(|t| t.span.end)
+            .unwrap_or(name.span.end);
+        Some(Import {
+            id: self.ids.next(),
+            span: SourceSpan::new(self.file, start.start, end),
+            name,
+        })
     }
 
     fn parse_decl_or_function(&mut self) -> Option<Item> {
@@ -809,17 +820,40 @@ impl<'a> Parser<'a> {
                 }
                 TokenKind::ColonColon => {
                     let tok = self.bump();
-                    self.emit(
-                        DiagCode::ParseUnsupported,
-                        tok.span,
-                        "qualified names are not accepted in this compiler slice",
-                    );
-                    let _ = self.parse_ident();
-                    lhs = Expr {
-                        id: self.ids.next(),
-                        span: lhs.span.merge(tok.span),
-                        kind: ExprKind::Error,
+                    let unit = match lhs.kind {
+                        ExprKind::Name(unit) => unit,
+                        _ => {
+                            self.emit(
+                                DiagCode::ParseExpected,
+                                tok.span,
+                                "qualified names start with a unit identifier",
+                            );
+                            let _ = self.parse_ident();
+                            lhs = Expr {
+                                id: self.ids.next(),
+                                span: lhs.span.merge(tok.span),
+                                kind: ExprKind::Error,
+                            };
+                            continue;
+                        }
                     };
+                    match self.parse_ident() {
+                        Some(name) => {
+                            let span = unit.span.merge(name.span);
+                            lhs = Expr {
+                                id: self.ids.next(),
+                                span,
+                                kind: ExprKind::Qualified { unit, name },
+                            };
+                        }
+                        None => {
+                            lhs = Expr {
+                                id: self.ids.next(),
+                                span: unit.span.merge(tok.span),
+                                kind: ExprKind::Error,
+                            };
+                        }
+                    }
                 }
                 TokenKind::PlusPlus | TokenKind::MinusMinus | TokenKind::Arrow => {
                     let tok = self.bump();
@@ -1118,7 +1152,9 @@ impl<'a> Parser<'a> {
                     self.bump();
                     return;
                 }
-                TokenKind::Pub | TokenKind::Const | TokenKind::At if depth == 0 && self.pos > 0 => {
+                TokenKind::Pub | TokenKind::Const | TokenKind::At | TokenKind::Import
+                    if depth == 0 && self.pos > 0 =>
+                {
                     return;
                 }
                 k if depth == 0 && k.is_type_start() && self.pos > 0 => return,

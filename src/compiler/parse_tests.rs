@@ -33,6 +33,7 @@ fn function_named<'a>(result: &'a CompilationResult, name: &str) -> &'a Function
 fn expr_tree(expr: &Expr) -> String {
     match &expr.kind {
         ExprKind::Name(id) => id.name.clone(),
+        ExprKind::Qualified { unit, name } => format!("{}::{}", unit.name, name.name),
         ExprKind::Int(lit) => lit.text.clone(),
         ExprKind::Char(_) => "char".to_string(),
         ExprKind::String(_) => "str".to_string(),
@@ -325,6 +326,20 @@ u8 f(ptr<u8> p) { return *p + p[1]; }
     assert!(positions.array_len.is_some());
     let f = function_named(&result, "f");
     assert!(matches!(f.params[0].ty.kind, TypeKind::Ptr(_)));
+}
+
+#[test]
+fn import_and_qualified_name_parse() {
+    let result = compile_src("import video;\nvoid f() { video::draw(); }\n");
+    assert!(
+        result
+            .units
+            .iter()
+            .flat_map(|u| u.items.iter())
+            .any(|item| matches!(item, Item::Import(imp) if imp.name.name == "video")),
+        "{:?}",
+        result.units
+    );
 }
 
 #[test]

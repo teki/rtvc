@@ -67,6 +67,14 @@ pub struct TranslationUnit {
 pub enum Item {
     Function(Function),
     Decl(VarDecl),
+    Import(Import),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Import {
+    pub id: NodeId,
+    pub span: SourceSpan,
+    pub name: Ident,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -174,6 +182,10 @@ pub struct Expr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExprKind {
     Name(Ident),
+    Qualified {
+        unit: Ident,
+        name: Ident,
+    },
     Int(IntegerLit),
     Char(u8),
     String(Vec<u8>),

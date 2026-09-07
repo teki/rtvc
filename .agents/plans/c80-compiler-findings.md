@@ -35,12 +35,12 @@ implementation is not an open design choice.
 
 ## F-002 — No `toml` crate in the current Cargo graph
 
-**Status:** open (future implementation choice, not an E00 blocker)  
-**Evidence:** [Cargo.toml](../../Cargo.toml) has no `toml` dependency. [rtvc_asm.rs](../../src/bin/rtvc_asm.rs) emits `rtvc-asm-v1` by hand.  
-**Affected:** E07 manifest parse and segment output  
-**Impact:** Manifest input needs a parser; segment output can keep the existing handwritten emitter.  
-**Proposed resolution:** add an optional `toml` (and only if needed `serde`) dependency behind `compiler` / CLI, never lightweight `wasm`. Reuse handwritten `rtvc-asm-v1` emission unless a parser is required to re-read it.  
-**Resolution authority:** implementer (E07); not a language decision.
+**Status:** resolved in E07
+**Evidence:** optional `toml` 0.8 plus `serde` sit on the `compiler` feature (`native`, `cli-tools`, `wasm-full`; not lightweight `wasm`). Manifests use serde `deny_unknown_fields`. Segment output stays a handwritten `rtvc-asm-v1` emitter matching [`rtvc_asm.rs`](../../src/bin/rtvc_asm.rs) enough for `loadasm`.
+**Affected:** E07 manifest parse and segment output
+**Impact:** none remaining
+**Proposed resolution:** implemented as proposed.
+**Resolution authority:** implementer (E07).
 
 ## F-003 — Design text that E01 “remains completed”
 
@@ -71,11 +71,11 @@ implementation is not an open design choice.
 
 ## F-006 — `cli-tools` does not currently enable `serde`
 
-**Status:** open (not needed until E07)  
-**Evidence:** `cli-tools = ["dep:serde_json"]` only. `native` and `wasm-full` already enable `serde` + `serde_json`.  
-**Affected:** E07 manifest/segment serialization if serde-derive is used in the compiler crate  
-**Impact:** A serde-based compiler type would fail to compile under `cli-tools` unless `compiler` also enables `dep:serde` or `cli-tools` is widened.  
-**Proposed resolution:** Keep E01–E06 free of serde. When E07 needs TOML/serde, put those deps on `compiler`, not lightweight `wasm`.  
+**Status:** resolved in E07
+**Evidence:** `compiler = ["dep:toml", "dep:serde"]` and `cli-tools = ["dep:serde_json", "compiler"]`.
+**Affected:** E07 manifest/segment serialization
+**Impact:** none remaining
+**Proposed resolution:** implemented; serde stays off lightweight `wasm`.
 **Resolution authority:** implementer (E07).
 
 ## F-007 — Prologue ABI copies must not clobber later arguments
