@@ -378,3 +378,51 @@ fn attribute_errors_are_located() {
         codes(&on_data)
     );
 }
+
+#[test]
+fn inline_asm_header_and_raw_body_parse() {
+    let result = compile_src(
+        r#"
+u8 f(u8 value) {
+    u8 result;
+    asm(in: a = value, out: a = result, clobber: flags) {
+        inc a
+        ld a, $
+    }
+    return result;
+}
+"#,
+    );
+    assert!(
+        !result
+            .diagnostics
+            .iter()
+            .any(|d| d.code.as_str().starts_with("lex-")),
+        "{:?}",
+        result.diagnostics
+    );
+    let func = first_function(&result);
+    match func.body.stmts.first() {
+        Some(Stmt::Decl(_)) => {}
+        other => panic!("expected result decl, got {other:?}"),
+    }
+    match &func.body.stmts[1] {
+        Stmt::Asm(stmt) => {
+            assert!(stmt.has_header);
+            assert_eq!(stmt.clauses.len(), 3);
+            assert!(stmt.body.contains("inc a"));
+            assert!(stmt.body.contains('$'));
+        }
+        other => panic!("expected asm, got {other:?}"),
+    }
+}
+
+#[test]
+fn top_level_asm_is_still_unsupported() {
+    let result = compile_src("asm { nop }\n");
+    assert!(
+        codes(&result).contains(&"parse-unsupported"),
+        "{:?}",
+        codes(&result)
+    );
+}

@@ -26,7 +26,7 @@ implementation is not an open design choice.
 | `str` prefix, `.len`, immutability | F003 | Yes | Exact “common” string escapes documented in E01 (`\\n \\r \\t \\\\ \\' \\" \\0 \\xNN`) | E01 lexer / E06 |
 | Aggregates, packed structs, init | F003 | Yes | Local aggregates remain v1-rejected | E06 / E10 |
 | Manifest, reservations, CLI, stack report | F004 | Yes | In-process metadata types may evolve; `--emit-map` deferred | E07 / E09 |
-| Inline assembly operands/units | F005 | Yes | No | E08 (header syntax may be parsed earlier as unsupported) |
+| Inline assembly operands/units | F005 | Yes | No | E08 (implemented) |
 | BASIC substitutions and USR fixture | F006 | Yes | Stop only if verified ROM contradicts USR/LOMEM | E11 |
 | Multiplication/division/remainder | Non-goals + F001 | Reject; multiplicative tokens may exist only for a diagnostic | No | E01/E02 diagnostics |
 | Heap, implicit promotions, ROM wrappers | Non-goals | Reject | No | — |
@@ -124,3 +124,38 @@ the immediate in `DE`/`BC`.
 **Impact:** Immediate word adds use `INC HL` for 1/2 and `ADD`/`ADC A` for other
 constants, so a pointer increment can stay in registers without an IX frame.  
 **Resolution authority:** implementer (E06).
+
+## F-012 — Asm headers need a lone `:` token and a raw body slice
+
+**Status:** resolved in E08  
+**Evidence:** The lexer only emitted `ColonColon`. `in: a = x` cannot parse
+without a single-colon token. Assembler `$` prefixes and `;` comments inside
+`asm { }` are not C80 tokens; lexing the body as C80 produced diagnostics.
+**Affected:** E08 parser  
+**Impact:** Tokenize `:` separately from `::`. Copy the source between matching
+braces (treating `@{...}` as a marker) and drop lexer diagnostics that fall
+inside that span.  
+**Resolution authority:** implementer (E08).
+
+## F-013 — IX-frame prologue must not destroy incoming `HL`
+
+**Status:** resolved in E08  
+**Evidence:** `LD HL,-n / ADD HL,SP / LD SP,HL` ran before ABI-to-home copies.
+`add_carry(0xFFFF, 1)` captured CF=0 because `left` in `HL` had already been
+replaced by the frame pointer. `ADD HL,DE` itself was correct.  
+**Affected:** any IX-frame function with an `HL` (or `H`/`L`) argument, including
+inline asm flag capture  
+**Impact:** Stash `HL` in a free `DE`/`BC`, or `DEC SP` n times when both pairs
+are incoming.  
+**Resolution authority:** implementer (E08).
+
+## F-014 — `LDIR` with `BC=0` may return instead of hitting the insn limit
+
+**Status:** resolved in E08 (test contract)  
+**Evidence:** Raw `LDIR` copies 65536 bytes and overwrites the function, then
+hits a `RET`. The harness returned `Ok` with many `DataWrite`s rather than a
+timeout.  
+**Affected:** T08 zero-count LDIR  
+**Impact:** Assert extra memory writes, not `timed_out`. Do not special-case
+`BC=0` in codegen.  
+**Resolution authority:** implementer (E08).

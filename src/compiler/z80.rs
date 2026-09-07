@@ -172,6 +172,7 @@ pub enum Z80Op {
     LdSpHl,
     LdSpIx,
     IncSp,
+    DecSp,
     Ld8Ix { dst: R8, disp: i8 },
     St8Ix { src: R8, disp: i8 },
     Ld8IxImm { disp: i8, imm: u8 },
@@ -224,6 +225,7 @@ impl Z80Op {
             Self::LdSpHl => "LD SP,HL".to_string(),
             Self::LdSpIx => "LD SP,IX".to_string(),
             Self::IncSp => "INC SP".to_string(),
+            Self::DecSp => "DEC SP".to_string(),
             Self::Ld8Ix { dst, disp } => format!("LD {},{}", dst.name(), ix_addr(*disp)),
             Self::St8Ix { src, disp } => format!("LD {},{}", ix_addr(*disp), src.name()),
             Self::Ld8IxImm { disp, imm } => format!("LD {},{imm}", ix_addr(*disp)),
@@ -270,28 +272,49 @@ pub enum Z80Item {
         span: SourceSpan,
         node: NodeId,
     },
+    Raw {
+        id: AsmInstructionId,
+        text: String,
+        span: SourceSpan,
+        node: Option<NodeId>,
+    },
+    Directive {
+        id: AsmInstructionId,
+        text: String,
+        span: SourceSpan,
+        node: Option<NodeId>,
+    },
 }
 
 impl Z80Item {
     pub fn id(&self) -> AsmInstructionId {
         match self {
-            Self::Label { id, .. } | Self::Instruction { id, .. } | Self::Data { id, .. } => *id,
+            Self::Label { id, .. }
+            | Self::Instruction { id, .. }
+            | Self::Data { id, .. }
+            | Self::Raw { id, .. }
+            | Self::Directive { id, .. } => *id,
         }
     }
 
     pub fn is_instruction(&self) -> bool {
-        matches!(self, Self::Instruction { .. })
+        matches!(self, Self::Instruction { .. } | Self::Raw { .. })
     }
 
     pub fn emits_bytes(&self) -> bool {
-        matches!(self, Self::Instruction { .. } | Self::Data { .. })
+        matches!(
+            self,
+            Self::Instruction { .. } | Self::Data { .. } | Self::Raw { .. }
+        )
     }
 
     fn render_line(&self) -> String {
         match self {
             Self::Label { name, .. } => format!("{name}:"),
             Self::Instruction { op, .. } => format!("        {}", op.render()),
-            Self::Data { text, .. } => format!("        {text}"),
+            Self::Data { text, .. } | Self::Raw { text, .. } | Self::Directive { text, .. } => {
+                format!("        {text}")
+            }
         }
     }
 }

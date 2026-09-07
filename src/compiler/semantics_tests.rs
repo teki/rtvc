@@ -307,3 +307,85 @@ fn returning_local_address_is_a_warning() {
     );
     assert!(result.code.is_some());
 }
+
+#[test]
+fn asm_overlapping_inputs_rejected() {
+    let result = compile_src(
+        r#"
+u8 f(u8 x, u8 y) {
+    asm(in: a = x, in: a = y, clobber: flags) { nop }
+    return x;
+}
+"#,
+    );
+    assert!(
+        codes(&result).contains(&"ty-mismatch"),
+        "{:?}",
+        codes(&result)
+    );
+    let pair = compile_src(
+        r#"
+u8 f(u16 p, u8 q) {
+    asm(in: hl = p, in: l = q, clobber: flags) { nop }
+    return q;
+}
+"#,
+    );
+    assert!(codes(&pair).contains(&"ty-mismatch"), "{:?}", codes(&pair));
+}
+
+#[test]
+fn asm_inout_requires_assignment_and_out_assigns() {
+    let unassigned = compile_src(
+        r#"
+u8 f() {
+    u8 x;
+    asm(inout: a = x, clobber: flags) { inc a }
+    return x;
+}
+"#,
+    );
+    assert!(
+        codes(&unassigned).contains(&"ty-use-before-assign"),
+        "{:?}",
+        codes(&unassigned)
+    );
+    let assigned = ok(r#"
+u8 f() {
+    u8 r;
+    asm(out: a = r, clobber: flags) { ld a, 3 }
+    return r;
+}
+"#);
+    assert!(assigned.code.is_some());
+}
+
+#[test]
+fn asm_rejects_org_and_ret() {
+    let org = compile_src("void f() { asm { org 0x1000 } }");
+    assert!(codes(&org).contains(&"cg-unsupported"), "{:?}", codes(&org));
+    let ret = compile_src("void f() { asm { ret } }");
+    assert!(codes(&ret).contains(&"cg-unsupported"), "{:?}", codes(&ret));
+}
+
+#[test]
+fn asm_call_without_stack_is_a_warning() {
+    let result = compile_src(
+        r#"
+u8 f() {
+    u8 r;
+    asm(out: a = r, clobber: flags) { call 0x9000 }
+    return r;
+}
+"#,
+    );
+    assert!(!result.has_errors(), "{:?}", result.diagnostics);
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.code.as_str() == "ln-stack" && !d.is_error()),
+        "{:?}",
+        result.diagnostics
+    );
+}

@@ -138,7 +138,146 @@ pub enum Stmt {
     Return(ReturnStmt),
     Break { id: NodeId, span: SourceSpan },
     Continue { id: NodeId, span: SourceSpan },
+    Asm(AsmStmt),
     Error { id: NodeId, span: SourceSpan },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AsmGpr {
+    A,
+    B,
+    C,
+    D,
+    E,
+    H,
+    L,
+    Bc,
+    De,
+    Hl,
+}
+
+impl AsmGpr {
+    pub fn parse(name: &str) -> Option<Self> {
+        Some(match name {
+            "a" => Self::A,
+            "b" => Self::B,
+            "c" => Self::C,
+            "d" => Self::D,
+            "e" => Self::E,
+            "h" => Self::H,
+            "l" => Self::L,
+            "bc" => Self::Bc,
+            "de" => Self::De,
+            "hl" => Self::Hl,
+            _ => return None,
+        })
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::A => "a",
+            Self::B => "b",
+            Self::C => "c",
+            Self::D => "d",
+            Self::E => "e",
+            Self::H => "h",
+            Self::L => "l",
+            Self::Bc => "bc",
+            Self::De => "de",
+            Self::Hl => "hl",
+        }
+    }
+
+    pub fn is_pair(self) -> bool {
+        matches!(self, Self::Bc | Self::De | Self::Hl)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AsmOutReg {
+    Gpr(AsmGpr),
+    Carry,
+    Zero,
+}
+
+impl AsmOutReg {
+    pub fn parse(name: &str) -> Option<Self> {
+        Some(match name {
+            "carry" => Self::Carry,
+            "zero" => Self::Zero,
+            other => Self::Gpr(AsmGpr::parse(other)?),
+        })
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Gpr(r) => r.as_str(),
+            Self::Carry => "carry",
+            Self::Zero => "zero",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AsmClobber {
+    Gpr(AsmGpr),
+    Flags,
+    Memory,
+}
+
+impl AsmClobber {
+    pub fn parse(name: &str) -> Option<Self> {
+        Some(match name {
+            "flags" => Self::Flags,
+            "memory" => Self::Memory,
+            other => Self::Gpr(AsmGpr::parse(other)?),
+        })
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Gpr(r) => r.as_str(),
+            Self::Flags => "flags",
+            Self::Memory => "memory",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AsmClause {
+    In {
+        reg: AsmGpr,
+        expr: Expr,
+        span: SourceSpan,
+    },
+    Out {
+        reg: AsmOutReg,
+        dest: Expr,
+        span: SourceSpan,
+    },
+    Inout {
+        reg: AsmGpr,
+        dest: Expr,
+        span: SourceSpan,
+    },
+    Clobber {
+        names: Vec<(AsmClobber, SourceSpan)>,
+        span: SourceSpan,
+    },
+    Stack {
+        bytes: u16,
+        span: SourceSpan,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AsmStmt {
+    pub id: NodeId,
+    pub span: SourceSpan,
+    pub has_header: bool,
+    pub clauses: Vec<AsmClause>,
+    pub body: String,
+    pub body_span: SourceSpan,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

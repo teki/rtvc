@@ -1,11 +1,12 @@
 //! Straight-line register-leaf lowering from typed IR to structured Z80 items.
 
 use super::abi::{assign_params, return_home};
-use super::ast::CallConv;
+use super::ast::{AsmClobber, AsmGpr, CallConv};
 use super::diagnostic::{DiagCode, Diagnostic};
+use super::inline_asm::{self, RES_GP, clobber_mask, gpr_mask};
 use super::ir::{
-    BlockId, FuncId, GlobalId, IrBinary, IrOp, IrUnary, LocalId, TypedFunction, TypedGlobal,
-    TypedProgram, VReg,
+    BlockId, FuncId, GlobalId, IrAsmOutKind, IrAsmOutput, IrBinary, IrOp, IrUnary, LocalId,
+    TypedFunction, TypedGlobal, TypedProgram, VReg,
 };
 use super::source::{FileId, IdGen, NodeId, SourceSpan};
 use super::types::{CType, PtrType};
@@ -72,6 +73,47 @@ impl Loc {
     }
 }
 
+fn gpr_loc(reg: AsmGpr) -> Loc {
+    match reg {
+        AsmGpr::A => Loc::Byte(R8::A),
+        AsmGpr::B => Loc::Byte(R8::B),
+        AsmGpr::C => Loc::Byte(R8::C),
+        AsmGpr::D => Loc::Byte(R8::D),
+        AsmGpr::E => Loc::Byte(R8::E),
+        AsmGpr::H => Loc::Byte(R8::H),
+        AsmGpr::L => Loc::Byte(R8::L),
+        AsmGpr::Bc => Loc::Word(Rr::Bc),
+        AsmGpr::De => Loc::Word(Rr::De),
+        AsmGpr::Hl => Loc::Word(Rr::Hl),
+    }
+}
+
+fn mask_to_r8s(mask: u16) -> Vec<R8> {
+    let mut out = Vec::new();
+    for (bit, r) in [
+        (inline_asm::RES_A, R8::A),
+        (inline_asm::RES_B, R8::B),
+        (inline_asm::RES_C, R8::C),
+        (inline_asm::RES_D, R8::D),
+        (inline_asm::RES_E, R8::E),
+        (inline_asm::RES_H, R8::H),
+        (inline_asm::RES_L, R8::L),
+    ] {
+        if mask & bit != 0 {
+            out.push(r);
+        }
+    }
+    out
+}
+
+fn incoming_occupies(homes: &[RegHome], rr: Rr) -> bool {
+    let (hi, lo) = rr.halves();
+    homes.iter().any(|home| match *home {
+        RegHome::Word(r) => r == rr,
+        RegHome::Byte(r) => r == hi || r == lo,
+    })
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Key {
     V(VReg),
@@ -99,6 +141,7 @@ struct Lowerer<'a> {
     spill_bytes: u8,
     call_sites: Vec<(FuncId, u16)>,
     param_moves: Vec<(Loc, Loc)>,
+    asm_stack: u16,
 }
 
 struct CalleeInfo {
@@ -326,6 +369,15 @@ pub(crate) fn map_item_lines(
                 let d = disassemble_at(&mut bus, line.addr);
                 (*id, op.render(), *span, *node, d.t_states)
             }
+            Z80Item::Raw {
+                id,
+                text,
+                span,
+                node,
+            } => {
+                let d = disassemble_at(&mut bus, line.addr);
+                (*id, text.clone(), *span, *node, d.t_states)
+            }
             Z80Item::Data {
                 id,
                 text,
@@ -333,7 +385,7 @@ pub(crate) fn map_item_lines(
                 node,
                 ..
             } => (*id, text.clone(), *span, Some(*node), None),
-            Z80Item::Label { .. } => continue,
+            Z80Item::Label { .. } | Z80Item::Directive { .. } => continue,
         };
         mapped_all.push(MappedInstruction {
             id,
@@ -380,6 +432,15 @@ pub(crate) fn map_chunks_from_lines(
                 let d = disassemble_at(&mut bus, line.addr);
                 (*id, op.render(), *span, *node, d.t_states)
             }
+            Z80Item::Raw {
+                id,
+                text,
+                span,
+                node,
+            } => {
+                let d = disassemble_at(&mut bus, line.addr);
+                (*id, text.clone(), *span, *node, d.t_states)
+            }
             Z80Item::Data {
                 id,
                 text,
@@ -387,7 +448,7 @@ pub(crate) fn map_chunks_from_lines(
                 node,
                 ..
             } => (*id, text.clone(), *span, Some(*node), None),
-            Z80Item::Label { .. } => continue,
+            Z80Item::Label { .. } | Z80Item::Directive { .. } => continue,
         };
         mapped_all.push(MappedInstruction {
             id,
@@ -527,6 +588,7 @@ pub(crate) struct FnPart {
     stack_bound: u16,
     frame_bytes: u16,
     call_sites: Vec<(FuncId, u16)>,
+    asm_stack: u16,
 }
 
 pub(crate) struct GlobalPart {
@@ -590,6 +652,7 @@ fn fill_stack_bounds(chunks: &mut [EmitChunk]) {
         let mut extra = 0u16;
         let sites = part.call_sites.clone();
         let frame = part.frame_bytes;
+        let asm = part.asm_stack;
         for (callee, arg_slots) in sites {
             extra = extra.max(
                 arg_slots
@@ -597,6 +660,7 @@ fn fill_stack_bounds(chunks: &mut [EmitChunk]) {
                     .saturating_add(bound_of(chunks, ids, memo, callee)),
             );
         }
+        extra = extra.max(asm);
         let bound = frame.saturating_add(extra);
         memo.insert(id, bound);
         bound
@@ -724,11 +788,12 @@ fn lower_function(
         spill_bytes,
         call_sites: Vec::new(),
         param_moves: Vec::new(),
+        asm_stack: 0,
     };
     lowerer.emit_label(&label, func.span, func.id.0);
     lowerer.plan_homes(&param_homes)?;
     if uses_ix {
-        lowerer.emit_prologue(func.span)?;
+        lowerer.emit_prologue(&param_homes, func.span)?;
     }
     lowerer.emit_param_setup(&param_homes, func.span)?;
 
@@ -806,6 +871,7 @@ fn lower_function(
         stack_bound: 0,
         frame_bytes,
         call_sites: lowerer.call_sites,
+        asm_stack: lowerer.asm_stack,
     })
 }
 
@@ -863,6 +929,26 @@ fn live_across_any_call(
                     }
                 }
             }
+            if let IrOp::InlineAsm {
+                inputs, outputs, ..
+            } = op
+            {
+                let ins: Vec<VReg> = inputs.iter().map(|(_, v)| *v).collect();
+                let outs: Vec<VReg> = outputs.iter().map(|o| o.dst).collect();
+                for id in &assigned {
+                    if local_last.get(id).is_some_and(|&last| last > i) {
+                        return true;
+                    }
+                }
+                for (&v, &last) in vreg_last {
+                    if last > i && !outs.contains(&v) {
+                        let dying = ins.contains(&v) && last == i;
+                        if !dying {
+                            return true;
+                        }
+                    }
+                }
+            }
             if let IrOp::StoreLocal { local, .. } = op {
                 assigned.insert(*local);
             }
@@ -884,7 +970,7 @@ fn locals_needing_frame(
             if let IrOp::AddrLocal { local, .. } = op {
                 need.insert(*local);
             }
-            if matches!(op, IrOp::Call { .. }) {
+            if matches!(op, IrOp::Call { .. } | IrOp::InlineAsm { .. }) {
                 for id in &assigned {
                     if local_last.get(id).is_some_and(|&last| last > i) {
                         need.insert(*id);
@@ -917,6 +1003,34 @@ fn max_call_spill_bytes(
                         if !dies_here {
                             bytes = bytes.saturating_add(2);
                         }
+                    }
+                }
+                max = max.max(bytes);
+            }
+            if let IrOp::InlineAsm {
+                inputs, outputs, ..
+            } = op
+            {
+                let ins: Vec<VReg> = inputs.iter().map(|(_, v)| *v).collect();
+                let outs: Vec<VReg> = outputs.iter().map(|o| o.dst).collect();
+                let mut bytes = 0u8;
+                for (&v, &last) in vreg_last {
+                    if last > i && !outs.contains(&v) {
+                        let dies_here = ins.contains(&v) && last == i;
+                        if !dies_here {
+                            bytes = bytes.saturating_add(2);
+                        }
+                    }
+                }
+                let flag = outputs
+                    .iter()
+                    .any(|o| matches!(o.kind, IrAsmOutKind::Carry | IrAsmOutKind::Zero));
+                if flag || outputs.len() > 1 {
+                    for o in outputs {
+                        bytes = bytes.saturating_add(o.ty.byte_width().unwrap_or(1));
+                    }
+                    if flag {
+                        bytes = bytes.saturating_add(2);
                     }
                 }
                 max = max.max(bytes);
@@ -954,6 +1068,12 @@ fn vreg_use_count(func: &TypedFunction, v: VReg) -> usize {
                 } if *src == v => 1,
                 IrOp::Call { dst, args, .. } => {
                     usize::from(dst.as_ref() == Some(&v)) + args.iter().filter(|a| **a == v).count()
+                }
+                IrOp::InlineAsm {
+                    inputs, outputs, ..
+                } => {
+                    inputs.iter().filter(|(_, a)| *a == v).count()
+                        + outputs.iter().filter(|o| o.dst == v).count()
                 }
                 _ => 0,
             };
@@ -1035,6 +1155,16 @@ fn liveness_fn(func: &TypedFunction) -> (HashMap<VReg, usize>, HashMap<LocalId, 
                         vreg_last.insert(*dst, i);
                     }
                 }
+                IrOp::InlineAsm {
+                    inputs, outputs, ..
+                } => {
+                    for (_, src) in inputs {
+                        vreg_last.insert(*src, i);
+                    }
+                    for out in outputs {
+                        vreg_last.insert(out.dst, i);
+                    }
+                }
                 _ => {}
             }
             i += 1;
@@ -1087,6 +1217,26 @@ impl Lowerer<'_> {
         self.items.push(Z80Item::Instruction {
             id,
             op,
+            span,
+            node: Some(self.func.id.0),
+        });
+    }
+
+    fn emit_raw(&mut self, text: String, span: SourceSpan) {
+        let id = self.next_id();
+        self.items.push(Z80Item::Raw {
+            id,
+            text,
+            span,
+            node: Some(self.func.id.0),
+        });
+    }
+
+    fn emit_directive(&mut self, text: String, span: SourceSpan) {
+        let id = self.next_id();
+        self.items.push(Z80Item::Directive {
+            id,
+            text,
             span,
             node: Some(self.func.id.0),
         });
@@ -1582,6 +1732,27 @@ impl Lowerer<'_> {
                 args,
                 span,
             } => self.lower_call(*dst, *func, args, *span)?,
+            IrOp::InlineAsm {
+                inputs,
+                outputs,
+                clobbers,
+                lines,
+                stack,
+                unknown_stack,
+                plain,
+                span,
+                node,
+            } => self.lower_inline_asm(
+                inputs,
+                outputs,
+                clobbers,
+                lines,
+                *stack,
+                *unknown_stack,
+                *plain,
+                *span,
+                *node,
+            )?,
             IrOp::LoadIndirect { dst, ptr, ty, span } => {
                 self.lower_load_indirect(*dst, *ptr, *ty, *span)?
             }
@@ -2231,21 +2402,74 @@ impl Lowerer<'_> {
         self.emit_parallel_moves(moves, span)
     }
 
-    fn emit_prologue(&mut self, span: SourceSpan) -> Result<(), Diagnostic> {
+    fn emit_prologue(
+        &mut self,
+        param_homes: &[RegHome],
+        span: SourceSpan,
+    ) -> Result<(), Diagnostic> {
         self.emit(Z80Op::PushIx, span);
         self.emit(Z80Op::LdIxImm(0), span);
         self.emit(Z80Op::AddIxSp, span);
-        if self.frame_used > 0 {
-            let n = u16::from(self.frame_used);
+        if self.frame_used == 0 {
+            return Ok(());
+        }
+        let n = u16::from(self.frame_used);
+        let hl_live = incoming_occupies(param_homes, Rr::Hl);
+        let scratch = if hl_live {
+            [Rr::De, Rr::Bc]
+                .into_iter()
+                .find(|&rr| !incoming_occupies(param_homes, rr))
+        } else {
+            None
+        };
+        if hl_live && scratch.is_none() {
+            for _ in 0..self.frame_used {
+                self.emit(Z80Op::DecSp, span);
+            }
+            return Ok(());
+        }
+        if let Some(rr) = scratch {
+            let (dh, dl) = rr.halves();
             self.emit(
-                Z80Op::Ld16Imm {
-                    dst: Rr::Hl,
-                    imm: n.wrapping_neg(),
+                Z80Op::Ld8 {
+                    dst: dh,
+                    src: R8::H,
                 },
                 span,
             );
-            self.emit(Z80Op::AddHlSp, span);
-            self.emit(Z80Op::LdSpHl, span);
+            self.emit(
+                Z80Op::Ld8 {
+                    dst: dl,
+                    src: R8::L,
+                },
+                span,
+            );
+        }
+        self.emit(
+            Z80Op::Ld16Imm {
+                dst: Rr::Hl,
+                imm: n.wrapping_neg(),
+            },
+            span,
+        );
+        self.emit(Z80Op::AddHlSp, span);
+        self.emit(Z80Op::LdSpHl, span);
+        if let Some(rr) = scratch {
+            let (sh, sl) = rr.halves();
+            self.emit(
+                Z80Op::Ld8 {
+                    dst: R8::H,
+                    src: sh,
+                },
+                span,
+            );
+            self.emit(
+                Z80Op::Ld8 {
+                    dst: R8::L,
+                    src: sl,
+                },
+                span,
+            );
         }
         Ok(())
     }
@@ -2420,6 +2644,231 @@ impl Lowerer<'_> {
                 Some(_) => return Err(self.error(span, "unexpected return home")),
             }
         }
+        Ok(())
+    }
+
+    fn lower_inline_asm(
+        &mut self,
+        inputs: &[(AsmGpr, VReg)],
+        outputs: &[IrAsmOutput],
+        clobbers: &[AsmClobber],
+        lines: &[String],
+        stack: Option<u16>,
+        _unknown_stack: bool,
+        plain: bool,
+        span: SourceSpan,
+        node: NodeId,
+    ) -> Result<(), Diagnostic> {
+        let flag_out = outputs
+            .iter()
+            .any(|o| matches!(o.kind, IrAsmOutKind::Carry | IrAsmOutKind::Zero));
+        let mut dirty = if plain {
+            RES_GP
+        } else {
+            let mut m = 0u16;
+            for (reg, _) in inputs {
+                m |= gpr_mask(*reg);
+            }
+            for out in outputs {
+                if let IrAsmOutKind::Gpr(r) = out.kind {
+                    m |= gpr_mask(r);
+                }
+            }
+            for c in clobbers {
+                m |= clobber_mask(*c);
+            }
+            m & RES_GP
+        };
+        if flag_out {
+            dirty |= gpr_mask(AsmGpr::A) | gpr_mask(AsmGpr::Hl);
+        }
+        let dirty_regs = mask_to_r8s(dirty);
+
+        let ins: Vec<VReg> = inputs.iter().map(|(_, v)| *v).collect();
+        let mut next_spill = if self.spill_bytes > 0 {
+            Some(-(self.frame_used as i8))
+        } else {
+            None
+        };
+        let mut live_keys = Vec::new();
+        for (&v, loc) in &self.vreg_loc.clone() {
+            let last = self.vreg_last.get(&v).copied().unwrap_or(0);
+            let dying = ins.contains(&v) && last == self.op_index;
+            if last > self.op_index && !dying && loc.regs().iter().any(|r| dirty_regs.contains(r)) {
+                live_keys.push(Key::V(v));
+            }
+        }
+        for (&l, loc) in &self.local_loc.clone() {
+            let last = self.local_last.get(&l).copied().unwrap_or(0);
+            if last > self.op_index && loc.regs().iter().any(|r| dirty_regs.contains(r)) {
+                live_keys.push(Key::L(l));
+            }
+        }
+        for key in live_keys {
+            let loc = match key {
+                Key::V(v) => self.vreg_loc[&v],
+                Key::L(l) => self.local_loc[&l],
+            };
+            if matches!(loc, Loc::Frame { .. } | Loc::Imm8(_) | Loc::Imm16(_)) {
+                continue;
+            }
+            let width = loc.width().max(1);
+            let disp = next_spill.ok_or_else(|| self.pressure(span))?;
+            let hi = (disp as i16) + i16::from(width) - 1;
+            if i8::try_from(hi).is_err() {
+                return Err(self.frame_error(span));
+            }
+            let slot = Loc::Frame { disp, width };
+            self.emit_move(loc, slot, span)?;
+            match key {
+                Key::V(v) => {
+                    self.vreg_loc.insert(v, slot);
+                }
+                Key::L(l) => {
+                    self.local_loc.insert(l, slot);
+                }
+            }
+            next_spill = Some(disp.saturating_add(width as i8));
+        }
+
+        let mut moves = Vec::new();
+        for (reg, v) in inputs {
+            let src = self.loc_of(*v, span)?;
+            moves.push((src, gpr_loc(*reg)));
+        }
+        self.emit_parallel_moves(moves, span)?;
+
+        for line in lines {
+            if let Some(name) = line.strip_suffix(':') {
+                if !name.contains(char::is_whitespace) && !name.is_empty() {
+                    self.emit_label(name, span, node);
+                    continue;
+                }
+            }
+            if line.to_ascii_uppercase().contains(" EQU ") {
+                self.emit_directive(line.clone(), span);
+            } else {
+                self.emit_raw(line.clone(), span);
+            }
+        }
+
+        let gpr_outs: Vec<(AsmGpr, &IrAsmOutput)> = outputs
+            .iter()
+            .filter_map(|o| match o.kind {
+                IrAsmOutKind::Gpr(r) => Some((r, o)),
+                _ => None,
+            })
+            .collect();
+        let capture = flag_out || gpr_outs.len() > 1;
+        let mut capture_push = 0u16;
+        if capture {
+            let mut slots: Vec<(VReg, CType, Loc)> = Vec::new();
+            if flag_out {
+                self.emit(Z80Op::PushAf, span);
+                capture_push = 2;
+            }
+            for (reg, out) in &gpr_outs {
+                let width = out.ty.byte_width().unwrap_or(1);
+                let disp = next_spill.ok_or_else(|| self.pressure(span))?;
+                let slot = Loc::Frame { disp, width };
+                self.emit_move(gpr_loc(*reg), slot, span)?;
+                slots.push((out.dst, out.ty, slot));
+                next_spill = Some(disp.saturating_add(width as i8));
+            }
+            if flag_out {
+                self.emit(Z80Op::Pop(Rr::Hl), span);
+                for out in outputs {
+                    match out.kind {
+                        IrAsmOutKind::Carry => {
+                            self.emit(
+                                Z80Op::Ld8 {
+                                    dst: R8::A,
+                                    src: R8::L,
+                                },
+                                span,
+                            );
+                            self.emit(Z80Op::And(AluSrc::Imm(1)), span);
+                            let disp = next_spill.ok_or_else(|| self.pressure(span))?;
+                            let slot = Loc::Frame { disp, width: 1 };
+                            self.emit_move(Loc::Byte(R8::A), slot, span)?;
+                            slots.push((out.dst, out.ty, slot));
+                            next_spill = Some(disp.saturating_add(1));
+                        }
+                        IrAsmOutKind::Zero => {
+                            self.emit(
+                                Z80Op::Ld8 {
+                                    dst: R8::A,
+                                    src: R8::L,
+                                },
+                                span,
+                            );
+                            self.emit(Z80Op::And(AluSrc::Imm(0x40)), span);
+                            let z1 = self.aux_label();
+                            let z2 = self.aux_label();
+                            self.emit(
+                                Z80Op::Jp {
+                                    cc: Some(Cc::Z),
+                                    target: z1.clone(),
+                                },
+                                span,
+                            );
+                            self.emit(Z80Op::Ld8Imm { dst: R8::A, imm: 1 }, span);
+                            self.emit(
+                                Z80Op::Jp {
+                                    cc: None,
+                                    target: z2.clone(),
+                                },
+                                span,
+                            );
+                            self.emit_label(&z1, span, node);
+                            self.emit(Z80Op::Ld8Imm { dst: R8::A, imm: 0 }, span);
+                            self.emit_label(&z2, span, node);
+                            let disp = next_spill.ok_or_else(|| self.pressure(span))?;
+                            let slot = Loc::Frame { disp, width: 1 };
+                            self.emit_move(Loc::Byte(R8::A), slot, span)?;
+                            slots.push((out.dst, out.ty, slot));
+                            next_spill = Some(disp.saturating_add(1));
+                        }
+                        IrAsmOutKind::Gpr(_) => {}
+                    }
+                }
+            }
+            for (dst, ty, slot) in slots {
+                if ty == CType::Bool {
+                    self.emit_move(slot, Loc::Byte(R8::A), span)?;
+                    self.normalize_bool_a(span, node)?;
+                    self.bind_vreg(dst, Loc::Byte(R8::A), ty);
+                } else {
+                    self.bind_vreg(dst, slot, ty);
+                }
+            }
+        } else if let Some((reg, out)) = gpr_outs.first() {
+            if out.ty == CType::Bool {
+                self.emit_move(gpr_loc(*reg), Loc::Byte(R8::A), span)?;
+                self.normalize_bool_a(span, node)?;
+                self.bind_vreg(out.dst, Loc::Byte(R8::A), out.ty);
+            } else {
+                self.bind_vreg(out.dst, gpr_loc(*reg), out.ty);
+            }
+        }
+
+        let extra = stack.unwrap_or(0).saturating_add(capture_push);
+        self.asm_stack = self.asm_stack.max(extra);
+        Ok(())
+    }
+
+    fn normalize_bool_a(&mut self, span: SourceSpan, node: NodeId) -> Result<(), Diagnostic> {
+        let done = self.aux_label();
+        self.emit(Z80Op::Or(AluSrc::Reg(R8::A)), span);
+        self.emit(
+            Z80Op::Jp {
+                cc: Some(Cc::Z),
+                target: done.clone(),
+            },
+            span,
+        );
+        self.emit(Z80Op::Ld8Imm { dst: R8::A, imm: 1 }, span);
+        self.emit_label(&done, span, node);
         Ok(())
     }
 

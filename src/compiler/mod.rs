@@ -3,6 +3,7 @@
 mod abi;
 mod ast;
 mod diagnostic;
+mod inline_asm;
 mod ir;
 mod lexer;
 mod lower;
@@ -17,8 +18,9 @@ pub mod harness;
 pub mod project;
 
 pub use ast::{
-    BinaryOp, Block, CallConv, Expr, ExprKind, Function, Ident, Import, Item, Param, Stmt,
-    TranslationUnit, TypeExpr, TypeKind, UnaryOp, VarDecl,
+    AsmClause, AsmClobber, AsmGpr, AsmOutReg, AsmStmt, BinaryOp, Block, CallConv, Expr, ExprKind,
+    Function, Ident, Import, Item, Param, Stmt, TranslationUnit, TypeExpr, TypeKind, UnaryOp,
+    VarDecl,
 };
 pub use diagnostic::{DiagCode, Diagnostic, RelatedSpan, Severity};
 pub use ir::{IrBinary, IrOp, TypedFunction, TypedProgram, function_by_name};
