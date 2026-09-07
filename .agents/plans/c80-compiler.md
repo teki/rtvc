@@ -2,8 +2,8 @@
 
 ## Goal
 
-Add a deliberately small C-like language for Z80 development, provisionally
-called C80, together with editor integration that makes generated code visible
+Add a deliberately small C-like language for Z80 development, called C80,
+together with editor integration that makes generated code visible
 and understandable. A developer should be able to edit C80 source, see the
 corresponding Z80 assembly, bytes, addresses, and static T-state information,
 load a successful build into the active emulator, and debug it through a
@@ -38,6 +38,8 @@ remaining available.
    optional Developer Workspace.
 9. Support both native and `wasm-full`. Do not pull editor/compiler UI into the
    lightweight WASM library targets.
+10. C80 is a small step above assembly: minimize stack traffic, keep data near
+    its defining code, and make hardware calls and interrupt management explicit.
 
 ## Delivery Boundary
 
@@ -50,6 +52,10 @@ or source-stepping UI.
 Editor needs are nevertheless designed into Phase 1 outputs. Source spans,
 instruction provenance, stable per-compilation IDs, final addresses, bytes, and
 timings must be real compiler results rather than reconstructed by Phase 2.
+
+Current implementation planning focuses on the compiler. Phase 2 sections record
+future consumers and architectural boundaries, not additional prerequisites for
+the compiler release. Do not expand editor or debugger design during Phase 1.
 
 The Phase 1 workflow is:
 
@@ -64,9 +70,9 @@ The Phase 1 workflow is:
 ## Worked Phase-One Compiler Example
 
 This section makes the intended behavior concrete. Names such as the project
-filename, CLI flags, intrinsic spelling, and exact `@fastcall` registers remain
-reviewable syntax; the compilation-unit, layout, type-checking, provenance, and
-output behavior illustrated here are requirements.
+filename, CLI flags, and register syntax are governed by the
+[Frozen Implementation Contracts](#frozen-implementation-contracts); older
+illustrative snippets do not override those contracts.
 
 ### Example Project
 
@@ -166,8 +172,10 @@ pub void print_name() {
     u8 index = 0;
 
     while (index < game_data::enemy_name.len) {
-        // Provisional typed Z80-port intrinsic: port is u16, value is u8.
-        io_out(0x0006, game_data::enemy_name[index]);
+        // Explicit 16-bit port address and byte value; operand syntax provisional.
+        asm(in: bc = u16(0x0006), in: a = game_data::enemy_name[index]) {
+            out (c),a
+        }
         index = index + 1;
     }
 }
@@ -176,11 +184,13 @@ pub void print_name() {
 The pointer rule makes every loop iteration perform a real memory write even if
 later optimizer analysis thinks the value is redundant.
 The string loop reads the prefix for `.len` and reads payload byte `index + 1`.
-`io_out` cannot be expressed as a memory array because Z80 port I/O is a
-separate address space.
+Port output cannot be expressed as a memory array because Z80 port I/O is a
+separate address space. This is an illustrative hardware write, not a text
+printing routine: TVC port 06 controls sound/printer/video fields.
 
-For the default stack ABI, a direct unoptimized lowering of
-`clear_first_row` can look like:
+For comparison only, adding `@stackcall` to `clear_first_row` permits the
+following direct stack-based lowering. It is not the normal output required
+for the unannotated register-call function above:
 
 ```asm
 video__clear_first_row:
@@ -244,7 +254,7 @@ video__clear_first_row:
 ```
 
 The stack ABI still requires IX here because Z80 has no ordinary
-stack-pointer-relative argument load. An eventual `@fastcall` convention that
+stack-pointer-relative argument load. The Phase 1B `@fastcall` convention, if it
 passes an eight-bit argument in A could omit the entire frame and prologue. The
 exact instruction selection is not a language guarantee; assembly snapshots
 and byte/T-state tests should make backend quality visible as it improves.
@@ -315,8 +325,7 @@ The proposed Phase 1 CLI shape is:
 ```text
 rtvc-c80 build demo/rtvc-c80.toml \
   --emit-asm demo/build/program.asm \
-  --emit-segments demo/build/program.toml \
-  --emit-map demo/build/program.c80map
+  --emit-segments demo/build/program.toml
 ```
 
 A successful command writes ordinary helper assembly and loadable segments. It
@@ -352,10 +361,10 @@ error[C80-LAYOUT-006]: unit `main` ($2000..$2874) overlaps unit `video`
 
 ### Example Stack and Fastcall Calls
 
-For the default stack ABI:
+For the explicit stack ABI (attribute spelling provisional):
 
 ```c
-pub u16 add(u16 left, u16 right) {
+pub @stackcall u16 add(u16 left, u16 right) {
     return left + right;
 }
 
@@ -399,10 +408,11 @@ An 8-bit argument occupies the same 16-bit slot: `u8` is zero-extended, `i8`
 is sign-extended, and `bool` is canonicalized to 0 or 1. This makes stack
 offsets regular.
 
-For an explicitly fast function, the initial convention might use HL and DE:
+For an ordinary function using the default register ABI, the proposed
+convention uses HL and DE:
 
 ```c
-pub @fastcall u16 add_fast(u16 left, u16 right) {
+pub u16 add_fast(u16 left, u16 right) {
     return left + right;
 }
 ```
@@ -418,9 +428,10 @@ math__add_fast:
     ret
 ```
 
-This exact register assignment remains a review decision. The important
-behavior is that `@fastcall` is part of the exported signature, all callers use
-the same convention, and ordinary functions continue to use stack slots.
+This register assignment is frozen by F002. The important
+behavior is that the resolved calling convention is part of the exported
+signature and all callers use it. Ordinary functions use register calling;
+`@stackcall` explicitly selects stack arguments.
 
 ## Phase-Two Integrated User Workflow
 
@@ -529,7 +540,7 @@ slot entirely:
 
 There is no signed load or signed byte representation here. The `i8` result
 tells the compiler that `< 0` means a sign-bit test. An explicitly unsigned
-spelling such as `(dx & 0x80) != 0` could generate the same instructions; the
+spelling such as `(u8(dx) & 0x80) != 0` could generate the same instructions; the
 signed type records that interpretation in the function contract and avoids
 repeating it at each use.
 
@@ -579,8 +590,8 @@ registers[3] = 0x80;
 
 This needs type checking and addressing rules, but no runtime pointer object,
 allocator, ownership model, alias-analysis framework, or `volatile` qualifier.
-Direct accesses to known locals, globals, and arrays can still be optimized;
-only access through a pointer uses the conservative rule. Introduce a second,
+Direct-access optimization follows the observable-memory rules below;
+it must never bypass aliasing or interrupt-sharing rules. Introduce a second,
 optimizable pointer kind later only if measured code demonstrates that the
 extra language distinction is worthwhile.
 
@@ -608,7 +619,8 @@ ABI. Support `value.len` as a `u8` read of the prefix and `value[index]` as a
 dynamic indexing follows the ordinary unchecked array rule. Do not support
 string mutation, concatenation, allocation, or assignment into owned string
 storage. String literals may be passed directly to `str` parameters by placing
-anonymous prefixed data in the unit's constant-data area.
+anonymous prefixed data immediately after the owning function's executable
+body, preserving unit locality and preventing execution from falling into data.
 
 Do not support:
 
@@ -623,8 +635,8 @@ Do not support:
 All scalar sizes and conversions are defined by C80. Conversions between
 different widths, signedness, integer and pointer types, or integer and `bool`
 must be explicit except for a literal proven to fit its destination. Arithmetic
-wraps at the declared width. Signed comparison and right-shift behavior must be
-specified and tested rather than inherited accidentally from Rust or C.
+wraps at the declared width. Signed comparison and right-shift behavior follow
+F001 and must be tested rather than inherited accidentally from Rust or C.
 
 Prefer type-constructor conversion syntax over C casts:
 
@@ -634,8 +646,44 @@ bool ready = bool(status);  // false only when status is zero
 u8 bit = u8(ready);         // always 0 or 1
 ```
 
-The exact spelling remains part of the grammar review, but implicit conversion
-must not be reintroduced as a convenience during code generation.
+Type-constructor conversion syntax is adopted. Implicit conversion must not
+be reintroduced as a convenience during code generation.
+
+Do not support source multiplication, division, or remainder, or silently insert
+arithmetic runtime helpers. Add compile-time `sizeof(T)` using the compiler's
+actual packed layout. Typed values always require explicit conversions when
+width or interpretation changes. A literal acquires its context's type only if
+it fits, without any conversion of an already typed value.
+
+### Local Initialization and Observable Memory
+
+Scalar locals have no implicit initialization. Report a compile error on any
+read not definitely preceded by an assignment on every incoming path. This
+emits no initialization instructions and allows declaration before assignment.
+An explicit assembly output counts as an assignment; an input or in/out operand
+requires a previously assigned value. Taking an address does not prove that an
+opaque assembly block or call initialized that local; the programmer must use
+an explicit output contract or initialize it first. Uninitialized reads are
+errors, not arbitrary register/stack contents, and the compiler inserts no
+automatic zeroing for locals.
+
+For interrupt sharing, making only writes observable is insufficient: a polling
+loop must also re-read its shared value. Every evaluated
+access to mutable source-level memory (globals, arrays, dereferenced pointers,
+and addressable locals) is observable and remains ordered. Do not cache those
+reads across source accesses or eliminate their writes, even when the address
+is known. No separate volatile spelling is necessary for shared memory.
+Immutable constants/data may still be folded when the language permits it.
+
+Pure scalar locals are values eligible for registers; compiler-private spills
+are implementation storage, not observable source memory. Optimize both freely
+subject to value semantics and aliasing. Once a local's address is exposed,
+apply the source-memory rule consistently. This distinction keeps loops over
+local counters fast while making explicit memory access predictable. The cost
+is that repeated global accesses remain real accesses. Neither observable reads
+nor writes promise multi-byte atomicity.
+
+### Struct Layout (Phase 1D)
 
 Structs and pointers to structs arrive in Phase 1D. Their intended use is:
 
@@ -661,7 +709,7 @@ construct says otherwise. In this example `x` is offset 0, `y` offset 1,
 `bitmap` offsets 2–3 in Z80 little-endian order, `visible` offset 4, and the
 computed `Sprite` size is 5. There is no implicit integer-to-pointer
 conversion; `ptr<Sprite>(0x9000)` makes the absolute-address interpretation
-visible. The exact pointer-constructor spelling remains a grammar decision.
+visible. The pointer-constructor spelling and allowed conversions are fixed by F001.
 
 ### Statements and Expressions
 
@@ -749,9 +797,11 @@ Use `import video;` and `video::symbol` as the initial module syntax:
    interface. There are no duplicated prototypes to drift out of sync.
 3. Lower each unit independently, namespace private assembler symbols by unit,
    and preserve the unit in all source-map records.
-4. Lay out each unit as code, literal/constant data, initialized globals, and
-   zero-initialized globals, then combine units with one `ORG` per configured
-   unit origin.
+4. Preserve top-level declaration order within each unit: functions and owned
+   data stay where they are defined. Do not collect project-wide text/data/BSS
+   sections or move data to another mapping window. Put anonymous literals
+   immediately after their owning function's executable body, without executable
+   fallthrough into them. Combine units with one `ORG` per configured origin.
 5. Run one final `assemble_program` call so absolute `CALL`, `JP`, and data
    references resolve across units and all final addresses are authoritative.
 6. Reject duplicate exports, missing imports, signature mismatches, segment
@@ -769,8 +819,8 @@ general linker is required initially. Mutually referring units are valid at
 the symbol-resolution level, but direct or mutual recursive function calls are
 rejected by the statically known call graph.
 
-A project build rebuilds/reassembles the complete project and then loads all
-changed segments. This matters because code growth inside one unit can move an
+A project build rebuilds/reassembles the complete project and emits all
+segments. This matters because code growth inside one unit can move an
 exported function and therefore change `CALL` operands in its callers. Truly
 independent hot replacement would require stable exported entry addresses or a
 jump table; defer that mechanism until a real workflow needs it.
@@ -796,10 +846,12 @@ origin = 0x8400
 Source files do not contain `ORG`; placement is external so the same unit can be
 reused at another address. Reject `ORG` inside inline assembly as an attempt to
 escape the unit's assigned sections. Single-file compilation continues to take
-target and one origin directly from the CLI/editor. A project may later support
-named memory regions, automatic sequential packing, or an optional ROM/RAM
-split, but explicit origins for byte-emitting units keep the first memory model
-observable and predictable.
+target and one origin directly from the CLI/editor. Keep explicit unit placement
+initially. Any later automatic placement must move whole units within explicitly
+compatible mapping regions, preserving their internal code/data order; automatic
+global text/data/BSS splitting is not the intended memory model. Initialized and
+zero-initialized globals both emit their bytes in place initially. Non-emitted
+reservations such as a stack are separate project allocations.
 
 ### Data and Absolute-Memory Units
 
@@ -849,10 +901,53 @@ device access still uses typed `io_in`/`io_out` intrinsics because ports are a
 separate CPU address space; pointers are not intended to disguise port I/O as
 memory access.
 
+### Static Reservations and Mixed BASIC/C80 Projects
+
+Most C80 programs preallocate their memory. The build reports exact emitted
+code/data ranges and explicit non-emitted reservations, including stack space
+and hardware buffers. Taking an absolute pointer does not reserve that range;
+projects declare external storage separately. Validate overlaps using ranges
+wide enough to represent an exclusive end of 65536 without wrapping.
+
+A TVC project may combine one BASIC source file with multiple C80 units. Here
+"objects" means compiler-produced units in the same project build; a general
+relocatable object-file format remains out of scope. Reuse
+[`tokenize_program`](../../src/emulator/basic.rs) for BASIC. Resolve symbolic
+BASIC references to final explicitly exported callable addresses before tokenization,
+then validate the exact tokenized program size against its assigned region.
+F004/F006 define explicit symbol references that avoid substitutions in strings,
+comments, or unrelated identifiers. Fixed C80 origins avoid a layout
+cycle caused by the length of rendered BASIC address literals.
+
+Initial BASIC integration is deliberately small: allow one BASIC file to call
+explicit assembly/C80 entry points and expose generated build constants for
+addresses and the required memory reservation. Choose a narrow substitution
+syntax, not a general macro preprocessor. The BASIC source explicitly performs
+the required target-specific reservation/setup using those constants; the
+compiler does not synthesize ROM wrappers or take over the interpreter.
+
+Include a small checked runnable example using the existing BASIC load path.
+Its setup must reserve C80 memory before BASIC allocations can overwrite it.
+Link-time range validation cannot guarantee safety if that setup is omitted or
+later undone. Loading token bytes alone does not initialize interpreter state.
+Defer automatic BASIC workspace management and cassette bootstrap generation;
+do not concatenate C80 bytes onto an ordinary BASIC CAS payload and assume they
+will be loaded at the linked addresses.
+
+C80 callable routines share BASIC's CPU stack and contribute to its reserved
+stack budget; BASIC's evaluation stack is a separate allocation. Freestanding
+startup owns the program's CPU stack reservation. Compute compiler-generated
+stack requirements from final call/frame lowering as described in the backend
+strategy below, adding declared external-call and interrupt allowances. Static
+placement does not imply that every runtime stack requirement is known.
+
 ## Inline Assembly
 
-Inline assembly is a required version-one capability, but introduce it in two
-steps.
+Inline assembly with explicit register inputs and outputs is a Phase 1B
+capability. It is the primary boundary for ROM calls, hardware operations, and
+assembly routines. Do not generate automatic BASIC/ROM wrappers. Users write
+any adaptation explicitly, including result registers, flags, mapping changes,
+and preservation of external state.
 
 The first form is a statement block containing normal rtvc helper-assembler
 syntax:
@@ -871,10 +966,14 @@ Initial semantics:
 - individual assembly statements retain spans inside the C80 source;
 - the compiler treats AF, BC, DE, and HL as clobbered, invalidates temporary
   register knowledge, and does not assume flags survive;
-- IX remains the active frame pointer when a function has a frame, IY remains
-  reserved, and inline assembly must not modify IX, IY, or SP unless an
-  explicitly unsafe form is added;
-- jumping into or out of an inline assembly block is rejected; and
+- IX remains the active frame pointer when a function has a frame and IY is
+  reserved. The block must restore IX/IY and SP before returning to C80 code.
+  Balanced saves/restores and returning CALL/RST operations are permitted with
+  explicit clobber and stack-usage contracts; no unbalanced stack change is
+  allowed inside an ordinary function;
+- branch targets within a block are local. A returning call is permitted;
+  arbitrary jumps/returns out of the block are not. Standalone startup and
+  interrupt entry/exit assembly use their own explicit entry contract; and
 - compiler variable names are not interpolated into raw assembly initially.
 
 For example:
@@ -932,21 +1031,66 @@ raw assembly. This is safe but can create spills; the later constrained form
 lets the programmer describe inputs, outputs, and narrower clobbers so the
 compiler can avoid unnecessary preservation.
 
-The later constrained form adds explicit operands and clobbers, for example:
+The first executable milestone also supports explicit operands and clobbers.
+Provisional syntax for a copy whose final pointer/count values are discarded:
 
 ```c
-asm(in: hl = src, in: de = dst, in: bc = count, clobber: flags) {
+asm(in: hl = src, in: de = dst, in: bc = count,
+    clobber: hl, de, bc, flags, memory) {
     ldir
 }
 ```
 
-Do not design a hidden constraint language during the first implementation.
-Record this syntax as provisional and refine it using real routines once raw
-inline assembly works safely.
+Inputs establish values at block entry and may be listed as clobbered afterward.
+Outputs assign C80 destinations from explicitly named registers at block exit;
+in/out operands model values both consumed and replaced. Declare flag outputs
+explicitly when converting carry/zero results to C80 booleans. Resolve operand
+moves without destroying other inputs or outputs. Keep syntax small and named
+after actual registers, not an opaque constraint language. Memory is a
+conservative barrier by default; a future narrower memory-effects form is not
+required initially. Verify zero-count LDIR semantics in examples rather than
+assuming a count of zero copies nothing.
 
 ## Calling Convention and Stack Model
 
-Use one simple, documented stack ABI as the baseline:
+### Confirmed Runtime Direction
+
+Freestanding programs are the primary use case. Calling C80 routines from
+BASIC or existing machine code uses explicit programmer-authored assembly when
+adaptation is needed. No compiler-generated BASIC/ROM wrappers are required.
+Where input/output registers already match, use the entry directly subject to
+the external preservation contract; do not assume the entire ABI matches.
+
+Stack size is configured at project level and the linker reserves its range.
+Expose stack bounds as build symbols. Stack setup is manual: programmer-written
+startup loads SP from the exported stack-top symbol and explicitly transfers
+control to C80 code. No generated SP setup or startup wrapper is required.
+BASIC/assembly calls inherit the caller's stack. The selected entry must
+distinguish a startup address from an ordinary callable function; setting PC
+does not supply a RET address. Manual startup also defines what happens if the
+called entry returns. The compiler never changes interrupt state implicitly.
+
+Interrupt entry and exit are always managed manually, including vectors,
+DI/EI, return instructions, nesting, and any mapper state. The compiler does
+not generate interrupt prologues/epilogues or automatic critical sections.
+Interrupt handlers are responsible for preserving the interrupted register
+state, including flags and any alternate/index registers they use, and for
+restoring SP. Ordinary generated code does not save registers merely because
+an interrupt could occur. A handler calling C80 code must preserve the
+registers that the called ABI may clobber as well as its own clobbers. This
+responsibility does not make multi-byte accesses atomic. Interrupt-shared
+globals follow the observable-memory rules: every evaluated read and write is
+emitted, independently of the handler's register-preservation responsibility.
+
+### Stack and Register Calls
+
+Register calling (previously called fastcall) is the default C80 convention.
+Use an explicit `@stackcall` attribute when stack arguments are needed; its
+spelling is fixed by F002. An optional `@fastcall` spelling may document the
+default but is not required. Always record the resolved convention in exported
+function signatures.
+
+Keep this simple stack ABI as the explicit alternative:
 
 - arguments are pushed right-to-left as 16-bit stack slots, including 8-bit
   values;
@@ -958,16 +1102,27 @@ Use one simple, documented stack ABI as the baseline:
 - IY is reserved for future target/runtime use; and
 - SP must be balanced at every control-flow merge and function return.
 
-This ABI favors a compiler that is easy to verify over optimal call sequences.
-Also support an explicit `@fastcall` function attribute for routines where call
-speed matters. Fastcall is part of the function's public type, so every caller,
-including a caller in another unit, must use the same convention. Freeze its
-register assignment only after writing and measuring representative 8-bit,
-16-bit, mixed-argument, nested-call, and inline-assembly examples. Adding or
-removing `@fastcall` is an ABI change; it never silently replaces the stack
-convention.
+Fastcall is required in the first executable milestone (Phase 1B), alongside
+the stack ABI. Useful register calls must not depend on Phase 1E optimization.
+Register calling is part of the function's public type, so every caller,
+including a caller in another unit, must use the same convention. Validate the
+F002 register assignment with representative 8-bit, 16-bit, mixed-argument,
+nested-call, and inline-assembly examples. Adding or
+removing `@stackcall` is an ABI change. Do not silently switch a function to
+stack calling when its arguments exceed the register budget; define the
+excess-argument policy explicitly.
 
-Locals initially use an IX-relative frame. Reject a frame whose offsets cannot
+Canonical small fastcall leaf routines must accept arguments in registers and
+return without argument stack slots or an unnecessary IX frame. CALL/RET still
+use the hardware stack; fastcall avoids argument/frame overhead, not all stack
+use. Nested calls may require spills to preserve live values. Evaluate argument
+expressions left-to-right before arranging them in ABI registers or the stack
+ABI's right-to-left slots. Freeze the register allocation and excess-argument
+policy before implementing call lowering, with byte/T-state acceptance tests
+for small leaf routines and correctness tests for nested calls.
+
+Locals that need memory initially use an IX-relative frame; pure scalar locals
+may remain in registers. Reject a frame whose offsets cannot
 be encoded safely by the selected instruction sequences. Leaf functions with
 no locals may omit the frame from the start; broader frame elimination belongs
 to the later code-generation phase.
@@ -975,6 +1130,55 @@ to the later code-generation phase.
 Reject direct and mutual recursion using the statically known call graph. This
 does not prohibit normal nested calls or interrupt entry. Generated functions
 must not use hidden global temporaries that make ordinary nested calls fail.
+
+### ROM Evidence and Proposed Register Assignment
+
+The checked-in TVC BASIC 1.2 listings demonstrate register-oriented,
+routine-specific contracts rather than a single uniform ROM ABI:
+
+- [TABLE_LOOKUP_WORD](../../roms/TVC12_D4.64K.asm) takes a table pointer in HL
+  and index in A, and returns a word in DE. Its instructions double A, add the
+  offset to HL, and load E/D from memory without an argument frame.
+- [CHECK_X_COORDINATE](../../roms/TVC12_D4.64K.asm) takes BC and returns
+  `03FFH - BC` in HL plus an out-of-range indication in carry. Its complete
+  body is `LD HL,03FFH; OR A; SBC HL,BC; RET`.
+- [OUT_CHARS_SAFE](../../roms/TVC12_D4.64K.asm) uses BC for count, DE for the
+  source pointer, HL for a device routine, C for each outgoing character, and A
+  for completion/error status. Register arguments do not eliminate the saves
+  required around nested calls.
+- [BASIC_USR](../../roms/TVC12_D3.64K.asm) passes the converted integer argument
+  in HL and returns through the BASIC integer-result conversion continuation
+  with HL. This makes a one-word-in/one-word-out C80 routine a useful callable
+  wrapper fixture; interpreter preservation still needs a verified contract.
+- [VIDEO_PAGE_GUARD and VIDEO_PAGE_RETURN](../../roms/TVC12_D4.64K.asm) splice
+  a restoration continuation into the stack and restore the memory mapper
+  while retaining the returned AF. ROM-call contracts include paging and
+  flags, not only parameter registers.
+
+These observations support a predictable C80 register ABI plus explicit inline
+assembly contracts. They do not justify treating arbitrary ROM routines as ordinary C80
+functions or changing the C80 return register to match each ROM routine.
+User-written assembly must adapt inputs, outputs (including flag results), clobbers, and
+mapping requirements. The evidence here is from TVC BASIC 1.2; no compatibility
+with other ROM versions or Spectrum routines is implied.
+
+ABI v1 assignment, adopted in F002 and validated during implementation:
+
+1. Reserve HL, DE, then BC for word/pointer/str arguments, in their declaration
+   order among those arguments.
+2. Assign byte/bool arguments in their declaration order to A, C, B, E, D, L,
+   then H, skipping all halves of pairs reserved by step 1. Pair reservation is
+   computed from the complete signature; it does not reorder evaluation.
+3. Return byte/bool values in A and word/pointer/str references in HL. Flags
+   are caller-clobbered, not an additional implicit C80 return value.
+4. Reject a register signature that does not fit and suggest explicit
+   `@stackcall`; do not add hidden stack arguments in the initial convention.
+
+This gives `(ptr<u8>, u8)` HL+A, `(u16, u16)` HL+DE, and
+`(ptr<u8>, ptr<u8>, u16)` HL+DE+BC. The ordering of additional byte registers
+is a C80 design decision, not a convention established by the ROM. Test mixed
+signatures, register permutation at calls, nested argument evaluation, and
+register pressure as implementation acceptance tests.
 
 ## Compiler Architecture (Phase 1)
 
@@ -1129,6 +1333,189 @@ Do not parse the displayed assembly back to reconstruct compiler provenance.
 
 If rendering exposes important limitations later, extract a shared structured
 instruction encoder from `asm.rs`; do not maintain two opcode tables.
+
+## Code Generation Strategy (Phase 1)
+
+Use a small deterministic backend with explicit value locations and Z80
+instruction constraints. Register calls and inexpensive small leaf routines
+are baseline requirements, not optional late optimizations. The initial backend
+does not need SSA, global graph coloring, or static allocation of function
+temporaries into shared global memory.
+
+### Pass Order and Backend Contracts
+
+1. Lower typed expressions into virtual byte/word values and explicit basic
+   blocks. Keep loads, stores, calls, and observable effects ordered; retain
+   source provenance on every operation.
+2. Select legal instruction patterns with declared input/output registers,
+   scratch requirements, flags read/written, and memory effects. Keep labels
+   symbolic and frame slots abstract.
+3. Compute block use/def sets and live-in/live-out sets to a fixed point,
+   including loops. Choose compatible register locations across straight-line
+   edges and simple loops; reconcile differing predecessor locations with edge
+   moves. Crossing a block boundary alone must not force a stack home.
+4. Lower ABI argument/return moves, call preservation, and edge stores/reloads.
+   Allocate spill slots and finalize frame size after scratch requirements are
+   known. If lowering creates more temporaries, include them before finalizing
+   the frame rather than silently borrowing an occupied register.
+5. Resolve frame addressing, emit necessary prologue/epilogue instructions,
+   and verify stack balance, register constraints, and symbol uniqueness.
+6. Apply proven local simplifications, render canonical assembler input, and
+   assemble. Join final bytes/addresses to provenance, timing, and layout data.
+
+The allocator and instruction selector cooperate through constraints; selecting
+an instruction must never assume A, HL, or a scratch pair is freely available.
+Both the original value and its location must remain identifiable after spills,
+reloads, and ABI moves. Invalid backend state produces a located internal
+diagnostic rather than silently generating incorrect code.
+
+### Register Allocation and Frames
+
+Track A, B, C, D, E, H, and L as overlapping resources with BC, DE, and HL.
+Writing H invalidates any recorded value in HL; reserving HL reserves both
+halves. AF is not a general word-value register. Track flags separately as
+short-lived condition results; alternate registers are not allocated initially.
+IX is reserved for frames and IY for target/runtime use under both ABIs.
+AF, BC, DE, and HL remain caller-saved under register calling as well as
+explicit stack calling; preserve IX when used and leave IY untouched.
+
+Prefer existing argument locations, then instruction-compatible free registers.
+When pressure requires eviction, prefer a dead value, then a value safely
+rematerializable without memory access, then the value with the farthest next
+use. Use a fixed tie-break order so identical input produces identical code.
+Spill live values to compiler-owned frame slots. Reuse slots only when liveness
+proves their lifetimes do not overlap.
+
+Pure scalar locals may remain in registers for their entire lifetime. Locals
+whose address is taken need stable storage for their source lifetime. Preserve
+register locations across compatible edges and simple loop backedges in Phase
+1B. Use explicit moves at joins and spill only for actual register pressure,
+addressable storage, or values that must survive clobbers. Stack-based lowering
+of every expression/control-flow merge does not meet the baseline quality goal.
+Expose spill/frame costs in the listing so users can simplify register-heavy
+code when necessary; do not hide them behind a fastcall label.
+
+Create an IX frame only when stack addressing actually needs it. A register-only
+leaf with no spills or addressable locals emits no frame. Check all byte offsets
+of locals, spills, and stack parameters against indexed-addressing limits;
+reject unsupported frames/parameter layouts with a diagnostic. Do not truncate
+an offset into an eight-bit displacement. Keep any temporary PUSH/POP balanced
+and include it in stack accounting.
+
+### Expressions, Conditions, and Addressing
+
+- Preserve left-to-right evaluation, including the address of an assignment
+  destination before its right-hand value. Evaluate an indexed destination
+  once; compound assignment later adds exactly one read and one write.
+- Prefer A for eight-bit ALU work and HL with DE/BC for word operations, moving
+  values only when the selected instruction requires it. Use immediate operands
+  where legal and fold only expressions with fully specified C80 semantics.
+- Lower comparisons directly to control flow when used as conditions. Use
+  unsigned carry/zero tests and correct signed comparisons; subtraction's sign
+  flag alone is not a signed less-than test when overflow occurs. Materialize
+  a canonical 0/1 only when the boolean is needed as a value. Never retain a
+  flags-based condition across an instruction that destroys those flags.
+- Implement short-circuit operators as branches. Variable-count shifts use
+  bounded lowering consistent with F001's count semantics; constant shifts can
+  use specialized instruction sequences.
+- Use absolute addressing for known globals when legal. Compute indirect
+  addresses in a supported pair, with little-endian word loads/stores and
+  explicit scaling by element size. Constant packed-struct sizes may require
+  shift/add scaling even while general source multiplication is unsupported.
+- Preserve a destination address across right-hand calls or register pressure.
+  Address arithmetic wraps at 16 bits; image placement arithmetic must not.
+
+Unknown pointer writes, calls, and raw assembly conservatively invalidate
+possibly aliased cached memory values. Flush preceding direct stores that an
+indirect access or call could observe. Never optimize `x = 1; *p = 2; return x;`
+to return 1. Preserve source-level mutable-memory reads/writes in IR order even
+when aliasing analysis could prove an earlier value: a later access is still
+observable. Restrict mutable load reuse/store elimination to compiler-private
+storage. Raw assembly is also a memory barrier, not only a register clobber.
+Interrupt-shared globals receive the same observable reads/writes as other
+mutable source memory; handler register preservation is a separate obligation.
+
+### Calls and Interoperability
+
+Evaluate argument expressions left-to-right into tracked values, preserving
+earlier arguments across later argument calls. Then perform a parallel move
+into the callee's resolved ABI locations. Resolve register-move cycles with a
+proven free temporary or spill slot; sequential naive moves can destroy an
+argument when registers are swapped. For `@stackcall`, push evaluated arguments
+right-to-left and remove slots without destroying the returned A/HL value.
+
+Preserve only live values held in caller-clobbered registers. Dead arguments
+need no saves. Do not automatically spill every register argument on function
+entry. Return a value directly from its current location when it already matches
+the return ABI. Explicit inline assembly supplies external register contracts
+and clobber/stack metadata; no ROM wrappers are synthesized. Automatic inlining, tail calls,
+and per-function inferred register conventions are deferred initially.
+
+### Labels, Branches, and Layout
+
+Generate assembler-safe unique names from unit/function/block/item IDs, with
+optional readable suffixes. Do not rely on case distinctions, concatenated user
+names separated only by underscores, or dot-local label scope: the existing
+assembler uppercases symbols and has no local scopes. Namespace raw assembly
+labels separately and validate its allowed instructions/directives before
+rendering; user assembly must not change project placement.
+
+Start with absolute JP for generated control-flow branches. Emit JR or DJNZ only
+when their final displacement is proven valid. Later branch shortening must
+iterate layout to stability and then reassemble; cross-unit fixed origins and
+all instruction-size changes must be included in the check. An out-of-range
+generated short branch must fall back to a correct long sequence, not reject an
+otherwise valid source function. Keep user-written raw branch range errors
+as source diagnostics.
+
+Check final assembled segments against emitted and reserved project ranges.
+Report per-function code bytes, frame bytes, and stack bounds separately. Layout
+and timing always describe the final emitted instructions, not estimated IR.
+
+### Stack Bound Calculation
+
+For each function, measure maximum additional stack depth below its entry SP.
+Include saved IX, frame slots, temporary pushes, argument slots, and preservation
+spills. At a call site, add the site's current depth, the two-byte CALL return
+address, and the callee's bound; take the maximum over all reachable sites and
+non-call paths. Count each allocation once, including argument slots already
+present at the call site. Analyze the acyclic C80 call graph bottom-up after
+lowering, and include startup/wrapper overhead at the root.
+
+External/ROM calls and raw assembly require verified or declared bounds; unknown
+usage remains unknown and cannot be reported as a proven safe reservation.
+Add interrupt-entry return-address and handler-save/call requirements to the
+interrupted path, with an explicit nesting policy. Interrupt re-entry can defeat
+an otherwise acyclic function-call bound. BASIC-owned CPU stack capacity and its
+existing interpreter depth also need a target-specific allowance.
+
+### Baseline Quality and Optimization Gates
+
+Phase 1B must produce a two-word register `add` as `ADD HL,DE; RET` under the
+proposed HL/DE ABI, with no argument pushes or IX prologue. A byte identity
+function should be just RET. These tiny byte/size/timing fixtures complement
+semantic execution tests for nested calls and register pressure; they are not
+a demand that all source programs match one assembly template.
+
+Phase 1B must also keep simple local counters and pointer walks in registers
+across loop backedges when register pressure allows, with no per-iteration stack
+traffic. Add a byte-buffer fill fixture and a compare/branch loop fixture;
+trivial ADD/RET examples alone do not establish useful generated-code quality.
+
+Phase 1E extends propagation to more complex control flow, eliminates dead
+compiler-private spills, and adds proven loop induction/address strength reduction, branch
+shortening, and redundant load/move elimination. A rewrite must preserve flags
+that remain live, observable access order/count, stack balance, and the union of
+its source provenance. Prefer fewer T-states without increasing bytes for the
+first local rewrites; record speed/size tradeoffs before adding competing modes.
+Do not implement the worked loop's DJNZ optimization until bounds, wraparound,
+register liveness, and relative-branch reach are proven.
+
+Every pass retains origin IDs; merged instructions retain all contributing
+origins and a primary display span, while eliminated operations have an explicit
+no-code mapping. Final source maps must not invent executable breakpoints for
+eliminated statements. Compare baseline and optimized execution on the same
+fixtures, including signed boundaries, aliases, effects, and nested calls.
 
 ## T-State and Size Metadata (Phase 1)
 
@@ -1356,8 +1743,10 @@ Build and Load uses assembled segments, not the rendered listing text:
    fails validation, write nothing.
 4. Record the compilation revision, target, segment ranges, and current machine
    mapping as the active loaded program.
-5. Optionally set PC to the configured entry function only through an explicit
+5. Set PC to the explicitly selected freestanding startup entry only through an explicit
    Run/Set Entry action; Build and Load alone should not silently start code.
+   Callable routines require their documented caller/wrapper environment rather
+   than direct PC assignment to an ordinary function.
 
 Add source-level debugger operations after address mapping is reliable:
 
@@ -1415,8 +1804,10 @@ the following internal milestones; these are not separate product phases.
    error recovery.
 3. Implement scopes, scalar and basic pointer types, address/dereference and
    pointer indexing, fixed scalar arrays/indexing, prefixed strings, constants,
-   function signatures, explicit conversions, and typed expression/statement
-   validation.
+   compile-time `sizeof(T)`, function signatures, explicit conversions,
+   definite assignment, and typed expression/statement validation. Cover the
+   [frozen type rules](#f001--expressions-types-and-definite-assignment) with
+   compact semantic fixtures.
 4. Add unit interfaces, `pub` exports, imports, qualified lookup, and call-graph
    recursion rejection.
 5. Document evaluation order, overflow, conversions, and rejected C syntax.
@@ -1431,14 +1822,25 @@ without panics.
    arrays/indexing, prefixed strings, locals, expressions, functions, calls,
    `if`, `while`, and `return`.
 2. Implement the stack ABI, frame layout, labels, control-flow validation, and
-   structured Z80 items.
-3. Define and test the explicit `@fastcall` ABI without changing stack-call
-   defaults.
+   structured Z80 items following the [code generation strategy](#code-generation-strategy-phase-1).
+   Add block liveness, overlapping-register tracking, constrained instruction
+   selection, deterministic spills, and absolute branches as the baseline.
+3. Define and implement the default register ABI, including register-only
+   argument passing and frame-free small leaf routines, plus explicit
+   `@stackcall`. Validate nested calls and left-to-right argument
+   evaluation under both conventions.
 4. Add project placement, loadable and constants-only units, namespaced private
    symbols, cross-unit references, and overlap validation.
 5. Render canonical helper assembly, assemble all units together with
    `assemble_program`, and return final segments and symbols.
 6. Add `rtvc-c80` with single-file/project assembly and binary/TOML outputs.
+7. Add project stack reservation and exported bounds plus an explicit assembly
+   startup fixture; stack setup and entry/return behavior are manual.
+   Add explicit register in/out inline assembly and manual entry/exit fixtures.
+   Define the project assembly-unit interface described under
+   [manual assembly units](#f004--project-assembly-units-reservations-and-output).
+8. Report final code/data sizes, compiler stack bounds, and external allowances;
+   validate explicit stack/buffer reservations along with emitted segments.
 
 Exit criterion: command-line fixtures compile, assemble, load through existing
 debugger tooling, run to completion, and produce expected memory/register
@@ -1451,7 +1853,7 @@ results in a `FakeBus` or machine test.
 3. Produce bidirectional source maps and compiler symbols.
 4. Add structured timing metadata and per-instruction size/T-state display data.
 5. Test one-to-many, many-to-one, synthetic, branch, and data-item maps. Add
-   inline-assembly map cases when raw inline assembly lands in Phase 1D.
+   inline-assembly map cases for the Phase 1B register in/out interface.
 
 Exit criterion: every generated byte is owned by a data item or mapped
 instruction; every displayed instruction maps back to source or is explicitly
@@ -1464,9 +1866,16 @@ synthetic.
    first executable milestone.
 2. Add `for`, `do/while`, compound assignment, increment/decrement, and useful
    constant/data declarations.
-3. Add raw inline assembly with conservative clobbers, then design explicit
-   operand/clobber syntax from measured examples.
-4. Add typed port/memory intrinsics and small target libraries.
+3. Extend Phase 1B inline assembly from measured examples, retaining explicit
+   registers, outputs, clobbers, and memory effects.
+4. Add optional typed port/memory conveniences only where they improve clarity;
+   explicit inline assembly remains the supported hardware/ROM boundary.
+5. Add the mixed BASIC/C80 project mode using the existing BASIC tokenizer,
+   symbolic callable references, and generated BASIC memory-reservation constants.
+   Supply explicit BASIC/assembly setup examples rather than automatic wrappers
+   or interpreter-memory management.
+   Keep initial output as a combined loadable image; cassette packaging may
+   follow after target startup/loading behavior is tested.
 
 Exit criterion: representative TVC routines can express structured data,
 loops, function calls, hardware access, and optimized inline assembly without
@@ -1476,10 +1885,10 @@ unsupported compiler workarounds.
 
 1. Add local constant folding, dead-block removal, branch simplification, and
    conservative peephole passes that preserve provenance.
-2. Track register values across short basic blocks and eliminate unnecessary
-   loads/stores.
-3. Remove avoidable frames from leaf functions and improve calls within the
-   already-defined stack and `@fastcall` ABIs.
+2. Extend baseline cross-block/loop register allocation to more complex control
+   flow and eliminate unnecessary compiler-private loads/stores.
+3. Improve frame/spill elimination beyond the required baseline and calls within the
+   already-defined register and explicit stack ABIs.
 4. Add source-level static cost summaries where control flow permits honest
    values.
 
@@ -1536,6 +1945,16 @@ standalone compiler milestone.
 - scope, type, conversion, width, signedness, and constant-range tests;
 - IR snapshots for evaluation order and control flow;
 - ABI tests for arguments, returns, frames, nested calls, and register clobbers;
+- register-pair/byte overlap, parallel-move cycles, spill pressure, and loop
+  live-in/live-out tests;
+- canonical frame-free register leaf code, long branches beyond JR range,
+  symbol case/scope collisions, and frame displacement boundaries;
+- aliasing and memory-barrier execution tests, including indirect mutation of
+  directly accessed locals/globals and argument evaluation with nested calls;
+- stack-bound tests checked against execution high-water measurements for known
+  call graphs, with explicit unknown external bounds and interrupt allowances;
+- mixed BASIC/C80 symbol resolution, exact tokenized size, reserved-range
+  overlap, memory-limit setup, and BASIC USR execution tests;
 - generated assembly that round-trips through the existing assembler;
 - execution tests using `FakeBus` and the Z80 core for representative programs;
 - inline-assembly acceptance, diagnostic, clobber, and source-span tests;
@@ -1595,36 +2014,468 @@ When the first language slice is stable:
   reliable.
 - Making compiler/editor state part of global workspace-layout persistence.
 
-## Decisions to Refine Before Implementation
+## Frozen Implementation Contracts
 
-1. **Language name and extension:** keep `C80`/`.c80`, or choose an rtvc/TVC-
-   specific name before it appears in file formats and documentation.
-2. **First target:** Generic Z80 compiler plus TVC editor loading is proposed;
-   decide whether the first runtime fixtures should be TVC-only.
-3. **Fastcall ABI:** choose register assignments from measured representative
-   signatures while keeping the stack ABI as the default.
-4. **Project details:** choose the project filename/extension, decide whether
-   unit names must always be explicit, and define path resolution relative to
-   the project file.
-5. **Later placement:** decide whether named memory regions, automatic
-   sequential packing, or optional ROM-code/RAM-data splitting are useful after
-   contiguous per-unit placement is proven.
-6. **First language slice:** confirm fixed scalar arrays/indexing and the small
-   typed-pointer model in the first executable milestone, while structs and
-   pointer-to-struct field access wait for Phase 1D.
-7. **String encoding:** confirm the one-byte prefix, initial ASCII/escape rules,
-   and whether target-specific character-set mapping belongs in the first TVC
-   library milestone.
-8. **Inline assembly syntax:** confirm raw-block restrictions and whether a
-   minimal `clobber` list belongs in the first form.
-9. **Assembler boundary:** validate the structured-item-to-canonical-text join
-   against branches, labels, inline assembly, and multiple segments before
-   considering a shared direct encoder.
-10. **Source stepping:** define call/interrupt behavior and its relationship to
-   existing instruction stepping before assigning shortcuts.
-11. **Project dependency:** decide how much file/origin persistence should wait
-   for developer-project management versus shipping as session-only editor
-   state.
+The following contracts resolve C80-F001 through C80-F006 under the user's
+instruction to finish the decisions before implementation resumes. They are
+normative, not suggestions requiring another approval. They supersede earlier
+provisional examples where wording differs. Tests validate these decisions;
+the absence of an implementation/test is not an unresolved design choice.
+Module layout, internal enum names, diagnostic numbering beyond existing codes,
+and test organization remain implementer choices.
 
-These are deliberate review points, not permission to leave foundational
-behavior implicit during implementation.
+### F001 — Expressions, Types, and Definite Assignment
+
+Use the E01 parser's precedence for accepted operators. From weakest to
+strongest: assignment; ||; &&; |; ^; &; ==/!=; </<=/>/>=; <</>>;
++/-; prefix; postfix/call/index/member. Assignment and prefix operators associate
+right-to-left; other binary operators associate left-to-right. Multiplicative
+syntax may be retained for a focused unsupported-operation diagnostic but never
+executes. Add missing accepted forms to the parser in their owning increment;
+E01's current syntax coverage is not a frozen language limitation.
+
+| Operation | Operand types | Result and rule |
+| --- | --- | --- |
+| +, -, &, ^, \| | Same integer type, after contextual literal typing | Same type, fixed-width bits; addition/subtraction wrap |
+| unary +, -, ~ | Integer | Same type; negate wraps, including signed minimum |
+| ==, != | Same integer/bool type or same pointer type | bool |
+| <, <=, >, >= | Same integer type | bool, signedness of operands |
+| !, &&, \|\| | bool only | bool; && and \|\| short-circuit |
+| <<, >> | Integer left, u8 count | Left type; no promotion |
+| assignment | Writable scalar/reference lvalue and matching value | Assigned value, no extra memory read |
+| pointer +/- integer | ptr<T> and any integer offset | ptr<T>, scaled offset with 16-bit address wrap |
+| pointer[index] | ptr<T> and integer index | T lvalue |
+| array[index] | Fixed array and integer index | Element lvalue; known negative/out-of-range index is an error |
+| sizeof(T) | Complete supported value type | u16 compile-time byte count; void/incomplete/oversized type is an error |
+
+Conditions in if/while/for/do-while require bool. Use bool(value) explicitly for
+an integer/pointer condition. No integer truthiness or bool arithmetic. bool
+loads from arbitrary mutable byte memory interpret zero as false and any other
+byte as true; stores and scalar/ABI results use exactly 0 or 1. Such loads remain
+observable even if the resulting boolean is predictable.
+
+Integer literal typing is local and deterministic:
+
+1. An assignment initializer, return, or function parameter supplies its exact
+   expected type to untyped integer literal expressions. Arithmetic/bitwise
+   expressions propagate an integer expected type to their untyped operands.
+   Comparison operands use the type of a typed peer; their bool result context
+   does not give an integer operand a bool type.
+2. A typed operand fixes the type of its otherwise untyped peer. Two differing
+   typed operands are errors even if one currently contains a small constant.
+   Character literals are typed u8; true/false are typed bool.
+3. With no contextual or typed-peer integer type, a literal-only integer subtree
+   uses u16, or i16 if it contains a syntactically negative integer literal.
+   Unary minus directly on an integer literal, allowing parentheses, forms that
+   signed literal before range checking. Thus -32768 is representable as i16.
+   If both comparison operands are untyped, apply this rule to them together.
+4. Each literal must fit the selected integer type before arithmetic. Operations
+   then use that type's wrapping semantics even during constant folding. Integer
+   literals do not implicitly become bool or pointers.
+5. An explicit cast first types its argument independently (without using the
+   destination as an expected type), then converts it. Thus u8(1000) is allowed
+   and gives 232, while u8 x = 1000 is a range error. u8(65536) is a source
+   literal range error; C80 does not introduce wider source integers for casts.
+
+Examples: u8 x = 255 + 1 gives 0; 255 + 1 without context is u16 value 256;
+i8 x = -128 is valid; i8 x = 128 is an error; i8(128) is -128;
+-128 < 1 is a signed i16 comparison and true; bool b = 1 is an error.
+A typed constant never loses its type to avoid an explicit conversion.
+
+Integer casts preserve bits at the same width, discard high bits on narrowing,
+and sign-extend a signed source or zero-extend an unsigned source on widening,
+regardless of destination signedness. bool(integer/pointer) tests nonzero;
+integer(bool) gives 0/1. ptr<T>(u16) and u16(pointer) are explicit bit-preserving
+conversions. Other integer widths must first be explicitly converted to u16 for
+a pointer cast. ptr<U>(ptr<T>) explicitly reinterprets the same address.
+No ptr<void>, str/integer, or str/pointer conversions are supported.
+
+Shift count literals have u8 context; typed counts must be u8 or explicitly
+cast to it. Count zero returns the left value, still evaluating both operands
+and any observable accesses. Counts at least the left width produce zero for
+left shift/logical right shift, or all sign bits for signed right shift.
+This is defined repeated-shift behavior, not a masked count or undefined
+behavior; clamp lowering at the width. Negative literal counts and 256 are
+range errors. Signed right shift is arithmetic; left shift wraps at width.
+
+Evaluate ordinary operands and call arguments left-to-right. For assignment,
+evaluate and retain the destination address before evaluating the RHS, then
+store once. Compound assignment evaluates the address, reads its old value,
+evaluates the RHS, and writes once; its result is the stored value without
+rereading. Prefix ++/-- returns the updated value; postfix returns the saved old
+value. These operations support integer and pointer lvalues; pointer steps are
+one element. Accepted compound operators are +=, -=, &=, |=, ^=, <<=, >>=;
+pointer compound operations are only +=/-=. No *=, /=, or %=.
+Array/struct whole-value assignment is not implicitly added by these rules.
+
+Local declaration without initialization emits no initialization and leaves its
+value unassigned. Parameters are assigned on entry. Analyze definite assignment
+with path intersections over the CFG, including backedges and short circuiting;
+a loop that may run zero times does not initialize a value afterward.
+Assignment on unreachable paths does not satisfy a reachable read. Assembly out
+assigns on normal block exit, while in/inout requires prior assignment.
+Every reachable non-void function exit needs return value; void fallthrough
+emits return. Function prototypes without bodies are rejected in version one:
+all C80 calls bind to project-defined functions, and external calls use assembly.
+
+### F002 — Frozen Register and Stack ABI
+
+The proposed register allocation is adopted as ABI v1. Ordinary functions use
+register calls; @stackcall selects stack slots; @fastcall is an optional alias
+for the default. Accept attributes before or after pub, canonically
+@stackcall pub u16 f(...). Reject duplicate/conflicting or unknown attributes.
+
+Reserve HL, DE, BC for word/pointer/str arguments in their relative declaration
+order. Then allocate byte/bool arguments in relative declaration order to
+A, C, B, E, D, L, H, skipping halves of reserved pairs. Evaluate arguments in
+source order independently of this assignment. Reject a signature that does
+not fit; suggest @stackcall. No hidden stack overflow arguments.
+
+Returns: byte/bool in A, word/pointer/str in HL, void has no result. AF/BC/DE/HL
+are caller-clobbered; IX is preserved and IY untouched. Alternate registers are
+not compiler-allocated and must be preserved by assembly that temporarily uses
+them. Flags are not an implicit additional C80 result.
+
+Examples: (u8,u8) uses A,C; (u16,u16) uses HL,DE;
+(u8,u16,u8) uses A,HL,C; (u16,u16,u16,u8) uses HL,DE,BC,A.
+The last signature plus another byte is rejected. Return-location overlap
+with an argument is legal.
+
+@stackcall uses caller-cleaned, right-to-left two-byte slots. u8 zero-extends,
+i8 sign-extends, bool uses 0/1. With saved IX and IX established at that SP,
+parameter bytes begin at IX+4; locals/spills use negative offsets.
+No hidden aggregate return pointers or stack parameters.
+Test ABI moves/spills/nested calls during E03/E05; test completion does not
+require a further ABI approval.
+
+### F003 — Pointers, Strings, Aggregates, and Initialization
+
+Pointers are plain 16-bit machine addresses. Pointees may be bool, integer,
+another supported pointer, or a complete struct (from E10); not void, str, or
+an array type. &scalar and &array[index]/&field are supported; &array and
+address-taking of constants/string payloads are rejected. There is no array
+decay. Pointer offsets may be any integer type: interpreting a signed offset
+and scaling/wrapping the address is the specified addressing operation, not
+an implicit general-purpose integer conversion.
+
+C80 has no borrow checker or automatic lifetime management. Taking a local's
+address gives it stable stack storage for its source lifetime; preserve it
+through that lifetime and do not alias it with private spill slots.
+Pointers can escape; the programmer is responsible for not using them after
+the object's lifetime or mapping ends. Diagnose directly returning &local with
+a warning, not an error. Do not introduce C-style undefined-behavior optimizer
+assumptions: dereferences remain real ordered machine-memory operations, but
+the compiler does not promise that a departed local's former bytes retain a
+value. Test the diagnostic and physical addressing, not stable dangling data.
+
+Global scalars/arrays/structs without an initializer emit zero bytes in place.
+Their initializers must be compile-time expressions, including allowed symbolic
+addresses of static storage. Resolve address fixups during final assembly and
+detect constant/type-layout dependency cycles. Scalar locals are never zeroed
+implicitly. Local const requires a compile-time initializer and has no storage.
+
+str globals own prefix+payload immutable bytes and require a string literal
+initializer. str local/parameter/return values are two-byte references to such
+static data or anonymous literals. Local reference assignment/rebinding and
+return are supported; replacing a global owned str or mutating bytes is not.
+No user-created str from arbitrary pointers, str comparison, arrays of str, or
+str struct fields in v1. sizeof(str) is 2 (reference representation); symbol
+metadata for an owned string reports its actual 1+payload storage size.
+str.len is u8 and indexing returns u8. Check constant bounds only when length
+is statically known; otherwise index unchecked. Static immutability permits
+folding .len/payload values. An arbitrary pointer write into immutable string
+storage violates that declaration's contract; no promise of observing it through
+str reads. Mutable pointer reads themselves are always observable.
+
+Arrays and struct objects are global/static in v1; scalar, pointer, and str
+reference locals are supported, but local aggregates/by-value aggregate
+arguments/returns/copies are not. Arrays are one-dimensional with length 1..65535,
+subject to total size fitting 65535 bytes. Struct fields may be scalar/pointer,
+a nested struct, or a fixed array of supported elements. Layout is packed in
+declaration order. Reject empty structs and recursive by-value layouts; recursive
+pointer types are allowed. Field . and pointer -> produce ordinary lvalues.
+sizeof accepts a named array type only if later type-alias syntax exists;
+v1 sizeof(T) covers scalar/pointer/str/named struct types, not expression syntax.
+
+Static aggregate initializers use positional braces, may nest, and may omit
+trailing elements/fields, which zero-fill. Reject excess initializers and
+designators. Whole aggregates stay at declaration position within their unit.
+No source multiplication is needed for compiler-generated address scaling.
+
+### F004 — Project, Assembly Units, Reservations, and Output
+
+Manifest version is 1; absent version defaults to 1. Reject unknown versions,
+unknown fields, duplicate unit names, unreadable files, and invalid ranges.
+Unit names and source identifiers are case-sensitive ASCII names; reserve
+project as the built-in namespace. Resolve every path relative to the manifest.
+Defaults: filename rtvc-c80.toml, target generic-z80, unit kind c80. Accepted
+targets are generic-z80, tvc, zx82. target is a code/validation profile, not
+an instruction to change emulator mapping. E11 BASIC requires tvc.
+
+~~~toml
+version = 1
+target = "tvc"
+entry = "boot::start"       # optional; an address, never synthesized startup
+
+[stack]
+base = 0xB800
+size = 0x0800               # initial SP symbol is C000H; first PUSH uses BFFE/BFFF
+interrupt_allowance = 0     # declared additional bytes for manual IRQ use
+
+[[reserve]]
+name = "screen"
+base = 0x8000
+size = 0x3800               # ends at B800H, adjacent to the stack
+
+[[unit]]
+name = "boot"
+kind = "asm"
+path = "src/boot.asm"
+origin = 0x2000
+exports = ["start"]
+stack_extra = 64           # programmer-declared bound, including called routines
+
+[[unit]]
+name = "main"
+path = "src/main.c80"
+origin = 0x2200
+~~~
+
+Reservations do not establish a mapping. Increasing screen size to 0x4000 in
+this example overlaps the stack and is rejected. [stack] is optional for callable/library
+builds. When absent, report computed requirements but do not claim an allocated
+safe stack. interrupt_allowance is a caller-declared bound for all allowed
+interrupt nesting, including interrupt return addresses and saved registers;
+omission means unknown, not zero. Explicit zero means the programmer asserts no
+additional interrupt stack usage. Reserve names must be unique; use
+@{project::reserve_NAME_base}, _size, and _end symbols for named reservations.
+
+Each [[unit]] has name/path/kind and requires origin if it emits bytes. c80 units
+cannot use exports or stack_extra; pub controls exports. asm exports lists labels,
+default empty. stack_extra for a standalone ASM entry is an optional declaration
+of total additional depth below entry SP over all its own paths/calls; omitted
+means unknown. The initial unit-level declaration applies to every exported entry.
+The declaration is trusted programmer metadata, not a compiler proof.
+
+Preserve C80 top-level declaration order and manual ASM order; no ORG,
+BASIC_START, imports of files, or other placement-changing directives inside
+either kind. ASM units support existing encoder instructions and EQU/DB/DW/DS
+and aliases. Their labels are case-insensitive within that unit as in the helper
+assembler; exported spelling is exactly the manifest name and must identify an
+existing local label. Namespace all private labels and reject local case collisions.
+ASM code may control SP/IX/IY, return instructions, and interrupts without generated
+prologues. Its declared entry/export is an address, not a typed C80 declaration.
+
+Use @{unit::export} for shared references inside ASM code/expressions. Replace
+them with generated assembler labels for functions/data or numeric constants as
+appropriate, before final assembly. Do not substitute in quoted literals or
+comments. No includes/macros or arbitrary code expansion. C80 uses ordinary
+import/qualified names for C80 declarations; calling an ASM export is explicit
+inline assembly, not an implicit typed function.
+
+Built-ins project::stack_base, stack_size, stack_top, stack_end are compile-time
+u16 values when representable. stack_top is (base+size) modulo 65536; stack_end
+has no C80 u16 value if it is 65536 and is then an explicit range diagnostic when
+referenced from C80. ASM substitutions may emit layout integers up to 65536,
+with operand range validation left to the assembler. Base/size arithmetic for
+reservations always uses a wider host integer: base 0..65535, size 1..65535,
+base+size <=65536. These allocations emit no bytes. Two ranges may be adjacent
+but never overlap; BASIC program bytes are the sole contained allocation inside
+their declared BASIC region, described below.
+
+Link-time checks cover logical ranges under the configured common mapping;
+bank-overlaid projects and arbitrary runtime page safety are out of scope.
+The programmer must keep live code, data, and stack accessible. Do not infer
+reservations from integer pointer values.
+
+A stack report has additional_bytes: optional nonnegative integer, provenance:
+proven/declared/unknown, plus frame_bytes and local_peak_bytes for C80 functions.
+Proven means all contributing usage was derived from compiler lowering; any
+trusted external bound makes an otherwise finite result declared; an unbounded
+contribution makes it unknown. Project totals include explicit root overhead and
+interrupt allowance once, not once per C80 call. Known bounds exceeding the
+reserved stack are errors. Unknown bounds produce a warning and valid code;
+they do not certify safety or block unrelated compilation.
+
+CLI: rtvc-c80 build INPUT [--target TARGET] [--origin ADDRESS]
+[--emit-asm PATH] [--emit-segments PATH] [--emit-bin PATH].
+A .c80 input uses its file stem as unit name (require an ASCII identifier), with
+--origin required if it emits bytes. A .toml input is a manifest; --origin is
+invalid there and --target must agree if supplied. At least one output flag is
+required; diagnostics go to stderr; exit 0 for success including warnings,
+nonzero for parse/type/link/IO errors. --emit-map is deferred: maps are mandatory
+library data, not a prematurely frozen external format.
+
+Segment output uses rtvc-asm-v1; ASM output is normal resolved helper assembly.
+Raw binary requires a contiguous union of emitted ranges; coalesce adjacent
+segments, reject gaps/multiple separated images, and never implicitly pad or
+concatenate. Assembly and segment outputs retain origins and symbols.
+Compile and validate all requested outputs before writing. Render to temporary
+siblings first, then replace destinations; on a replacement failure return an
+IO error naming any outputs already replaced. Do not claim cross-file transaction
+atomicity. Compiler errors do not replace existing outputs. CLI integration tests
+must verify these behaviors and discover the actual test command.
+
+In-process metadata remains allowed to evolve. It must own the source snapshots,
+build identity, diagnostics, symbols, segments, maps, size/timing, and stack report.
+Success contains the complete valid program; failure contains diagnostics and
+non-loadable partial analysis only. Internal type naming is an implementation
+choice; no separate approval for a Rust schema is required.
+
+### F005 — Explicit Inline Assembly Contract
+
+Use this grammar (clause order is source order; a trailing comma is allowed):
+
+~~~text
+asm [ "(" clause { "," clause } ")" ] "{" assembly-source "}"
+clause := "in:" register "=" expression
+        | "out:" output-register "=" lvalue
+        | "inout:" register "=" lvalue
+        | "clobber:" name { "," name }
+        | "stack:" nonnegative-integer-literal
+register := a | b | c | d | e | h | l | bc | de | hl
+output-register := register | carry | zero
+clobber-name := register | flags | memory
+~~~
+
+A comma followed by a clause keyword and colon starts a new clause; other
+comma-separated names continue clobber. Keywords/register names are lowercase
+in the C80 header; ASM body retains helper-assembler case-insensitivity.
+Input/output width must match its register: bytes for single registers, words/
+pointers/str references for pairs. Literals get register-width context (u8/u16).
+Flags out require bool destinations and capture carry/zero without inversion.
+inout is shorthand for entry read plus exit assignment to the same lvalue.
+No I/O operand for SP/IX/IY/alternate registers; standalone ASM handles those.
+
+Input register resources cannot overlap another input; outputs cannot overlap
+another output. Input and output may overlap each other (replacement), including
+a pair and its halves across the boundary. inout occupies both sets. Reject a
+clobber overlapping an output or duplicate clobber resource; an input may also
+be clobbered. carry/zero outputs may coexist and may coexist with flags clobber:
+the flag outputs describe the final flags, while clobber invalidates prior flags.
+All writes to general registers must be listed as outputs/inout/clobbers in an
+operand-bearing block. Registers omitted by a complete explicit contract are
+preserved by the block; an opaque call's contract is the programmer's obligation.
+Plain asm { ... } conservatively clobbers AF/BC/DE/HL and memory.
+Any block is a conservative memory barrier regardless of whether memory is
+listed. A flags-only clobber does not silently cover A.
+
+Evaluate header expressions and destination addresses left-to-right once before
+entering the block. For inout, read its old value at that position. Before any
+output writeback, capture all result registers and flag outputs without destroying
+others. Write destinations in clause order. bool register outputs normalize to
+0/1 at the C80 boundary. Supplying outputs does not magically initialize memory
+written through an input pointer for definite-assignment purposes.
+
+Examples:
+
+~~~c
+u8 result;
+asm(in: a = value, out: a = result, clobber: flags) {
+    inc a
+}
+bool carry_set;
+asm(in: hl = left, in: de = right, out: hl = sum,
+    out: carry = carry_set, clobber: flags) {
+    add hl,de
+}
+asm(in: hl = src, in: de = dst, in: bc = count,
+    clobber: hl, de, bc, flags, memory) {
+    ldir
+}
+~~~
+
+ASM locals/branches are namespaced per block. Allow normal instructions,
+local labels, local EQU, balanced PUSH/POP, and returning CALL/RST. Reject RET/
+RETI/RETN or JP/JR to outside the block, indirect jumps, ORG/BASIC_START,
+DB/DW/DS/raw-byte directives, and assembler expressions that escape ordinary
+control-flow validation. Calls can use literal addresses, local subroutines only
+if representable without forbidden exits (normally use standalone units), or
+@{unit::export}; they must return to the block continuation. RST is an explicit
+returning external call and requires the same stack/clobber declaration.
+Inline payload bytes after RST are not supported in this first form; use an
+explicit standalone assembly routine for such firmware protocols.
+
+Reject explicit SP adjustments and unsupported writes to IX/IY/alternate
+registers inside ordinary inline blocks. PUSH/POP IX/IY for balanced preservation
+is allowed only if the original value is restored; use conservative validation,
+not guesses through external calls. The programmer must preserve these registers
+through called external code. Net SP displacement must be zero at every normal
+exit. For straight/local-branch PUSH/POP, verify compatible stack heights at
+merges and no unbalanced cycle; calls require stack:N to claim a bound.
+
+stack:N declares the maximum additional hardware stack bytes used inside the
+block, including CALL/RST return addresses, saves, and all nested callees.
+A statically evident peak above N is an error; otherwise N is a trusted bound.
+Omission on a block with opaque calls gives unknown usage and a warning, not a
+compile error. Pure non-calling blocks may have proven bounds from validated
+stack effects. Inline assembly preserves observable memory ordering, even when
+the programmer's body contains writes not expressible in C80.
+
+### F006 — Minimal BASIC Linking and Target Fixture
+
+Support [basic] only for target="tvc", at most once:
+
+~~~toml
+[basic]
+path = "src/main.bas"
+origin = 0x4000
+size = 0x8000
+~~~
+
+The half-open region [origin,origin+size) reserves BASIC program plus its dynamic
+workspace/evaluation stack, not C80's CPU stack. Enforce ordinary range checks.
+Tokenized bytes occupy the start of this region; require payload_size+0x100 <=
+size as the BASIC 1.2 minimum gap check, without claiming that it budgets arbitrary
+arrays/variables. All other units/reservations must be disjoint. Export
+project::basic_base, basic_size, basic_end, basic_himem (end-1) and
+basic_program_size. basic_end=65536 follows the same wide-substitution restriction
+as stack_end. Do not allow C80 layout/initializers to depend on basic_program_size,
+which is determined only after C80 addresses and BASIC substitutions.
+
+Use the same @{unit::export}/@{project::symbol} markers in BASIC expression
+positions. Resolve to unsigned decimal integers after final C80 assembly.
+Unknown/malformed active markers are errors. Leave markers in quoted strings,
+REM/! tails, and DATA fields literal; resume normal substitution after an
+unquoted DATA colon. Use the tokenizer's lexical rules for quote/comment/data
+boundaries; do not perform unrestricted textual replacement. Marker spelling is
+case-sensitive like C80; normal BASIC case handling follows the existing tokenizer.
+
+The target fixture is TVC BASIC 1.2 with the checked-in D4/D3/D7 ROMs, standard
+64K mapping. Use C80 @fastcall pub i16 echo(i16 value) returning value, then
+a BASIC line LET R=USR(@{math::echo},42), followed by a visible/result-memory
+assertion and another BASIC statement proving interpreter continuation.
+Also test -1 and signed-boundary inputs/results. This contract passes one signed
+16-bit integer in HL and receives HL as signed 16-bit, matching the ROM's USR
+path. No arbitrary multi-argument marshaling or generated BASIC wrapper.
+
+For reservation setup, use manual BASIC LOMEM to establish the selected program
+base before installing C80 bytes below it. The fixture may type/enter the BASIC
+source after LOMEM through the existing emulator command/keyboard path; it must
+not invoke a tape injector that resets the program origin afterward. With the
+example BASIC region 4000H..BFFFH, place C80 at 3000H, use the existing BASIC
+CPU stack unchanged, and install C80 only after relocating/entering BASIC.
+HI-MEM remains BFFFH in this selected fixture. Verify actual TEXT/program base
+and C80 bytes before and after USR and exercise normal BASIC allocations.
+Record the manual commands in the example documentation.
+
+Other regions may require additional explicit BASIC/assembly setup by the user;
+the compiler emits symbols/checks, not automatic interpreter-state writes.
+Failure of a test is implementation/research work within this fixed target
+contract, not a requirement for a separate fixture-approval step. Stop only if
+verified ROM behavior contradicts the specified USR/LOMEM contract. Do not
+change ROM/CPU implementation to force the fixture to pass.
+
+### Implementation Authority and Remaining Work
+
+Implement E02-E12 using these contracts. The earlier open findings are resolved
+as design decisions; their implementation tests remain to be written/run.
+E01 parsing remains a completed increment, not proof it already handles every
+later syntax form. Extend it in the increment that introduces the form and
+update info/c80.md to distinguish implemented behavior from planned behavior.
+
+No further product or contract approval is required for these increments.
+Continue to stop for genuinely contradictory requirements, newly discovered
+infeasibility, or missing external permissions, and record evidence. Do not
+classify internal API naming, writing the specified tests, or an ordinary
+implementation bug as a reason to stop for a design decision.
