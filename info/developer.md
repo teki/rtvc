@@ -53,6 +53,19 @@ cargo run --bin rtvc -- data/snapshots/boot12dos.rtvcsnap.zip \
   -i target/coding/crtc-register-explorer.cas
 ```
 
+### Mixed C80 and BASIC (LOMEM)
+
+A TVC C80 project with `[basic] origin = 0x4000` is not a CAS inject. Cold
+BASIC 1.2 keeps `TEXT` at `19EFH` and `HIMEM` at `BFFFH` with map `70H` (U0
+in page 0, SYS in page 3). Type `LOMEM 16384` so `TEXT` moves to `4000H`,
+then enter the substituted BASIC source and write C80 bytes at `3000H`. Tape
+injection always copies to `19EFH` and will undo that origin.
+
+`USR(address, param)` passes `param` in `HL` and takes the returned `HL` as a
+signed integer. A C80 `@fastcall pub i16 echo(i16 value)` leaf is a valid
+callee. TVC BASIC integer literals do not accept `-32768`; use `-32767` as
+the negative 16-bit boundary in BASIC source.
+
 Game-porting and VT-DOS software techniques are maintained in the standalone
 `tvc-ports` knowledge base. This document retains only emulator-specific
 workflow findings.

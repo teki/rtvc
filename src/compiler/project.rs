@@ -50,6 +50,7 @@ pub struct Manifest {
     pub stack: Option<StackSpec>,
     pub reserves: Vec<ReserveSpec>,
     pub units: Vec<UnitSpec>,
+    pub basic: Option<BasicSpec>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,6 +77,21 @@ pub struct UnitSpec {
     pub stack_extra: Option<u16>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BasicSpec {
+    pub path: PathBuf,
+    pub origin: u16,
+    pub size: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompiledBasic {
+    pub origin: u16,
+    pub region_size: u16,
+    pub payload: Vec<u8>,
+    pub substituted_source: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ManifestDto {
@@ -91,6 +107,8 @@ struct ManifestDto {
     reserve: Vec<ReserveDto>,
     #[serde(default)]
     unit: Vec<UnitDto>,
+    #[serde(default)]
+    basic: Option<BasicDto>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -123,6 +141,14 @@ struct UnitDto {
     exports: Vec<String>,
     #[serde(default)]
     stack_extra: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BasicDto {
+    path: String,
+    origin: u64,
+    size: u64,
 }
 
 pub fn parse_manifest(text: &str) -> Result<Manifest, String> {
@@ -198,6 +224,26 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, String> {
     if units.is_empty() {
         return Err("manifest has no [[unit]] entries".to_string());
     }
+    let basic = match dto.basic {
+        None => None,
+        Some(b) => {
+            if target != ProjectTarget::Tvc {
+                return Err("[basic] is only supported for target = \"tvc\"".to_string());
+            }
+            let origin = fit_u16("basic.origin", b.origin)?;
+            let size = fit_range_size("basic.size", b.size)?;
+            if u32::from(origin) + u32::from(size) > 65536 {
+                return Err(
+                    "basic.origin+basic.size overflows the 16-bit address space".to_string()
+                );
+            }
+            Some(BasicSpec {
+                path: PathBuf::from(b.path),
+                origin,
+                size,
+            })
+        }
+    };
     Ok(Manifest {
         version,
         target,
@@ -205,6 +251,7 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, String> {
         stack,
         reserves,
         units,
+        basic,
     })
 }
 
@@ -236,7 +283,11 @@ pub struct ProjectUnitInput<'a> {
     pub stack_extra: Option<u16>,
 }
 
-pub fn compile_project(manifest: &Manifest, units: &[ProjectUnitInput<'_>]) -> CompilationResult {
+pub fn compile_project(
+    manifest: &Manifest,
+    units: &[ProjectUnitInput<'_>],
+    basic_source: Option<&str>,
+) -> CompilationResult {
     use super::ast::CallConv;
     use super::ir::{FuncId, TypedProgram};
     use super::lower::{
@@ -244,8 +295,8 @@ pub fn compile_project(manifest: &Manifest, units: &[ProjectUnitInput<'_>]) -> C
     };
     use super::parser::parse_file;
     use super::semantics::{
-        StackLayout, UnitExports, analyze_unit_in_project, apply_const_bits, check_call_graph,
-        collect_exports,
+        BasicLayout, ProjectBuiltins, ReserveLayout, StackLayout, UnitExports,
+        analyze_unit_in_project, apply_const_bits, check_call_graph, collect_exports,
     };
     use super::source::{FileId, IdGen, SourceMap};
     use super::z80::{GeneratedFunction, asm_global_label, asm_label};
@@ -271,6 +322,24 @@ pub fn compile_project(manifest: &Manifest, units: &[ProjectUnitInput<'_>]) -> C
         base: s.base,
         size: s.size,
     });
+    let basic_layout = manifest.basic.as_ref().map(|b| BasicLayout {
+        origin: b.origin,
+        size: b.size,
+    });
+    let reserve_layouts: Vec<ReserveLayout<'_>> = manifest
+        .reserves
+        .iter()
+        .map(|r| ReserveLayout {
+            name: r.name.as_str(),
+            base: r.base,
+            size: r.size,
+        })
+        .collect();
+    let builtins = ProjectBuiltins {
+        stack: stack_layout,
+        basic: basic_layout,
+        reserves: &reserve_layouts,
+    };
 
     let mut exports: HashMap<String, UnitExports> = HashMap::new();
     for (name, _, ast) in &ast_units {
@@ -285,8 +354,13 @@ pub fn compile_project(manifest: &Manifest, units: &[ProjectUnitInput<'_>]) -> C
     let mut all_calls = Vec::new();
     let mut parsed_asts = Vec::new();
     for (name, file, ast) in ast_units {
-        let (part, calls) =
-            analyze_unit_in_project(&ast, &name, Some(&exports), stack_layout, &mut diagnostics);
+        let (part, calls) = analyze_unit_in_project(
+            &ast,
+            &name,
+            Some(&exports),
+            Some(builtins),
+            &mut diagnostics,
+        );
         if let Some(slot) = exports.get_mut(&name) {
             apply_const_bits(slot, &part);
         }
@@ -308,6 +382,7 @@ pub fn compile_project(manifest: &Manifest, units: &[ProjectUnitInput<'_>]) -> C
             units: ast_list,
             program: None,
             code: None,
+            basic: None,
         };
     }
 
@@ -320,6 +395,7 @@ pub fn compile_project(manifest: &Manifest, units: &[ProjectUnitInput<'_>]) -> C
                 units: ast_list,
                 program: Some(program),
                 code: None,
+                basic: None,
             };
         }
     };
@@ -383,6 +459,7 @@ pub fn compile_project(manifest: &Manifest, units: &[ProjectUnitInput<'_>]) -> C
             units: ast_list,
             program: Some(program),
             code: None,
+            basic: None,
         };
     }
 
@@ -448,6 +525,7 @@ pub fn compile_project(manifest: &Manifest, units: &[ProjectUnitInput<'_>]) -> C
             units: ast_list,
             program: Some(program),
             code: None,
+            basic: None,
         };
     }
 
@@ -466,6 +544,7 @@ pub fn compile_project(manifest: &Manifest, units: &[ProjectUnitInput<'_>]) -> C
                 units: ast_list,
                 program: Some(program),
                 code: None,
+                basic: None,
             };
         }
     };
@@ -492,6 +571,7 @@ pub fn compile_project(manifest: &Manifest, units: &[ProjectUnitInput<'_>]) -> C
             units: ast_list,
             program: Some(program),
             code: None,
+            basic: None,
         };
     }
 
@@ -547,12 +627,44 @@ pub fn compile_project(manifest: &Manifest, units: &[ProjectUnitInput<'_>]) -> C
         globals,
     };
 
+    let mut basic_out = None;
+    if let Some(spec) = &manifest.basic {
+        match compile_basic_unit(
+            spec,
+            basic_source,
+            &subst,
+            &code.assembled,
+            dummy_span(FileId(0)),
+        ) {
+            Ok(compiled) => basic_out = Some(compiled),
+            Err(diag) => diagnostics.push(diag),
+        }
+    } else if basic_source.is_some() {
+        diagnostics.push(Diagnostic::error(
+            DiagCode::CgUnsupported,
+            dummy_span(FileId(0)),
+            "BASIC source was supplied without a [basic] manifest region",
+        ));
+    }
+
+    if diagnostics.iter().any(Diagnostic::is_error) {
+        return CompilationResult {
+            sources,
+            diagnostics,
+            units: ast_list,
+            program: Some(program),
+            code: None,
+            basic: None,
+        };
+    }
+
     CompilationResult {
         sources,
         diagnostics,
         units: ast_list,
         program: Some(program),
         code: Some(code),
+        basic: basic_out,
     }
 }
 
@@ -589,6 +701,22 @@ fn insert_project_symbols(subst: &mut HashMap<(String, String), String>, manifes
             ((end % 65536) as u16).to_string(),
         );
         subst.insert(("project".into(), "stack_end".into()), end.to_string());
+    }
+    if let Some(basic) = &manifest.basic {
+        let end = u32::from(basic.origin) + u32::from(basic.size);
+        subst.insert(
+            ("project".into(), "basic_base".into()),
+            basic.origin.to_string(),
+        );
+        subst.insert(
+            ("project".into(), "basic_size".into()),
+            basic.size.to_string(),
+        );
+        subst.insert(("project".into(), "basic_end".into()), end.to_string());
+        subst.insert(
+            ("project".into(), "basic_himem".into()),
+            (end - 1).to_string(),
+        );
     }
     for r in &manifest.reserves {
         let end = u32::from(r.base) + u32::from(r.size);
@@ -722,6 +850,111 @@ fn substitute_markers(
             continue;
         }
         out.push(ch);
+        i += 1;
+    }
+    Ok(out)
+}
+
+fn compile_basic_unit(
+    spec: &BasicSpec,
+    source: Option<&str>,
+    subst: &HashMap<(String, String), String>,
+    assembled: &AssembledProgram,
+    span: SourceSpan,
+) -> Result<CompiledBasic, Diagnostic> {
+    let Some(source) = source else {
+        return Err(Diagnostic::error(
+            DiagCode::LnMissingOrigin,
+            span,
+            "manifest [basic] is present but no BASIC source was supplied",
+        ));
+    };
+    let numeric = numeric_subst(subst, assembled);
+    let substituted = substitute_basic(source, &numeric)
+        .map_err(|msg| Diagnostic::error(DiagCode::TyUnresolvedName, span, msg))?;
+    let payload = crate::basic::tokenize_program(&substituted).map_err(|err| {
+        Diagnostic::error(
+            DiagCode::ParseExpected,
+            span,
+            format!("BASIC tokenize failed: {err}"),
+        )
+    })?;
+    let payload_len = payload.len() as u32;
+    if payload_len + 0x100 > u32::from(spec.size) {
+        return Err(Diagnostic::error(
+            DiagCode::LnOverlap,
+            span,
+            format!(
+                "tokenized BASIC is {} bytes; payload+0x100 must fit in basic.size {}",
+                payload.len(),
+                spec.size
+            ),
+        ));
+    }
+    Ok(CompiledBasic {
+        origin: spec.origin,
+        region_size: spec.size,
+        payload,
+        substituted_source: substituted,
+    })
+}
+
+fn numeric_subst(
+    subst: &HashMap<(String, String), String>,
+    assembled: &AssembledProgram,
+) -> HashMap<(String, String), String> {
+    let mut out = HashMap::new();
+    for ((unit, name), value) in subst {
+        let rendered = if value.bytes().all(|b| b.is_ascii_digit()) {
+            value.clone()
+        } else if let Some(&addr) = assembled.symbols.get(value) {
+            u32::from(addr).to_string()
+        } else {
+            assembled
+                .symbols
+                .iter()
+                .find(|(label, _)| label.eq_ignore_ascii_case(value))
+                .map(|(_, addr)| u32::from(*addr).to_string())
+                .unwrap_or_else(|| value.clone())
+        };
+        out.insert((unit.clone(), name.clone()), rendered);
+    }
+    out
+}
+
+fn substitute_basic(
+    source: &str,
+    subst: &HashMap<(String, String), String>,
+) -> Result<String, String> {
+    let modes = crate::basic::basic_copy_modes(source);
+    let bytes = source.as_bytes();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let active = modes.get(i).copied() == Some(crate::basic::BasicCopyMode::Normal);
+        if active && bytes[i] == b'@' && bytes.get(i + 1) == Some(&b'{') {
+            let rest = &source[i + 2..];
+            let Some(end) = rest.find('}') else {
+                return Err("unterminated @{...} marker".to_string());
+            };
+            let inner = &rest[..end];
+            let Some((unit, name)) = inner.split_once("::") else {
+                return Err(format!("invalid marker '@{{{inner}}}'"));
+            };
+            let Some(value) = subst.get(&(unit.to_string(), name.to_string())) else {
+                return Err(format!("unresolved marker '@{{{inner}}}'"));
+            };
+            if name == "basic_program_size" {
+                return Err(
+                    "project::basic_program_size is not available during BASIC substitution"
+                        .to_string(),
+                );
+            }
+            out.push_str(value);
+            i += 2 + end + 1;
+            continue;
+        }
+        out.push(bytes[i] as char);
         i += 1;
     }
     Ok(out)
@@ -897,6 +1130,18 @@ fn check_layout_ranges(
                 name: format!("reserve {}", r.name),
                 start: u32::from(r.base),
                 end: u32::from(r.base) + u32::from(r.size),
+            },
+            span,
+            diagnostics,
+        );
+    }
+    if let Some(basic) = &manifest.basic {
+        push_range(
+            &mut ranges,
+            LayoutRange {
+                name: "basic".into(),
+                start: u32::from(basic.origin),
+                end: u32::from(basic.origin) + u32::from(basic.size),
             },
             span,
             diagnostics,
@@ -1108,6 +1353,7 @@ fn hex16(value: u16) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bus::CpuBus;
     use crate::compiler::harness::execute_function;
 
     fn compile_units(
@@ -1134,8 +1380,41 @@ mod tests {
                 stack,
                 reserves,
                 units: specs,
+                basic: None,
             },
             units,
+            None,
+        )
+    }
+
+    fn compile_tvc(
+        units: &[ProjectUnitInput<'_>],
+        basic: BasicSpec,
+        basic_src: &str,
+    ) -> crate::compiler::CompilationResult {
+        let specs = units
+            .iter()
+            .map(|u| UnitSpec {
+                name: u.name.to_string(),
+                path: PathBuf::from(u.source_name),
+                kind: u.kind,
+                origin: u.origin,
+                exports: u.exports.to_vec(),
+                stack_extra: u.stack_extra,
+            })
+            .collect();
+        compile_project(
+            &Manifest {
+                version: 1,
+                target: ProjectTarget::Tvc,
+                entry: None,
+                stack: None,
+                reserves: Vec::new(),
+                units: specs,
+                basic: Some(basic),
+            },
+            units,
+            Some(basic_src),
         )
     }
 
@@ -1162,6 +1441,19 @@ mod tests {
         );
         assert!(parse_manifest("[[unit]]\nname=\"project\"\npath=\"a.c80\"\n").is_err());
         assert!(parse_manifest("version = 2\n[[unit]]\nname=\"a\"\npath=\"a.c80\"\n").is_err());
+        assert!(
+            parse_manifest(
+                "target=\"generic-z80\"\n[basic]\npath=\"a.bas\"\norigin=0x4000\nsize=0x8000\n[[unit]]\nname=\"a\"\npath=\"a.c80\"\n"
+            )
+            .is_err()
+        );
+        let ok = parse_manifest(
+            "target=\"tvc\"\n[basic]\npath=\"src/main.bas\"\norigin=0x4000\nsize=0x8000\n[[unit]]\nname=\"math\"\npath=\"echo.c80\"\norigin=0x3000\n",
+        )
+        .unwrap();
+        let basic = ok.basic.unwrap();
+        assert_eq!(basic.origin, 0x4000);
+        assert_eq!(basic.size, 0x8000);
     }
 
     #[test]
@@ -1700,5 +1992,288 @@ mod tests {
                 .return_word(),
             0
         );
+    }
+
+    fn math_unit(src: &str) -> ProjectUnitInput<'_> {
+        ProjectUnitInput {
+            name: "math",
+            kind: UnitKind::C80,
+            origin: Some(0x3000),
+            text: src,
+            source_name: "echo.c80",
+            exports: &[],
+            stack_extra: None,
+        }
+    }
+
+    fn fixture_basic() -> BasicSpec {
+        BasicSpec {
+            path: PathBuf::from("main.bas"),
+            origin: 0x4000,
+            size: 0x8000,
+        }
+    }
+
+    #[test]
+    fn basic_markers_resolve_after_code_growth_and_respect_boundaries() {
+        let small = "@fastcall pub i16 echo(i16 value) { return value; }\n";
+        let large = "u8 pad[16];\n@fastcall pub i16 echo(i16 value) { return value; }\n";
+        let bas = r#"
+10 PRINT "@{math::echo}"
+20 REM @{math::echo}
+30 DATA @{math::echo}:LET R=USR(@{math::echo},42)
+"#;
+        let small_res = compile_tvc(&[math_unit(small)], fixture_basic(), bas);
+        let large_res = compile_tvc(&[math_unit(large)], fixture_basic(), bas);
+        assert!(!small_res.has_errors(), "{:?}", small_res.diagnostics);
+        assert!(!large_res.has_errors(), "{:?}", large_res.diagnostics);
+        let small_addr = small_res
+            .code
+            .as_ref()
+            .unwrap()
+            .function("echo")
+            .unwrap()
+            .addr;
+        let large_addr = large_res
+            .code
+            .as_ref()
+            .unwrap()
+            .function("echo")
+            .unwrap()
+            .addr;
+        assert_ne!(small_addr, large_addr);
+        let small_src = &small_res.basic.as_ref().unwrap().substituted_source;
+        let large_src = &large_res.basic.as_ref().unwrap().substituted_source;
+        assert!(
+            small_src.contains(&format!("PRINT \"@{{math::echo}}\"")),
+            "{small_src}"
+        );
+        assert!(small_src.contains("REM @{math::echo}"), "{small_src}");
+        assert!(small_src.contains("DATA @{math::echo}:"), "{small_src}");
+        assert!(
+            small_src.contains(&format!("USR({small_addr},42)")),
+            "{small_src}"
+        );
+        assert!(
+            large_src.contains(&format!("USR({large_addr},42)")),
+            "{large_src}"
+        );
+        assert!(!small_src.contains("USR(@{"), "{small_src}");
+        let payload = &small_res.basic.as_ref().unwrap().payload;
+        assert_eq!(*payload.last().unwrap(), 0x00);
+        assert!(payload.len() as u32 + 0x100 <= 0x8000);
+    }
+
+    #[test]
+    fn missing_basic_symbol_and_c80_program_size_are_errors() {
+        let src = "@fastcall pub i16 echo(i16 value) { return value; }\n";
+        let missing = compile_tvc(
+            &[math_unit(src)],
+            fixture_basic(),
+            "10 LET R=USR(@{math::nope},1)\n",
+        );
+        assert!(
+            codes(&missing).contains(&"ty-unresolved-name"),
+            "{:?}",
+            missing.diagnostics
+        );
+        let c80 = "u16 n() { return project::basic_program_size; }\n";
+        let result = compile_tvc(&[math_unit(c80)], fixture_basic(), "10 PRINT 1\n");
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("basic_program_size")),
+            "{:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn basic_region_overlap_and_payload_gap_are_rejected() {
+        let src = "@fastcall pub i16 echo(i16 value) { return value; }\n";
+        let overlap = compile_tvc(
+            &[ProjectUnitInput {
+                name: "math",
+                kind: UnitKind::C80,
+                origin: Some(0x4100),
+                text: src,
+                source_name: "echo.c80",
+                exports: &[],
+                stack_extra: None,
+            }],
+            fixture_basic(),
+            "10 PRINT 1\n",
+        );
+        assert!(
+            codes(&overlap).contains(&"ln-overlap"),
+            "{:?}",
+            overlap.diagnostics
+        );
+        let tiny = compile_tvc(
+            &[math_unit(src)],
+            BasicSpec {
+                path: PathBuf::from("main.bas"),
+                origin: 0x4000,
+                size: 0x20,
+            },
+            "10 PRINT 1\n",
+        );
+        assert!(
+            codes(&tiny).contains(&"ln-overlap"),
+            "{:?}",
+            tiny.diagnostics
+        );
+    }
+
+    #[test]
+    fn basic_usr_echo_runs_on_tvc_12_after_lomem() {
+        let src = "@fastcall pub i16 echo(i16 value) { return value; }\n";
+        let bas = "\
+10 LET R=USR(@{math::echo},42)\n\
+20 IF R=42 THEN POKE 16383,1\n\
+30 LET R=USR(@{math::echo},-1)\n\
+40 IF R=-1 THEN POKE 16383,PEEK(16383)+1\n\
+50 LET R=USR(@{math::echo},32767)\n\
+60 IF R=32767 THEN POKE 16383,PEEK(16383)+1\n\
+70 LET R=USR(@{math::echo},-32767)\n\
+80 IF R=-32767 THEN POKE 16383,PEEK(16383)+1\n\
+90 POKE 16382,1\n";
+        let result = compile_tvc(&[math_unit(src)], fixture_basic(), bas);
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        let code = result.code.as_ref().unwrap();
+        let basic = result.basic.as_ref().unwrap();
+        let echo_addr = code.function("echo").unwrap().addr;
+        assert_eq!(echo_addr, 0x3000);
+        assert!(
+            basic.substituted_source.contains("USR(12288,42)"),
+            "{}",
+            basic.substituted_source
+        );
+
+        let mut tvc = boot_tvc12();
+        wait_until(&mut tvc, 400, |tvc| peek16(tvc, 0x1722) == 0x19EF);
+        for _ in 0..120 {
+            tvc.run_for_a_frame();
+        }
+        assert_eq!(peek16(&mut tvc, 0x0B19), 0xBFFF, "HIMEM");
+        type_line(&mut tvc, "LOMEM 16384");
+        wait_until(&mut tvc, 600, |tvc| peek16(tvc, 0x1722) == 0x4000);
+        assert_eq!(peek16(&mut tvc, 0x1722), 0x4000, "TEXT after LOMEM");
+        assert_eq!(peek16(&mut tvc, 0x0B19), 0xBFFF, "HIMEM after LOMEM");
+
+        let text = peek16(&mut tvc, 0x1722);
+        let old_top = peek16(&mut tvc, 0x1726);
+        let old_chain = peek16(&mut tvc, 0x1724);
+        for (i, byte) in basic.payload.iter().enumerate() {
+            tvc.bus.w8(text.wrapping_add(i as u16), *byte);
+        }
+        let extra = (basic.payload.len() as u16).saturating_sub(1);
+        poke16(&mut tvc, 0x1726, old_top.wrapping_add(extra));
+        poke16(&mut tvc, 0x1724, old_chain.wrapping_add(extra));
+
+        let c80_bytes: Vec<(u16, u8)> = code
+            .assembled
+            .segments
+            .iter()
+            .flat_map(|seg| {
+                seg.bytes
+                    .iter()
+                    .enumerate()
+                    .map(|(i, b)| (seg.addr.wrapping_add(i as u16), *b))
+            })
+            .collect();
+        let before: Vec<_> = c80_bytes
+            .iter()
+            .map(|(addr, _)| tvc.bus.r8(*addr))
+            .collect();
+        for (addr, byte) in &c80_bytes {
+            tvc.bus.w8(*addr, *byte);
+        }
+        let after: Vec<_> = c80_bytes
+            .iter()
+            .map(|(addr, _)| tvc.bus.r8(*addr))
+            .collect();
+        assert_eq!(
+            after,
+            c80_bytes.iter().map(|(_, b)| *b).collect::<Vec<_>>(),
+            "C80 bytes must land in RAM; map={:02X} before={before:02X?}",
+            tvc.bus.mmu.get_map_val()
+        );
+
+        type_line(&mut tvc, "RUN");
+        wait_until(&mut tvc, 1200, |tvc| {
+            tvc.bus.r8(0x3FFF) == 4 && tvc.bus.r8(0x3FFE) == 1
+        });
+        assert_eq!(tvc.bus.r8(0x3FFF), 4, "USR results");
+        assert_eq!(tvc.bus.r8(0x3FFE), 1, "interpreter continued");
+        assert_eq!(peek16(&mut tvc, 0x1722), 0x4000, "TEXT after USR");
+        let still: Vec<_> = c80_bytes
+            .iter()
+            .map(|(addr, _)| tvc.bus.r8(*addr))
+            .collect();
+        assert_eq!(still, after, "C80 bytes after USR");
+        let _ = before;
+    }
+
+    fn boot_tvc12() -> crate::tvc::Tvc {
+        let mut tvc = crate::tvc::Tvc::new_with_vid_model(false, crate::vid::VidModel::Interleaved);
+        tvc.add_rom("TVC12_D4.64K", include_bytes!("../../roms/TVC12_D4.64K"));
+        tvc.add_rom("TVC12_D3.64K", include_bytes!("../../roms/TVC12_D3.64K"));
+        tvc.add_rom("TVC12_D7.64K", include_bytes!("../../roms/TVC12_D7.64K"));
+        tvc.set_fast_boot(true);
+        tvc.reset();
+        tvc
+    }
+
+    fn poke16(tvc: &mut crate::tvc::Tvc, addr: u16, value: u16) {
+        let bytes = value.to_le_bytes();
+        tvc.bus.w8(addr, bytes[0]);
+        tvc.bus.w8(addr.wrapping_add(1), bytes[1]);
+    }
+
+    fn peek16(tvc: &mut crate::tvc::Tvc, addr: u16) -> u16 {
+        u16::from_le_bytes([tvc.bus.r8(addr), tvc.bus.r8(addr.wrapping_add(1))])
+    }
+
+    fn wait_until(
+        tvc: &mut crate::tvc::Tvc,
+        frames: u32,
+        mut pred: impl FnMut(&mut crate::tvc::Tvc) -> bool,
+    ) {
+        for _ in 0..frames {
+            tvc.run_for_a_frame();
+            if pred(tvc) {
+                return;
+            }
+        }
+        let pc = tvc.z80.state.pc;
+        let map = tvc.bus.mmu.get_map_val();
+        let marker = tvc.bus.r8(0x3FFF);
+        panic!(
+            "timeout pc={pc:04X} TEXT={:04X} HIMEM={:04X} map={map:02X} m3fff={marker:02X}",
+            peek16(tvc, 0x1722),
+            peek16(tvc, 0x0B19),
+        );
+    }
+
+    fn type_line(tvc: &mut crate::tvc::Tvc, text: &str) {
+        for ch in text.chars().chain(std::iter::once('\r')) {
+            let code = ch as u32;
+            tvc.key_down(code);
+            if ch != '\r' {
+                tvc.key_press(ch);
+            }
+            for _ in 0..8 {
+                tvc.run_for_a_frame();
+            }
+            tvc.key_up(code);
+            for _ in 0..3 {
+                tvc.run_for_a_frame();
+            }
+        }
+        for _ in 0..40 {
+            tvc.run_for_a_frame();
+        }
     }
 }

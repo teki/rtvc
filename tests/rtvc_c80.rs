@@ -149,3 +149,38 @@ origin = 0x2200
     assert!(text.contains("[[segments]]"));
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn tvc_manifest_loads_basic_from_the_manifest_directory() {
+    let dir = scratch();
+    let src_dir = dir.join("src");
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(
+        src_dir.join("echo.c80"),
+        "@fastcall pub i16 echo(i16 value) { return value; }\n",
+    )
+    .unwrap();
+    fs::write(src_dir.join("main.bas"), "10 LET R=USR(@{math::echo},42)\n").unwrap();
+    fs::write(
+        dir.join("proj.toml"),
+        "target = \"tvc\"\n[basic]\npath = \"src/main.bas\"\norigin = 0x4000\nsize = 0x8000\n[[unit]]\nname = \"math\"\npath = \"src/echo.c80\"\norigin = 0x3000\n",
+    )
+    .unwrap();
+    let cwd = std::env::temp_dir();
+    let out = Command::new(exe())
+        .current_dir(&cwd)
+        .args([
+            "build",
+            dir.join("proj.toml").to_str().unwrap(),
+            "--emit-asm",
+            dir.join("out.asm").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
