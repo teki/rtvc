@@ -572,14 +572,16 @@ directory.
 The C80 compiler is a library under [`src/compiler/`](../src/compiler/), gated
 by the `compiler` feature. Implemented language, leaf codegen, branches,
 scalar globals, calls (register and `@stackcall`), arrays, pointers,
-prefixed strings, multi-unit projects, manual assembly entry, and explicit
-inline `asm` operands are described
+prefixed strings, multi-unit projects, manual assembly entry, explicit
+inline `asm` operands, listing maps, instruction timing, and stack
+provenance are described
 in [C80 Language Reference](c80.md). Generated
 functions are assembled with the existing helper assembler. The host CLI is
 [`rtvc-c80`](../src/bin/rtvc_c80.rs): `rtvc-c80 build INPUT` with
 `--emit-asm`, `--emit-segments` (`rtvc-asm-v1`), and/or `--emit-bin`. Callers
 may also pass owned in-memory snapshots into `compiler::compile` or
-`compiler::project::compile_project`.
+`compiler::project::compile_project`. `CompilationResult::map()` is the
+in-process listing; `--emit-map` is not a CLI flag.
 
 ## Testing and Validation
 

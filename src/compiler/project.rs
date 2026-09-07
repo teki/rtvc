@@ -529,6 +529,7 @@ pub fn compile_project(manifest: &Manifest, units: &[ProjectUnitInput<'_>]) -> C
             param_types: Vec::new(),
             ret: None,
             stack_bound: extra,
+            stack_provenance: super::z80::StackProvenance::Declared,
             frame_bytes: 0,
             instruction_ids: Vec::new(),
             mapped: Vec::new(),

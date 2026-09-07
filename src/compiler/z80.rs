@@ -264,6 +264,8 @@ pub enum Z80Item {
         id: AsmInstructionId,
         op: Z80Op,
         span: SourceSpan,
+        expr: Option<SourceSpan>,
+        synthetic: bool,
         node: Option<NodeId>,
     },
     Data {
@@ -276,6 +278,8 @@ pub enum Z80Item {
         id: AsmInstructionId,
         text: String,
         span: SourceSpan,
+        expr: Option<SourceSpan>,
+        synthetic: bool,
         node: Option<NodeId>,
     },
     Directive {
@@ -327,6 +331,27 @@ pub fn render_items(items: &[Z80Item]) -> String {
     out
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StaticTiming {
+    Exact(u16),
+    Branch { not_taken: u16, taken: u16 },
+    Repeating { continuing: u16, last: u16 },
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MappedKind {
+    Instruction,
+    Data,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StackProvenance {
+    Proven,
+    Declared,
+    Unknown,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MappedInstruction {
     pub id: AsmInstructionId,
@@ -334,6 +359,12 @@ pub struct MappedInstruction {
     pub bytes: Vec<u8>,
     pub text: String,
     pub t_states: Option<&'static str>,
+    pub timing: StaticTiming,
+    pub kind: MappedKind,
+    pub synthetic: bool,
+    pub expression_span: Option<SourceSpan>,
+    pub statement_span: Option<SourceSpan>,
+    pub function: Option<FuncId>,
     pub span: SourceSpan,
     pub node: Option<NodeId>,
 }
@@ -351,6 +382,7 @@ pub struct GeneratedFunction {
     pub param_types: Vec<CType>,
     pub ret: Option<RegHome>,
     pub stack_bound: u16,
+    pub stack_provenance: StackProvenance,
     pub frame_bytes: u16,
     pub instruction_ids: Vec<AsmInstructionId>,
     pub mapped: Vec<MappedInstruction>,
@@ -363,6 +395,7 @@ pub struct GeneratedGlobal {
     pub addr: u16,
     pub size: u16,
     pub ty: super::types::CType,
+    pub span: SourceSpan,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
