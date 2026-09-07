@@ -570,21 +570,24 @@ directory.
 ## C80 Compiler
 
 The C80 compiler is a library under [`src/compiler/`](../src/compiler/), gated
-by the `compiler` feature. Implemented language, leaf codegen, branches,
-scalar globals, calls (register and `@stackcall`), arrays, pointers,
-prefixed strings, packed structs, `for`/`do-while`, compound assignment,
-increment/decrement, multi-unit projects, mixed BASIC/C80 linking, manual
-assembly entry, explicit inline `asm` operands, listing maps, instruction
-timing, and stack provenance are described
+by the `compiler` feature. Implemented language, leaf codegen, branches
+(shortened to `JR` when the displacement fits), scalar globals, calls
+(register and `@stackcall`), arrays, pointers, prefixed strings, packed
+structs, `for`/`do-while`, compound assignment, increment/decrement,
+multi-unit projects, mixed BASIC/C80 linking, manual assembly entry, explicit
+inline `asm` operands, listing maps, instruction timing, stack provenance, and
+provenance-preserving peephole/branch-shortening are described
 in [C80 Language Reference](c80.md). Generated
 functions are assembled with the existing helper assembler. The host CLI is
 [`rtvc-c80`](../src/bin/rtvc_c80.rs): `rtvc-c80 build INPUT` with
-`--emit-asm`, `--emit-segments` (`rtvc-asm-v1`), and/or `--emit-bin`. A TVC
+`--emit-asm`, `--emit-segments` (`rtvc-asm-v1`), and/or `--emit-bin`.
+`--no-optimize` keeps baseline `JP` lowering. A TVC
 manifest may name one `[basic]` file; tokenized BASIC stays in-process
 (`CompilationResult.basic`) and is not a CLI emit flag. Callers
 may also pass owned in-memory snapshots into `compiler::compile` or
 `compiler::project::compile_project`. `CompilationResult::map()` is the
-in-process listing; `--emit-map` is not a CLI flag.
+in-process listing; `--emit-map` is not a CLI flag. The compiler is present on
+native, `cli-tools`, and `wasm-full` builds and absent from lightweight `wasm`.
 
 ## Testing and Validation
 

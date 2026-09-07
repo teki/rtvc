@@ -456,9 +456,9 @@ u8 cont(u8 n) {
     let many = execute_function(code, "count", &[5]).unwrap();
     assert_eq!(many.return_byte(), 5);
     assert!(many.tstates > one.tstates);
-    assert_eq!(zero.tstates, 66);
-    assert_eq!(one.tstates, 127);
-    assert_eq!(many.tstates, 371);
+    assert_eq!(zero.tstates, 48);
+    assert_eq!(one.tstates, 106);
+    assert_eq!(many.tstates, 338);
     assert_eq!(
         execute_function(code, "nest", &[1, 1])
             .unwrap()
@@ -493,7 +493,10 @@ fn long_branches_use_jp_not_jr() {
     let result = compile_ok(&body);
     let text = assembly_of(&result).to_ascii_uppercase();
     assert!(text.contains("JP"), "{text}");
-    assert!(!text.contains("JR"), "{text}");
+    assert!(
+        text.contains("JP ") || text.contains("JP,"),
+        "80 increments must keep a long JP:\n{text}"
+    );
     let code = result.code.as_ref().unwrap();
     assert_eq!(
         execute_function(code, "far", &[0]).unwrap().return_byte(),
@@ -1264,6 +1267,7 @@ u8 dead_local() {
             text: src,
         }],
         origin: 0x9000,
+        optimize: true,
     });
     assert!(!other.has_errors(), "{:?}", other.diagnostics);
     let other_map = other.map().unwrap();
@@ -1622,5 +1626,244 @@ u8 nested_break() {
             .unwrap()
             .return_byte(),
         3
+    );
+}
+
+const OPT_COMPARE_SRC: &str = r#"
+u8 g;
+u8 count(u8 n) {
+    u8 s = 0;
+    while (n != 0) {
+        s = s + 1;
+        n = n - 1;
+    }
+    return s;
+}
+void writes() { g = 1; g = 2; g = 3; }
+u8 poll() { u8 a = g; u8 b = g; return a + b; }
+u8 nest(bool a, bool b) {
+    if (a) {
+        if (b) { return 1; }
+        return 2;
+    }
+    return 3;
+}
+"#;
+
+fn compile_opt(src: &str, optimize: bool) -> CompilationResult {
+    compile(CompileInput {
+        files: vec![SourceInput {
+            name: "test.c80",
+            text: src,
+        }],
+        origin: DEFAULT_CODE_ORIGIN,
+        optimize,
+    })
+}
+
+fn exec_ok(
+    code: &crate::compiler::z80::GeneratedProgram,
+    name: &str,
+    args: &[u16],
+) -> crate::compiler::harness::ExecResult {
+    execute_function(code, name, args).unwrap_or_else(|e| panic!("{name}: {e}"))
+}
+
+fn source_effects(exec: &crate::compiler::harness::ExecResult) -> Vec<(AccessKind, u16, u8)> {
+    exec.data_accesses()
+        .map(|a| (a.kind, a.addr, a.value))
+        .collect()
+}
+
+#[test]
+fn short_branches_become_jr_long_stay_jp() {
+    let short = compile_ok("u8 f(u8 x) { if (x == 0) { return 1; } return 2; }");
+    let short_text = assembly_of(&short).to_ascii_uppercase();
+    assert!(
+        short_text.contains("JR"),
+        "in-range branch should shorten:\n{short_text}"
+    );
+    assert!(
+        !short_text.contains("DJNZ"),
+        "DJNZ is not proven for v1:\n{short_text}"
+    );
+    let code = short.code.as_ref().unwrap();
+    assert_eq!(exec_ok(code, "f", &[0]).return_byte(), 1);
+    assert_eq!(exec_ok(code, "f", &[1]).return_byte(), 2);
+    for mapped in &code.function("f").unwrap().mapped {
+        if mapped.text.to_ascii_uppercase().starts_with("JR") {
+            assert_eq!(
+                mapped.bytes.len(),
+                2,
+                "JR must be 2 bytes: {:?}",
+                mapped.bytes
+            );
+            let disp = mapped.bytes[1] as i8;
+            assert!(
+                (-128..=127).contains(&disp),
+                "JR displacement out of range: {disp}"
+            );
+        }
+    }
+
+    let mut body = String::from("u8 g;\nu8 far(bool c) {\n    if (c) {\n");
+    for _ in 0..80 {
+        body.push_str("        g = g + 1;\n");
+    }
+    body.push_str("    }\n    return g;\n}\n");
+    let far = compile_ok(&body);
+    let far_text = assembly_of(&far).to_ascii_uppercase();
+    assert!(
+        far_text.contains("JP"),
+        "far skip must remain JP:\n{far_text}"
+    );
+}
+
+#[test]
+fn baseline_and_optimized_match_effects_and_improve_cost() {
+    let base = compile_opt(OPT_COMPARE_SRC, false);
+    let opt = compile_opt(OPT_COMPARE_SRC, true);
+    assert!(!base.has_errors(), "{:?}", base.diagnostics);
+    assert!(!opt.has_errors(), "{:?}", opt.diagnostics);
+    let base_code = base.code.as_ref().unwrap();
+    let opt_code = opt.code.as_ref().unwrap();
+    let g = global_addr(base_code, "g");
+    assert_eq!(g, global_addr(opt_code, "g"));
+
+    for n in [0u16, 1, 5, 255] {
+        let b = exec_ok(base_code, "count", &[n]);
+        let o = exec_ok(opt_code, "count", &[n]);
+        assert_eq!(b.return_byte(), o.return_byte(), "count({n})");
+        assert_eq!(b.sp, o.sp, "count({n}) SP");
+        assert_eq!(source_effects(&b), source_effects(&o), "count({n}) effects");
+        assert!(
+            o.tstates <= b.tstates,
+            "count({n}) T-states grew: {} -> {}",
+            b.tstates,
+            o.tstates
+        );
+    }
+    let zero = exec_ok(opt_code, "count", &[0]);
+    let one = exec_ok(opt_code, "count", &[1]);
+    assert_eq!(zero.return_byte(), 0);
+    assert!(
+        zero.insns < 30,
+        "n=0 must not wrap into 256 iterations: insns={}",
+        zero.insns
+    );
+    assert!(zero.tstates < one.tstates);
+
+    let bw = exec_ok(base_code, "writes", &[]);
+    let ow = exec_ok(opt_code, "writes", &[]);
+    assert_eq!(source_effects(&bw), source_effects(&ow));
+    let g_writes: Vec<u8> = ow
+        .data_accesses()
+        .filter(|a| a.kind == AccessKind::DataWrite && a.addr == g)
+        .map(|a| a.value)
+        .collect();
+    assert_eq!(g_writes, [1, 2, 3]);
+
+    let cfg = ExecConfig {
+        scripted_reads: vec![(g, vec![3, 5])],
+        ..ExecConfig::default()
+    };
+    let bp = execute_function_with(base_code, "poll", &[], &cfg).unwrap();
+    let op = execute_function_with(opt_code, "poll", &[], &cfg).unwrap();
+    assert_eq!(bp.return_byte(), 8);
+    assert_eq!(op.return_byte(), 8);
+    assert_eq!(source_effects(&bp), source_effects(&op));
+
+    for args in [[1u16, 1], [1, 0], [0, 1]] {
+        let b = exec_ok(base_code, "nest", &args);
+        let o = exec_ok(opt_code, "nest", &args);
+        assert_eq!(b.return_byte(), o.return_byte(), "nest{args:?}");
+        assert_eq!(b.sp, o.sp);
+        assert_eq!(source_effects(&b), source_effects(&o));
+    }
+
+    let base_count = base_code.function("count").unwrap().size;
+    let opt_count = opt_code.function("count").unwrap().size;
+    let b5 = exec_ok(base_code, "count", &[5]);
+    let o5 = exec_ok(opt_code, "count", &[5]);
+    eprintln!(
+        "count quality: {} -> {} bytes, 5-iter {} -> {} T-states",
+        base_count, opt_count, b5.tstates, o5.tstates
+    );
+    assert!(
+        opt_count <= base_count,
+        "count grew: {base_count} -> {opt_count}"
+    );
+    assert!(
+        !assembly_of(&opt).to_ascii_uppercase().contains("DJNZ"),
+        "{}",
+        assembly_of(&opt)
+    );
+
+    let base_map = base.map().unwrap();
+    let opt_map = opt.map().unwrap();
+    assert!(base_map.symbol("count").is_some());
+    assert!(opt_map.symbol("count").is_some());
+    assert_eq!(base_map.identity.origin, opt_map.identity.origin);
+    for mapped in &opt_code.function("count").unwrap().mapped {
+        assert!(
+            mapped.statement_span.is_some(),
+            "optimized insn lost span: {}",
+            mapped.text
+        );
+    }
+}
+
+#[test]
+fn compile_latency_fixture_completes() {
+    let src = r#"
+struct Sprite { u8 x; u8 y; };
+Sprite cells[8];
+u8 acc;
+void fill(ptr<u8> p, u8 n, u8 v) {
+    while (n != 0) {
+        *p = v;
+        p = p + 1;
+        n = n - 1;
+    }
+}
+void step(ptr<Sprite> p, u8 n) {
+    while (n != 0) {
+        p->x = p->x + 1;
+        p = p + 1;
+        n = n - 1;
+    }
+}
+u8 walk(u8 n) {
+    u8 s = 0;
+    for (u8 i = 0; i < n; i = i + 1) {
+        s = s + 1;
+    }
+    return s;
+}
+u8 choose(u8 x) {
+    if (x == 0) { return 1; }
+    if (x == 1) { return 2; }
+    return 3;
+}
+"#;
+    let start = std::time::Instant::now();
+    const RUNS: u32 = 20;
+    for _ in 0..RUNS {
+        let result = compile_ok(src);
+        let code = result.code.as_ref().unwrap();
+        assert_eq!(exec_ok(code, "choose", &[0]).return_byte(), 1);
+        assert_eq!(exec_ok(code, "choose", &[2]).return_byte(), 3);
+        assert_eq!(exec_ok(code, "walk", &[0]).return_byte(), 0);
+        assert_eq!(exec_ok(code, "walk", &[1]).return_byte(), 1);
+    }
+    let elapsed = start.elapsed();
+    eprintln!(
+        "compile_latency_fixture: {RUNS} compiles in {} ms on {}",
+        elapsed.as_millis(),
+        std::env::consts::OS
+    );
+    assert!(
+        elapsed.as_secs() < 30,
+        "compile latency fixture exceeded 30s: {elapsed:?}"
     );
 }

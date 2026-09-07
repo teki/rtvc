@@ -183,3 +183,17 @@ the BASIC 1.2 integer range before the call.
 **Impact:** Use `-32767` as the BASIC-source negative boundary. `i16` `0x8000`
 remains representable in HL if constructed without that literal.
 **Resolution authority:** implementer (E11); ROM contract unchanged.
+
+## F-017 — Taken `JR` costs more T-states than `JP`; `DJNZ` wraps at zero
+
+**Status:** resolved in E12 (policy)
+**Evidence:** `JR` taken is 12 T-states vs `JP` 10; not-taken `JR` is 7 vs 10.
+Converting backward loop edges or the `JP NZ, body` enter-jump to `JR` grew
+`count(5)` from 371 to 380 T-states. `DJNZ` with `B=0` iterates 256 times, but
+`while (n != 0)` with `n == 0` must iterate zero times.
+**Affected:** E12 branch shortening; T12 loop fixtures
+**Impact:** Collapse `JP cc, then; JP else` to `JP !cc, else` when `then` is
+next, convert only forward conditional `JP` to `JR`, and keep backward/
+unconditional `JP`. Do not emit `DJNZ`.
+**Resolution authority:** implementer (E12); matches design “prefer fewer
+T-states without growing bytes” and the deferred-DJNZ note.

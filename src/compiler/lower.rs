@@ -247,8 +247,15 @@ pub fn lower_program(
     origin: u16,
     ids: &mut IdGen,
     diagnostics: &mut Vec<Diagnostic>,
+    optimize: bool,
 ) -> Option<GeneratedProgram> {
-    let chunks = lower_to_chunks(program, ids, diagnostics)?;
+    let mut chunks = lower_to_chunks(program, ids, diagnostics)?;
+    if optimize {
+        super::optimize::optimize_chunks(&mut chunks, origin, diagnostics);
+        if diagnostics.iter().any(Diagnostic::is_error) {
+            return None;
+        }
+    }
     let (items, assembly) = render_chunks(&chunks);
     let assembled = match assemble_program(&assembly, origin) {
         Ok(assembled) => assembled,
@@ -601,6 +608,13 @@ impl EmitChunk {
         match self {
             Self::Func(p) => &p.items,
             Self::Global(p) => &p.items,
+        }
+    }
+
+    pub(crate) fn items_mut(&mut self) -> &mut Vec<Z80Item> {
+        match self {
+            Self::Func(p) => &mut p.items,
+            Self::Global(p) => &mut p.items,
         }
     }
 

@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use rtvc_core::compiler::project::{
-    ProjectUnitInput, compile_project, contiguous_bytes, is_ascii_ident, parse_manifest,
+    ProjectUnitInput, compile_project_opt, contiguous_bytes, is_ascii_ident, parse_manifest,
     render_rtvc_asm_v1, resolve_manifest_path, write_atomic,
 };
 use rtvc_core::compiler::{
@@ -67,6 +67,7 @@ struct Options {
     emit_asm: Option<PathBuf>,
     emit_segments: Option<PathBuf>,
     emit_bin: Option<PathBuf>,
+    optimize: bool,
 }
 
 fn parse_args(program: &str, args: &[String]) -> Result<Options, String> {
@@ -79,6 +80,7 @@ fn parse_args(program: &str, args: &[String]) -> Result<Options, String> {
     let mut emit_asm = None;
     let mut emit_segments = None;
     let mut emit_bin = None;
+    let mut optimize = true;
     let mut i = 1usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -109,6 +111,9 @@ fn parse_args(program: &str, args: &[String]) -> Result<Options, String> {
                     args.get(i).ok_or("--emit-bin requires a path")?,
                 ));
             }
+            "--no-optimize" => {
+                optimize = false;
+            }
             value if value.starts_with('-') => {
                 return Err(format!("unknown option '{value}'\n\n{}", usage(program)));
             }
@@ -138,6 +143,7 @@ fn parse_args(program: &str, args: &[String]) -> Result<Options, String> {
         emit_asm,
         emit_segments,
         emit_bin,
+        optimize,
     })
 }
 
@@ -202,7 +208,12 @@ fn compile_input(options: &Options) -> Result<CompilationResult, String> {
             }
             None => None,
         };
-        return Ok(compile_project(&manifest, &inputs, basic_text.as_deref()));
+        return Ok(compile_project_opt(
+            &manifest,
+            &inputs,
+            basic_text.as_deref(),
+            options.optimize,
+        ));
     }
     if ext != "c80" {
         return Err("input must be a .c80 file or a .toml manifest".to_string());
@@ -222,6 +233,7 @@ fn compile_input(options: &Options) -> Result<CompilationResult, String> {
             text: &text,
         }],
         origin: options.origin.unwrap_or(DEFAULT_CODE_ORIGIN),
+        optimize: options.optimize,
     });
     if options.origin.is_none() {
         let emits = result
@@ -253,7 +265,7 @@ fn parse_number(value: &str) -> Result<u16, String> {
 fn usage(program: &str) -> String {
     format!(
         "Usage: {program} build INPUT [--target TARGET] [--origin ADDRESS]\n\
-         [--emit-asm PATH] [--emit-segments PATH] [--emit-bin PATH]"
+         [--no-optimize] [--emit-asm PATH] [--emit-segments PATH] [--emit-bin PATH]"
     )
 }
 
