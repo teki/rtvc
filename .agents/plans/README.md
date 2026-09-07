@@ -29,6 +29,8 @@ implementation order, limitations, and focused validation.
 ## Current Plans
 
 - [C80 Compiler and Integrated Source View](c80-compiler.md)
+  ([Terra execution plan](c80-compiler-execution.md),
+  [status](c80-compiler-progress.md), [findings](c80-compiler-findings.md))
 - [Clean Up the `laser-port1` Porting Effort](cleanup-laser-port1.md)
   ([progress](cleanup-laser-port1-progress.md))
 - [Frame History Debugger](frame-history-debugger.md)
