@@ -36,6 +36,9 @@ pub enum DiagCode {
     TyReturnLocalAddr,
     CgUnsupported,
     CgInternal,
+    LnOverlap,
+    LnMissingOrigin,
+    LnStack,
 }
 
 impl DiagCode {
@@ -66,6 +69,9 @@ impl DiagCode {
             Self::TyReturnLocalAddr => "ty-return-local-addr",
             Self::CgUnsupported => "cg-unsupported",
             Self::CgInternal => "cg-internal",
+            Self::LnOverlap => "ln-overlap",
+            Self::LnMissingOrigin => "ln-missing-origin",
+            Self::LnStack => "ln-stack",
         }
     }
 }

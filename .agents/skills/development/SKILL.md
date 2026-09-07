@@ -213,6 +213,16 @@ This skill provides step-by-step instructions and references for compiling, exec
   - Use `-` as the input path to read source from stdin; omit `-o` to write TOML to stdout.
   - In [scripts/rtvc_debug.py](../../../scripts/rtvc_debug.py), use `loadasm helper.toml` to write TOML segments to mapped memory.
 
+- **Compile C80 sources or a project manifest:**
+  ```bash
+  cargo run --bin rtvc-c80 -- build main.c80 --origin 0x8000 --emit-asm out.asm
+  cargo run --bin rtvc-c80 -- build rtvc-c80.toml --emit-segments out.toml
+  ```
+  - `.c80` uses the file stem as the unit name (ASCII identifier). `--origin` is required when the unit emits bytes.
+  - A `.toml` manifest is version 1; paths are relative to the manifest file. `--origin` is invalid on a manifest.
+  - At least one of `--emit-asm`, `--emit-segments`, `--emit-bin` is required. Segment output is `rtvc-asm-v1`. Raw binary requires a contiguous union of emitted ranges.
+  - Diagnostics go to stderr. Exit 0 includes warnings; errors do not replace existing outputs.
+
 - **Compile numbered TVC BASIC source to CAS:**
   ```bash
   cargo run --bin rtvc-basic -- coding/crtc-register-explorer.bas -o target/coding/crtc-register-explorer.cas
@@ -277,9 +287,13 @@ The lightweight web dependency tree should contain `wasm-bindgen` but not cpal, 
 - **Run C80 compiler tests:**
   ```bash
   cargo test --lib --no-default-features --features cli-tools compiler::
+  cargo test --test rtvc_c80 --no-default-features --features cli-tools
+  cargo test --bin rtvc-c80 --no-default-features --features cli-tools
   ```
-  - Requires a non-zero test count. The assembler filter `asm::` also matches
+  - Requires a non-zero `compiler::` test count. The assembler filter `asm::` also matches
     `disasm::`; unique assembler runs use `asm::tests:: -- --skip disasm`.
+  - `tests/rtvc_c80.rs` covers CLI origin/manifest path, compile-error output
+    preservation, and multi-unit `--emit-segments`.
 
 - **Run FUSE tests (1334 tests):**
   These tests are adapted from the FUSE ZX Spectrum emulator test vectors. They are **fast to run** and are the primary validation suite used to verify correctness during active development.

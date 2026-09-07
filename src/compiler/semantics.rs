@@ -7,7 +7,54 @@ use super::source::{NodeId, SourceSpan};
 use super::types::{ArrayElem, ArrayType, CType, PtrType};
 use std::collections::{HashMap, HashSet};
 
+#[derive(Debug, Clone, Copy)]
+pub struct StackLayout {
+    pub base: u16,
+    pub size: u16,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct UnitExports {
+    pub symbols: HashMap<String, ExportedSymbol>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ExportedSymbol {
+    Function {
+        id: FuncId,
+        params: Vec<CType>,
+        conv: CallConv,
+        ret: CType,
+        is_pub: bool,
+    },
+    Value {
+        id: GlobalId,
+        ty: CType,
+        is_pub: bool,
+        is_const: bool,
+        bits: Option<u16>,
+    },
+}
+
+impl ExportedSymbol {
+    fn is_pub(&self) -> bool {
+        match self {
+            Self::Function { is_pub, .. } | Self::Value { is_pub, .. } => *is_pub,
+        }
+    }
+}
+
 pub fn analyze_unit(unit: &TranslationUnit, diagnostics: &mut Vec<Diagnostic>) -> TypedProgram {
+    analyze_unit_in_project(unit, "", None, None, diagnostics).0
+}
+
+pub fn analyze_unit_in_project(
+    unit: &TranslationUnit,
+    unit_name: &str,
+    exports: Option<&HashMap<String, UnitExports>>,
+    stack: Option<StackLayout>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> (TypedProgram, Vec<(String, String, SourceSpan)>) {
     let mut analyzer = Analyzer {
         diagnostics,
         symbols: HashMap::new(),
@@ -18,11 +65,100 @@ pub fn analyze_unit(unit: &TranslationUnit, diagnostics: &mut Vec<Diagnostic>) -
         next_anon: 0,
         anon_globals: Vec::new(),
         str_lens: HashMap::new(),
+        imports: HashSet::new(),
+        unit_name: unit_name.to_string(),
+        exports,
+        stack,
     };
     analyzer.collect(unit);
     let program = analyzer.check_unit(unit);
-    analyzer.check_recursion();
-    program
+    let calls = analyzer.calls.clone();
+    if exports.is_none() {
+        analyzer.check_recursion();
+    }
+    (program, calls)
+}
+
+pub fn collect_exports(unit: &TranslationUnit, diagnostics: &mut Vec<Diagnostic>) -> UnitExports {
+    let mut analyzer = Analyzer {
+        diagnostics,
+        symbols: HashMap::new(),
+        func_ids: HashMap::new(),
+        calls: Vec::new(),
+        next_vreg: 1,
+        next_block: 1,
+        next_anon: 0,
+        anon_globals: Vec::new(),
+        str_lens: HashMap::new(),
+        imports: HashSet::new(),
+        unit_name: String::new(),
+        exports: None,
+        stack: None,
+    };
+    analyzer.collect(unit);
+    let mut symbols = HashMap::new();
+    for (name, sym) in &analyzer.symbols {
+        match &sym.kind {
+            SymbolKind::Function { params, conv } => {
+                symbols.insert(
+                    name.clone(),
+                    ExportedSymbol::Function {
+                        id: FuncId(sym.id),
+                        params: params.clone(),
+                        conv: *conv,
+                        ret: sym.ty,
+                        is_pub: sym.is_pub,
+                    },
+                );
+            }
+            SymbolKind::Global | SymbolKind::Const => {
+                symbols.insert(
+                    name.clone(),
+                    ExportedSymbol::Value {
+                        id: GlobalId(sym.id),
+                        ty: sym.ty,
+                        is_pub: sym.is_pub,
+                        is_const: sym.is_const,
+                        bits: None,
+                    },
+                );
+            }
+        }
+    }
+    UnitExports { symbols }
+}
+
+pub fn apply_const_bits(exports: &mut UnitExports, program: &TypedProgram) {
+    for global in &program.globals {
+        if !global.is_const {
+            continue;
+        }
+        if let Some(ExportedSymbol::Value { bits, .. }) = exports.symbols.get_mut(&global.name) {
+            *bits = global.init;
+        }
+    }
+}
+
+pub fn check_call_graph(calls: &[(String, String, SourceSpan)], diagnostics: &mut Vec<Diagnostic>) {
+    let mut adj: HashMap<String, Vec<(String, SourceSpan)>> = HashMap::new();
+    let mut starts = Vec::new();
+    for (from, to, span) in calls {
+        adj.entry(from.clone())
+            .or_default()
+            .push((to.clone(), *span));
+        if !starts.contains(from) {
+            starts.push(from.clone());
+        }
+    }
+    for start in &starts {
+        if let Some(span) = cycle_from(&adj, start) {
+            diagnostics.push(Diagnostic::error(
+                DiagCode::TyRecursion,
+                span,
+                format!("recursive call graph involving '{start}' is not allowed"),
+            ));
+        }
+    }
 }
 
 struct Symbol {
@@ -32,6 +168,8 @@ struct Symbol {
     #[allow(dead_code)]
     span: SourceSpan,
     is_const: bool,
+    is_pub: bool,
+    const_bits: Option<u16>,
 }
 
 enum SymbolKind {
@@ -44,6 +182,23 @@ enum SymbolKind {
     Const,
 }
 
+enum QSym {
+    Function {
+        id: FuncId,
+        params: Vec<CType>,
+        #[allow(dead_code)]
+        conv: CallConv,
+        ret: CType,
+        qname: String,
+    },
+    Value {
+        id: GlobalId,
+        ty: CType,
+        is_const: bool,
+        bits: Option<u16>,
+    },
+}
+
 struct Analyzer<'a> {
     diagnostics: &'a mut Vec<Diagnostic>,
     symbols: HashMap<String, Symbol>,
@@ -54,6 +209,10 @@ struct Analyzer<'a> {
     next_anon: u32,
     anon_globals: Vec<TypedGlobal>,
     str_lens: HashMap<NodeId, u8>,
+    imports: HashSet<String>,
+    unit_name: String,
+    exports: Option<&'a HashMap<String, UnitExports>>,
+    stack: Option<StackLayout>,
 }
 
 struct FnCtx {
@@ -196,10 +355,12 @@ impl<'a> Analyzer<'a> {
                             id: func.id,
                             span: func.name.span,
                             is_const: false,
+                            is_pub: func.is_pub,
+                            const_bits: None,
                         },
                     );
                     self.func_ids
-                        .insert(func.name.name.clone(), FuncId(func.id));
+                        .insert(self.func_key(&func.name.name), FuncId(func.id));
                 }
                 Item::Decl(decl) => {
                     let mut ty = self.type_of(&decl.ty);
@@ -241,10 +402,44 @@ impl<'a> Analyzer<'a> {
                             id: decl.id,
                             span: decl.name.span,
                             is_const: decl.is_const,
+                            is_pub: decl.is_pub,
+                            const_bits: None,
                         },
                     );
                 }
+                Item::Import(import) => {
+                    if import.name.name == "project" {
+                        self.emit(
+                            DiagCode::TyDuplicateName,
+                            import.name.span,
+                            "namespace 'project' is built-in and cannot be imported",
+                        );
+                    } else if let Some(exports) = self.exports {
+                        if !exports.contains_key(&import.name.name) {
+                            self.emit(
+                                DiagCode::TyUnresolvedName,
+                                import.name.span,
+                                format!("unknown unit '{}'", import.name.name),
+                            );
+                        }
+                    }
+                    if !self.imports.insert(import.name.name.clone()) {
+                        self.emit(
+                            DiagCode::TyDuplicateName,
+                            import.name.span,
+                            format!("duplicate import '{}'", import.name.name),
+                        );
+                    }
+                }
             }
+        }
+    }
+
+    fn func_key(&self, name: &str) -> String {
+        if self.unit_name.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}::{name}", self.unit_name)
         }
     }
 
@@ -262,6 +457,7 @@ impl<'a> Analyzer<'a> {
                     functions.push(self.check_function(func));
                     globals.extend(self.anon_globals.drain(..));
                 }
+                Item::Import(_) => {}
             }
         }
         TypedProgram { globals, functions }
@@ -373,6 +569,11 @@ impl<'a> Analyzer<'a> {
         } else {
             Some(0)
         };
+        if decl.is_const {
+            if let Some(sym) = self.symbols.get_mut(&decl.name.name) {
+                sym.const_bits = init;
+            }
+        }
         Some(TypedGlobal {
             id: GlobalId(decl.id),
             name: decl.name.name.clone(),
@@ -768,6 +969,7 @@ impl<'a> Analyzer<'a> {
         let value = match &expr.kind {
             ExprKind::Error => return None,
             ExprKind::Name(name) => self.check_name(ctx, name)?,
+            ExprKind::Qualified { unit, name } => self.check_qualified(ctx, unit, name)?,
             ExprKind::Int(lit) => self.check_int(ctx, expr.span, lit.value, false, expected)?,
             ExprKind::Char(b) => {
                 let ty = expected.filter(|t| t.is_integer()).unwrap_or(CType::U8);
@@ -973,9 +1175,11 @@ impl<'a> Analyzer<'a> {
                 matches!(sym.kind, SymbolKind::Function { .. }),
                 sym.ty,
                 sym.id,
+                sym.is_const,
+                sym.const_bits,
             )
         });
-        if let Some((is_fn, ty, id)) = global {
+        if let Some((is_fn, ty, id, is_const, const_bits)) = global {
             if is_fn {
                 self.emit(
                     DiagCode::TyMismatch,
@@ -994,6 +1198,17 @@ impl<'a> Analyzer<'a> {
                     ),
                 );
                 return None;
+            }
+            if is_const {
+                let Some(bits) = const_bits else {
+                    self.emit(
+                        DiagCode::TyMismatch,
+                        name.span,
+                        format!("const '{}' has no compile-time value", name.name),
+                    );
+                    return None;
+                };
+                return Some(self.const_val(ctx, ty, bits, name.span));
             }
             let dst = self.vreg();
             if ty == CType::Str {
@@ -1027,6 +1242,193 @@ impl<'a> Analyzer<'a> {
             format!("unresolved name '{}'", name.name),
         );
         None
+    }
+
+    fn check_qualified(&mut self, ctx: &mut FnCtx, unit: &Ident, name: &Ident) -> Option<Value> {
+        match self.lookup_qualified(unit, name)? {
+            QSym::Function { qname, .. } => {
+                self.emit(
+                    DiagCode::TyMismatch,
+                    name.span,
+                    format!("'{qname}' is a function"),
+                );
+                None
+            }
+            QSym::Value {
+                id,
+                ty,
+                is_const,
+                bits,
+            } => {
+                if matches!(ty, CType::Array(_)) {
+                    self.emit(
+                        DiagCode::TyMismatch,
+                        name.span,
+                        format!(
+                            "array '{}::{}' does not decay to a pointer; use &{}::{}[0]",
+                            unit.name, name.name, unit.name, name.name
+                        ),
+                    );
+                    return None;
+                }
+                if is_const {
+                    let Some(bits) = bits else {
+                        self.emit(
+                            DiagCode::TyMismatch,
+                            name.span,
+                            format!(
+                                "const '{}::{}' has no compile-time value",
+                                unit.name, name.name
+                            ),
+                        );
+                        return None;
+                    };
+                    return Some(self.const_val(ctx, ty, bits, name.span));
+                }
+                let dst = self.vreg();
+                if ty == CType::Str {
+                    self.emit_op(
+                        ctx,
+                        IrOp::AddrGlobal {
+                            dst,
+                            global: id,
+                            span: name.span,
+                        },
+                    );
+                } else {
+                    self.emit_op(
+                        ctx,
+                        IrOp::LoadGlobal {
+                            dst,
+                            global: id,
+                            span: name.span,
+                        },
+                    );
+                }
+                Some(Value {
+                    ty,
+                    reg: dst,
+                    bits: None,
+                })
+            }
+        }
+    }
+
+    fn lookup_qualified(&mut self, unit: &Ident, name: &Ident) -> Option<QSym> {
+        if unit.name == "project" {
+            return self.lookup_project(name);
+        }
+        if !self.imports.contains(&unit.name) {
+            self.emit(
+                DiagCode::TyUnresolvedName,
+                unit.span,
+                format!("'{}' is not imported", unit.name),
+            );
+            return None;
+        }
+        let Some(exports) = self.exports else {
+            self.emit(
+                DiagCode::TyUnresolvedName,
+                name.span,
+                format!("unresolved name '{}::{}'", unit.name, name.name),
+            );
+            return None;
+        };
+        let Some(unit_ex) = exports.get(&unit.name) else {
+            self.emit(
+                DiagCode::TyUnresolvedName,
+                unit.span,
+                format!("unknown unit '{}'", unit.name),
+            );
+            return None;
+        };
+        let Some(sym) = unit_ex.symbols.get(&name.name) else {
+            self.emit(
+                DiagCode::TyUnresolvedName,
+                name.span,
+                format!("unresolved name '{}::{}'", unit.name, name.name),
+            );
+            return None;
+        };
+        if !sym.is_pub() {
+            self.emit(
+                DiagCode::TyUnresolvedName,
+                name.span,
+                format!("'{}::{}' is private", unit.name, name.name),
+            );
+            return None;
+        }
+        Some(match sym {
+            ExportedSymbol::Function {
+                id,
+                params,
+                conv,
+                ret,
+                ..
+            } => QSym::Function {
+                id: *id,
+                params: params.clone(),
+                conv: *conv,
+                ret: *ret,
+                qname: format!("{}::{}", unit.name, name.name),
+            },
+            ExportedSymbol::Value {
+                id,
+                ty,
+                is_const,
+                bits,
+                ..
+            } => QSym::Value {
+                id: *id,
+                ty: *ty,
+                is_const: *is_const,
+                bits: *bits,
+            },
+        })
+    }
+
+    fn lookup_project(&mut self, name: &Ident) -> Option<QSym> {
+        let Some(stack) = self.stack else {
+            self.emit(
+                DiagCode::TyUnresolvedName,
+                name.span,
+                "project stack is not configured",
+            );
+            return None;
+        };
+        let base = u32::from(stack.base);
+        let size = u32::from(stack.size);
+        let end = base + size;
+        let bits = match name.name.as_str() {
+            "stack_base" => stack.base,
+            "stack_size" => stack.size,
+            "stack_top" => (end % 65536) as u16,
+            "stack_end" => {
+                if end == 65536 {
+                    self.emit(
+                        DiagCode::TyLiteralRange,
+                        name.span,
+                        "project::stack_end is 65536 and is not a u16 value",
+                    );
+                    return None;
+                }
+                end as u16
+            }
+            _ => {
+                self.emit(
+                    DiagCode::TyUnresolvedName,
+                    name.span,
+                    format!("unknown project builtin '{}'", name.name),
+                );
+                return None;
+            }
+        };
+        Some(QSym::Value {
+            id: GlobalId(NodeId(0)),
+            ty: CType::U16,
+            is_const: true,
+            bits: Some(bits),
+        })
     }
 
     fn check_unary(
@@ -1215,6 +1617,34 @@ impl<'a> Analyzer<'a> {
                 })
             } else {
                 None
+            }
+        } else if let ExprKind::Qualified { unit, name } = &base.kind {
+            match self.lookup_qualified(unit, name) {
+                None => return None,
+                Some(QSym::Value {
+                    id,
+                    ty: CType::Array(arr),
+                    ..
+                }) => {
+                    known_len = Some(u32::from(arr.len));
+                    let addr = self.vreg();
+                    self.emit_op(
+                        ctx,
+                        IrOp::AddrGlobal {
+                            dst: addr,
+                            global: id,
+                            span: name.span,
+                        },
+                    );
+                    Some(Value {
+                        ty: PtrType::of(arr.elem.to_ctype())
+                            .map(CType::Ptr)
+                            .unwrap_or(CType::Void),
+                        reg: addr,
+                        bits: None,
+                    })
+                }
+                Some(_) => None,
             }
         } else {
             None
@@ -1434,6 +1864,61 @@ impl<'a> Analyzer<'a> {
                 );
                 None
             }
+            ExprKind::Qualified { unit, name } => match self.lookup_qualified(unit, name)? {
+                QSym::Function { qname, .. } => {
+                    self.emit(
+                        DiagCode::TyNotLvalue,
+                        span,
+                        format!("cannot take the address of function '{qname}'"),
+                    );
+                    None
+                }
+                QSym::Value {
+                    id, ty, is_const, ..
+                } => {
+                    if is_const {
+                        self.emit(
+                            DiagCode::TyNotLvalue,
+                            span,
+                            "cannot take the address of a constant",
+                        );
+                        return None;
+                    }
+                    if matches!(ty, CType::Array(_)) {
+                        self.emit(
+                            DiagCode::TyMismatch,
+                            span,
+                            format!(
+                                "cannot take the address of array '{}::{}'; use &{}::{}[0]",
+                                unit.name, name.name, unit.name, name.name
+                            ),
+                        );
+                        return None;
+                    }
+                    let Some(ptr_ty) = PtrType::of(ty).map(CType::Ptr) else {
+                        self.emit(
+                            DiagCode::TyMismatch,
+                            span,
+                            format!("cannot take the address of {}", ty.as_str()),
+                        );
+                        return None;
+                    };
+                    let dst = self.vreg();
+                    self.emit_op(
+                        ctx,
+                        IrOp::AddrGlobal {
+                            dst,
+                            global: id,
+                            span,
+                        },
+                    );
+                    Some(Value {
+                        ty: ptr_ty,
+                        reg: dst,
+                        bits: None,
+                    })
+                }
+            },
             ExprKind::String(_) => {
                 self.emit(
                     DiagCode::TyNotLvalue,
@@ -1852,6 +2337,56 @@ impl<'a> Analyzer<'a> {
             );
             return Some(val);
         }
+        if let ExprKind::Qualified { unit, name } = &lhs.kind {
+            match self.lookup_qualified(unit, name)? {
+                QSym::Function { qname, .. } => {
+                    self.emit(
+                        DiagCode::TyNotLvalue,
+                        lhs.span,
+                        format!("cannot assign to function '{qname}'"),
+                    );
+                    return None;
+                }
+                QSym::Value {
+                    id, ty, is_const, ..
+                } => {
+                    if is_const {
+                        self.emit(
+                            DiagCode::TyAssignConst,
+                            lhs.span,
+                            format!("cannot assign to const '{}::{}'", unit.name, name.name),
+                        );
+                        return None;
+                    }
+                    if matches!(ty, CType::Array(_)) {
+                        self.emit(
+                            DiagCode::TyNotLvalue,
+                            lhs.span,
+                            "cannot assign to an array as a whole",
+                        );
+                        return None;
+                    }
+                    if ty == CType::Str {
+                        self.emit(
+                            DiagCode::TyAssignConst,
+                            lhs.span,
+                            "cannot replace an owned str global",
+                        );
+                        return None;
+                    }
+                    let val = self.check_expr(ctx, rhs, Some(ty))?;
+                    self.emit_op(
+                        ctx,
+                        IrOp::StoreGlobal {
+                            global: id,
+                            src: val.reg,
+                            span,
+                        },
+                    );
+                    return Some(val);
+                }
+            }
+        }
         let ExprKind::Name(name) = &lhs.kind else {
             self.emit(
                 DiagCode::TyNotLvalue,
@@ -1943,40 +2478,64 @@ impl<'a> Analyzer<'a> {
         args: &[Expr],
         span: SourceSpan,
     ) -> Option<Value> {
-        let ExprKind::Name(name) = &callee.kind else {
-            self.emit(
-                DiagCode::TyMismatch,
-                callee.span,
-                "calls require a function name",
-            );
-            return None;
+        let (func_name, func_id, params, ret, callee_key) = match &callee.kind {
+            ExprKind::Name(name) => {
+                let Some(sym) = self.symbols.get(&name.name) else {
+                    self.emit(
+                        DiagCode::TyUnresolvedName,
+                        name.span,
+                        format!("unresolved name '{}'", name.name),
+                    );
+                    return None;
+                };
+                let SymbolKind::Function { params, conv: _ } = &sym.kind else {
+                    self.emit(
+                        DiagCode::TyMismatch,
+                        name.span,
+                        format!("'{}' is not a function", name.name),
+                    );
+                    return None;
+                };
+                (
+                    name.name.clone(),
+                    FuncId(sym.id),
+                    params.clone(),
+                    sym.ty,
+                    self.func_key(&name.name),
+                )
+            }
+            ExprKind::Qualified { unit, name } => match self.lookup_qualified(unit, name)? {
+                QSym::Function {
+                    id,
+                    params,
+                    ret,
+                    qname,
+                    ..
+                } => (qname.clone(), id, params, ret, qname),
+                QSym::Value { .. } => {
+                    self.emit(
+                        DiagCode::TyMismatch,
+                        name.span,
+                        format!("'{}::{}' is not a function", unit.name, name.name),
+                    );
+                    return None;
+                }
+            },
+            _ => {
+                self.emit(
+                    DiagCode::TyMismatch,
+                    callee.span,
+                    "calls require a function name",
+                );
+                return None;
+            }
         };
-        let Some(sym) = self.symbols.get(&name.name) else {
-            self.emit(
-                DiagCode::TyUnresolvedName,
-                name.span,
-                format!("unresolved name '{}'", name.name),
-            );
-            return None;
-        };
-        let SymbolKind::Function { params, conv: _ } = &sym.kind else {
-            self.emit(
-                DiagCode::TyMismatch,
-                name.span,
-                format!("'{}' is not a function", name.name),
-            );
-            return None;
-        };
-        let params = params.clone();
-        let ret = sym.ty;
-        let func_id = FuncId(sym.id);
         if params.len() != args.len() {
             self.emit(
                 DiagCode::TyMismatch,
                 span,
                 format!(
-                    "function '{}' takes {} argument(s), found {}",
-                    name.name,
+                    "function '{func_name}' takes {} argument(s), found {}",
                     params.len(),
                     args.len()
                 ),
@@ -1989,7 +2548,8 @@ impl<'a> Analyzer<'a> {
                 arg_regs.push(val.reg);
             }
         }
-        self.calls.push((ctx.name.clone(), name.name.clone(), span));
+        self.calls
+            .push((self.func_key(&ctx.name), callee_key, span));
         let dst = if ret == CType::Void {
             None
         } else {

@@ -20,6 +20,7 @@ rfd = { version = "0.15", optional = true }
 ureq = { version = "3.3", optional = true }
 zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
+toml = { version = "0.8", optional = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0", optional = true }
 web-sys = { version = "0.3", features = ["Window", "Document", "HtmlElement", "HtmlAnchorElement", "HtmlCanvasElement", "Blob", "Url", "Storage", "BlobPropertyBag", "console"], optional = true }
@@ -34,7 +35,7 @@ winres = "0.1"
 
 [features]
 default = ["native"]
-compiler = []
+compiler = ["dep:toml", "dep:serde"]
 native = ["dep:cpal", "dep:egui", "dep:eframe", "dep:egui_dock", "dep:png", "dep:image", "dep:rfd", "dep:ureq", "dep:zip", "dep:serde", "dep:serde_json", "compiler"]
 cli-tools = ["dep:serde_json", "compiler"]
 wasm = ["dep:wasm-bindgen"]
@@ -80,6 +81,11 @@ name = "rtvc-disasm"
 path = "src/bin/rtvc_disasm.rs"
 
 [[bin]]
+name = "rtvc-c80"
+path = "src/bin/rtvc_c80.rs"
+required-features = ["compiler"]
+
+[[bin]]
 name = "zx82"
 path = "src/bin/zx82_main.rs"
 required-features = ["native"]
@@ -91,6 +97,11 @@ path = "src/bin/rtvc_dsk.rs"
 [[bin]]
 name = "rtvc-tap2toml"
 path = "src/bin/rtvc_tap2toml.rs"
+
+[[test]]
+name = "rtvc_c80"
+path = "tests/rtvc_c80.rs"
+required-features = ["compiler"]
 
 [profile.release]
 lto = true
