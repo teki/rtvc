@@ -701,3 +701,249 @@ fn recursion_still_rejected_with_calls_enabled() {
     );
     assert!(result.code.is_none());
 }
+
+#[test]
+fn data_only_unit_keeps_declaration_order() {
+    let result = compile_ok(
+        r#"
+u8 frame_counter;
+u8 positions[16];
+str enemy_name = "hello world";
+"#,
+    );
+    let code = result.code.as_ref().unwrap();
+    let origin = code.assembled.origin;
+    let frame = code.global("frame_counter").unwrap();
+    let positions = code.global("positions").unwrap();
+    let name = code.global("enemy_name").unwrap();
+    assert_eq!(frame.addr, origin);
+    assert_eq!(frame.size, 1);
+    assert_eq!(positions.addr, origin.wrapping_add(1));
+    assert_eq!(positions.size, 16);
+    assert_eq!(name.addr, origin.wrapping_add(17));
+    assert_eq!(name.size, 12);
+    let start = (name.addr.wrapping_sub(origin)) as usize;
+    assert_eq!(&code.assembled.bytes[start..start + 12], b"\x0Bhello world");
+}
+
+#[test]
+fn pointer_deref_and_index_execute() {
+    let result = compile_ok(
+        r#"
+u8 cell;
+u8 get(ptr<u8> p) { return *p; }
+void set(ptr<u8> p, u8 v) { *p = v; }
+u8 at(ptr<u8> p, u8 i) { return p[i]; }
+"#,
+    );
+    let code = result.code.as_ref().unwrap();
+    let cell = code.global("cell").unwrap().addr;
+    let got = execute_function_with(
+        code,
+        "get",
+        &[cell],
+        &ExecConfig {
+            initial_mem: vec![(cell, 9)],
+            ..ExecConfig::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(got.return_byte(), 9);
+    let set = execute_function(code, "set", &[cell, 4]).unwrap();
+    assert_eq!(set.ix, 0x1111);
+    let at = execute_function_with(
+        code,
+        "at",
+        &[cell, 0],
+        &ExecConfig {
+            initial_mem: vec![(cell, 7)],
+            ..ExecConfig::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(at.return_byte(), 7);
+}
+
+#[test]
+fn global_array_index_and_store() {
+    let result = compile_ok(
+        r#"
+u8 positions[4];
+u8 get(u8 i) { return positions[i]; }
+void set(u8 i, u8 v) { positions[i] = v; }
+"#,
+    );
+    let code = result.code.as_ref().unwrap();
+    let base = code.global("positions").unwrap().addr;
+    execute_function(code, "set", &[2, 9]).unwrap();
+    let got = execute_function_with(
+        code,
+        "get",
+        &[2],
+        &ExecConfig {
+            initial_mem: vec![(base.wrapping_add(2), 9)],
+            ..ExecConfig::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(got.return_byte(), 9);
+}
+
+#[test]
+fn pointer_aliases_local_and_global() {
+    let result = compile_ok(
+        r#"
+u8 g;
+u8 alias() {
+    u8 x = 1;
+    ptr<u8> p = &x;
+    ptr<u8> q = &g;
+    *p = 4;
+    *q = 5;
+    return x;
+}
+"#,
+    );
+    let code = result.code.as_ref().unwrap();
+    let g = code.global("g").unwrap().addr;
+    let out = execute_function(code, "alias", &[]).unwrap();
+    assert_eq!(out.return_byte(), 4);
+    assert!(
+        out.data_accesses()
+            .any(|a| a.kind == AccessKind::DataWrite && a.addr == g && a.value == 5),
+        "{:?}",
+        out.data_accesses().collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ordered_word_then_byte_pointer_accesses() {
+    let result = compile_ok(
+        r#"
+u16 cell;
+void store(ptr<u16> p, u16 v) { *p = v; }
+u8 low(ptr<u8> p) { return *p; }
+"#,
+    );
+    let code = result.code.as_ref().unwrap();
+    let cell = code.global("cell").unwrap().addr;
+    let store = execute_function(code, "store", &[cell, 0x0201]).unwrap();
+    let data_writes: Vec<_> = store
+        .data_accesses()
+        .filter(|a| {
+            a.kind == AccessKind::DataWrite && (a.addr == cell || a.addr == cell.wrapping_add(1))
+        })
+        .collect();
+    assert_eq!(data_writes.len(), 2, "{data_writes:?}");
+    assert_eq!(data_writes[0].addr, cell);
+    assert_eq!(data_writes[0].value, 0x01);
+    assert_eq!(data_writes[1].addr, cell.wrapping_add(1));
+    assert_eq!(data_writes[1].value, 0x02);
+}
+
+#[test]
+fn pointer_index_wraps_in_16bit_space() {
+    let result = compile_ok("u8 at(ptr<u8> p) { return p[1]; }");
+    let code = result.code.as_ref().unwrap();
+    let got = execute_function_with(
+        code,
+        "at",
+        &[0xFFFF],
+        &ExecConfig {
+            initial_mem: vec![(0x0000, 42)],
+            ..ExecConfig::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(got.return_byte(), 42);
+}
+
+#[test]
+fn prefixed_strings_and_len() {
+    let empty = compile_ok(r#"str empty = ""; u8 n() { return empty.len; }"#);
+    let code = empty.code.as_ref().unwrap();
+    let g = code.global("empty").unwrap();
+    assert_eq!(g.size, 1);
+    let start = (g.addr.wrapping_sub(code.assembled.origin)) as usize;
+    assert_eq!(code.assembled.bytes[start], 0);
+    assert_eq!(execute_function(code, "n", &[]).unwrap().return_byte(), 0);
+
+    let hello = compile_ok(
+        r#"
+str s = "hi";
+u8 n() { return s.len; }
+u8 ch() { return s[1]; }
+u8 lit(str t) { return t.len; }
+u8 pass() { return lit("xy"); }
+"#,
+    );
+    let code = hello.code.as_ref().unwrap();
+    assert_eq!(execute_function(code, "n", &[]).unwrap().return_byte(), 2);
+    assert_eq!(
+        execute_function(code, "ch", &[]).unwrap().return_byte(),
+        b'i'
+    );
+    assert_eq!(
+        execute_function(code, "pass", &[]).unwrap().return_byte(),
+        2
+    );
+    let text = assembly_of(&hello).to_ascii_uppercase();
+    assert!(
+        text.contains("RET"),
+        "string payload must follow a returning function, got {text}"
+    );
+
+    let payload = "A".repeat(255);
+    let src = format!(r#"str s = "{payload}"; u8 n() {{ return s.len; }}"#);
+    let long = compile_ok(&src);
+    assert_eq!(
+        execute_function(long.code.as_ref().unwrap(), "n", &[])
+            .unwrap()
+            .return_byte(),
+        255
+    );
+}
+
+#[test]
+fn buffer_fill_pointer_walk_stays_in_registers() {
+    let result = compile_ok(
+        r#"
+u8 buf[8];
+void fill(ptr<u8> p, u8 n, u8 v) {
+    while (n != 0) {
+        *p = v;
+        p = p + 1;
+        n = n - 1;
+    }
+}
+u8 get(u8 i) { return buf[i]; }
+"#,
+    );
+    let text = assembly_of(&result).to_ascii_uppercase();
+    assert!(!text.contains("IX"), "{text}");
+    assert!(!text.contains("PUSH"), "{text}");
+    let code = result.code.as_ref().unwrap();
+    let base = code.global("buf").unwrap().addr;
+    let filled = execute_function(code, "fill", &[base, 8, 7]).unwrap();
+    for i in 0u16..8 {
+        assert!(
+            filled
+                .data_accesses()
+                .any(|a| a.kind == AccessKind::DataWrite
+                    && a.addr == base.wrapping_add(i)
+                    && a.value == 7),
+            "missing write at {i}: {:?}",
+            filled.data_accesses().collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn array_name_does_not_decay() {
+    let result = compile_source("test.c80", "u8 a[2]; ptr<u8> f() { return a; }");
+    assert!(
+        codes(&result).contains(&"ty-mismatch"),
+        "{:?}",
+        codes(&result)
+    );
+}

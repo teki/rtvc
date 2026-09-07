@@ -209,7 +209,14 @@ impl TokenKind {
     pub fn is_type_start(self) -> bool {
         matches!(
             self,
-            Self::Void | Self::Bool | Self::U8 | Self::I8 | Self::U16 | Self::I16
+            Self::Void
+                | Self::Bool
+                | Self::U8
+                | Self::I8
+                | Self::U16
+                | Self::I16
+                | Self::Ptr
+                | Self::Str
         )
     }
 }

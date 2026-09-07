@@ -8,7 +8,7 @@ use super::ir::{
     TypedProgram, VReg,
 };
 use super::source::{FileId, IdGen, NodeId, SourceSpan};
-use super::types::CType;
+use super::types::{CType, PtrType};
 use super::z80::{
     AluSrc, AsmInstructionId, Cc, GeneratedFunction, GeneratedGlobal, GeneratedProgram,
     MappedInstruction, R8, RegHome, Rr, Z80Item, Z80Op, asm_block_label, asm_global_label,
@@ -426,15 +426,25 @@ fn fill_stack_bounds(chunks: &mut [EmitChunk]) {
 fn lower_global(global: &TypedGlobal, ids: &mut IdGen) -> Result<GlobalPart, Diagnostic> {
     let label = asm_global_label(global.id, &global.name);
     let bits = global.init.unwrap_or(0);
-    let text = match global.ty.byte_width() {
-        Some(1) => format!("DB {}", bits as u8),
-        Some(2) => format!("DW {bits}"),
-        _ => {
-            return Err(Diagnostic::error(
-                DiagCode::CgUnsupported,
-                global.span,
-                format!("cannot emit global '{}'", global.name),
-            ));
+    let text = if !global.extra.is_empty() {
+        let bytes = global
+            .extra
+            .iter()
+            .map(|b| b.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("DB {bytes}")
+    } else {
+        match global.ty.byte_width() {
+            Some(1) => format!("DB {}", bits as u8),
+            Some(2) => format!("DW {bits}"),
+            _ => {
+                return Err(Diagnostic::error(
+                    DiagCode::CgUnsupported,
+                    global.span,
+                    format!("cannot emit global '{}'", global.name),
+                ));
+            }
         }
     };
     let mut items = Vec::new();
@@ -493,7 +503,12 @@ fn lower_function(
     let live_across = live_across_any_call(func, &vreg_last, &local_last);
     let spill_bytes = max_call_spill_bytes(func, &vreg_last, &local_last);
     let pressure = !fits_stable_registers(func, func.conv);
-    let uses_ix = func.conv == CallConv::Stack || live_across || spill_bytes > 0 || pressure;
+    let needs_addr = func
+        .blocks
+        .iter()
+        .any(|b| b.ops.iter().any(|op| matches!(op, IrOp::AddrLocal { .. })));
+    let uses_ix =
+        func.conv == CallConv::Stack || live_across || spill_bytes > 0 || pressure || needs_addr;
     let stable = func.blocks.len() > 1 || uses_ix;
     let mut lowerer = Lowerer {
         func,
@@ -673,6 +688,9 @@ fn locals_needing_frame(
     let mut i = 0usize;
     for block in &func.blocks {
         for op in &block.ops {
+            if let IrOp::AddrLocal { local, .. } = op {
+                need.insert(*local);
+            }
             if matches!(op, IrOp::Call { .. }) {
                 for id in &assigned {
                     if local_last.get(id).is_some_and(|&last| last > i) {
@@ -680,7 +698,7 @@ fn locals_needing_frame(
                     }
                 }
             }
-            if let IrOp::StoreLocal { local, .. } = op {
+            if let IrOp::StoreLocal { local, .. } | IrOp::AddrLocal { local, .. } = op {
                 assigned.insert(*local);
             }
             i += 1;
@@ -733,6 +751,10 @@ fn vreg_use_count(func: &TypedFunction, v: VReg) -> usize {
                     usize::from(*lhs == v) + usize::from(*rhs == v)
                 }
                 IrOp::StoreLocal { src, .. } | IrOp::StoreGlobal { src, .. } if *src == v => 1,
+                IrOp::LoadIndirect { ptr, .. } if *ptr == v => 1,
+                IrOp::StoreIndirect { ptr, src, .. } if *ptr == v || *src == v => {
+                    usize::from(*ptr == v) + usize::from(*src == v)
+                }
                 IrOp::Branch { cond, .. } if *cond == v => 1,
                 IrOp::Return {
                     value: Some(src), ..
@@ -786,10 +808,22 @@ fn liveness_fn(func: &TypedFunction) -> (HashMap<VReg, usize>, HashMap<LocalId, 
                     vreg_last.insert(*src, i);
                     local_last.insert(*local, i);
                 }
-                IrOp::LoadGlobal { dst, .. } => {
+                IrOp::LoadGlobal { dst, .. } | IrOp::AddrGlobal { dst, .. } => {
                     vreg_last.insert(*dst, i);
                 }
+                IrOp::AddrLocal { dst, local, .. } => {
+                    vreg_last.insert(*dst, i);
+                    local_last.insert(*local, i);
+                }
                 IrOp::StoreGlobal { src, .. } => {
+                    vreg_last.insert(*src, i);
+                }
+                IrOp::LoadIndirect { dst, ptr, .. } => {
+                    vreg_last.insert(*ptr, i);
+                    vreg_last.insert(*dst, i);
+                }
+                IrOp::StoreIndirect { ptr, src, .. } => {
+                    vreg_last.insert(*ptr, i);
                     vreg_last.insert(*src, i);
                 }
                 IrOp::Branch { cond, .. } => {
@@ -1342,6 +1376,10 @@ impl Lowerer<'_> {
             IrOp::LoadGlobal { dst, global, span } => {
                 self.lower_load_global(*dst, *global, *span)?
             }
+            IrOp::AddrGlobal { dst, global, span } => {
+                self.lower_addr_global(*dst, *global, *span)?
+            }
+            IrOp::AddrLocal { dst, local, span } => self.lower_addr_local(*dst, *local, *span)?,
             IrOp::StoreGlobal { global, src, span } => {
                 self.lower_store_global(*global, *src, *span)?
             }
@@ -1351,6 +1389,12 @@ impl Lowerer<'_> {
                 args,
                 span,
             } => self.lower_call(*dst, *func, args, *span)?,
+            IrOp::LoadIndirect { dst, ptr, ty, span } => {
+                self.lower_load_indirect(*dst, *ptr, *ty, *span)?
+            }
+            IrOp::StoreIndirect { ptr, src, ty, span } => {
+                self.lower_store_indirect(*ptr, *src, *ty, *span)?
+            }
         }
         Ok(())
     }
@@ -1531,6 +1575,12 @@ impl Lowerer<'_> {
     ) -> Result<(), Diagnostic> {
         match op {
             IrBinary::Add => {
+                if let Loc::Imm16(n) = self.loc_of(rhs, span)? {
+                    self.ensure_hl(lhs, span)?;
+                    self.add_hl_imm(n, span)?;
+                    self.bind_vreg(dst, Loc::Word(Rr::Hl), ty);
+                    return Ok(());
+                }
                 if matches!(self.loc_of(lhs, span)?, Loc::Word(Rr::De))
                     && matches!(self.loc_of(rhs, span)?, Loc::Word(Rr::Hl))
                 {
@@ -1598,6 +1648,55 @@ impl Lowerer<'_> {
             _ => return Err(self.error(span, "unsupported word operator in this increment")),
         }
         Ok(())
+    }
+
+    fn add_hl_imm(&mut self, n: u16, span: SourceSpan) -> Result<(), Diagnostic> {
+        match n {
+            0 => Ok(()),
+            1 => {
+                self.emit(Z80Op::IncHl, span);
+                Ok(())
+            }
+            2 => {
+                self.emit(Z80Op::IncHl, span);
+                self.emit(Z80Op::IncHl, span);
+                Ok(())
+            }
+            _ => {
+                self.claim_r8(R8::A, None, span)?;
+                self.emit(
+                    Z80Op::Ld8 {
+                        dst: R8::A,
+                        src: R8::L,
+                    },
+                    span,
+                );
+                self.emit(Z80Op::AddA(AluSrc::Imm(n as u8)), span);
+                self.emit(
+                    Z80Op::Ld8 {
+                        dst: R8::L,
+                        src: R8::A,
+                    },
+                    span,
+                );
+                self.emit(
+                    Z80Op::Ld8 {
+                        dst: R8::A,
+                        src: R8::H,
+                    },
+                    span,
+                );
+                self.emit(Z80Op::AdcA(AluSrc::Imm((n >> 8) as u8)), span);
+                self.emit(
+                    Z80Op::Ld8 {
+                        dst: R8::H,
+                        src: R8::A,
+                    },
+                    span,
+                );
+                Ok(())
+            }
+        }
     }
 
     fn lower_cast(
@@ -2264,6 +2363,166 @@ impl Lowerer<'_> {
         _span: SourceSpan,
     ) -> Result<(), Diagnostic> {
         self.bind_vreg(dst, Loc::Byte(R8::A), CType::Bool);
+        Ok(())
+    }
+
+    fn lower_load_indirect(
+        &mut self,
+        dst: VReg,
+        ptr: VReg,
+        ty: CType,
+        span: SourceSpan,
+    ) -> Result<(), Diagnostic> {
+        self.ensure_hl(ptr, span)?;
+        match ty.byte_width() {
+            Some(1) => {
+                self.claim_r8(R8::A, Some(Key::V(ptr)), span)?;
+                self.emit(Z80Op::LdHl(R8::A), span);
+                self.bind_vreg(dst, Loc::Byte(R8::A), ty);
+            }
+            Some(2) => {
+                self.claim_r8(R8::A, Some(Key::V(ptr)), span)?;
+                self.emit(Z80Op::LdHl(R8::A), span);
+                self.emit(Z80Op::IncHl, span);
+                self.claim_r8(R8::H, Some(Key::V(ptr)), span)?;
+                self.emit(Z80Op::LdHl(R8::H), span);
+                self.emit(
+                    Z80Op::Ld8 {
+                        dst: R8::L,
+                        src: R8::A,
+                    },
+                    span,
+                );
+                self.bind_vreg(dst, Loc::Word(Rr::Hl), ty);
+            }
+            _ => return Err(self.error(span, "cannot load this type from a pointer")),
+        }
+        Ok(())
+    }
+
+    fn lower_store_indirect(
+        &mut self,
+        ptr: VReg,
+        src: VReg,
+        ty: CType,
+        span: SourceSpan,
+    ) -> Result<(), Diagnostic> {
+        match ty.byte_width() {
+            Some(1) => {
+                self.ensure_a(src, span)?;
+                self.ensure_hl(ptr, span)?;
+                self.emit(Z80Op::StHl(R8::A), span);
+            }
+            Some(2) => {
+                self.ensure_in_rr(src, Rr::De, span)?;
+                self.ensure_hl(ptr, span)?;
+                self.emit(
+                    Z80Op::Ld8 {
+                        dst: R8::A,
+                        src: R8::E,
+                    },
+                    span,
+                );
+                self.emit(Z80Op::StHl(R8::A), span);
+                self.emit(Z80Op::IncHl, span);
+                self.emit(
+                    Z80Op::Ld8 {
+                        dst: R8::A,
+                        src: R8::D,
+                    },
+                    span,
+                );
+                self.emit(Z80Op::StHl(R8::A), span);
+            }
+            _ => return Err(self.error(span, "cannot store this type through a pointer")),
+        }
+        Ok(())
+    }
+
+    fn lower_addr_global(
+        &mut self,
+        dst: VReg,
+        global: GlobalId,
+        span: SourceSpan,
+    ) -> Result<(), Diagnostic> {
+        let (symbol, ty) = self
+            .globals
+            .get(&global)
+            .cloned()
+            .ok_or_else(|| self.error(span, "unknown global"))?;
+        self.claim_rr(Rr::Hl, None, span)?;
+        self.emit(
+            Z80Op::Ld16Sym {
+                dst: Rr::Hl,
+                symbol,
+            },
+            span,
+        );
+        let result_ty = match ty {
+            CType::Array(a) => PtrType::of(a.elem.to_ctype()).map(CType::Ptr).unwrap_or(ty),
+            CType::Str => CType::Str,
+            other => PtrType::of(other).map(CType::Ptr).unwrap_or(CType::U16),
+        };
+        self.bind_vreg(dst, Loc::Word(Rr::Hl), result_ty);
+        Ok(())
+    }
+
+    fn lower_addr_local(
+        &mut self,
+        dst: VReg,
+        local: LocalId,
+        span: SourceSpan,
+    ) -> Result<(), Diagnostic> {
+        let loc = *self
+            .local_loc
+            .get(&local)
+            .ok_or_else(|| self.error(span, "addressable local has no home"))?;
+        let Loc::Frame { disp, .. } = loc else {
+            return Err(self.error(span, "addressable local is not in the IX frame"));
+        };
+        self.claim_rr(Rr::Hl, None, span)?;
+        self.emit(Z80Op::PushIx, span);
+        self.emit(Z80Op::Pop(Rr::Hl), span);
+        if disp != 0 {
+            self.claim_r8(R8::A, None, span)?;
+            self.emit(
+                Z80Op::Ld8 {
+                    dst: R8::A,
+                    src: R8::L,
+                },
+                span,
+            );
+            self.emit(Z80Op::AddA(AluSrc::Imm(disp as u8)), span);
+            self.emit(
+                Z80Op::Ld8 {
+                    dst: R8::L,
+                    src: R8::A,
+                },
+                span,
+            );
+            self.emit(
+                Z80Op::Ld8 {
+                    dst: R8::A,
+                    src: R8::H,
+                },
+                span,
+            );
+            let high = if disp < 0 { 0xFF } else { 0 };
+            self.emit(Z80Op::AdcA(AluSrc::Imm(high)), span);
+            self.emit(
+                Z80Op::Ld8 {
+                    dst: R8::H,
+                    src: R8::A,
+                },
+                span,
+            );
+        }
+        let elem = *self
+            .local_ty
+            .get(&local)
+            .ok_or_else(|| self.error(span, "addressable local has no type"))?;
+        let ty = PtrType::of(elem).map(CType::Ptr).unwrap_or(CType::U16);
+        self.bind_vreg(dst, Loc::Word(Rr::Hl), ty);
         Ok(())
     }
 

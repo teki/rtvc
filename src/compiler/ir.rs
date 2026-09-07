@@ -34,6 +34,7 @@ pub struct TypedGlobal {
     pub is_pub: bool,
     pub is_const: bool,
     pub init: Option<u16>,
+    pub extra: Vec<u8>,
     pub span: SourceSpan,
 }
 
@@ -117,9 +118,31 @@ pub enum IrOp {
         global: GlobalId,
         span: SourceSpan,
     },
+    AddrGlobal {
+        dst: VReg,
+        global: GlobalId,
+        span: SourceSpan,
+    },
+    AddrLocal {
+        dst: VReg,
+        local: LocalId,
+        span: SourceSpan,
+    },
     StoreGlobal {
         global: GlobalId,
         src: VReg,
+        span: SourceSpan,
+    },
+    LoadIndirect {
+        dst: VReg,
+        ptr: VReg,
+        ty: CType,
+        span: SourceSpan,
+    },
+    StoreIndirect {
+        ptr: VReg,
+        src: VReg,
+        ty: CType,
         span: SourceSpan,
     },
     Call {

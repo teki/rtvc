@@ -10,7 +10,7 @@ pub struct Ident {
     pub span: SourceSpan,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeKind {
     Void,
     Bool,
@@ -18,6 +18,8 @@ pub enum TypeKind {
     I8,
     U16,
     I16,
+    Str,
+    Ptr(Box<TypeExpr>),
 }
 
 impl TypeKind {
@@ -29,18 +31,21 @@ impl TypeKind {
             TokenKind::I8 => Self::I8,
             TokenKind::U16 => Self::U16,
             TokenKind::I16 => Self::I16,
+            TokenKind::Str => Self::Str,
             _ => return None,
         })
     }
 
-    pub fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> String {
         match self {
-            Self::Void => "void",
-            Self::Bool => "bool",
-            Self::U8 => "u8",
-            Self::I8 => "i8",
-            Self::U16 => "u16",
-            Self::I16 => "i16",
+            Self::Void => "void".to_string(),
+            Self::Bool => "bool".to_string(),
+            Self::U8 => "u8".to_string(),
+            Self::I8 => "i8".to_string(),
+            Self::U16 => "u16".to_string(),
+            Self::I16 => "i16".to_string(),
+            Self::Str => "str".to_string(),
+            Self::Ptr(inner) => format!("ptr<{}>", inner.kind.as_str()),
         }
     }
 }
@@ -104,6 +109,7 @@ pub struct VarDecl {
     pub is_const: bool,
     pub ty: TypeExpr,
     pub name: Ident,
+    pub array_len: Option<Expr>,
     pub init: Option<Expr>,
 }
 
@@ -213,6 +219,8 @@ pub enum UnaryOp {
     Minus,
     Not,
     BitNot,
+    Deref,
+    AddrOf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

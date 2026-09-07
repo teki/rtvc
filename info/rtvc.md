@@ -571,7 +571,8 @@ directory.
 
 The C80 compiler is a library under [`src/compiler/`](../src/compiler/), gated
 by the `compiler` feature. Implemented language, leaf codegen, branches,
-scalar globals, and calls (register and `@stackcall`) are described in
+scalar globals, calls (register and `@stackcall`), arrays, pointers, and
+prefixed strings are described in
 [C80 Language Reference](c80.md). Generated
 functions are assembled with the existing helper assembler; there is no
 `rtvc-c80` CLI yet. Callers pass owned in-memory source snapshots into

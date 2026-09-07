@@ -140,6 +140,7 @@ pub enum Z80Op {
     Ld8Imm { dst: R8, imm: u8 },
     Ld8 { dst: R8, src: R8 },
     Ld16Imm { dst: Rr, imm: u16 },
+    Ld16Sym { dst: Rr, symbol: String },
     AddA(AluSrc),
     Sub(AluSrc),
     And(AluSrc),
@@ -148,6 +149,7 @@ pub enum Z80Op {
     Cp(AluSrc),
     AddHl(Rr),
     SbcA(AluSrc),
+    AdcA(AluSrc),
     SbcHl(Rr),
     Cpl,
     Neg,
@@ -173,6 +175,9 @@ pub enum Z80Op {
     Ld8Ix { dst: R8, disp: i8 },
     St8Ix { src: R8, disp: i8 },
     Ld8IxImm { disp: i8, imm: u8 },
+    LdHl(R8),
+    StHl(R8),
+    IncHl,
     Rla,
 }
 
@@ -183,6 +188,7 @@ impl Z80Op {
             Self::Ld8Imm { dst, imm } => format!("LD {},{}", dst.name(), imm),
             Self::Ld8 { dst, src } => format!("LD {},{}", dst.name(), src.name()),
             Self::Ld16Imm { dst, imm } => format!("LD {},{}", dst.name(), imm),
+            Self::Ld16Sym { dst, symbol } => format!("LD {},{}", dst.name(), symbol),
             Self::AddA(src) => format!("ADD A,{}", alu_src(src)),
             Self::Sub(src) => format!("SUB {}", alu_src(src)),
             Self::And(src) => format!("AND {}", alu_src(src)),
@@ -191,6 +197,7 @@ impl Z80Op {
             Self::Cp(src) => format!("CP {}", alu_src(src)),
             Self::AddHl(src) => format!("ADD HL,{}", src.name()),
             Self::SbcA(src) => format!("SBC A,{}", alu_src(src)),
+            Self::AdcA(src) => format!("ADC A,{}", alu_src(src)),
             Self::SbcHl(src) => format!("SBC HL,{}", src.name()),
             Self::Cpl => "CPL".to_string(),
             Self::Neg => "NEG".to_string(),
@@ -220,6 +227,9 @@ impl Z80Op {
             Self::Ld8Ix { dst, disp } => format!("LD {},{}", dst.name(), ix_addr(*disp)),
             Self::St8Ix { src, disp } => format!("LD {},{}", ix_addr(*disp), src.name()),
             Self::Ld8IxImm { disp, imm } => format!("LD {},{imm}", ix_addr(*disp)),
+            Self::LdHl(r) => format!("LD {},(HL)", r.name()),
+            Self::StHl(r) => format!("LD (HL),{}", r.name()),
+            Self::IncHl => "INC HL".to_string(),
             Self::Rla => "RLA".to_string(),
         }
     }
