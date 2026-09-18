@@ -1,0 +1,37 @@
+// Scalar types, wrapping arithmetic, casts, and sizeof.
+// Integer operators need the same type after contextual literal typing.
+// There is no implicit promotion and no *, /, or %.
+
+const u16 LIMIT = 255;
+
+u8 wrap_add() {
+    return 255 + 1;
+}
+
+i8 signed_min() {
+    return -128;
+}
+
+u16 widen(u8 x) {
+    return u16(x);
+}
+
+u8 narrow(u16 x) {
+    return u8(x);
+}
+
+bool nonzero(u8 x) {
+    return bool(x);
+}
+
+u16 sizes() {
+    return sizeof(u8) + sizeof(i16) + sizeof(bool);
+}
+
+u16 limit() {
+    return LIMIT;
+}
+
+u8 mask(u8 x) {
+    return x & 0x0F;
+}

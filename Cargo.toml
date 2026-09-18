@@ -1,6 +1,11 @@
+[workspace]
+members = [".", "c80"]
+default-members = ["."]
+exclude = ["xtask"]
+
 [package]
 name = "rtvc"
-version = "0.8.6"
+version = "0.8.7"
 edition = "2024"
 license = "MIT"
 autobins = false
@@ -35,11 +40,11 @@ winres = "0.1"
 
 [features]
 default = ["native"]
-compiler = ["dep:toml", "dep:serde"]
-native = ["dep:cpal", "dep:egui", "dep:eframe", "dep:egui_dock", "dep:png", "dep:image", "dep:rfd", "dep:ureq", "dep:zip", "dep:serde", "dep:serde_json", "compiler"]
-cli-tools = ["dep:serde_json", "compiler"]
+asm-toml = ["dep:toml"]
+native = ["dep:cpal", "dep:egui", "dep:eframe", "dep:egui_dock", "dep:png", "dep:image", "dep:rfd", "dep:ureq", "dep:zip", "dep:serde", "dep:serde_json", "asm-toml"]
+cli-tools = ["dep:serde_json", "asm-toml"]
 wasm = ["dep:wasm-bindgen"]
-wasm-full = ["dep:wasm-bindgen", "dep:egui", "dep:eframe", "dep:egui_dock", "dep:png", "dep:image", "dep:rfd", "dep:zip", "dep:serde", "dep:serde_json", "dep:web-sys", "dep:js-sys", "dep:wasm-bindgen-futures", "dep:web-time", "compiler"]
+wasm-full = ["dep:wasm-bindgen", "dep:egui", "dep:eframe", "dep:egui_dock", "dep:png", "dep:image", "dep:rfd", "dep:zip", "dep:serde", "dep:serde_json", "dep:web-sys", "dep:js-sys", "dep:wasm-bindgen-futures", "dep:web-time"]
 web-vid-simple = []
 web-vid-realistic = []
 
@@ -81,11 +86,6 @@ name = "rtvc-disasm"
 path = "src/bin/rtvc_disasm.rs"
 
 [[bin]]
-name = "rtvc-c80"
-path = "src/bin/rtvc_c80.rs"
-required-features = ["compiler"]
-
-[[bin]]
 name = "zx82"
 path = "src/bin/zx82_main.rs"
 required-features = ["native"]
@@ -97,11 +97,6 @@ path = "src/bin/rtvc_dsk.rs"
 [[bin]]
 name = "rtvc-tap2toml"
 path = "src/bin/rtvc_tap2toml.rs"
-
-[[test]]
-name = "rtvc_c80"
-path = "tests/rtvc_c80.rs"
-required-features = ["compiler"]
 
 [profile.release]
 lto = true

@@ -7,7 +7,7 @@ use super::z80::{
     AsmInstructionId, GeneratedFunction, GeneratedGlobal, GeneratedProgram, MappedInstruction,
     MappedKind, StackProvenance, StaticTiming,
 };
-use crate::asm::AssembledProgram;
+use rtvc_core::asm::AssembledProgram;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 

@@ -275,6 +275,23 @@ pub fn basic_copy_modes(source: &str) -> Vec<BasicCopyMode> {
     modes
 }
 
+/// Byte length of a tokenized program including the final `00H`, if `bytes`
+/// begins with a well-formed BASIC payload. Extra trailing data is ignored.
+pub fn tokenized_program_len(bytes: &[u8]) -> Option<usize> {
+    let mut offset = 0;
+    while offset < bytes.len() {
+        let len = bytes[offset] as usize;
+        if len == 0 {
+            return Some(offset + 1);
+        }
+        if len < 4 || offset + len > bytes.len() || bytes[offset + len - 1] != 0xFF {
+            return None;
+        }
+        offset += len;
+    }
+    None
+}
+
 /// Reconstruct numbered BASIC source from a tokenized program payload.
 pub fn detokenize_program(bytes: &[u8]) -> Result<String, BasicError> {
     let mut out = String::new();

@@ -1,0 +1,3 @@
+# Isolate crate checks so C80 errors do not fail the emulator package.
+[check]
+workspace = false

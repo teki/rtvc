@@ -1,0 +1,13 @@
+import sizes;
+
+pub u8 inc(u8 x) {
+    return x + 1;
+}
+
+pub u16 canvas() {
+    return sizes::WIDTH;
+}
+
+pub u16 stack_top() {
+    return project::stack_top;
+}

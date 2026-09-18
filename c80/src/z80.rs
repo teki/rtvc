@@ -4,7 +4,7 @@ use super::ast::CallConv;
 use super::ir::FuncId;
 use super::source::{NodeId, SourceSpan};
 use super::types::CType;
-use crate::asm::AssembledProgram;
+use rtvc_core::asm::AssembledProgram;
 use std::fmt::Write;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -198,6 +198,13 @@ pub enum Z80Op {
     StHl(R8),
     IncHl,
     Rla,
+    InImm { port: u8 },
+    OutImm { port: u8 },
+    InC,
+    OutC,
+    Di,
+    Ei,
+    Ldir,
 }
 
 impl Z80Op {
@@ -256,6 +263,13 @@ impl Z80Op {
             Self::StHl(r) => format!("LD (HL),{}", r.name()),
             Self::IncHl => "INC HL".to_string(),
             Self::Rla => "RLA".to_string(),
+            Self::InImm { port } => format!("IN A,({port})"),
+            Self::OutImm { port } => format!("OUT ({port}),A"),
+            Self::InC => "IN A,(C)".to_string(),
+            Self::OutC => "OUT (C),A".to_string(),
+            Self::Di => "DI".to_string(),
+            Self::Ei => "EI".to_string(),
+            Self::Ldir => "LDIR".to_string(),
         }
     }
 }

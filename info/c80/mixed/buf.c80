@@ -1,0 +1,48 @@
+// Shared 16-byte buffer BASIC can PEEK/POKE at @{buf::cells}.
+// USR passes one integer in HL; fill uses the low byte as the stored value.
+
+pub const u16 COUNT = 16;
+pub u8 cells[16];
+
+@fastcall pub i16 fill(i16 value) {
+    u8 v;
+    ptr<u8> p;
+    u8 n;
+    v = u8(value);
+    p = &cells[0];
+    n = 16;
+    while (n != 0) {
+        *p = v;
+        p = p + 1;
+        n = n - 1;
+    }
+    return value;
+}
+
+@fastcall pub i16 sum(i16 unused) {
+    ptr<u8> p;
+    u8 n;
+    u16 s;
+    p = &cells[0];
+    n = 16;
+    s = 0;
+    while (n != 0) {
+        s = s + u16(*p);
+        p = p + 1;
+        n = n - 1;
+    }
+    return i16(s);
+}
+
+@fastcall pub i16 bump(i16 unused) {
+    ptr<u8> p;
+    u8 n;
+    p = &cells[0];
+    n = 16;
+    while (n != 0) {
+        *p = *p + 1;
+        p = p + 1;
+        n = n - 1;
+    }
+    return i16(cells[0]);
+}

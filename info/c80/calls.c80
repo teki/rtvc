@@ -1,0 +1,31 @@
+// Default calls use the register ABI (@fastcall is an alias).
+// Word args: HL, DE, BC. Byte args then take A, C, B, … skipping used halves.
+// Byte results return in A; words in HL. Recursion is rejected.
+
+u8 id(u8 x) {
+    return x;
+}
+
+u8 add8(u8 a, u8 b) {
+    return a + b;
+}
+
+u16 add16(u16 a, u16 b) {
+    return a + b;
+}
+
+u8 nest(u8 x) {
+    return add8(x, id(1));
+}
+
+u16 swapped(u16 a, u16 b) {
+    return add16(b, a);
+}
+
+@fastcall u8 tagged(u8 x) {
+    return x + 1;
+}
+
+u8 use_tagged(u8 x) {
+    return tagged(x);
+}

@@ -213,10 +213,13 @@ Az opcionális gyors befecskendezési útvonal egy emulátoros kényelmi funkci�
 2. beállítja a `0xB0` leképezést, hogy a RAM-ot az összes CPU ablakon keresztül láthatóvá tegye;
 3. kihagyja a 144 bájtos CAS fejlécet;
 4. a hasznos adatot a `0x19EF` BASIC programcímre másolja;
-5. visszaállítja az előző leképezést.
+5. ha a hasznos adat tokenizált BASIC programmal kezdődik, beállítja a `TEXT`/`CHAIN`/`TOP`
+   mutatókat (`1722H`/`1724H`/`1726H`), hogy a `LIST` és a `RUN` lássa a programot;
+6. visszaállítja az előző leképezést.
 
-A felhasználói felület `RUN`-t javasol a befecskendezés után. Sok gépi kódú program tartalmaz egy
-kis BASIC betöltőt, amely a `0x1B00` közelében hív kódot.
+Nem nulla CAS autostart bájt esetén a `-i` / `--inject` a befecskendezés után begépeli a `RUN`-t,
+ugyanúgy, mint a Gamebase. A Tape menü Inject művelete a promptnál hagy. Sok gépi kódú program
+tartalmaz egy kis BASIC betöltőt, amely a `0x1B00` közelében hív kódot.
 
 ### Floppy és archívumok
 
@@ -262,11 +265,14 @@ A memóriabeli sorformátumot és a tokenizálási szabályokat a
 
 ## Parancssori CAS-konverter
 
-Az `rtvc-tocas input.bas helper.asm` egy vagy több `.bas` és `.asm` forrást
-fordít melléjük írt `.cas` fájlokká. A `.bas` bemenetek az `rtvc-basic`, az
-`.asm` bemenetek az `rtvc-asm --format cas` útvonalát használják. A kimenet
-a forrás útvonala `.cas` kiterjesztéssel. Az egyéb kiterjesztésű fájlokat
-kiírja és kihagyja.
+Az `rtvc-tocas input.bas helper.asm program.toml` egy vagy több `.bas`, `.asm`
+és `rtvc-asm-v1` TOML forrást fordít melléjük írt `.cas` fájlokká. A `.bas`
+bemenetek az `rtvc-basic`, az `.asm` bemenetek az `rtvc-asm --format cas`
+útvonalát használják. A TOML szegmenseket cím szerint rendezi, `19EFH`-tól
+a legmagasabb kizáró végéig lapítja, a hézagokat nullával tölti. Az első
+szegmens tokenizált BASIC program vagy indító stub `19EFH`-n; a `4000H`-ra
+helyezett BASIC nem kazetta. A kimenet a forrás útvonala `.cas`
+kiterjesztéssel. Az egyéb kiterjesztésű fájlokat kiírja és kihagyja.
 
 ## ROM betöltés és gyors rendszerindítás
 

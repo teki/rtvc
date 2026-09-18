@@ -1,0 +1,23 @@
+// cpu:: builtins. No import. in:/out: stay asm operand keywords.
+
+u8 read_device(u8 port) {
+    return cpu::in(port);
+}
+
+void write_device(u8 port, u8 value) {
+    cpu::out(port, value);
+}
+
+void write_pair(u8 port, u8 lo, u8 hi) {
+    cpu::out(port, lo);
+    cpu::out(port + 1, hi);
+}
+
+void copy_block(ptr<u8> src, ptr<u8> dst, u16 n) {
+    cpu::ldir(src, dst, n);
+}
+
+void ints() {
+    cpu::di();
+    cpu::ei();
+}

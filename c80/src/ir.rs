@@ -152,6 +152,28 @@ pub enum IrOp {
         args: Vec<VReg>,
         span: SourceSpan,
     },
+    PortIn {
+        dst: VReg,
+        port: VReg,
+        span: SourceSpan,
+    },
+    PortOut {
+        port: VReg,
+        value: VReg,
+        span: SourceSpan,
+    },
+    Di {
+        span: SourceSpan,
+    },
+    Ei {
+        span: SourceSpan,
+    },
+    Ldir {
+        hl: VReg,
+        de: VReg,
+        bc: VReg,
+        span: SourceSpan,
+    },
     InlineAsm {
         inputs: Vec<(AsmGpr, VReg)>,
         outputs: Vec<IrAsmOutput>,

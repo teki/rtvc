@@ -1,0 +1,6 @@
+// USR passes the integer argument in HL and reads the result from HL.
+// @fastcall is the default register ABI; a single i16 uses HL.
+
+@fastcall pub i16 echo(i16 value) {
+    return value;
+}

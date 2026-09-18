@@ -1,9 +1,9 @@
 use super::*;
-use crate::asm::assemble_line;
-use crate::bus::FakeBus;
-use crate::compiler::abi::{assign_params, return_home};
-use crate::compiler::harness::{AccessKind, ExecConfig, execute_function, execute_function_with};
-use crate::disasm::disassemble_at;
+use rtvc_core::asm::assemble_line;
+use rtvc_core::bus::FakeBus;
+use crate::abi::{assign_params, return_home};
+use crate::harness::{AccessKind, ExecConfig, execute_function, execute_function_with};
+use rtvc_core::disasm::disassemble_at;
 
 fn compile_ok(src: &str) -> CompilationResult {
     let result = compile_source("test.c80", src);
@@ -96,7 +96,7 @@ fn byte_identity_is_ret() {
     for x in [0u16, 1, 127, 128, 255] {
         let exec = execute_function(result.code.as_ref().unwrap(), "id", &[x]).unwrap();
         assert_eq!(exec.return_byte(), x as u8, "id({x})");
-        assert_eq!(exec.sp, crate::compiler::harness::DEFAULT_SP);
+        assert_eq!(exec.sp, crate::harness::DEFAULT_SP);
         assert_eq!(exec.ix, 0x1111);
         assert_eq!(exec.iy, 0x2222);
         assert_eq!(exec.tstates, 10);
@@ -137,7 +137,7 @@ fn word_add_is_add_hl_de() {
         let exec = execute_function(result.code.as_ref().unwrap(), "add", &[a, b]).unwrap();
         assert_eq!(exec.return_word(), expect, "add({a:#06x},{b:#06x})");
         assert_eq!(exec.tstates, 21);
-        assert_eq!(exec.sp, crate::compiler::harness::DEFAULT_SP);
+        assert_eq!(exec.sp, crate::harness::DEFAULT_SP);
         assert_eq!(exec.ix, 0x1111);
     }
 }
@@ -550,8 +550,8 @@ u8 poll() { u8 a = g; u8 b = g; return a + b; }
     assert_eq!(g_reads.len(), 2, "{g_reads:?}");
 }
 
-fn assert_ix_iy_sp(exec: &crate::compiler::harness::ExecResult) {
-    assert_eq!(exec.sp, crate::compiler::harness::DEFAULT_SP);
+fn assert_ix_iy_sp(exec: &crate::harness::ExecResult) {
+    assert_eq!(exec.sp, crate::harness::DEFAULT_SP);
     assert_eq!(exec.ix, 0x1111);
     assert_eq!(exec.iy, 0x2222);
 }
@@ -1268,6 +1268,7 @@ u8 dead_local() {
         }],
         origin: 0x9000,
         optimize: true,
+        target: C80Target::GenericZ80,
     });
     assert!(!other.has_errors(), "{:?}", other.diagnostics);
     let other_map = other.map().unwrap();
@@ -1658,18 +1659,19 @@ fn compile_opt(src: &str, optimize: bool) -> CompilationResult {
         }],
         origin: DEFAULT_CODE_ORIGIN,
         optimize,
+        target: C80Target::GenericZ80,
     })
 }
 
 fn exec_ok(
-    code: &crate::compiler::z80::GeneratedProgram,
+    code: &crate::z80::GeneratedProgram,
     name: &str,
     args: &[u16],
-) -> crate::compiler::harness::ExecResult {
+) -> crate::harness::ExecResult {
     execute_function(code, name, args).unwrap_or_else(|e| panic!("{name}: {e}"))
 }
 
-fn source_effects(exec: &crate::compiler::harness::ExecResult) -> Vec<(AccessKind, u16, u8)> {
+fn source_effects(exec: &crate::harness::ExecResult) -> Vec<(AccessKind, u16, u8)> {
     exec.data_accesses()
         .map(|a| (a.kind, a.addr, a.value))
         .collect()
@@ -1865,5 +1867,437 @@ u8 choose(u8 x) {
     assert!(
         elapsed.as_secs() < 30,
         "compile latency fixture exceeded 30s: {elapsed:?}"
+    );
+}
+
+fn compile_target(src: &str, target: C80Target) -> CompilationResult {
+    let result = compile(CompileInput {
+        files: vec![SourceInput {
+            name: "test.c80",
+            text: src,
+        }],
+        origin: DEFAULT_CODE_ORIGIN,
+        optimize: true,
+        target,
+    });
+    assert!(!result.has_errors(), "{:?}\n{src}", result.diagnostics);
+    result
+}
+
+fn port_trace(exec: &crate::harness::ExecResult) -> Vec<(AccessKind, u16, u8, u8)> {
+    exec.data_accesses()
+        .filter(|a| matches!(a.kind, AccessKind::PortIn | AccessKind::PortOut))
+        .map(|a| (a.kind, a.addr, a.value, a.high))
+        .collect()
+}
+
+#[test]
+fn port_io_tvc_immediate_and_dynamic() {
+    let src = r#"
+void imm_out() { cpu::out(0x06, 0x80); }
+u8 imm_in() { return cpu::in(0x58); }
+u8 dyn(u8 port, u8 value) {
+    cpu::out(port, value);
+    return cpu::in(port);
+}
+u8 nested(u8 p, u8 q) {
+    cpu::out(p, cpu::in(q));
+    return 0;
+}
+void disc() { cpu::in(0x12); }
+void twice() { cpu::out(1, 1); cpu::out(1, 1); }
+u8 keep(u8 x) { cpu::out(6, 1); return x; }
+bool skip(bool cond) { return cond && (cpu::in(1) != 0); }
+u8 poll() {
+    u8 v;
+    v = cpu::in(0x59);
+    while ((v & 0x10) != 0) {
+        v = cpu::in(0x59);
+    }
+    return v;
+}
+"#;
+    let tvc = compile_target(src, C80Target::Tvc);
+    let asm = assembly_of(&tvc).to_ascii_uppercase();
+    assert!(asm.contains("OUT (6),A"), "{asm}");
+    assert!(asm.contains("IN A,(88)"), "{asm}");
+    assert!(
+        !tvc.code
+            .as_ref()
+            .unwrap()
+            .function("imm_out")
+            .unwrap()
+            .mapped
+            .iter()
+            .any(|m| m.text.to_ascii_uppercase().contains("OUT (C)")),
+        "{asm}"
+    );
+    assert_eq!(func_bytes(&tvc, "imm_out"), [0x3E, 0x80, 0xD3, 0x06, 0xC9]);
+    assert_eq!(func_bytes(&tvc, "imm_in"), [0xDB, 0x58, 0xC9]);
+    let mapped = tvc.code.as_ref().unwrap().function("imm_out").unwrap();
+    assert!(
+        mapped
+            .mapped
+            .iter()
+            .any(|m| m.text.to_ascii_uppercase().contains("OUT (6),A")
+                && m.t_states.is_some()
+                && m.statement_span.is_some()),
+        "{:?}",
+        mapped.mapped
+    );
+
+    let code = tvc.code.as_ref().unwrap();
+    let imm = execute_function(code, "imm_out", &[]).unwrap();
+    assert!(
+        port_trace(&imm)
+            .iter()
+            .any(|a| a.0 == AccessKind::PortOut && a.1 == 6 && a.2 == 0x80),
+        "{:?}",
+        imm.accesses
+    );
+
+    let din = execute_function_with(
+        code,
+        "imm_in",
+        &[],
+        &ExecConfig {
+            scripted_ports: vec![(0x58, vec![0xA5])],
+            ..ExecConfig::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(din.return_byte(), 0xA5);
+
+    let dynamic = execute_function_with(
+        code,
+        "dyn",
+        &[0x12, 7],
+        &ExecConfig {
+            scripted_ports: vec![(0x12, vec![42])],
+            ..ExecConfig::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(dynamic.return_byte(), 42);
+    let ports = port_trace(&dynamic);
+    assert!(
+        ports
+            .iter()
+            .any(|a| a.0 == AccessKind::PortOut && a.1 == 0x12 && a.2 == 7),
+        "{ports:?}"
+    );
+    assert!(
+        ports
+            .iter()
+            .any(|a| a.0 == AccessKind::PortIn && a.1 == 0x12 && a.2 == 42),
+        "{ports:?}"
+    );
+
+    let nested = execute_function_with(
+        code,
+        "nested",
+        &[0x20, 0x21],
+        &ExecConfig {
+            scripted_ports: vec![(0x21, vec![9])],
+            ..ExecConfig::default()
+        },
+    )
+    .unwrap();
+    let nports = port_trace(&nested);
+    assert_eq!(nports[0], (AccessKind::PortIn, 0x21, 9, nports[0].3));
+    assert_eq!(nports[1], (AccessKind::PortOut, 0x20, 9, nports[1].3));
+
+    let disc = execute_function_with(
+        code,
+        "disc",
+        &[],
+        &ExecConfig {
+            scripted_ports: vec![(0x12, vec![1])],
+            ..ExecConfig::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        port_trace(&disc)
+            .iter()
+            .any(|a| a.0 == AccessKind::PortIn && a.1 == 0x12),
+        "{:?}",
+        disc.accesses
+    );
+
+    let twice = execute_function(code, "twice", &[]).unwrap();
+    let tports: Vec<_> = port_trace(&twice)
+        .into_iter()
+        .filter(|a| a.0 == AccessKind::PortOut)
+        .collect();
+    assert_eq!(tports.len(), 2, "{tports:?}");
+
+    let keep = execute_function(code, "keep", &[42]).unwrap();
+    assert_eq!(keep.return_byte(), 42);
+
+    let skipped = execute_function(code, "skip", &[0]).unwrap();
+    assert!(port_trace(&skipped).is_empty(), "{:?}", skipped.accesses);
+    let taken = execute_function_with(
+        code,
+        "skip",
+        &[1],
+        &ExecConfig {
+            scripted_ports: vec![(1, vec![0])],
+            ..ExecConfig::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        port_trace(&taken)
+            .iter()
+            .any(|a| a.0 == AccessKind::PortIn && a.1 == 1),
+        "{:?}",
+        taken.accesses
+    );
+
+    let polled = execute_function_with(
+        code,
+        "poll",
+        &[],
+        &ExecConfig {
+            scripted_ports: vec![(0x59, vec![0x10, 0x10, 0x00])],
+            ..ExecConfig::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(polled.return_byte(), 0);
+    assert_eq!(
+        port_trace(&polled)
+            .iter()
+            .filter(|a| a.0 == AccessKind::PortIn)
+            .count(),
+        3
+    );
+}
+
+#[test]
+fn port_io_generic_z80_zero_extends_bc() {
+    let src = "void f() { cpu::out(0x12, 7); }\nu8 g(u8 p) { return cpu::in(p); }\n";
+    let result = compile_target(src, C80Target::GenericZ80);
+    let asm = assembly_of(&result).to_ascii_uppercase();
+    assert!(asm.contains("OUT (C),A"), "{asm}");
+    assert!(asm.contains("IN A,(C)"), "{asm}");
+    assert!(!asm.contains("OUT (18),A"), "{asm}");
+    let code = result.code.as_ref().unwrap();
+    let out = execute_function(code, "f", &[]).unwrap();
+    let ports = port_trace(&out);
+    assert_eq!(ports.len(), 1, "{ports:?}");
+    assert_eq!(ports[0].0, AccessKind::PortOut);
+    assert_eq!(ports[0].1, 0x12);
+    assert_eq!(ports[0].2, 7);
+    assert_eq!(ports[0].3, 0, "high address byte must be zero: {ports:?}");
+
+    let inn = execute_function_with(
+        code,
+        "g",
+        &[0x34],
+        &ExecConfig {
+            scripted_ports: vec![(0x34, vec![0x55])],
+            ..ExecConfig::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(inn.return_byte(), 0x55);
+    let ip = port_trace(&inn);
+    assert_eq!(ip[0].3, 0, "IN A,(C) high byte is B: {ip:?}");
+}
+
+#[test]
+fn port_io_optimized_matches_baseline_trace() {
+    let src = r#"
+u8 g;
+void writes() {
+    cpu::out(1, 1);
+    g = 2;
+    cpu::out(1, 3);
+}
+u8 poll() {
+    u8 a = cpu::in(2);
+    u8 b = cpu::in(2);
+    return a + b;
+}
+"#;
+    let base = compile(CompileInput {
+        files: vec![SourceInput {
+            name: "test.c80",
+            text: src,
+        }],
+        origin: DEFAULT_CODE_ORIGIN,
+        optimize: false,
+        target: C80Target::Tvc,
+    });
+    let opt = compile(CompileInput {
+        files: vec![SourceInput {
+            name: "test.c80",
+            text: src,
+        }],
+        origin: DEFAULT_CODE_ORIGIN,
+        optimize: true,
+        target: C80Target::Tvc,
+    });
+    assert!(!base.has_errors(), "{:?}", base.diagnostics);
+    assert!(!opt.has_errors(), "{:?}", opt.diagnostics);
+    let cfg = ExecConfig {
+        scripted_ports: vec![(2, vec![3, 5])],
+        ..ExecConfig::default()
+    };
+    let bw = execute_function(base.code.as_ref().unwrap(), "writes", &[]).unwrap();
+    let ow = execute_function(opt.code.as_ref().unwrap(), "writes", &[]).unwrap();
+    assert_eq!(port_trace(&bw), port_trace(&ow));
+    assert_eq!(source_effects(&bw), source_effects(&ow));
+    let bp = execute_function_with(base.code.as_ref().unwrap(), "poll", &[], &cfg).unwrap();
+    let op = execute_function_with(opt.code.as_ref().unwrap(), "poll", &[], &cfg).unwrap();
+    assert_eq!(bp.return_byte(), 8);
+    assert_eq!(op.return_byte(), 8);
+    assert_eq!(port_trace(&bp), port_trace(&op));
+}
+
+#[test]
+fn cpu_di_ei_ldir_emit_and_copy() {
+    let ints = compile_ok("void ints() { cpu::di(); cpu::ei(); }\n");
+    assert_eq!(func_bytes(&ints, "ints"), [0xF3, 0xFB, 0xC9]);
+
+    let result = compile_ok(
+        r#"
+u8 src[4];
+u8 dst[4];
+u8 buf[4];
+void copy(u16 n) {
+    src[0] = 1;
+    src[1] = 2;
+    src[2] = 3;
+    src[3] = 4;
+    cpu::ldir(&src[0], &dst[0], n);
+}
+u8 get(u8 i) { return dst[i]; }
+u8 copy_get(u16 n, u8 i) {
+    copy(n);
+    return get(i);
+}
+void fill() {
+    buf[0] = 9;
+    buf[1] = 0;
+    buf[2] = 0;
+    buf[3] = 0;
+    cpu::ldir(&buf[0], &buf[1], 3);
+}
+u8 fill_get(u8 i) {
+    fill();
+    return buf[i];
+}
+"#,
+    );
+    let text = assembly_of(&result).to_ascii_uppercase();
+    assert!(text.contains("LDIR"), "{text}");
+    let code = result.code.as_ref().unwrap();
+    assert_eq!(
+        execute_function(code, "copy_get", &[1, 0])
+            .unwrap()
+            .return_byte(),
+        1
+    );
+    assert_eq!(
+        execute_function(code, "copy_get", &[3, 2])
+            .unwrap()
+            .return_byte(),
+        3
+    );
+    assert_eq!(
+        execute_function(code, "fill_get", &[3])
+            .unwrap()
+            .return_byte(),
+        9,
+        "HL is source and DE is dest (Z80 LDIR order)"
+    );
+    let zero = execute_function_with(
+        code,
+        "copy",
+        &[0],
+        &ExecConfig {
+            insn_limit: 200,
+            ..ExecConfig::default()
+        },
+    )
+    .expect("BC=0 LDIR may smash code and still return");
+    let extra_writes = zero
+        .accesses
+        .iter()
+        .filter(|a| a.kind == AccessKind::DataWrite)
+        .count();
+    assert!(
+        extra_writes > 8,
+        "BC=0 LDIR must copy many bytes, not skip: writes={extra_writes}"
+    );
+}
+
+#[test]
+fn call_second_byte_arg_can_depend_on_the_first() {
+    let result = compile_ok(
+        r#"
+u8 gy;
+u8 gn;
+void take(u8 y, u8 n) {
+    gy = y;
+    gn = n;
+}
+u8 by;
+u8 oy;
+u8 n_up(u8 b, u8 o) {
+    by = b;
+    oy = o;
+    take(by, oy - by);
+    return gn;
+}
+u8 y_up(u8 b, u8 o) {
+    by = b;
+    oy = o;
+    take(by, oy - by);
+    return gy;
+}
+u8 n_up4(u8 b, u8 o) {
+    by = b;
+    oy = o;
+    take(by + 4, oy - by);
+    return gn;
+}
+u8 n_down(u8 b, u8 o) {
+    by = b;
+    oy = o;
+    take(oy, by - oy);
+    return gn;
+}
+"#,
+    );
+    let code = result.code.as_ref().unwrap();
+    assert_eq!(
+        execute_function(code, "n_up", &[117, 118])
+            .unwrap()
+            .return_byte(),
+        1,
+        "take(by, oy - by) must pass the difference, not by"
+    );
+    assert_eq!(
+        execute_function(code, "y_up", &[117, 118])
+            .unwrap()
+            .return_byte(),
+        117
+    );
+    assert_eq!(
+        execute_function(code, "n_up4", &[117, 118])
+            .unwrap()
+            .return_byte(),
+        1,
+        "take(by + 4, oy - by) must not reuse by + 4 as the count"
+    );
+    assert_eq!(
+        execute_function(code, "n_down", &[118, 117])
+            .unwrap()
+            .return_byte(),
+        1
     );
 }

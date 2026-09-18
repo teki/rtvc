@@ -1626,6 +1626,82 @@ fn form_error(mnemonic: &str, op: &[&str]) -> AsmError {
     AsmError::new(format!("unsupported instruction '{}{}'", mnemonic, suffix))
 }
 
+/// Parse `rtvc-asm-v1` TOML produced by `rtvc-asm` or `rtvc-c80 --emit-segments`.
+#[cfg(feature = "asm-toml")]
+pub fn parse_rtvc_asm_v1(text: &str) -> Result<AssembledProgram, String> {
+    let value: toml::Value =
+        toml::from_str(text).map_err(|err| format!("invalid rtvc-asm-v1 TOML: {err}"))?;
+    let format = value.get("format").and_then(|v| v.as_str()).unwrap_or("");
+    if format != "rtvc-asm-v1" {
+        return Err(format!("unsupported assembler format '{format}'"));
+    }
+    let origin = toml_u16(value.get("origin"), "origin")?;
+    let next_addr = toml_u16(value.get("next_addr"), "next_addr")?;
+    let mut symbols = BTreeMap::new();
+    if let Some(table) = value.get("symbols").and_then(|v| v.as_table()) {
+        for (name, raw) in table {
+            symbols.insert(name.clone(), toml_u16(Some(raw), name)?);
+        }
+    }
+    let mut segments = Vec::new();
+    if let Some(rows) = value.get("segments").and_then(|v| v.as_array()) {
+        for (i, row) in rows.iter().enumerate() {
+            let addr = toml_u16(row.get("addr"), &format!("segments[{i}].addr"))?;
+            let bytes = match row.get("bytes").and_then(|v| v.as_array()) {
+                Some(items) => items
+                    .iter()
+                    .enumerate()
+                    .map(|(j, item)| toml_u8(item, &format!("segments[{i}].bytes[{j}]")))
+                    .collect::<Result<Vec<_>, _>>()?,
+                None => {
+                    return Err(format!("segments[{i}].bytes is missing"));
+                }
+            };
+            if let Some(len) = row.get("len").and_then(|v| v.as_integer()) {
+                if len as usize != bytes.len() {
+                    return Err(format!(
+                        "segments[{i}].len {len} does not match {} bytes",
+                        bytes.len()
+                    ));
+                }
+            }
+            segments.push(AssembledSegment { addr, bytes });
+        }
+    }
+    let flat: Vec<u8> = segments
+        .iter()
+        .flat_map(|s| s.bytes.iter().copied())
+        .collect();
+    Ok(AssembledProgram {
+        origin,
+        bytes: flat,
+        segments,
+        symbols,
+        mappings: Vec::new(),
+        lines: Vec::new(),
+        next_addr,
+    })
+}
+
+#[cfg(feature = "asm-toml")]
+fn toml_u16(value: Option<&toml::Value>, name: &str) -> Result<u16, String> {
+    let Some(value) = value else {
+        return Err(format!("{name} is missing"));
+    };
+    let n = value
+        .as_integer()
+        .ok_or_else(|| format!("{name} is not an integer"))?;
+    u16::try_from(n).map_err(|_| format!("{name} {n} is not a u16"))
+}
+
+#[cfg(feature = "asm-toml")]
+fn toml_u8(value: &toml::Value, name: &str) -> Result<u8, String> {
+    let n = value
+        .as_integer()
+        .ok_or_else(|| format!("{name} is not an integer"))?;
+    u8::try_from(n).map_err(|_| format!("{name} {n} is not a u8"))
+}
+
 #[cfg(test)]
 #[path = "asm_tests.rs"]
 mod tests;

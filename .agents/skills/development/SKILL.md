@@ -15,6 +15,8 @@ This skill provides step-by-step instructions and references for compiling, exec
   ```bash
   cargo build
   ```
+  - The native emulator does not compile C80. The compiler is a separate
+    workspace crate: `cargo run -p rtvc-c80`.
   - The Windows MSVC `rtvc` executable is linked with an 8 MiB stack by [build.rs](../../../build.rs); keep this setting when changing startup allocation patterns because the emulator state can overflow the platform's default debug-build stack.
   - On Linux, the native audio backend uses `cpal` and may require ALSA development files such as `libasound2-dev` on Debian/Ubuntu or `alsa-lib-devel` on Fedora.
 - **Run the main emulator binary (opens egui window):**
@@ -23,9 +25,9 @@ This skill provides step-by-step instructions and references for compiling, exec
   ```
   To start directly from a snapshot:
   ```bash
-  cargo run --bin rtvc -- data/snapshots/boot12dos.rtvcsnap.zip
-  ```
-  - `data/snapshots/boot12dos.rtvcsnap.zip` is a clean, fully booted TVC 1.2 VT-DOS
+  cargo run --bin rtvc -- snapshots/boot12dos.rtvcsnap.zip
+```
+  - `snapshots/boot12dos.rtvcsnap.zip` is a clean, fully booted TVC 1.2 VT-DOS
     fixture. Use it for tests that do not need to exercise boot, avoiding the
     normal startup wait.
   To mount a disk, mount a tape, or inject a tape directly on startup:
@@ -215,14 +217,15 @@ This skill provides step-by-step instructions and references for compiling, exec
 
 - **Compile C80 sources or a project manifest:**
   ```bash
-  cargo run --bin rtvc-c80 -- build main.c80 --origin 0x8000 --emit-asm out.asm
-  cargo run --bin rtvc-c80 -- build rtvc-c80.toml --emit-segments out.toml
+  cargo run -p rtvc-c80 -- build main.c80 --origin 0x8000 --emit-asm out.asm
+  cargo run -p rtvc-c80 -- build rtvc-c80.toml --emit-segments out.toml
   ```
   - `.c80` uses the file stem as the unit name (ASCII identifier). `--origin` is required when the unit emits bytes.
   - A `.toml` manifest is version 1; paths are relative to the manifest file. `--origin` is invalid on a manifest.
-  - `target = "tvc"` may include one `[basic]` table (`path`, `origin`, `size`). Tokenized BASIC is in-process only.
+  - `target = "tvc"` may include one `[basic]` table (`path` only). Tokenized BASIC is emitted in the same `--emit-segments` TOML at `19EFH` (`project::basic_base` / `project::basic_program_size`). The linker errors if that payload overlaps C80/ASM, `[stack]`, or `[[reserve]]`. `--emit-bin` still requires a contiguous union of all emitted ranges, including BASIC. `rtvc-tocas` flattens that TOML to CAS (the tutorial mixed examples use this).
   - At least one of `--emit-asm`, `--emit-segments`, `--emit-bin` is required. Segment output is `rtvc-asm-v1`. Raw binary requires a contiguous union of emitted ranges.
   - Optimization (identity moves, fallthrough jumps, in-range `JP`→`JR`) is on by default; `--no-optimize` keeps baseline lowering.
+  - A feature walkthrough with checked-in sources is [info/c80/tutorial.md](../../../info/c80/tutorial.md); [info/c80/compile.sh](../../../info/c80/compile.sh) and [info/c80/compile.bat](../../../info/c80/compile.bat) compile every example into `info/c80/out/`. Mixed TVC examples (`mixed`, `tvc-usr`, `pong`) also emit sibling `.cas` files through `rtvc-tocas`.
   - Diagnostics go to stderr. Exit 0 includes warnings; errors do not replace existing outputs.
 
 - **Compile numbered TVC BASIC source to CAS:**
@@ -233,12 +236,14 @@ This skill provides step-by-step instructions and references for compiling, exec
   - Default `--format cas` matches a BASIC `SAVE` header; `--format bin` writes the raw payload; `--auto` sets the CAS autostart byte.
   - Use `-` as the input path to read source from stdin; omit `-o` to write output to stdout.
 
-- **Convert `.bas` and `.asm` sources to sibling CAS files:**
+- **Convert `.bas`, `.asm`, and `rtvc-asm-v1` TOML sources to sibling CAS files:**
   ```bash
   cargo run --bin rtvc-tocas -- coding/crtc-register-explorer.bas coding/crtc-register-explorer.asm
+  cargo run --bin rtvc-tocas -- path/to/program.toml
   ```
   - Compiles `.bas` inputs with the same path as `rtvc-basic`, and assembles `.asm` inputs with the same path as `rtvc-asm --format cas`.
-  - Writes each `.cas` beside its source, replacing the `.bas` or `.asm` extension.
+  - Flattens `rtvc-asm-v1` TOML from `19EFH` through the highest exclusive end, zero-filling gaps. The first segment must be a tokenized BASIC stub at `19EFH`; relocated BASIC at `4000H` is rejected. Exclusive end must be at most `C000H`. Reports payload versus padding; uses the ASM CAS autostart profile.
+  - Writes each `.cas` beside its source, replacing the extension.
   - Accepts multiple inputs and converts all of them. Files with any other extension are printed and skipped.
 
 - **Convert a ZX Spectrum TAP tape image to rtvc TOML:**
@@ -288,14 +293,16 @@ The lightweight web dependency tree should contain `wasm-bindgen` but not cpal, 
 
 - **Run C80 compiler tests:**
   ```bash
-  cargo test --lib --no-default-features --features cli-tools compiler::
-  cargo test --test rtvc_c80 --no-default-features --features cli-tools
-  cargo test --bin rtvc-c80 --no-default-features --features cli-tools
+  cargo test -p rtvc-c80 --lib
+  cargo test -p rtvc-c80 --test rtvc_c80
+  cargo test -p rtvc-c80 --bin rtvc-c80
+  cargo test --bin rtvc-tocas
   ```
-  - Requires a non-zero `compiler::` test count. The assembler filter `asm::` also matches
+  - Requires a non-zero `rtvc-c80` lib test count. The assembler filter `asm::` also matches
     `disasm::`; unique assembler runs use `asm::tests:: -- --skip disasm`.
-  - `tests/rtvc_c80.rs` covers CLI origin/manifest path, compile-error output
-    preservation, multi-unit `--emit-segments`, and TVC `[basic]` path resolution.
+  - [`c80/tests/rtvc_c80.rs`](../../../c80/tests/rtvc_c80.rs) covers CLI origin/manifest path, compile-error output
+    preservation, multi-unit `--emit-segments`, TVC `[basic]` path resolution, and CAS USR inject.
+  - `rtvc-tocas` TOML tests flatten `rtvc-asm-v1` segments to a `19EFH` CAS.
 
 - **Run FUSE tests (1334 tests):**
   These tests are adapted from the FUSE ZX Spectrum emulator test vectors. They are **fast to run** and are the primary validation suite used to verify correctness during active development.

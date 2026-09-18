@@ -1,0 +1,19 @@
+[package]
+name = "rtvc-c80"
+version = "0.8.7"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[lib]
+name = "rtvc_c80"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rtvc-c80"
+path = "src/bin/rtvc_c80.rs"
+
+[dependencies]
+rtvc_core = { path = "..", package = "rtvc", default-features = false, features = ["asm-toml"] }
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"

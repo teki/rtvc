@@ -1,0 +1,10 @@
+// Smallest useful C80 unit: register-leaf functions, no frame.
+// `id` is a single RET. `add` is ADD HL,DE then RET.
+
+u8 id(u8 x) {
+    return x;
+}
+
+u16 add(u16 a, u16 b) {
+    return a + b;
+}

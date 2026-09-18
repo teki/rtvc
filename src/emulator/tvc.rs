@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use crate::bus::CpuBus;
-use crate::cas::TapeBitstreamGenerator;
+use crate::cas::{TVC_CAS_HEADER_LEN, TVC_CAS_LOAD_ADDR, TapeBitstreamGenerator};
 use crate::expansion::ExpansionSlots;
 use crate::hbf::HBF;
 use crate::instruction_trace::{
@@ -682,14 +682,22 @@ impl Tvc {
     }
 
     pub fn load_cas(&mut self, data: &[u8]) -> bool {
-        if data.len() < 144 || data[0] != 0x11 {
+        if data.len() < TVC_CAS_HEADER_LEN || data[0] != 0x11 {
             return false;
         }
         let savemap = self.bus.mmu.get_map_val();
         self.bus.mmu.set_map(0xB0);
-        for i in 144..data.len() {
-            let addr = (6639 + i - 144) as u16;
+        for i in TVC_CAS_HEADER_LEN..data.len() {
+            let addr = TVC_CAS_LOAD_ADDR.wrapping_add((i - TVC_CAS_HEADER_LEN) as u16);
             self.bus.w8(addr, data[i]);
+        }
+        if let Some(len) = crate::basic::tokenized_program_len(&data[TVC_CAS_HEADER_LEN..]) {
+            if len > 1 {
+                let last = TVC_CAS_LOAD_ADDR.wrapping_add((len as u16) - 1);
+                poke16(&mut self.bus, 0x1722, TVC_CAS_LOAD_ADDR);
+                poke16(&mut self.bus, 0x1724, last);
+                poke16(&mut self.bus, 0x1726, last);
+            }
         }
         self.bus.mmu.set_map(savemap);
         true
@@ -988,6 +996,12 @@ impl Tvc {
         }
         (irq_duration, frame_complete)
     }
+}
+
+fn poke16(bus: &mut TvcBus, addr: u16, value: u16) {
+    let bytes = value.to_le_bytes();
+    bus.w8(addr, bytes[0]);
+    bus.w8(addr.wrapping_add(1), bytes[1]);
 }
 
 #[cfg(test)]

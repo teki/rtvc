@@ -1,9 +1,92 @@
 pub const TVC_CAS_HEADER_LEN: usize = 144;
 pub const TVC_CAS_TYPE_BASIC: u8 = 0x01;
+/// CAS header byte: non-zero means BASIC should auto-run after load.
+pub const TVC_CAS_AUTOSTART_OFF: usize = 0x84;
+/// Cassette BASIC-load profile: first payload byte is CPU address 19EFH.
+pub const TVC_CAS_LOAD_ADDR: u16 = 0x19EF;
+/// Exclusive end of the 64K TVC RAM load window.
+pub const TVC_CAS_LOAD_END: u32 = 0xC000;
 
 pub struct TapeInterval {
     pub level: f32, // 0.0 for low, 1.0 for high, 0.5 for silence
     pub start_cycle: u64,
+}
+
+/// Linear CAS payload from 19EFH through the highest emitted end, with gaps zero-filled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinearCasImage {
+    pub bytes: Vec<u8>,
+    pub load_addr: u16,
+    pub payload_bytes: usize,
+    pub padding_bytes: usize,
+}
+
+/// Sort addressed segments, zero-fill gaps from 19EFH, and require a BASIC stub at 19EFH.
+pub fn flatten_cas_image(segments: &[(u16, &[u8])]) -> Result<LinearCasImage, String> {
+    if segments.is_empty() {
+        return Err("CAS flatten requires at least one segment".to_string());
+    }
+    let mut ordered: Vec<(u16, &[u8])> = segments
+        .iter()
+        .copied()
+        .filter(|(_, bytes)| !bytes.is_empty())
+        .collect();
+    if ordered.is_empty() {
+        return Err("CAS flatten requires at least one non-empty segment".to_string());
+    }
+    ordered.sort_by_key(|(addr, _)| *addr);
+    let first = ordered[0].0;
+    if first != TVC_CAS_LOAD_ADDR {
+        return Err(format!(
+            "CAS flatten requires the first segment at {TVC_CAS_LOAD_ADDR:04X}H (BASIC load), got {first:04X}H; a relocated BASIC image at 4000H is not a runnable cassette"
+        ));
+    }
+    let mut prev_end = 0u32;
+    let mut payload_bytes = 0usize;
+    let mut max_end = 0u32;
+    for (i, (addr, bytes)) in ordered.iter().enumerate() {
+        let start = u32::from(*addr);
+        let end = start + bytes.len() as u32;
+        if end > TVC_CAS_LOAD_END {
+            return Err(format!(
+                "segment at {addr:04X}H ends at {end:04X}H, past {TVC_CAS_LOAD_END:04X}H"
+            ));
+        }
+        if i > 0 && start < prev_end {
+            return Err(format!(
+                "segment at {addr:04X}H overlaps previous range ending at {prev_end:04X}H"
+            ));
+        }
+        payload_bytes += bytes.len();
+        max_end = max_end.max(end);
+        prev_end = end;
+    }
+    let load = u32::from(TVC_CAS_LOAD_ADDR);
+    let len = (max_end - load) as usize;
+    let mut bytes = vec![0u8; len];
+    for (addr, data) in &ordered {
+        let offset = (*addr - TVC_CAS_LOAD_ADDR) as usize;
+        bytes[offset..offset + data.len()].copy_from_slice(data);
+    }
+    crate::basic::detokenize_program(&bytes).map_err(|err| {
+        format!("CAS flatten BASIC stub at {TVC_CAS_LOAD_ADDR:04X}H is invalid: {err}")
+    })?;
+    if bytes.first().copied() == Some(0) {
+        return Err(format!(
+            "CAS flatten BASIC stub at {TVC_CAS_LOAD_ADDR:04X}H is empty"
+        ));
+    }
+    Ok(LinearCasImage {
+        bytes,
+        load_addr: TVC_CAS_LOAD_ADDR,
+        payload_bytes,
+        padding_bytes: len - payload_bytes,
+    })
+}
+
+/// True when a TVC CAS header requests auto-run after load or inject.
+pub fn tvc_cas_autostarts(data: &[u8]) -> bool {
+    data.len() > TVC_CAS_AUTOSTART_OFF && data[0] == 0x11 && data[TVC_CAS_AUTOSTART_OFF] != 0
 }
 
 /// Build a TVC CAS container: 144-byte header followed by payload.
@@ -21,7 +104,7 @@ pub fn encode_tvc_cas(payload: &[u8], file_type: u8, autostart: u8, load_addr: u
     cas[0x81] = file_type;
     cas[0x82] = (payload.len() & 0xFF) as u8;
     cas[0x83] = (payload.len() >> 8) as u8;
-    cas[0x84] = autostart;
+    cas[TVC_CAS_AUTOSTART_OFF] = autostart;
     cas[0x87] = (load_addr & 0xFF) as u8;
     cas[0x88] = (load_addr >> 8) as u8;
     cas[TVC_CAS_HEADER_LEN..].copy_from_slice(payload);

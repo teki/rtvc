@@ -12,7 +12,7 @@
 ;   cargo run --bin rtvc-asm -- --format cas \
 ;     coding/crtc-register-explorer.asm \
 ;     -o target/coding/crtc-register-explorer.cas
-;   cargo run --bin rtvc -- data/snapshots/boot12dos.rtvcsnap.zip \
+;   cargo run --bin rtvc -- snapshots/boot12dos.rtvcsnap.zip \
 ;     -i target/coding/crtc-register-explorer.cas
 
         BASIC_START

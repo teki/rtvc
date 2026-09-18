@@ -1,0 +1,28 @@
+// Default builds optimize: forward conditional JP may become JR, and
+// JP cc,then / JP else collapses when `then` is the next block.
+// Backward loop jumps stay JP. Compile again with --no-optimize to compare.
+// Mutable globals are not CSE'd or coalesced: writes(1,2,3) stores three times.
+
+u8 g;
+
+u8 short_if(u8 x) {
+    if (x == 0) {
+        return 1;
+    }
+    return 2;
+}
+
+u8 count(u8 n) {
+    u8 s = 0;
+    while (n != 0) {
+        s = s + 1;
+        n = n - 1;
+    }
+    return s;
+}
+
+void writes() {
+    g = 1;
+    g = 2;
+    g = 3;
+}
