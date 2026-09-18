@@ -4,6 +4,15 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+## v0.8.7 - 2026-09-18
+
+- Cassette inject binds BASIC `TEXT`/`CHAIN`/`TOP`, and `rtvc -i` types `RUN`
+  when the CAS autostart byte is set.
+- `rtvc-tocas` flattens `rtvc-asm-v1` TOML into one zero-padded CAS image from
+  `19EFH` when the first segment is a BASIC stub.
+- Failed snapshot loads and tape injects now exit with an error instead of
+  continuing.
+
 ## v0.8.6 - 2026-09-05
 
 - Added `rtvc-basic` to compile numbered TVC BASIC source into CAS cassette

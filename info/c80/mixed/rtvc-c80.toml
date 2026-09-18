@@ -1,0 +1,10 @@
+version = 1
+target = "tvc"
+
+[basic]
+path = "main.bas"
+
+[[unit]]
+name = "buf"
+path = "buf.c80"
+origin = 0x3000

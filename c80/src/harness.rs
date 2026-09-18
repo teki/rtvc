@@ -2,10 +2,10 @@
 
 use super::ast::CallConv;
 use super::z80::{GeneratedProgram, R8, RegHome, Rr};
-use crate::bus::CpuBus;
-use crate::disasm::disassemble_at;
-use crate::z80::Z80;
-use crate::z80_state::{R_A, R_B, R_C, R_D, R_E, R_F, R_H, R_L};
+use rtvc_core::bus::CpuBus;
+use rtvc_core::disasm::disassemble_at;
+use rtvc_core::z80::Z80;
+use rtvc_core::z80_state::{R_A, R_B, R_C, R_D, R_E, R_F, R_H, R_L};
 use std::collections::HashMap;
 
 pub const DEFAULT_SP: u16 = 0xFF00;
@@ -27,6 +27,7 @@ pub struct MemAccess {
     pub kind: AccessKind,
     pub addr: u16,
     pub value: u8,
+    pub high: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -136,7 +137,12 @@ impl CpuBus for TraceBus {
         } else {
             self.mem[addr as usize]
         };
-        self.accesses.push(MemAccess { kind, addr, value });
+        self.accesses.push(MemAccess {
+            kind,
+            addr,
+            value,
+            high: 0,
+        });
         value
     }
 
@@ -145,15 +151,17 @@ impl CpuBus for TraceBus {
             kind: AccessKind::DataWrite,
             addr,
             value: val,
+            high: 0,
         });
         self.mem[addr as usize] = val;
     }
 
-    fn out8(&mut self, port: u8, val: u8, _expected_val: u8) {
+    fn out8(&mut self, port: u8, val: u8, high_addr: u8) {
         self.accesses.push(MemAccess {
             kind: AccessKind::PortOut,
             addr: u16::from(port),
             value: val,
+            high: high_addr,
         });
     }
 
@@ -171,6 +179,7 @@ impl CpuBus for TraceBus {
             kind: AccessKind::PortIn,
             addr: u16::from(port),
             value,
+            high: val,
         });
         value
     }

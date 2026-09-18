@@ -42,6 +42,48 @@ pub use z80::{
 use parser::parse_file;
 use semantics::analyze_unit;
 
+/// Port I/O lowering profile. TVC uses immediate `IN A,(n)` / `OUT (n),A`
+/// for constant ports; GenericZ80 and Zx82 zero-extend the byte port to BC.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum C80Target {
+    GenericZ80,
+    Tvc,
+    Zx82,
+}
+
+impl C80Target {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::GenericZ80 => "generic-z80",
+            Self::Tvc => "tvc",
+            Self::Zx82 => "zx82",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "generic-z80" => Self::GenericZ80,
+            "tvc" => Self::Tvc,
+            "zx82" => Self::Zx82,
+            _ => return None,
+        })
+    }
+
+    pub fn uses_immediate_port(self) -> bool {
+        matches!(self, Self::Tvc)
+    }
+}
+
+impl From<project::ProjectTarget> for C80Target {
+    fn from(target: project::ProjectTarget) -> Self {
+        match target {
+            project::ProjectTarget::GenericZ80 => Self::GenericZ80,
+            project::ProjectTarget::Tvc => Self::Tvc,
+            project::ProjectTarget::Zx82 => Self::Zx82,
+        }
+    }
+}
+
 /// In-memory compilation input. The core never reads the filesystem.
 pub struct CompileInput<'a> {
     pub files: Vec<SourceInput<'a>>,
@@ -49,6 +91,7 @@ pub struct CompileInput<'a> {
     /// When true (the default for `compile_source` and the CLI), drop identity
     /// moves, fallthrough jumps, and shorten in-range `JP` to `JR`.
     pub optimize: bool,
+    pub target: C80Target,
 }
 
 pub struct SourceInput<'a> {
@@ -122,6 +165,7 @@ pub fn compile(input: CompileInput<'_>) -> CompilationResult {
             &mut ids,
             &mut diagnostics,
             input.optimize,
+            input.target,
         )
     });
     CompilationResult {
@@ -139,6 +183,7 @@ pub fn compile_source(name: &str, text: &str) -> CompilationResult {
         files: vec![SourceInput { name, text }],
         origin: DEFAULT_CODE_ORIGIN,
         optimize: true,
+        target: C80Target::GenericZ80,
     })
 }
 

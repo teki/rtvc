@@ -113,9 +113,9 @@ fn main() -> eframe::Result<()> {
         let snapshot_path = std::path::PathBuf::from(snapshot_path);
         if let Err(err) = emu.load_snapshot_file(&snapshot_path) {
             eprintln!("failed to load snapshot {}: {err}", snapshot_path.display());
-        } else {
-            loaded_snapshot = true;
+            std::process::exit(1);
         }
+        loaded_snapshot = true;
     }
 
     for (drive, disk_path) in disks_to_mount.iter().enumerate() {
@@ -132,8 +132,20 @@ fn main() -> eframe::Result<()> {
     }
     if let Some(tape_path) = tape_to_inject {
         let path = std::path::PathBuf::from(tape_path);
-        if let Err(err) = emu.inject_tape_file_path(&path) {
-            eprintln!("failed to inject tape {}: {err}", path.display());
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                if let Err(err) = emu.inject_tape_file_path(&path) {
+                    eprintln!("failed to inject tape {}: {err}", path.display());
+                    std::process::exit(1);
+                }
+                if rtvc_core::cas::tvc_cas_autostarts(&bytes) {
+                    emu.type_text("RUN\r");
+                }
+            }
+            Err(err) => {
+                eprintln!("failed to inject tape {}: {err}", path.display());
+                std::process::exit(1);
+            }
         }
     }
 

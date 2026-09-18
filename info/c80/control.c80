@@ -1,0 +1,62 @@
+// Conditions must be bool: write `x != 0`, not `if (x)`.
+// Locals have no implicit init; every read needs an assignment on all paths.
+
+u8 g;
+
+u8 count(u8 n) {
+    u8 s = 0;
+    while (n != 0) {
+        s = s + 1;
+        n = n - 1;
+    }
+    return s;
+}
+
+u8 choose(u8 x) {
+    if (x == 0) {
+        return 1;
+    }
+    if (x == 1) {
+        return 2;
+    }
+    return 3;
+}
+
+u8 nest(bool a, bool b) {
+    if (a) {
+        if (b) {
+            return 1;
+        }
+        return 2;
+    }
+    return 3;
+}
+
+u8 skipped(u8 n) {
+    u8 s = 0;
+    while (n != 0) {
+        n = n - 1;
+        if (n == 2) {
+            continue;
+        }
+        if (n == 0) {
+            break;
+        }
+        s = s + 1;
+    }
+    return s;
+}
+
+u8 both(bool a, bool b) {
+    if (a && b) {
+        return 1;
+    }
+    if (a || b) {
+        return 2;
+    }
+    return 0;
+}
+
+void bump() {
+    g = g + 1;
+}

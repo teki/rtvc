@@ -26,7 +26,7 @@ the program area around `19EFH`.
 Use a booted snapshot when testing injected `BASIC_START` programs:
 
 ```bash
-cargo run --bin rtvc -- data/snapshots/boot12dos.rtvcsnap.zip \
+cargo run --bin rtvc -- snapshots/boot12dos.rtvcsnap.zip \
   -i target/coding/tvc-interrupt-raster-probe.cas
 ```
 
@@ -49,17 +49,29 @@ Numbered BASIC sources use the same injection path after `rtvc-basic`:
 mkdir -p target/coding
 cargo run --bin rtvc-basic -- coding/crtc-register-explorer.bas \
   -o target/coding/crtc-register-explorer.cas
-cargo run --bin rtvc -- data/snapshots/boot12dos.rtvcsnap.zip \
+cargo run --bin rtvc -- snapshots/boot12dos.rtvcsnap.zip \
   -i target/coding/crtc-register-explorer.cas
 ```
 
-### Mixed C80 and BASIC (LOMEM)
+### Mixed C80 and BASIC
 
-A TVC C80 project with `[basic] origin = 0x4000` is not a CAS inject. Cold
-BASIC 1.2 keeps `TEXT` at `19EFH` and `HIMEM` at `BFFFH` with map `70H` (U0
-in page 0, SYS in page 3). Type `LOMEM 16384` so `TEXT` moves to `4000H`,
-then enter the substituted BASIC source and write C80 bytes at `3000H`. Tape
-injection always copies to `19EFH` and will undo that origin.
+A TVC C80 `[basic]` region is only a `path`. BASIC always starts at `19EFH`;
+its length is the tokenized payload. The linker errors if that range overlaps
+a module, `[stack]`, or `[[reserve]]`. Cold BASIC 1.2 keeps `TEXT` at `19EFH`
+and `HIMEM` at `BFFFH` with map `70H` (U0 in page 0, SYS in page 3). Tape
+injection copies to `19EFH`.
+
+The tutorial mixed, `tvc-usr`, and pong examples keep C80 at `3000H`.
+`compile.sh` runs `rtvc-tocas` on those TOMLs. Inject `info/c80/out/mixed.cas`
+(or `pong.cas`) into a booted snapshot:
+
+```bash
+cargo run --bin rtvc -- snapshots/boot12dos.rtvcsnap.zip \
+  -i info/c80/out/mixed.cas
+```
+
+`rtvc-tocas` sets CAS autostart, so `-i` types `RUN`. The flatten owns every byte from `19EFH`
+through the highest exclusive end.
 
 `USR(address, param)` passes `param` in `HL` and takes the returned `HL` as a
 signed integer. A C80 `@fastcall pub i16 echo(i16 value)` leaf is a valid

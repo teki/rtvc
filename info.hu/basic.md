@@ -768,11 +768,13 @@ más foglalás, illetve magasabb LOMEM tovább csökkenti a helyet; a fordító
 a szabványos 64K memóriakiosztást feltételezi.
 Az alapértelmezett fejléc a BASIC `SAVE` mentésnek felel meg
 (fájltípus `01H`, autostart `00H`). Az `rtvc-tocas` ugyanezt a CAS képet a
-forrás mellé írja:
+forrás mellé írja. `rtvc-asm-v1` TOML-t is lapít `19EFH`-tól, ha az első
+szegmens tokenizált BASIC stub:
 
 ```bash
 rtvc-basic coding/crtc-register-explorer.bas -o target/coding/crtc-register-explorer.cas
 rtvc-tocas coding/crtc-register-explorer.bas
+rtvc-tocas path/to/program.toml
 ```
 
 A `--auto` a CAS autostart bájtot állítja; a `--format bin` fejléc nélküli

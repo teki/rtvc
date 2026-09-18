@@ -17,7 +17,6 @@ pub struct StackLayout {
 #[derive(Debug, Clone, Copy)]
 pub struct BasicLayout {
     pub origin: u16,
-    pub size: u16,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -666,11 +665,14 @@ impl<'a> Analyzer<'a> {
                     );
                 }
                 Item::Import(import) => {
-                    if import.name.name == "project" {
+                    if import.name.name == "project" || import.name.name == "cpu" {
                         self.emit(
                             DiagCode::TyDuplicateName,
                             import.name.span,
-                            "namespace 'project' is built-in and cannot be imported",
+                            format!(
+                                "namespace '{}' is built-in and cannot be imported",
+                                import.name.name
+                            ),
                         );
                     } else if let Some(exports) = self.exports {
                         if !exports.contains_key(&import.name.name) {
@@ -2099,7 +2101,9 @@ impl<'a> Analyzer<'a> {
                 );
                 return None;
             }
-            ExprKind::Call { callee, args } => self.check_call(ctx, callee, args, expr.span)?,
+            ExprKind::Call { callee, args } => {
+                self.check_call(ctx, callee, args, expr.span, expected)?
+            }
             ExprKind::Index { base, index } => self.check_index(ctx, base, index, expr.span)?,
             ExprKind::Field { base, name } => self.check_field(ctx, base, name, expr.span)?,
             ExprKind::Cast { ty, expr: inner } => self.check_cast(ctx, ty, inner, expr.span)?,
@@ -2412,6 +2416,14 @@ impl<'a> Analyzer<'a> {
         if unit.name == "project" {
             return self.lookup_project(name);
         }
+        if unit.name == "cpu" {
+            self.emit(
+                DiagCode::TyMismatch,
+                name.span,
+                format!("'cpu::{}' is a compiler intrinsic", name.name),
+            );
+            return None;
+        }
         if !self.imports.contains(&unit.name) {
             self.emit(
                 DiagCode::TyUnresolvedName,
@@ -2486,17 +2498,18 @@ impl<'a> Analyzer<'a> {
             "stack_base" | "stack_size" | "stack_top" | "stack_end" => {
                 self.project_stack_bits(name)?
             }
-            "basic_program_size" => {
+            "basic_program_size" | "basic_size" | "basic_end" | "basic_himem" => {
                 self.emit(
                     DiagCode::TyLiteralRange,
                     name.span,
-                    "project::basic_program_size is determined after BASIC substitution and is not a C80 value",
+                    format!(
+                        "project::{} is determined after BASIC tokenization and is not a C80 value",
+                        name.name
+                    ),
                 );
                 return None;
             }
-            "basic_base" | "basic_size" | "basic_end" | "basic_himem" => {
-                self.project_basic_bits(name)?
-            }
+            "basic_base" => self.project_basic_bits(name)?,
             other if other.starts_with("reserve_") => self.project_reserve_bits(name)?,
             _ => {
                 self.emit(
@@ -2553,22 +2566,8 @@ impl<'a> Analyzer<'a> {
             );
             return None;
         };
-        let end = u32::from(basic.origin) + u32::from(basic.size);
         Some(match name.name.as_str() {
             "basic_base" => basic.origin,
-            "basic_size" => basic.size,
-            "basic_himem" => (end - 1) as u16,
-            "basic_end" => {
-                if end == 65536 {
-                    self.emit(
-                        DiagCode::TyLiteralRange,
-                        name.span,
-                        "project::basic_end is 65536 and is not a u16 value",
-                    );
-                    return None;
-                }
-                end as u16
-            }
             _ => unreachable!(),
         })
     }
@@ -4381,7 +4380,13 @@ impl<'a> Analyzer<'a> {
         callee: &Expr,
         args: &[Expr],
         span: SourceSpan,
+        expected: Option<CType>,
     ) -> Option<Value> {
+        if let ExprKind::Qualified { unit, name } = &callee.kind {
+            if unit.name == "cpu" {
+                return self.check_cpu_intrinsic(ctx, name, args, span, expected);
+            }
+        }
         let (func_name, func_id, params, ret, callee_key) = match &callee.kind {
             ExprKind::Name(name) => {
                 let Some(sym) = self.symbols.get(&name.name) else {
@@ -4473,6 +4478,165 @@ impl<'a> Analyzer<'a> {
             reg: dst.unwrap_or_else(|| self.vreg()),
             bits: None,
         })
+    }
+
+    fn check_cpu_intrinsic(
+        &mut self,
+        ctx: &mut FnCtx,
+        name: &Ident,
+        args: &[Expr],
+        span: SourceSpan,
+        expected: Option<CType>,
+    ) -> Option<Value> {
+        match name.name.as_str() {
+            "in" => {
+                if args.len() != 1 {
+                    self.emit(
+                        DiagCode::TyMismatch,
+                        span,
+                        format!("'cpu::in' takes 1 argument(s), found {}", args.len()),
+                    );
+                    return None;
+                }
+                let port = self.check_expr(ctx, &args[0], Some(CType::U8))?;
+                let dst = self.vreg();
+                self.emit_op(
+                    ctx,
+                    IrOp::PortIn {
+                        dst,
+                        port: port.reg,
+                        span,
+                    },
+                );
+                Some(Value {
+                    ty: CType::U8,
+                    reg: dst,
+                    bits: None,
+                })
+            }
+            "out" => {
+                if args.len() != 2 {
+                    self.emit(
+                        DiagCode::TyMismatch,
+                        span,
+                        format!("'cpu::out' takes 2 argument(s), found {}", args.len()),
+                    );
+                    return None;
+                }
+                let port = self.check_expr(ctx, &args[0], Some(CType::U8))?;
+                let value = self.check_expr(ctx, &args[1], Some(CType::U8))?;
+                if !self.cpu_void_ok(expected, span, "cpu::out") {
+                    return None;
+                }
+                self.emit_op(
+                    ctx,
+                    IrOp::PortOut {
+                        port: port.reg,
+                        value: value.reg,
+                        span,
+                    },
+                );
+                Some(self.cpu_void_value())
+            }
+            "di" => {
+                if !args.is_empty() {
+                    self.emit(
+                        DiagCode::TyMismatch,
+                        span,
+                        format!("'cpu::di' takes 0 argument(s), found {}", args.len()),
+                    );
+                    return None;
+                }
+                if !self.cpu_void_ok(expected, span, "cpu::di") {
+                    return None;
+                }
+                self.emit_op(ctx, IrOp::Di { span });
+                Some(self.cpu_void_value())
+            }
+            "ei" => {
+                if !args.is_empty() {
+                    self.emit(
+                        DiagCode::TyMismatch,
+                        span,
+                        format!("'cpu::ei' takes 0 argument(s), found {}", args.len()),
+                    );
+                    return None;
+                }
+                if !self.cpu_void_ok(expected, span, "cpu::ei") {
+                    return None;
+                }
+                self.emit_op(ctx, IrOp::Ei { span });
+                Some(self.cpu_void_value())
+            }
+            "ldir" => {
+                if args.len() != 3 {
+                    self.emit(
+                        DiagCode::TyMismatch,
+                        span,
+                        format!("'cpu::ldir' takes 3 argument(s), found {}", args.len()),
+                    );
+                    return None;
+                }
+                let hl = self.check_ldir_addr(ctx, &args[0], "hl")?;
+                let de = self.check_ldir_addr(ctx, &args[1], "de")?;
+                let bc = self.check_expr(ctx, &args[2], Some(CType::U16))?;
+                if !self.cpu_void_ok(expected, span, "cpu::ldir") {
+                    return None;
+                }
+                self.emit_op(
+                    ctx,
+                    IrOp::Ldir {
+                        hl: hl.reg,
+                        de: de.reg,
+                        bc: bc.reg,
+                        span,
+                    },
+                );
+                Some(self.cpu_void_value())
+            }
+            _ => {
+                self.emit(
+                    DiagCode::TyUnresolvedName,
+                    name.span,
+                    format!("unknown cpu intrinsic '{}'", name.name),
+                );
+                None
+            }
+        }
+    }
+
+    fn cpu_void_ok(&mut self, expected: Option<CType>, span: SourceSpan, name: &str) -> bool {
+        if expected.is_some() {
+            self.emit(
+                DiagCode::TyVoidValue,
+                span,
+                format!("cannot use void {name} as a value"),
+            );
+            false
+        } else {
+            true
+        }
+    }
+
+    fn cpu_void_value(&mut self) -> Value {
+        Value {
+            ty: CType::Void,
+            reg: self.vreg(),
+            bits: None,
+        }
+    }
+
+    fn check_ldir_addr(&mut self, ctx: &mut FnCtx, expr: &Expr, which: &str) -> Option<Value> {
+        let val = self.check_expr(ctx, expr, None)?;
+        if val.ty.pointee().is_some() || val.ty == CType::U16 || val.ty == CType::I16 {
+            return Some(val);
+        }
+        self.emit(
+            DiagCode::TyMismatch,
+            expr.span,
+            format!("cpu::ldir {which} needs a pointer or u16/i16"),
+        );
+        None
     }
 
     fn check_cast(

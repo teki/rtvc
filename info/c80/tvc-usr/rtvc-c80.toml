@@ -1,0 +1,10 @@
+version = 1
+target = "tvc"
+
+[basic]
+path = "main.bas"
+
+[[unit]]
+name = "math"
+path = "echo.c80"
+origin = 0x3000

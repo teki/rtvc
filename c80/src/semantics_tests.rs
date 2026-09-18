@@ -1,5 +1,5 @@
 use super::*;
-use crate::compiler::ir::function_by_name;
+use crate::ir::function_by_name;
 
 fn compile_src(src: &str) -> CompilationResult {
     compile_source("test.c80", src)
@@ -442,5 +442,116 @@ u8 f() {
             .any(|d| d.code.as_str() == "ln-stack" && !d.is_error()),
         "{:?}",
         result.diagnostics
+    );
+}
+
+#[test]
+fn cpu_intrinsics_are_reserved_and_typed() {
+    let result = ok(r#"
+u8 read_device(u8 port) { return cpu::in(port); }
+void write_device(u8 port, u8 value) { cpu::out(port, value); }
+void imm() { cpu::out(0x06, 0x80); cpu::in(0x58); }
+void ints() { cpu::di(); cpu::ei(); }
+void copy(ptr<u8> hl, ptr<u8> de, u16 bc) { cpu::ldir(hl, de, bc); }
+"#);
+    let read = function_by_name(result.program.as_ref().unwrap(), "read_device").unwrap();
+    assert!(
+        read.blocks
+            .iter()
+            .any(|b| b.ops.iter().any(|op| matches!(op, IrOp::PortIn { .. }))),
+        "{:?}",
+        read.blocks
+    );
+    let write = function_by_name(result.program.as_ref().unwrap(), "write_device").unwrap();
+    assert!(
+        write
+            .blocks
+            .iter()
+            .any(|b| b.ops.iter().any(|op| matches!(op, IrOp::PortOut { .. }))),
+        "{:?}",
+        write.blocks
+    );
+
+    let ints = function_by_name(result.program.as_ref().unwrap(), "ints").unwrap();
+    assert!(
+        ints.blocks
+            .iter()
+            .any(|b| b.ops.iter().any(|op| matches!(op, IrOp::Di { .. }))),
+        "{:?}",
+        ints.blocks
+    );
+    assert!(
+        ints.blocks
+            .iter()
+            .any(|b| b.ops.iter().any(|op| matches!(op, IrOp::Ei { .. }))),
+        "{:?}",
+        ints.blocks
+    );
+    let copy = function_by_name(result.program.as_ref().unwrap(), "copy").unwrap();
+    assert!(
+        copy.blocks
+            .iter()
+            .any(|b| b.ops.iter().any(|op| matches!(op, IrOp::Ldir { .. }))),
+        "{:?}",
+        copy.blocks
+    );
+
+    let value = compile_src("u8 f() { return cpu::in; }");
+    assert!(
+        codes(&value).contains(&"ty-mismatch"),
+        "{:?}",
+        codes(&value)
+    );
+
+    let arity = compile_src("void f() { cpu::out(1); }");
+    assert!(
+        codes(&arity).contains(&"ty-mismatch"),
+        "{:?}",
+        codes(&arity)
+    );
+
+    let wide = compile_src("void f(u16 p) { cpu::out(p, 1); }");
+    assert!(codes(&wide).contains(&"ty-mismatch"), "{:?}", codes(&wide));
+
+    let range = compile_src("void f() { cpu::out(256, 1); }");
+    assert!(
+        codes(&range).contains(&"ty-literal-range"),
+        "{:?}",
+        codes(&range)
+    );
+
+    let as_value = compile_src("u8 f() { return cpu::out(1, 2); }");
+    assert!(
+        codes(&as_value).contains(&"ty-void-value"),
+        "{:?}",
+        codes(&as_value)
+    );
+
+    let di_value = compile_src("u8 f() { return cpu::di(); }");
+    assert!(
+        codes(&di_value).contains(&"ty-void-value"),
+        "{:?}",
+        codes(&di_value)
+    );
+
+    let ldir_ty = compile_src("void f(str s, ptr<u8> d) { cpu::ldir(s, d, 1); }");
+    assert!(
+        codes(&ldir_ty).contains(&"ty-mismatch"),
+        "{:?}",
+        codes(&ldir_ty)
+    );
+
+    let unknown = compile_src("void f() { cpu::halt(); }");
+    assert!(
+        codes(&unknown).contains(&"ty-unresolved-name"),
+        "{:?}",
+        codes(&unknown)
+    );
+
+    let imp = compile_src("import cpu;\nvoid f() { }");
+    assert!(
+        codes(&imp).contains(&"ty-duplicate-name"),
+        "{:?}",
+        codes(&imp)
     );
 }

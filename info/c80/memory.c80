@@ -1,0 +1,42 @@
+// Global arrays, pointers, and length-prefixed strings.
+// Arrays do not decay: take &buf[0], not buf. Locals cannot be arrays.
+// Pointer ± integer scales by sizeof(T). No ordered pointer compares.
+
+u8 buf[8];
+str hello = "hi";
+
+void fill(ptr<u8> p, u8 n, u8 v) {
+    while (n != 0) {
+        *p = v;
+        p = p + 1;
+        n = n - 1;
+    }
+}
+
+u8 get(u8 i) {
+    return buf[i];
+}
+
+ptr<u8> start() {
+    return &buf[0];
+}
+
+u8 hello_len() {
+    return hello.len;
+}
+
+u8 hello_at(u8 i) {
+    return hello[i];
+}
+
+u8 lit_len(str t) {
+    return t.len;
+}
+
+u8 pass_lit() {
+    return lit_len("xy");
+}
+
+u16 ptr_width() {
+    return sizeof(ptr<u8>) + sizeof(str);
+}

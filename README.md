@@ -45,6 +45,9 @@ More historical background is available on the
   the TVC floppy disk subsystem: setup, BASIC usage, and CLI commands.
 - [rtvc Implementation and Usage Reference](info/rtvc.md) — emulator
   architecture, media, snapshots, debugger, UI, and build targets.
+- [C80 Language Reference](info/c80.md) — implemented compiler syntax,
+  diagnostics, and library entry.
+- [C80 Tutorial](info/c80/tutorial.md) — walkthrough with compilable examples.
 - [rtvc Assembler Reference](info/assembler.md) — helper assembler and
   disassembler syntax, formats, and debugger workflow.
 
@@ -78,8 +81,9 @@ run any tool with `--help` for its complete options:
 | --- | --- | --- |
 | `rtvc-dsk` | Create, inspect, and modify TVC FAT12 disk images. | `rtvc-dsk dir disk.dsk` |
 | `rtvc-asm` | Assemble small Z80 sources to TOML, CAS, or raw binary. | `rtvc-asm --format cas demo.asm -o demo.cas` |
+| `rtvc-c80` | Compile C80 sources or a project manifest to assembly, `rtvc-asm-v1` segments, or raw binary. | `rtvc-c80 build main.c80 --origin 0x8000 --emit-asm out.asm` |
 | `rtvc-basic` | Compile numbered TVC BASIC source to CAS or raw program bytes. | `rtvc-basic demo.bas -o demo.cas` |
-| `rtvc-tocas` | Convert `.bas` and `.asm` sources to sibling `.cas` files. | `rtvc-tocas demo.bas helper.asm` |
+| `rtvc-tocas` | Convert `.bas`, `.asm`, and `rtvc-asm-v1` TOML sources to sibling `.cas` files. | `rtvc-tocas demo.bas helper.asm program.toml` |
 | `rtvc-disasm` | Convert binary or ROM bytes to round-trippable assembler source. | `rtvc-disasm --origin C000H rom.bin -o rom.asm` |
 | `rtvc-cas2wav` | Convert a TVC CAS cassette image to a 44.1 kHz WAV file. | `rtvc-cas2wav input.cas output.wav` |
 | `rtvc-tap2toml` | Convert a ZX Spectrum TAP image to structured TOML for analysis and porting tools. | `rtvc-tap2toml game.tap -o game.toml` |
@@ -87,7 +91,8 @@ run any tool with `--help` for its complete options:
 See the [assembler reference](info/assembler.md) for the assembler and
 disassembler syntax and output formats, and the
 [TVC BASIC reference](info/basic.md#tokenized-program-format) for `rtvc-basic`.
-`rtvc-tocas` converts `.bas` and `.asm` files to sibling `.cas` images.
+`rtvc-tocas` converts `.bas`, `.asm`, and `rtvc-asm-v1` TOML files to sibling `.cas`
+images. TOML flattening requires a BASIC stub at `19EFH`.
 
 ### macOS First Launch
 
@@ -166,6 +171,13 @@ cargo run --bin rtvc -- -t path/to/tape.cas
 
 # Inject a cassette tape directly into memory
 cargo run --bin rtvc -- -i path/to/tape.cas
+```
+
+A non-zero CAS autostart byte makes `-i` type `RUN`. Combine with a booted
+snapshot for mixed C80 examples:
+
+```bash
+cargo run --bin rtvc -- snapshots/boot12dos.rtvcsnap.zip -i info/c80/out/pong.cas
 ```
 
 When running from source, place ROM files in `roms/`. Optional program archives

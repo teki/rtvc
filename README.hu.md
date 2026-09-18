@@ -68,7 +68,7 @@ megjeleníteni:
 | `rtvc-dsk` | TVC FAT12 lemezképek létrehozása, vizsgálata és módosítása. | `rtvc-dsk dir lemez.dsk` |
 | `rtvc-asm` | Kis Z80 források fordítása TOML, CAS vagy nyers bináris formátumba. | `rtvc-asm --format cas demo.asm -o demo.cas` |
 | `rtvc-basic` | Számozott TVC BASIC forrás fordítása CAS vagy nyers programbájtokká. | `rtvc-basic demo.bas -o demo.cas` |
-| `rtvc-tocas` | `.bas` és `.asm` források fordítása melléjük írt `.cas` fájlokká. | `rtvc-tocas demo.bas helper.asm` |
+| `rtvc-tocas` | `.bas`, `.asm` és `rtvc-asm-v1` TOML források fordítása melléjük írt `.cas` fájlokká. | `rtvc-tocas demo.bas helper.asm program.toml` |
 | `rtvc-disasm` | Bináris vagy ROM-adatok visszafordítása újra lefordítható assembly forrássá. | `rtvc-disasm --origin C000H rom.bin -o rom.asm` |
 | `rtvc-cas2wav` | TVC CAS kazettakép átalakítása 44,1 kHz-es WAV fájllá. | `rtvc-cas2wav bemenet.cas kimenet.wav` |
 | `rtvc-tap2toml` | ZX Spectrum TAP kazettakép átalakítása elemzési és portolási TOML formátumba. | `rtvc-tap2toml jatek.tap -o jatek.toml` |
@@ -76,8 +76,8 @@ megjeleníteni:
 Az assembler és disassembler szintaxisát és kimeneti formátumait az
 [assembler referencia](info.hu/assembler.md) ismerteti. Az `rtvc-basic`
 használatát a [TVC BASIC referencia](info.hu/basic.md#tokenizalt-programformatum)
-írja le. Az `rtvc-tocas` `.bas` és `.asm` fájlokat fordít melléjük írt `.cas`
-képekké.
+írja le. Az `rtvc-tocas` `.bas`, `.asm` és `rtvc-asm-v1` TOML fájlokat fordít
+melléjük írt `.cas` képekké. A TOML-lapítás BASIC stubot vár `19EFH`-n.
 
 ### Első indítás macOS-en
 
@@ -159,6 +159,13 @@ cargo run --bin rtvc -- -t utvonal/kazetta.cas
 cargo run --bin rtvc -- -i utvonal/kazetta.cas
 ```
 
+Nem nulla CAS autostart bájt esetén a `-i` begépeli a `RUN`-t. A kevert C80
+példákhoz indított snapshottal együtt:
+
+```bash
+cargo run --bin rtvc -- snapshots/boot12dos.rtvcsnap.zip -i info/c80/out/pong.cas
+```
+
 Forrásból futtatáskor helyezd a ROM-fájlokat a `roms/` könyvtárba. Az
 opcionális programarchívumok és médiafájlok a `progs/` könyvtárba kerülhetnek.
 
@@ -223,6 +230,8 @@ A teljes fejlesztési munkafolyamathoz lásd:
 
 ## Dokumentáció
 
+- [C80 nyelvleírás (angol)](info/c80.md)
+- [C80 tutorial (angol)](info/c80/tutorial.md)
 - [rtvc assembler referencia](info.hu/assembler.md)
 - [Az rtvc implementációja és használata (angol)](info/rtvc.md)
 - [Részletes TVC hardverreferencia (angol)](info/tvc.md)

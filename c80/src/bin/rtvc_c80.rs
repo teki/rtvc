@@ -2,12 +2,12 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use rtvc_core::compiler::project::{
+use rtvc_c80::project::{
     ProjectUnitInput, compile_project_opt, contiguous_bytes, is_ascii_ident, parse_manifest,
     render_rtvc_asm_v1, resolve_manifest_path, write_atomic,
 };
-use rtvc_core::compiler::{
-    CompilationResult, CompileInput, DEFAULT_CODE_ORIGIN, SourceInput, compile,
+use rtvc_c80::{
+    C80Target, CompilationResult, CompileInput, DEFAULT_CODE_ORIGIN, SourceInput, compile,
 };
 
 fn main() {
@@ -227,6 +227,12 @@ fn compile_input(options: &Options) -> Result<CompilationResult, String> {
         return Err("unit name from file stem must be an ASCII identifier".to_string());
     }
     let text = fs::read_to_string(&options.input).map_err(|e| e.to_string())?;
+    let target = match &options.target {
+        Some(name) => {
+            C80Target::parse(name).ok_or_else(|| format!("unsupported target '{name}'"))?
+        }
+        None => C80Target::GenericZ80,
+    };
     let result = compile(CompileInput {
         files: vec![SourceInput {
             name: &options.input_name,
@@ -234,6 +240,7 @@ fn compile_input(options: &Options) -> Result<CompilationResult, String> {
         }],
         origin: options.origin.unwrap_or(DEFAULT_CODE_ORIGIN),
         optimize: options.optimize,
+        target,
     });
     if options.origin.is_none() {
         let emits = result

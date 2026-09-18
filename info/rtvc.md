@@ -48,10 +48,10 @@ and full-web frontends.
 | [src/emulator/asm.rs](../src/emulator/asm.rs) | Z80 single-line and two-pass helper assembler |
 | [src/emulator/basic.rs](../src/emulator/basic.rs) | TVC BASIC tokenizer and detokenizer |
 | [src/emulator/disasm.rs](../src/emulator/disasm.rs) | Z80 disassembler and debugger instruction metadata |
-| [src/compiler/](../src/compiler/) | C80 compiler frontend (feature `compiler`) |
+| [c80/](../c80/) | C80 compiler crate (`rtvc-c80`; not part of `cargo build`) |
 | [src/bin/rtvc_asm.rs](../src/bin/rtvc_asm.rs) | command-line assembler that emits `rtvc-asm-v1` TOML |
 | [src/bin/rtvc_basic.rs](../src/bin/rtvc_basic.rs) | command-line BASIC compiler that emits CAS or raw program bytes |
-| [src/bin/rtvc_tocas.rs](../src/bin/rtvc_tocas.rs) | command-line converter that writes sibling `.cas` files from `.bas` and `.asm` sources |
+| [src/bin/rtvc_tocas.rs](../src/bin/rtvc_tocas.rs) | command-line converter that writes sibling `.cas` files from `.bas`, `.asm`, and `rtvc-asm-v1` TOML |
 | [src/bin/rtvc_tap2toml.rs](../src/bin/rtvc_tap2toml.rs) | ZX Spectrum TAP parser that emits structured `rtvc-zx-tap-v1` TOML |
 | [src/fd1793.rs](../src/fd1793.rs) | FD1793 floppy controller with two-drive read/write support |
 | [src/emu.rs](../src/emu.rs) | machine selection, media, run state |
@@ -74,7 +74,8 @@ validation independent from machine emulation.
 | Target | Features | Notes |
 | --- | --- | --- |
 | Native desktop | default `native` | egui/eframe, cpal audio, filesystem media, zip support, TCP debugger |
-| Native CLI tools | `cli-tools` without default features | disk, assembler, BASIC compiler, C80 compiler library, CAS converter, disassembler, CAS-to-WAV, and TAP conversion utilities without desktop UI/audio dependencies |
+| Native CLI tools | `cli-tools` without default features | disk, assembler, BASIC compiler, CAS converter, disassembler, CAS-to-WAV, and TAP conversion utilities without desktop UI/audio dependencies |
+| C80 compiler | workspace crate `rtvc-c80` | `cargo run -p rtvc-c80`; uses `rtvc_core` without UI features |
 | Native headless | default `native`, `--headless` CLI | machine loop and TCP debugger without GUI |
 | Integrated Zx82 | default `native` and `wasm-full` | Spectrum 48K state loading through the shared application and debugger |
 | Standalone Zx82 | default `native`, `cargo run --bin zx82` | focused Spectrum core runner |
@@ -83,9 +84,9 @@ validation independent from machine emulation.
 | Full web | `wasm-full` | complete egui UI, browser files, IndexedDB, AudioWorklet |
 
 The lightweight WASM target intentionally excludes egui, eframe, cpal, zip,
-native filesystem code, and the C80 compiler. Browser-only dependencies must
-remain behind web features. The `compiler` feature is enabled by `native`,
-`cli-tools`, and `wasm-full`.
+native filesystem code, and the C80 compiler. Native desktop and `wasm-full`
+also omit C80. Browser-only dependencies must remain behind web features. C80
+is a separate workspace crate (`c80/`); it is not a Cargo feature of `rtvc`.
 
 Rust edition 2024 is used, requiring Rust 1.85 or newer.
 
@@ -247,10 +248,14 @@ The optional fast injection path is an emulator convenience, not TVC hardware:
 2. set map `0xB0` to expose RAM through all CPU windows;
 3. skip the 144-byte CAS header;
 4. copy payload to BASIC program address `0x19EF`;
-5. restore the previous map.
+5. if the payload starts with a tokenized BASIC program, set `TEXT`/`CHAIN`/`TOP`
+   (`1722H`/`1724H`/`1726H`) so `LIST` and `RUN` see it;
+6. restore the previous map.
 
-The UI suggests `RUN` after injection. Many machine-code programs include a
-small BASIC loader that calls code near `0x1B00`.
+A non-zero CAS autostart byte (`-i` / `--inject`) queues `RUN` after injection,
+matching Gamebase. The Tape menu Inject action still leaves you at the prompt.
+Many machine-code programs include a small BASIC loader that calls code near
+`0x1B00`.
 
 ### Floppy and archives
 
@@ -313,11 +318,19 @@ and tokenization rules.
 
 ## Command-Line CAS Converter
 
-`cargo run --bin rtvc-tocas -- input.bas helper.asm` converts one or more
-`.bas` and `.asm` sources to sibling `.cas` files. `.bas` inputs use the same
-path as `rtvc-basic`; `.asm` inputs use the same path as `rtvc-asm --format cas`.
-The output path is the source path with the extension replaced by `.cas`.
-Files with any other extension are printed and skipped.
+`cargo run --bin rtvc-tocas -- input.bas helper.asm out.toml` converts one or more
+`.bas`, `.asm`, and `rtvc-asm-v1` TOML sources to sibling `.cas` files. `.bas`
+inputs use the same path as `rtvc-basic`; `.asm` inputs use the same path as
+`rtvc-asm --format cas`. TOML inputs are sorted by address and flattened from
+`19EFH` through the highest exclusive end, with gaps zero-filled. The first
+segment must start at `19EFH` and contain a tokenized BASIC program or launch
+stub (trailing machine code after the `00H` terminator is allowed). Relocated
+BASIC-only images at `4000H` are rejected; exclusive end must be at most
+`C000H`. The CAS header uses the ASM autostart profile (`FFH`, load `19EFH`).
+The command prints payload versus padding sizes. The linear payload owns the
+whole span: zeroes in gaps are part of the cassette image. There is no
+relocating loader. The output path is the source path with the extension
+replaced by `.cas`. Files with any other extension are printed and skipped.
 
 ## ZX Spectrum TAP Conversion
 
@@ -569,25 +582,28 @@ directory.
 
 ## C80 Compiler
 
-The C80 compiler is a library under [`src/compiler/`](../src/compiler/), gated
-by the `compiler` feature. Implemented language, leaf codegen, branches
+The C80 compiler is the [`rtvc-c80`](../c80/) crate. Implemented language, leaf codegen, branches
 (shortened to `JR` when the displacement fits), scalar globals, calls
 (register and `@stackcall`), arrays, pointers, prefixed strings, packed
 structs, `for`/`do-while`, compound assignment, increment/decrement,
 multi-unit projects, mixed BASIC/C80 linking, manual assembly entry, explicit
 inline `asm` operands, listing maps, instruction timing, stack provenance, and
 provenance-preserving peephole/branch-shortening are described
-in [C80 Language Reference](c80.md). Generated
+in [C80 Language Reference](c80.md) and the
+[C80 Tutorial](c80/tutorial.md). Generated
 functions are assembled with the existing helper assembler. The host CLI is
-[`rtvc-c80`](../src/bin/rtvc_c80.rs): `rtvc-c80 build INPUT` with
+[`rtvc-c80`](../c80/src/bin/rtvc_c80.rs): `rtvc-c80 build INPUT` with
 `--emit-asm`, `--emit-segments` (`rtvc-asm-v1`), and/or `--emit-bin`.
 `--no-optimize` keeps baseline `JP` lowering. A TVC
-manifest may name one `[basic]` file; tokenized BASIC stays in-process
-(`CompilationResult.basic`) and is not a CLI emit flag. Callers
-may also pass owned in-memory snapshots into `compiler::compile` or
-`compiler::project::compile_project`. `CompilationResult::map()` is the
-in-process listing; `--emit-map` is not a CLI flag. The compiler is present on
-native, `cli-tools`, and `wasm-full` builds and absent from lightweight `wasm`.
+manifest may name one `[basic]` file. `--emit-segments` writes one
+`rtvc-asm-v1` TOML with C80/ASM segments and the tokenized BASIC payload at
+`19EFH`. `rtvc-tocas` flattens that TOML into one CAS. The tutorial mixed
+examples use `19EFH`/`3000H` and `compile.sh` writes `.cas` files. Callers
+may also pass owned in-memory snapshots into `rtvc_c80::compile` or
+`rtvc_c80::project::compile_project`. `CompilationResult::map()` is the
+in-process listing; `--emit-map` is not a CLI flag. The compiler is the
+`rtvc-c80` workspace crate (`cargo run -p rtvc-c80`) and is absent from native
+desktop, `cli-tools`, `wasm-full`, and lightweight `wasm` builds of `rtvc`.
 
 ## Testing and Validation
 

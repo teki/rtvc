@@ -1,0 +1,23 @@
+// Inline asm is a statement. The body is helper-assembler text, not C80.
+// Header operands are evaluated once, left to right, before the body.
+// RET, ORG, and jumping out of the block are rejected.
+
+u8 inc8(u8 value) {
+    u8 result;
+    asm (in: a = value, out: a = result, clobber: flags) {
+        inc a
+    }
+    return result;
+}
+
+u8 add_carry(u8 left, u8 right) {
+    u8 sum;
+    bool carry;
+    asm (in: a = left, in: b = right, out: a = sum, out: carry = carry, clobber: flags) {
+        add a, b
+    }
+    if (carry) {
+        return sum + 1;
+    }
+    return sum;
+}

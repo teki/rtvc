@@ -1,0 +1,4 @@
+// Constants-only unit: public consts have no storage and need no origin.
+
+pub const u16 WIDTH = 40;
+pub const u8 HEIGHT = 24;

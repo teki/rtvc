@@ -4,7 +4,8 @@ use super::CompilationResult;
 use super::diagnostic::{DiagCode, Diagnostic};
 use super::source::SourceSpan;
 use super::z80::GeneratedProgram;
-use crate::asm::AssembledProgram;
+use rtvc_core::asm::{AssembledProgram, AssembledSegment};
+use rtvc_core::cas::TVC_CAS_LOAD_ADDR;
 use serde::Deserialize;
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
@@ -26,7 +27,7 @@ impl ProjectTarget {
         }
     }
 
-    fn parse(value: &str) -> Option<Self> {
+    pub fn parse(value: &str) -> Option<Self> {
         Some(match value {
             "generic-z80" => Self::GenericZ80,
             "tvc" => Self::Tvc,
@@ -80,14 +81,15 @@ pub struct UnitSpec {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BasicSpec {
     pub path: PathBuf,
-    pub origin: u16,
-    pub size: u16,
+}
+
+impl BasicSpec {
+    pub const ORIGIN: u16 = TVC_CAS_LOAD_ADDR;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompiledBasic {
     pub origin: u16,
-    pub region_size: u16,
     pub payload: Vec<u8>,
     pub substituted_source: String,
 }
@@ -147,8 +149,10 @@ struct UnitDto {
 #[serde(deny_unknown_fields)]
 struct BasicDto {
     path: String,
-    origin: u64,
-    size: u64,
+    #[serde(default)]
+    origin: Option<u64>,
+    #[serde(default)]
+    size: Option<u64>,
 }
 
 pub fn parse_manifest(text: &str) -> Result<Manifest, String> {
@@ -192,6 +196,9 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, String> {
         if u.name == "project" {
             return Err("unit name 'project' is reserved".to_string());
         }
+        if u.name == "cpu" {
+            return Err("unit name 'cpu' is reserved".to_string());
+        }
         if !is_ascii_ident(&u.name) {
             return Err(format!("unit name '{}' is not an ASCII identifier", u.name));
         }
@@ -230,17 +237,16 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, String> {
             if target != ProjectTarget::Tvc {
                 return Err("[basic] is only supported for target = \"tvc\"".to_string());
             }
-            let origin = fit_u16("basic.origin", b.origin)?;
-            let size = fit_range_size("basic.size", b.size)?;
-            if u32::from(origin) + u32::from(size) > 65536 {
+            if b.origin.is_some() {
+                return Err("BASIC starts at 19EFH; omit [basic] origin".to_string());
+            }
+            if b.size.is_some() {
                 return Err(
-                    "basic.origin+basic.size overflows the 16-bit address space".to_string()
+                    "BASIC size comes from the tokenized program; omit [basic] size".to_string(),
                 );
             }
             Some(BasicSpec {
                 path: PathBuf::from(b.path),
-                origin,
-                size,
             })
         }
     };
@@ -311,7 +317,7 @@ pub fn compile_project_opt(
     use super::source::{FileId, IdGen, SourceMap};
     use super::z80::{GeneratedFunction, asm_global_label, asm_label};
     use super::{CompilationResult, diagnostic::DiagCode};
-    use crate::asm::assemble_program;
+    use rtvc_core::asm::assemble_program;
 
     let mut sources = SourceMap::new();
     let mut diagnostics = Vec::new();
@@ -332,9 +338,8 @@ pub fn compile_project_opt(
         base: s.base,
         size: s.size,
     });
-    let basic_layout = manifest.basic.as_ref().map(|b| BasicLayout {
-        origin: b.origin,
-        size: b.size,
+    let basic_layout = manifest.basic.as_ref().map(|_| BasicLayout {
+        origin: BasicSpec::ORIGIN,
     });
     let reserve_layouts: Vec<ReserveLayout<'_>> = manifest
         .reserves
@@ -396,7 +401,8 @@ pub fn compile_project_opt(
         };
     }
 
-    let chunks = match lower_to_chunks(&program, &mut ids, &mut diagnostics) {
+    let chunks = match lower_to_chunks(&program, &mut ids, &mut diagnostics, manifest.target.into())
+    {
         Some(chunks) => chunks,
         None => {
             return CompilationResult {
@@ -656,7 +662,7 @@ pub fn compile_project_opt(
         });
     }
 
-    let code = super::z80::GeneratedProgram {
+    let mut code = super::z80::GeneratedProgram {
         origin: assembled.origin,
         items,
         assembly,
@@ -674,7 +680,19 @@ pub fn compile_project_opt(
             &code.assembled,
             dummy_span(FileId(0)),
         ) {
-            Ok(compiled) => basic_out = Some(compiled),
+            Ok(compiled) => {
+                check_basic_payload_overlap(
+                    manifest,
+                    &code.assembled,
+                    compiled.payload.len(),
+                    dummy_span(FileId(0)),
+                    &mut diagnostics,
+                );
+                if !diagnostics.iter().any(Diagnostic::is_error) {
+                    attach_basic_image(&mut code, &compiled);
+                    basic_out = Some(compiled);
+                }
+            }
             Err(diag) => diagnostics.push(diag),
         }
     } else if basic_source.is_some() {
@@ -740,20 +758,10 @@ fn insert_project_symbols(subst: &mut HashMap<(String, String), String>, manifes
         );
         subst.insert(("project".into(), "stack_end".into()), end.to_string());
     }
-    if let Some(basic) = &manifest.basic {
-        let end = u32::from(basic.origin) + u32::from(basic.size);
+    if let Some(_basic) = &manifest.basic {
         subst.insert(
             ("project".into(), "basic_base".into()),
-            basic.origin.to_string(),
-        );
-        subst.insert(
-            ("project".into(), "basic_size".into()),
-            basic.size.to_string(),
-        );
-        subst.insert(("project".into(), "basic_end".into()), end.to_string());
-        subst.insert(
-            ("project".into(), "basic_himem".into()),
-            (end - 1).to_string(),
+            BasicSpec::ORIGIN.to_string(),
         );
     }
     for r in &manifest.reserves {
@@ -894,7 +902,7 @@ fn substitute_markers(
 }
 
 fn compile_basic_unit(
-    spec: &BasicSpec,
+    _spec: &BasicSpec,
     source: Option<&str>,
     subst: &HashMap<(String, String), String>,
     assembled: &AssembledProgram,
@@ -910,31 +918,56 @@ fn compile_basic_unit(
     let numeric = numeric_subst(subst, assembled);
     let substituted = substitute_basic(source, &numeric)
         .map_err(|msg| Diagnostic::error(DiagCode::TyUnresolvedName, span, msg))?;
-    let payload = crate::basic::tokenize_program(&substituted).map_err(|err| {
+    let payload = rtvc_core::basic::tokenize_program(&substituted).map_err(|err| {
         Diagnostic::error(
             DiagCode::ParseExpected,
             span,
             format!("BASIC tokenize failed: {err}"),
         )
     })?;
-    let payload_len = payload.len() as u32;
-    if payload_len + 0x100 > u32::from(spec.size) {
-        return Err(Diagnostic::error(
-            DiagCode::LnOverlap,
-            span,
-            format!(
-                "tokenized BASIC is {} bytes; payload+0x100 must fit in basic.size {}",
-                payload.len(),
-                spec.size
-            ),
-        ));
-    }
     Ok(CompiledBasic {
-        origin: spec.origin,
-        region_size: spec.size,
+        origin: BasicSpec::ORIGIN,
         payload,
         substituted_source: substituted,
     })
+}
+
+fn attach_basic_image(code: &mut GeneratedProgram, basic: &CompiledBasic) {
+    code.assembled.segments.push(AssembledSegment {
+        addr: basic.origin,
+        bytes: basic.payload.clone(),
+    });
+    let size = u16::try_from(basic.payload.len()).unwrap_or(u16::MAX);
+    code.assembled
+        .symbols
+        .insert("project::basic_base".into(), basic.origin);
+    code.assembled
+        .symbols
+        .insert("project::basic_program_size".into(), size);
+    if let Some(min) = code.assembled.segments.iter().map(|s| s.addr).min() {
+        code.assembled.origin = min;
+        code.origin = min;
+    }
+    if let Some(end) = code
+        .assembled
+        .segments
+        .iter()
+        .map(|s| s.addr.wrapping_add(s.bytes.len() as u16))
+        .max()
+    {
+        code.assembled.next_addr = end;
+    }
+    if !code.assembly.ends_with('\n') {
+        code.assembly.push('\n');
+    }
+    code.assembly
+        .push_str(&format!("ORG 0x{:04X}\n", basic.origin));
+    for chunk in basic.payload.chunks(16) {
+        let items: Vec<String> = chunk.iter().map(|b| format!("0x{b:02X}")).collect();
+        code.assembly.push_str("        DB ");
+        code.assembly.push_str(&items.join(", "));
+        code.assembly.push('\n');
+    }
 }
 
 fn numeric_subst(
@@ -964,12 +997,12 @@ fn substitute_basic(
     source: &str,
     subst: &HashMap<(String, String), String>,
 ) -> Result<String, String> {
-    let modes = crate::basic::basic_copy_modes(source);
+    let modes = rtvc_core::basic::basic_copy_modes(source);
     let bytes = source.as_bytes();
     let mut out = String::new();
     let mut i = 0;
     while i < bytes.len() {
-        let active = modes.get(i).copied() == Some(crate::basic::BasicCopyMode::Normal);
+        let active = modes.get(i).copied() == Some(rtvc_core::basic::BasicCopyMode::Normal);
         if active && bytes[i] == b'@' && bytes.get(i + 1) == Some(&b'{') {
             let rest = &source[i + 2..];
             let Some(end) = rest.find('}') else {
@@ -982,11 +1015,14 @@ fn substitute_basic(
             let Some(value) = subst.get(&(unit.to_string(), name.to_string())) else {
                 return Err(format!("unresolved marker '@{{{inner}}}'"));
             };
-            if name == "basic_program_size" {
-                return Err(
-                    "project::basic_program_size is not available during BASIC substitution"
-                        .to_string(),
-                );
+            if name == "basic_program_size"
+                || name == "basic_size"
+                || name == "basic_end"
+                || name == "basic_himem"
+            {
+                return Err(format!(
+                    "project::{name} is determined after BASIC tokenization and is not available during substitution"
+                ));
             }
             out.push_str(value);
             i += 2 + end + 1;
@@ -1173,18 +1209,64 @@ fn check_layout_ranges(
             diagnostics,
         );
     }
-    if let Some(basic) = &manifest.basic {
+}
+
+fn check_basic_payload_overlap(
+    manifest: &Manifest,
+    assembled: &AssembledProgram,
+    payload_len: usize,
+    span: SourceSpan,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let mut ranges = Vec::new();
+    for (i, seg) in assembled.segments.iter().enumerate() {
+        let start = u32::from(seg.addr);
+        let end = start + seg.bytes.len() as u32;
         push_range(
             &mut ranges,
             LayoutRange {
-                name: "basic".into(),
-                start: u32::from(basic.origin),
-                end: u32::from(basic.origin) + u32::from(basic.size),
+                name: format!("segment{i}"),
+                start,
+                end,
             },
             span,
             diagnostics,
         );
     }
+    if let Some(stack) = &manifest.stack {
+        push_range(
+            &mut ranges,
+            LayoutRange {
+                name: "stack".into(),
+                start: u32::from(stack.base),
+                end: u32::from(stack.base) + u32::from(stack.size),
+            },
+            span,
+            diagnostics,
+        );
+    }
+    for r in &manifest.reserves {
+        push_range(
+            &mut ranges,
+            LayoutRange {
+                name: format!("reserve {}", r.name),
+                start: u32::from(r.base),
+                end: u32::from(r.base) + u32::from(r.size),
+            },
+            span,
+            diagnostics,
+        );
+    }
+    push_range(
+        &mut ranges,
+        LayoutRange {
+            name: "basic".into(),
+            start: u32::from(BasicSpec::ORIGIN),
+            end: u32::from(BasicSpec::ORIGIN) + payload_len as u32,
+        },
+        span,
+        diagnostics,
+    );
 }
 
 fn push_range(
@@ -1300,7 +1382,7 @@ pub fn render_rtvc_asm_v1(
         out.push(String::new());
         out.push("[symbols]".to_string());
         for (name, value) in &assembled.symbols {
-            out.push(format!("{name} = {}", hex16(*value)));
+            out.push(format!("{} = {}", toml_key(name), hex16(*value)));
         }
     }
     for segment in &assembled.segments {
@@ -1320,6 +1402,17 @@ pub fn render_rtvc_asm_v1(
         out.push("]".to_string());
     }
     out.join("\n") + "\n"
+}
+
+fn toml_key(name: &str) -> String {
+    if name
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.')
+    {
+        name.to_string()
+    } else {
+        toml_string(name)
+    }
 }
 
 pub fn contiguous_bytes(code: &GeneratedProgram) -> Result<Vec<u8>, String> {
@@ -1391,14 +1484,15 @@ fn hex16(value: u16) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bus::CpuBus;
-    use crate::compiler::harness::execute_function;
+    use rtvc_core::asm::parse_rtvc_asm_v1;
+    use rtvc_core::bus::CpuBus;
+    use crate::harness::execute_function;
 
     fn compile_units(
         units: &[ProjectUnitInput<'_>],
         stack: Option<StackSpec>,
         reserves: Vec<ReserveSpec>,
-    ) -> crate::compiler::CompilationResult {
+    ) -> crate::CompilationResult {
         let specs = units
             .iter()
             .map(|u| UnitSpec {
@@ -1429,7 +1523,7 @@ mod tests {
         units: &[ProjectUnitInput<'_>],
         basic: BasicSpec,
         basic_src: &str,
-    ) -> crate::compiler::CompilationResult {
+    ) -> crate::CompilationResult {
         let specs = units
             .iter()
             .map(|u| UnitSpec {
@@ -1456,7 +1550,7 @@ mod tests {
         )
     }
 
-    fn codes(result: &crate::compiler::CompilationResult) -> Vec<&'static str> {
+    fn codes(result: &crate::CompilationResult) -> Vec<&'static str> {
         result
             .diagnostics
             .iter()
@@ -1478,20 +1572,30 @@ mod tests {
             .is_err()
         );
         assert!(parse_manifest("[[unit]]\nname=\"project\"\npath=\"a.c80\"\n").is_err());
+        assert!(parse_manifest("[[unit]]\nname=\"cpu\"\npath=\"a.c80\"\n").is_err());
         assert!(parse_manifest("version = 2\n[[unit]]\nname=\"a\"\npath=\"a.c80\"\n").is_err());
         assert!(
             parse_manifest(
-                "target=\"generic-z80\"\n[basic]\npath=\"a.bas\"\norigin=0x4000\nsize=0x8000\n[[unit]]\nname=\"a\"\npath=\"a.c80\"\n"
+                "target=\"generic-z80\"\n[basic]\npath=\"a.bas\"\n[[unit]]\nname=\"a\"\npath=\"a.c80\"\n"
             )
             .is_err()
         );
+        let origin = parse_manifest(
+            "target=\"tvc\"\n[basic]\npath=\"src/main.bas\"\norigin=0x19EF\n[[unit]]\nname=\"math\"\npath=\"echo.c80\"\norigin=0x3000\n",
+        )
+        .unwrap_err();
+        assert!(origin.contains("19EFH"), "{origin}");
+        let sized = parse_manifest(
+            "target=\"tvc\"\n[basic]\npath=\"src/main.bas\"\nsize=0x1611\n[[unit]]\nname=\"math\"\npath=\"echo.c80\"\norigin=0x3000\n",
+        )
+        .unwrap_err();
+        assert!(sized.contains("size"), "{sized}");
         let ok = parse_manifest(
-            "target=\"tvc\"\n[basic]\npath=\"src/main.bas\"\norigin=0x4000\nsize=0x8000\n[[unit]]\nname=\"math\"\npath=\"echo.c80\"\norigin=0x3000\n",
+            "target=\"tvc\"\n[basic]\npath=\"src/main.bas\"\n[[unit]]\nname=\"math\"\npath=\"echo.c80\"\norigin=0x3000\n",
         )
         .unwrap();
-        let basic = ok.basic.unwrap();
-        assert_eq!(basic.origin, 0x4000);
-        assert_eq!(basic.size, 0x8000);
+        assert_eq!(ok.basic.unwrap().path, PathBuf::from("src/main.bas"));
+        assert_eq!(BasicSpec::ORIGIN, 0x19EF);
     }
 
     #[test]
@@ -1849,7 +1953,11 @@ mod tests {
         let code = result.code.as_ref().unwrap();
         assert!(code.assembly.contains("CALL "));
         assert!(!code.assembly.contains("@{"));
-        let exec = execute_function(code, "start", &[]).unwrap();
+        let toml = render_rtvc_asm_v1("proj.toml", 0x2000, &code.assembled);
+        let parsed = parse_rtvc_asm_v1(&toml).unwrap();
+        let mut loaded = code.clone();
+        loaded.assembled = parsed;
+        let exec = execute_function(&loaded, "start", &[]).unwrap();
         assert!(!exec.timed_out);
         assert_eq!(exec.return_byte(), 8);
     }
@@ -2047,8 +2155,6 @@ mod tests {
     fn fixture_basic() -> BasicSpec {
         BasicSpec {
             path: PathBuf::from("main.bas"),
-            origin: 0x4000,
-            size: 0x8000,
         }
     }
 
@@ -2099,7 +2205,7 @@ mod tests {
         assert!(!small_src.contains("USR(@{"), "{small_src}");
         let payload = &small_res.basic.as_ref().unwrap().payload;
         assert_eq!(*payload.last().unwrap(), 0x00);
-        assert!(payload.len() as u32 + 0x100 <= 0x8000);
+        assert!(payload.len() as u32 + u32::from(BasicSpec::ORIGIN) <= 0x3000);
     }
 
     #[test]
@@ -2125,16 +2231,26 @@ mod tests {
             "{:?}",
             result.diagnostics
         );
+        let size = "u16 n() { return project::basic_size; }\n";
+        let result = compile_tvc(&[math_unit(size)], fixture_basic(), "10 PRINT 1\n");
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("basic_size")),
+            "{:?}",
+            result.diagnostics
+        );
     }
 
     #[test]
-    fn basic_region_overlap_and_payload_gap_are_rejected() {
+    fn basic_payload_overlap_is_rejected() {
         let src = "@fastcall pub i16 echo(i16 value) { return value; }\n";
         let overlap = compile_tvc(
             &[ProjectUnitInput {
                 name: "math",
                 kind: UnitKind::C80,
-                origin: Some(0x4100),
+                origin: Some(BasicSpec::ORIGIN),
                 text: src,
                 source_name: "echo.c80",
                 exports: &[],
@@ -2148,24 +2264,15 @@ mod tests {
             "{:?}",
             overlap.diagnostics
         );
-        let tiny = compile_tvc(
-            &[math_unit(src)],
-            BasicSpec {
-                path: PathBuf::from("main.bas"),
-                origin: 0x4000,
-                size: 0x20,
-            },
-            "10 PRINT 1\n",
-        );
-        assert!(
-            codes(&tiny).contains(&"ln-overlap"),
-            "{:?}",
-            tiny.diagnostics
-        );
     }
 
     #[test]
-    fn basic_usr_echo_runs_on_tvc_12_after_lomem() {
+    fn basic_usr_echo_runs_on_tvc_12_after_inject() {
+        use rtvc_core::cas::{
+            TVC_CAS_HEADER_LEN, TVC_CAS_LOAD_ADDR, TVC_CAS_TYPE_BASIC, encode_tvc_cas,
+            flatten_cas_image,
+        };
+
         let src = "@fastcall pub i16 echo(i16 value) { return value; }\n";
         let bas = "\
 10 LET R=USR(@{math::echo},42)\n\
@@ -2189,31 +2296,54 @@ mod tests {
             basic.substituted_source
         );
 
+        let toml = render_rtvc_asm_v1("usr.toml", 0x3000, &code.assembled);
+        let image = parse_rtvc_asm_v1(&toml).unwrap();
+        let base = *image
+            .symbols
+            .get("project::basic_base")
+            .expect("project::basic_base");
+        let size = *image
+            .symbols
+            .get("project::basic_program_size")
+            .expect("project::basic_program_size") as usize;
+        assert_eq!(base, TVC_CAS_LOAD_ADDR);
+        let basic_seg = image
+            .segments
+            .iter()
+            .find(|s| s.addr == base)
+            .expect("BASIC segment");
+        assert_eq!(basic_seg.bytes.len(), size);
+        assert_eq!(basic_seg.bytes, basic.payload);
+
+        let owned: Vec<(u16, Vec<u8>)> = image
+            .segments
+            .iter()
+            .map(|s| (s.addr, s.bytes.clone()))
+            .collect();
+        let refs: Vec<(u16, &[u8])> = owned.iter().map(|(a, b)| (*a, b.as_slice())).collect();
+        let linear = flatten_cas_image(&refs).unwrap();
+        let cas = encode_tvc_cas(&linear.bytes, TVC_CAS_TYPE_BASIC, 0xFF, TVC_CAS_LOAD_ADDR);
+
         let mut tvc = boot_tvc12();
         wait_until(&mut tvc, 400, |tvc| peek16(tvc, 0x1722) == 0x19EF);
         for _ in 0..120 {
             tvc.run_for_a_frame();
         }
         assert_eq!(peek16(&mut tvc, 0x0B19), 0xBFFF, "HIMEM");
-        type_line(&mut tvc, "LOMEM 16384");
-        wait_until(&mut tvc, 600, |tvc| peek16(tvc, 0x1722) == 0x4000);
-        assert_eq!(peek16(&mut tvc, 0x1722), 0x4000, "TEXT after LOMEM");
-        assert_eq!(peek16(&mut tvc, 0x0B19), 0xBFFF, "HIMEM after LOMEM");
-
-        let text = peek16(&mut tvc, 0x1722);
-        let old_top = peek16(&mut tvc, 0x1726);
-        let old_chain = peek16(&mut tvc, 0x1724);
-        for (i, byte) in basic.payload.iter().enumerate() {
-            tvc.bus.w8(text.wrapping_add(i as u16), *byte);
+        assert!(tvc.load_cas(&cas));
+        for (i, byte) in cas[TVC_CAS_HEADER_LEN..].iter().enumerate() {
+            assert_eq!(
+                tvc.bus.r8(TVC_CAS_LOAD_ADDR.wrapping_add(i as u16)),
+                *byte,
+                "injected RAM at {:04X}",
+                TVC_CAS_LOAD_ADDR.wrapping_add(i as u16)
+            );
         }
-        let extra = (basic.payload.len() as u16).saturating_sub(1);
-        poke16(&mut tvc, 0x1726, old_top.wrapping_add(extra));
-        poke16(&mut tvc, 0x1724, old_chain.wrapping_add(extra));
 
-        let c80_bytes: Vec<(u16, u8)> = code
-            .assembled
+        let c80_bytes: Vec<(u16, u8)> = image
             .segments
             .iter()
+            .filter(|s| s.addr != base)
             .flat_map(|seg| {
                 seg.bytes
                     .iter()
@@ -2221,23 +2351,10 @@ mod tests {
                     .map(|(i, b)| (seg.addr.wrapping_add(i as u16), *b))
             })
             .collect();
-        let before: Vec<_> = c80_bytes
-            .iter()
-            .map(|(addr, _)| tvc.bus.r8(*addr))
-            .collect();
-        for (addr, byte) in &c80_bytes {
-            tvc.bus.w8(*addr, *byte);
-        }
         let after: Vec<_> = c80_bytes
             .iter()
             .map(|(addr, _)| tvc.bus.r8(*addr))
             .collect();
-        assert_eq!(
-            after,
-            c80_bytes.iter().map(|(_, b)| *b).collect::<Vec<_>>(),
-            "C80 bytes must land in RAM; map={:02X} before={before:02X?}",
-            tvc.bus.mmu.get_map_val()
-        );
 
         type_line(&mut tvc, "RUN");
         wait_until(&mut tvc, 1200, |tvc| {
@@ -2245,17 +2362,39 @@ mod tests {
         });
         assert_eq!(tvc.bus.r8(0x3FFF), 4, "USR results");
         assert_eq!(tvc.bus.r8(0x3FFE), 1, "interpreter continued");
-        assert_eq!(peek16(&mut tvc, 0x1722), 0x4000, "TEXT after USR");
+        assert_eq!(
+            peek16(&mut tvc, 0x1722),
+            TVC_CAS_LOAD_ADDR,
+            "TEXT after USR"
+        );
         let still: Vec<_> = c80_bytes
             .iter()
             .map(|(addr, _)| tvc.bus.r8(*addr))
             .collect();
         assert_eq!(still, after, "C80 bytes after USR");
-        let _ = before;
     }
 
-    fn boot_tvc12() -> crate::tvc::Tvc {
-        let mut tvc = crate::tvc::Tvc::new_with_vid_model(false, crate::vid::VidModel::Interleaved);
+    #[test]
+    fn mixed_asm_reassembles_basic_payload() {
+        let src = "@fastcall pub i16 echo(i16 value) { return value; }\n";
+        let bas = "10 LET R=USR(@{math::echo},42)\n";
+        let result = compile_tvc(&[math_unit(src)], fixture_basic(), bas);
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        let code = result.code.as_ref().unwrap();
+        let basic = result.basic.as_ref().unwrap();
+        assert!(code.assembly.contains("ORG 0x19EF"));
+        assert!(code.assembled.symbols.contains_key("project::basic_base"));
+        let reassembled = rtvc_core::asm::assemble_program(&code.assembly, 0x3000).unwrap();
+        let basic_seg = reassembled
+            .segments
+            .iter()
+            .find(|s| s.addr == 0x19EF)
+            .expect("reassembled BASIC");
+        assert_eq!(basic_seg.bytes, basic.payload);
+    }
+
+    fn boot_tvc12() -> rtvc_core::tvc::Tvc {
+        let mut tvc = rtvc_core::tvc::Tvc::new_with_vid_model(false, rtvc_core::vid::VidModel::Interleaved);
         tvc.add_rom("TVC12_D4.64K", include_bytes!("../../roms/TVC12_D4.64K"));
         tvc.add_rom("TVC12_D3.64K", include_bytes!("../../roms/TVC12_D3.64K"));
         tvc.add_rom("TVC12_D7.64K", include_bytes!("../../roms/TVC12_D7.64K"));
@@ -2264,20 +2403,14 @@ mod tests {
         tvc
     }
 
-    fn poke16(tvc: &mut crate::tvc::Tvc, addr: u16, value: u16) {
-        let bytes = value.to_le_bytes();
-        tvc.bus.w8(addr, bytes[0]);
-        tvc.bus.w8(addr.wrapping_add(1), bytes[1]);
-    }
-
-    fn peek16(tvc: &mut crate::tvc::Tvc, addr: u16) -> u16 {
+    fn peek16(tvc: &mut rtvc_core::tvc::Tvc, addr: u16) -> u16 {
         u16::from_le_bytes([tvc.bus.r8(addr), tvc.bus.r8(addr.wrapping_add(1))])
     }
 
     fn wait_until(
-        tvc: &mut crate::tvc::Tvc,
+        tvc: &mut rtvc_core::tvc::Tvc,
         frames: u32,
-        mut pred: impl FnMut(&mut crate::tvc::Tvc) -> bool,
+        mut pred: impl FnMut(&mut rtvc_core::tvc::Tvc) -> bool,
     ) {
         for _ in 0..frames {
             tvc.run_for_a_frame();
@@ -2295,7 +2428,7 @@ mod tests {
         );
     }
 
-    fn type_line(tvc: &mut crate::tvc::Tvc, text: &str) {
+    fn type_line(tvc: &mut rtvc_core::tvc::Tvc, text: &str) {
         for ch in text.chars().chain(std::iter::once('\r')) {
             let code = ch as u32;
             tvc.key_down(code);

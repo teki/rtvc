@@ -2964,7 +2964,7 @@ dependencies = [
 
 [[package]]
 name = "rtvc"
-version = "0.8.6"
+version = "0.8.7"
 dependencies = [
  "cpal",
  "eframe",
@@ -2986,6 +2986,15 @@ dependencies = [
  "web-time",
  "winres",
  "zip",
+]
+
+[[package]]
+name = "rtvc-c80"
+version = "0.8.7"
+dependencies = [
+ "rtvc",
+ "serde",
+ "toml 0.8.23",
 ]
 
 [[package]]

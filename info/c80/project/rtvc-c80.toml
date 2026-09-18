@@ -1,0 +1,26 @@
+version = 1
+target = "generic-z80"
+
+[stack]
+base = 0xFF00
+size = 0x0100
+
+# Constants-only units must appear before importers so `pub const` bits
+# are applied before qualified lookup.
+
+[[unit]]
+name = "sizes"
+path = "sizes.c80"
+
+[[unit]]
+name = "math"
+path = "math.c80"
+origin = 0x2100
+
+[[unit]]
+name = "boot"
+kind = "asm"
+path = "boot.asm"
+origin = 0x2000
+exports = ["start"]
+stack_extra = 16

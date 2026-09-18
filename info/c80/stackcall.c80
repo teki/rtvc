@@ -1,0 +1,19 @@
+// @stackcall is caller-cleaned, right-to-left, two-byte slots.
+// Use it when a signature does not fit the register ABI.
+// The callee uses a saved-IX frame; parameters live at IX+4.
+
+@stackcall pub u16 add(u16 a, u16 b) {
+    return a + b;
+}
+
+@stackcall u8 mix(u8 a, u16 b, u8 c) {
+    return a + c;
+}
+
+u16 use_add() {
+    return add(2, 3);
+}
+
+u8 use_mix() {
+    return mix(1, 0x1111, 4);
+}

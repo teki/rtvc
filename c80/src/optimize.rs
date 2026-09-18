@@ -4,7 +4,7 @@ use super::diagnostic::{DiagCode, Diagnostic};
 use super::lower::EmitChunk;
 use super::source::{FileId, SourceSpan};
 use super::z80::{Z80Item, Z80Op, render_items};
-use crate::asm::assemble_program;
+use rtvc_core::asm::assemble_program;
 
 const MAX_JR_PASSES: usize = 256;
 
@@ -184,7 +184,7 @@ fn shorten_jumps(chunks: &mut [EmitChunk], origin: u16, diagnostics: &mut Vec<Di
 fn assemble_current(
     chunks: &[EmitChunk],
     origin: u16,
-) -> Result<crate::asm::AssembledProgram, crate::asm::AsmError> {
+) -> Result<rtvc_core::asm::AssembledProgram, rtvc_core::asm::AsmError> {
     let mut items = Vec::new();
     for chunk in chunks {
         items.extend(chunk.items().iter().cloned());
@@ -194,7 +194,7 @@ fn assemble_current(
 
 fn emitting_addrs(
     chunks: &[EmitChunk],
-    assembled: &crate::asm::AssembledProgram,
+    assembled: &rtvc_core::asm::AssembledProgram,
 ) -> Option<Vec<((usize, usize), u16)>> {
     let mut out = Vec::new();
     let mut line_i = 0usize;

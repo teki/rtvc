@@ -1,0 +1,41 @@
+// Packed structs (declaration order, no padding), for/do, ++/--, compound assign.
+// Sprite is 5 bytes: x, y, bitmap, visible.
+// Indexing enemies[i] in a tight leaf can run out of registers; walk with a pointer.
+
+struct Sprite {
+    u8 x;
+    u8 y;
+    u16 bitmap;
+    bool visible;
+};
+
+Sprite one = { 10, 20, 0x1234, true };
+Sprite enemies[8];
+
+void step(ptr<Sprite> p, u8 n) {
+    while (n != 0) {
+        p->x += 1;
+        p = p + 1;
+        n--;
+    }
+}
+
+u8 walk(u8 n) {
+    u8 s = 0;
+    for (u8 i = 0; i < n; i++) {
+        s++;
+    }
+    return s;
+}
+
+u8 once() {
+    u8 n = 0;
+    do {
+        n++;
+    } while (n < 1);
+    return n;
+}
+
+u8 first_x() {
+    return one.x;
+}

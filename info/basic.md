@@ -758,11 +758,14 @@ fitting this ceiling does not guarantee enough space to execute. A smaller
 machine, DOS or other reservations lowering HIMEM, or a higher LOMEM reduces
 the available space further; the compiler assumes the standard 64K layout.
 Default headers match BASIC `SAVE` (file type `01H`, autostart
-`00H`). `rtvc-tocas` writes the same CAS image beside the source:
+`00H`). `rtvc-tocas` writes the same CAS image beside the source. It also
+flattens `rtvc-asm-v1` TOML from `19EFH` with zero-filled gaps when the first
+segment is a tokenized BASIC stub (ASM autostart profile):
 
 ```bash
 cargo run --bin rtvc-basic -- coding/crtc-register-explorer.bas -o target/coding/crtc-register-explorer.cas
 cargo run --bin rtvc-tocas -- coding/crtc-register-explorer.bas
+cargo run --bin rtvc-tocas -- path/to/program.toml
 ```
 
 Pass `--auto` to set the CAS autostart byte, or `--format bin` to write the

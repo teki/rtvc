@@ -1,6 +1,6 @@
 # C80 Compiler Findings
 
-Last updated: 2026-09-07
+Last updated: 2026-09-08
 
 Numbered findings are kept historically. Do not delete a finding because a later
 path supersedes it; mark it resolved and point at the replacement.
@@ -197,3 +197,75 @@ next, convert only forward conditional `JP` to `JR`, and keep backward/
 unconditional `JP`. Do not emit `DJNZ`.
 **Resolution authority:** implementer (E12); matches design “prefer fewer
 T-states without growing bytes” and the deferred-DJNZ note.
+
+## C80-FIND-021 — Mixed project output is the segment TOML
+
+**Status:** resolved in E11 revalidation  
+**Evidence:** Earlier E11 treated tokenized BASIC as in-process only. The
+clarified F004/F006 contract is one `rtvc-asm-v1` TOML containing C80/ASM
+and the BASIC payload. CAS remains E13 (`rtvc-tocas`). E11 must be
+revalidated against the serialized mixed-image procedure before reaffirming
+E12.  
+**Affected:** E07 artifact wording; E11 `--emit-segments` / T11 USR fixture  
+**Impact:** Attach BASIC bytes and `project::basic_base` /
+`project::basic_program_size` to the existing linker image. Tests load that
+TOML. Do not add a relocation loader or CAS emit in E11. E13 later packs
+that TOML through `rtvc-tocas`.  
+**Resolution authority:** user plan correction; implementer (E11).
+
+## C80-FIND-022 — CAS flatten is the 19EFH load profile
+
+**Status:** resolved in E13  
+**Evidence:** Mixed tutorial/pong images keep BASIC at `19EFH` (`[basic]`
+has `path` and `size` only) and C80 at `3000H` so `rtvc-tocas` can flatten
+them. Tape inject always writes `19EFH`. Instant `load_cas` copies the linear
+payload and, when the payload starts with tokenized BASIC, sets TEXT/CHAIN/TOP
+(`1722H`/`1724H`/`1726H`) so `LIST`/`RUN` see the injected program. CLI `-i`
+types `RUN` when the CAS autostart byte is set.  
+**Affected:** E13 `rtvc-tocas` TOML path; T13 cassette USR  
+**Impact:** No relocating loader. `[basic]` is a path; BASIC is `19EFH` and
+must not overlap linked modules.  
+**Resolution authority:** design CAS follow-up; implementer (E13).
+
+## C80-FIND-023 — Pong vsync must ACK before waiting
+
+**Status:** resolved in pong example  
+**Evidence:** `setup()` does `DI` then a long `LDIR`. Port `59H` bit 4
+(cursor/sound, active low) can stay pending because nothing ACKs it. Waiting
+for idle then a falling edge deadlocks in the idle poll. ACK with
+`OUT (07H)` first, wait until bit 4 is pending, ACK again. Reprogram CRTC
+R10/R11=3 and R14/R15=`0x0EFF` so the cursor still ticks at 50 Hz after
+VT-DOS (`0x0AFF`). Injected `pong.cas` plus `RUN` then serves on Space and
+moves the left paddle on joystick up.  
+**Affected:** `info/c80/pong/pong.c80` `wait_frame` / `setup`  
+**Impact:** Any C80 bitmap loop that `DI`s must ACK bit 4 before polling.  
+**Resolution authority:** pong playtest after E13.
+
+## C80-FIND-024 — Native and wasm-full no longer enable `compiler`
+
+**Status:** resolved  
+**Evidence:** E00 proposed `compiler` on `native`, `wasm-full`, and `cli-tools`.
+The emulator and full-web UI never call the compiler, so a C80 compile error
+blocked `cargo build --bin rtvc`. `native` and `wasm-full` no longer enable
+`compiler`. `cli-tools` still does. Direct `--features compiler` builds
+`rtvc-c80` without the desktop UI. Tutorial `compile.sh` / `compile.bat` pass
+`--no-default-features --features compiler`.  
+**Affected:** [Cargo.toml](../../Cargo.toml) features; native/wasm-full size;
+C80 CLI commands  
+**Impact:** `cargo run --bin rtvc-c80` with default features is skipped until
+`compiler` is enabled. Lightweight `wasm` was already without C80.  
+**Resolution authority:** user request to make C80 standalone of the emulator.
+
+## C80-FIND-025 — C80 is a separate workspace crate
+
+**Status:** resolved  
+**Evidence:** Feature-gating still compiled C80 whenever `compiler`/`cli-tools`
+was on, and rust-analyzer/`cargo check` of the `rtvc` package could still see
+`src/compiler/`. The compiler now lives in [`c80/`](../../c80/) as package
+`rtvc-c80`. Workspace `default-members = ["."]`, so `cargo build` does not
+build C80. `parse_rtvc_asm_v1` moved to `rtvc_core::asm` (`asm-toml` feature)
+so `rtvc-tocas` does not depend on the compiler crate.  
+**Affected:** workspace layout; `cargo run -p rtvc-c80`; tutorial compile scripts  
+**Impact:** A C80 type error cannot fail `cargo build --bin rtvc`. Use
+`cargo test -p rtvc-c80` for compiler tests.  
+**Resolution authority:** user request to split C80 from rtvc.

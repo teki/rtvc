@@ -172,10 +172,7 @@ pub void print_name() {
     u8 index = 0;
 
     while (index < game_data::enemy_name.len) {
-        // Explicit 16-bit port address and byte value; operand syntax provisional.
-        asm(in: bc = u16(0x0006), in: a = game_data::enemy_name[index]) {
-            out (c),a
-        }
+        cpu::out(0x0006, game_data::enemy_name[index]);
         index = index + 1;
     }
 }
@@ -740,6 +737,89 @@ Avoid pretending that machine I/O is portable C. Provide typed compiler
 intrinsics for operations such as mapped-memory access and Z80 port input and
 output. Machine-specific libraries can wrap those primitives later.
 
+#### Proposed Port Input and Output Form (Phase 1D / E10)
+
+Use built-in call expressions with these signatures (no declaration or import
+required):
+
+```c
+u8 cpu::in(u8 port);
+void cpu::out(u8 port, u8 value);
+void cpu::di();
+void cpu::ei();
+void cpu::ldir(/* HL source */ ptr-or-u16 hl, /* DE dest */ ptr-or-u16 de, u16 bc);
+```
+
+These are compiler intrinsics in the reserved `cpu` namespace, not ordinary
+linked functions. They cannot be imported or taken as function values. Keep
+`in` and `out` as inline-assembly operand vocabulary (`in:` / `out:`) rather
+than adding statement keywords. Bare names `in` / `out` / `di` / `ei` /
+`ldir` are not reserved. The implemented contract is in
+[info/c80.md](../../info/c80.md).
+
+```c
+u8 read_device(u8 port) {
+    return cpu::in(port);
+}
+
+void write_device(u8 port, u8 value) {
+    cpu::out(port, value);
+}
+
+void write_pair(u8 port, u16 value) {
+    cpu::out(port, u8(value));
+    cpu::out(port + 1, u8(value >> 8));
+}
+```
+
+The port is an 8-bit port number; each operation transfers exactly one byte.
+This matches the TVC's low-byte device decoding; see
+[Port decode](../../info/tvc.md#port-decode). There is no implicit word transfer
+or memory-pointer interpretation. The ordinary conversion rules apply:
+fitting literals such as `cpu::out(0x06, 0x80)` and typed `u8` ports are accepted;
+typed `u16` ports or values require explicit narrowing with `u8(...)`.
+Reject wrong arity/types, out-of-range literals, and use of the void output
+result as a value. Port arithmetic follows ordinary `u8` wrapping rules.
+For TVC, only the low address byte is contractual; the high bus byte is
+unspecified. For GenericZ80 and Zx82, zero-extend the byte port to BC for a
+deterministic address. Devices requiring a nonzero high byte use explicit
+inline assembly, including expansion-specific decoding. These conveniences
+do not claim to cover every Z80 device.
+
+Evaluate arguments exactly once, left-to-right: for output, finish evaluating
+the port, then the value, then perform the write. Input is an expression and
+may also be a discarded-result statement. Every evaluated input or output is
+observable, including an unused input result or repeated identical writes.
+Preserve order relative to other I/O, observable source-memory accesses, calls,
+and inline assembly. Never fold, merge, eliminate, speculate, or hoist an I/O
+operation; short-circuited or otherwise unexecuted expressions perform no I/O.
+These operations do not imply interrupt masking or atomic read/modify/write.
+
+Represent input/output explicitly in the typed IR with effect and source-span
+metadata. Dynamic-port lowering puts the port in C and uses `IN A,(C)` for input
+and `OUT (C),A` for output. Model register overlap and flag effects accurately,
+preserve live values during operand setup, and preserve the evaluated port if
+the value expression contains a call or another input. They are inline
+operations, with no CALL, runtime helper, or callee stack allowance; any
+preservation spills still count toward the ordinary stack bound. Include setup
+and I/O instructions in source maps and final byte/timing metadata.
+
+For TVC constant ports, select `IN A,(n)` or `OUT (n),A` when beneficial:
+TVC devices ignore their high address byte. For dynamic TVC ports, B need not
+be initialized solely for I/O. On GenericZ80 and Zx82 initialize B to zero and
+retain BC-addressed lowering. Track the selected instruction's actual flag
+effects. Block I/O and explicit flag results remain available through inline
+assembly; they are outside these two built-ins.
+
+Validate low-byte port numbers and byte values with an instrumented TVC bus,
+including immediate and dynamic forms. For GenericZ80/Zx82 verify the zero
+high address byte. Reject port literals above 255 unless explicitly narrowed.
+Cover constant/dynamic ports, explicit conversions and diagnostics, unused
+inputs, repeated writes, polling, nested `cpu::out(port_expr(), cpu::in(other))`,
+short-circuiting, live registers/flags, and ordering with mutable memory.
+Compare baseline and optimized effect traces and verify assembler round trips,
+source provenance, and instruction timing metadata.
+
 Use a target profile in compiler options rather than hard-coding TVC behavior
 into the frontend:
 
@@ -897,7 +977,7 @@ path = "src/video_memory.c80"
 An `origin` becomes required if that unit later emits a function or owns
 storage. `ORG` remains project-managed; an explicit pointer constant is a value
 in the language rather than a request to place generated output. Normal Z80
-device access still uses typed `io_in`/`io_out` intrinsics because ports are a
+device access still uses typed `cpu::in`/`cpu::out` intrinsics because ports are a
 separate CPU address space; pointers are not intended to disguise port I/O as
 memory access.
 
@@ -933,6 +1013,11 @@ later undone. Loading token bytes alone does not initialize interpreter state.
 Defer automatic BASIC workspace management and cassette bootstrap generation;
 do not concatenate C80 bytes onto an ordinary BASIC CAS payload and assume they
 will be loaded at the linked addresses.
+
+The mixed artifact is explicitly the same `rtvc-asm-v1` TOML used for C80/ASM:
+`--emit-segments` includes the tokenized BASIC payload at `[basic].origin` as
+well as all C80/ASM segments. F004/F006 specify serialization and execution
+acceptance. An in-process BASIC buffer alone is not the mixed-project output.
 
 C80 callable routines share BASIC's CPU stack and contribute to its reserved
 stack budget; BASIC's evaluation stack is a separate allocation. Freestanding
@@ -1637,6 +1722,9 @@ Add an `rtvc-c80` binary before the editor depends on the compiler. It should:
 - accept target and unit-origin options;
 - write generated assembly and optionally raw binary or the existing
   `rtvc-asm-v1` TOML segment format;
+- for mixed projects, include BASIC program bytes in the same segment output;
+  this is an addressed memory image, not a CAS or an automatically runnable
+  interpreter snapshot;
 - emit human-readable diagnostics with file, line, column, and source context;
 - optionally emit a machine-readable compiler metadata file containing source
   maps, symbols, bytes, and timings once that schema is stable; and
@@ -1868,14 +1956,16 @@ synthetic.
    constant/data declarations.
 3. Extend Phase 1B inline assembly from measured examples, retaining explicit
    registers, outputs, clobbers, and memory effects.
-4. Add optional typed port/memory conveniences only where they improve clarity;
-   explicit inline assembly remains the supported hardware/ROM boundary.
+4. Add typed `cpu::in(u8) -> u8` and `cpu::out(u8, u8) -> void` port intrinsics
+   with the byte-port and observable-effect contract above. Explicit inline
+   assembly remains available for other hardware/ROM operations.
 5. Add the mixed BASIC/C80 project mode using the existing BASIC tokenizer,
    symbolic callable references, and generated BASIC memory-reservation constants.
    Supply explicit BASIC/assembly setup examples rather than automatic wrappers
    or interpreter-memory management.
-   Keep initial output as a combined loadable image; cassette packaging may
-   follow after target startup/loading behavior is tested.
+   Emit one `rtvc-asm-v1` TOML containing C80/ASM segments and the BASIC payload
+   at its configured origin. Execute that serialized artifact with explicit
+   interpreter setup in the E11 test; cassette packaging remains deferred.
 
 Exit criterion: representative TVC routines can express structured data,
 loops, function calls, hardware access, and optimized inline assembly without
@@ -2307,6 +2397,26 @@ nonzero for parse/type/link/IO errors. --emit-map is deferred: maps are mandator
 library data, not a prematurely frozen external format.
 
 Segment output uses rtvc-asm-v1; ASM output is normal resolved helper assembly.
+Here "complete loadable image" means the complete collection of addressed
+emitted bytes, serialized by `--emit-segments` as `rtvc-asm-v1` TOML. E07 covers
+C80/ASM programs; E11 adds the BASIC payload to that same image. No CAS output,
+CPU register snapshot, automatic startup, or interpreter initialization is
+implied by this term.
+
+For a mixed project, append the exact tokenized BASIC payload, including its
+final program terminator, as a segment beginning at `[basic].origin`. Do not
+emit its entire reserved workspace as zero padding. Preserve the ordinary
+segment-format fields and make `project::basic_base` and
+`project::basic_program_size` available in the exported symbols so consumers
+can identify the BASIC byte range even if adjacent ranges are coalesced.
+Keep the BASIC allocation as a contained subrange of its own reservation;
+all C80/ASM and other reserved ranges must remain disjoint from that reservation.
+Do not reject BASIC for overlapping the workspace that intentionally owns it.
+
+For mixed `--emit-asm`, render the same BASIC bytes using ORG/DB so reassembly
+reproduces the entire segment image. The raw-binary contiguity rule below also
+includes BASIC bytes; it does not silently omit them. No separate BASIC CAS
+file or new container schema is required for E11.
 Raw binary requires a contiguous union of emitted ranges; coalesce adjacent
 segments, reject gaps/multiple separated images, and never implicitly pad or
 concatenate. Assembly and segment outputs retain origins and symbols.
@@ -2459,6 +2569,38 @@ HI-MEM remains BFFFH in this selected fixture. Verify actual TEXT/program base
 and C80 bytes before and after USR and exercise normal BASIC allocations.
 Record the manual commands in the example documentation.
 
+#### Serialized Mixed-Image Acceptance (E11/T11)
+
+The execution test must consume the actual CLI-produced TOML, not only the
+compiler's in-memory structures or a separately rebuilt BASIC program:
+
+1. Build the mixed fixture with `--emit-segments`, read the file back using
+   the supported segment format, and locate BASIC through its exported range
+   symbols. Assert exact BASIC payload bytes/terminator and C80/ASM ranges.
+2. Start the selected TVC BASIC 1.2 environment. Establish the manual LOMEM
+   reservation and valid interpreter workspace before loading C80 memory.
+   A test helper may detokenize the BASIC bytes read from the artifact and
+   enter those lines through the ROM's existing input path to establish its
+   program pointers; it must not rebuild from the original `.bas` source.
+3. Pause and load every serialized segment at its address using the existing
+   mapped-memory path, then verify memory matches the file. The helper's
+   earlier interpreter setup must agree with that same payload/base/length.
+   Do not reset/reinject a tape program afterward and overwrite the linked layout.
+4. Issue BASIC RUN, observe the compiled USR entry and return, check 42/-1 and
+   signed-boundary results, and assert a subsequent BASIC statement executes.
+   Bound execution and assert the protected C80 bytes remain intact.
+
+Supply a reproducible manual/helper loading recipe with the fixture. It must
+explicitly describe interpreter setup before `loadasm`; `loadasm` alone writes
+bytes and does not initialize BASIC. No general loader UI, automatic compiler
+wrapper, or new production interpreter-management layer is required. Tests that
+only tokenize, inspect segments, or call machine code without BASIC do not pass
+this E11 gate. The existing E07 pure-C80/ASM harness remains valid for E07.
+
+This requirement closes an output/integration specification gap. An earlier
+E11 completion based only on in-process tokenization/substitution must be
+revalidated against this artifact test; the existing linker need not be replaced.
+
 Other regions may require additional explicit BASIC/assembly setup by the user;
 the compiler emits symbols/checks, not automatic interpreter-state writes.
 Failure of a test is implementation/research work within this fixed target
@@ -2466,9 +2608,67 @@ contract, not a requirement for a separate fixture-approval step. Stop only if
 verified ROM behavior contradicts the specified USR/LOMEM contract. Do not
 change ROM/CPU implementation to force the fixture to pass.
 
-### Implementation Authority and Remaining Work
+## CAS Follow-Up: Linear Image First, Compression Second
 
-Implement E02-E12 using these contracts. The earlier open findings are resolved
+CAS packaging follows the compiler's segment output in two separate increments
+(E13/E14). It belongs in `rtvc-tocas`, not the C80 backend or linker. Earlier
+references to deferred CAS packaging mean deferred beyond E12, not excluded
+from these follow-up increments.
+
+E13 accepts `rtvc-asm-v1` TOML and builds one linear byte block. Sort and validate
+segments, preserve every byte at its linked address, and fill inter-segment gaps
+with zeroes. Wrap that block using the existing TVC CAS encoder. This intentional
+CAS padding does not change `rtvc-c80 --emit-bin`, which still rejects gaps.
+Do not add a relocation loader or compressor in the first cut.
+
+The first supported cassette profile is the existing BASIC-loadable image at
+19EFH. Require the first segment to start there and contain a valid tokenized
+BASIC program or an explicit BASIC launch stub; reject arbitrary binary or a
+relocated BASIC-only image at 4000H rather than emitting a misleading runnable
+CAS. The user supplies the launch/setup code and links its machine-code targets
+at their final addresses. Package through the highest emitted end address, with
+all gaps materialized; reject overflow and images outside the supported 64K TVC
+RAM load range (exclusive end at most C000H). Report payload and padding sizes.
+The linear load writes the gaps too: this profile requires exclusive ownership
+of the entire load interval, even where TOML originally contained no segment.
+User startup/reservation rules still apply after loading.
+
+E14 adds opt-in [ZX0](https://github.com/einar-saukas/ZX0) compression over
+exactly the same linear block, including zero padding. Port upstream's optimal
+compressor and stream writer to native Rust, with no C FFI, external executable,
+or C toolchain required for normal builds/use. Keep this packaging code outside
+the C80 backend/linker. Use forward ZX0 v2 streams and adapt upstream's standard
+Z80 decoder to the repository assembler. Classic v1, backwards streams, prefix
+dictionaries, and alternative decoder variants are outside initial E14 scope.
+Pin and record the upstream commit used for the port and fixtures, preserve
+source notices and the [BSD-3-Clause license](https://github.com/einar-saukas/ZX0/blob/main/LICENSE),
+and include ZX0 attribution in distributed documentation.
+
+A BASIC launch stub invokes decompression, reconstructing the original bytes
+before the explicitly selected program continuation. Require explicit scratch
+memory for staged input, decoder, live bootstrap, and active stack, disjoint from
+the output span. Validate initial cassette loading and staging as well as decoding;
+reject unsafe overlap or insufficient space. ZX0 overlapping decompression is
+not part of the initial path. Compression changes tape storage size, not linked
+addresses or final RAM footprint. Keep uncompressed output as the default with
+explicit `--compression none|zx0` selection. Report total cassette size including
+bootstrap/staging overhead, even when compression makes the result larger. Do
+not introduce general multi-bank relocation or ROM-call wrappers.
+
+Use bounded Rust compression and host validation, rejecting empty input and
+requiring the decoded length to equal the E13 image size. Cross-check with pinned
+upstream fixtures and execute the adapted Z80 decoder on Rust output; host round
+trips alone are insufficient. The codec choice is settled by this plan and needs
+no further product approval. See the [E14 execution contract](c80-compiler-execution.md#e14--optional-zx0-compression-of-the-linear-cas-image).
+
+Both increments must be tested by loading the resulting CAS through the real
+cassette path and executing the program. Direct TOML memory injection alone
+does not validate cassette packaging.
+
+## Implementation Authority and Remaining Work
+
+Implement E02-E12 using these contracts, then E13/E14 when those packaging
+increments are assigned. The earlier open findings are resolved
 as design decisions; their implementation tests remain to be written/run.
 E01 parsing remains a completed increment, not proof it already handles every
 later syntax form. Extend it in the increment that introduces the form and

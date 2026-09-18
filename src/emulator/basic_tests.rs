@@ -34,6 +34,12 @@ fn detokenizes_saved_hello_world_program() {
         detokenize_program(HWCNT_PAYLOAD).unwrap(),
         "10 FOR I=1 TO 10\n20 PRINT \"hello world\",I\n30 NEXT I\n"
     );
+    assert_eq!(
+        tokenized_program_len(HWCNT_PAYLOAD),
+        Some(HWCNT_PAYLOAD.len())
+    );
+    assert_eq!(tokenized_program_len(&[0]), Some(1));
+    assert_eq!(tokenized_program_len(&[]), None);
 }
 
 #[test]

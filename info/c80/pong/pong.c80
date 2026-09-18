@@ -1,0 +1,345 @@
+// Pong as one C80 USR. BASIC only launches it:
+//   10 LET R=USR(@{pong::play},0)
+//   20 PRINT R
+// play() does not return until someone reaches WIN. PRINT is 1 if you won,
+// -1 if the AI won.
+//
+// Playfield (GRAPHICS 4, VID0 at 8000H after mapper 50H):
+//   240 visible rasters (Y in 0..239), 64 bytes per raster.
+//   One byte is four 4-colour pixels. C80 has no << yet, so sprites are
+//   whole bytes: left paddle column 2, AI column 61, ball one column.
+//   Byte (col, y) is memory[y * 64 + 0x8000 + col].
+//   Paddles are 24 rasters tall, ball is 4. Y is the top row (inclusive);
+//   the bottom is exclusive, so a paddle occupies [py, py+24).
+//
+// Drawing never repaints a whole sprite after the first stamp. A move only
+// writes the new edge and clears the old one. put_row() is a one-argument
+// store; column, pixel value, and span length live in globals so a stamp
+// and the matching erase can share the same count. fill_rows(y, oy - by)
+// would also put two related bytes into A and C at once, which is a bad
+// fit for the register ABI — keep the length in draw_h instead.
+//
+// y * 64 is six doublings: C80 has no * or << yet.
+//
+// Keyboard is an 11x8 active-low matrix: out 03H selects the row, in 58H
+// reads the columns (0 = pressed). Joystick / cursor keys are row 8
+// (bit 1 up, bit 2 down). Space is row 7 bit 5.
+
+pub const u8 WIN = 5;
+
+// 0 = waiting for Space, 1 = in play, 2 = player reached WIN, 3 = AI did.
+u8 state;
+u8 pscore;
+u8 ascore;
+u8 py;          // left paddle top, even, steps of 2
+u8 ay;          // right paddle top, steps of 1
+u8 bx;          // ball column 0..63
+u8 by;          // ball top raster
+i8 vx;          // 0 = waiting to serve, else ±1
+i8 vy;
+u8 draw_col;    // VRAM column for put_row
+u8 draw_val;    // 0xFF = four white pixels, 0 = clear
+u8 draw_h;      // how many rasters fill_rows should write
+
+u8 read_row(u8 row) {
+    cpu::out(0x03, row);
+    return cpu::in(0x58);
+}
+
+// Store draw_val at (draw_col, y). a = y*64 via six ADD A,A.
+void put_row(u8 y) {
+    u16 a;
+    ptr<u8> p;
+    a = u16(y);
+    a += a;
+    a += a;
+    a += a;
+    a += a;
+    a += a;
+    a += a;
+    p = ptr<u8>(a + 0x8000) + draw_col;
+    *p = draw_val;
+}
+
+// Write draw_h rasters starting at y. Copy the count so a later erase can
+// still see the original draw_h.
+void fill_rows(u8 y) {
+    u8 n;
+    n = draw_h;
+    while (n != 0) {
+        put_row(y);
+        y = y + 1;
+        n = n - 1;
+    }
+}
+
+void wait_frame() {
+    // Bit 4 of 59H is the shared cursor/sound IRQ, active low. DI during
+    // setup's LDIR leaves it pending, so ACK first or the idle wait never ends.
+    cpu::out(0x07, 0);
+    while ((cpu::in(0x59) & 0x10) != 0) {
+    }
+    cpu::out(0x07, 0);
+}
+
+// Center the ball and freeze it. Space in serve() sets vx/vy.
+void place_ball() {
+    bx = 32;
+    by = 118;
+    vx = 0;
+    vy = 0;
+    state = 0;
+}
+
+// Paddle [pad_y, pad_y+24) overlaps ball [by, by+4).
+bool hits(u8 pad_y) {
+    if (by < pad_y + 24 && pad_y < by + 4) {
+        return true;
+    }
+    return false;
+}
+
+void scored(bool player) {
+    if (player) {
+        pscore = pscore + 1;
+        if (pscore == WIN) {
+            state = 2;
+            return;
+        }
+    } else {
+        ascore = ascore + 1;
+        if (ascore == WIN) {
+            state = 3;
+            return;
+        }
+    }
+    place_ball();
+}
+
+void move_player() {
+    u8 joy;
+    joy = read_row(8);
+    // Up: new top is two white rows at py; old bottom was [py+24, py+26).
+    if ((joy & 0x02) == 0) {
+        if (py >= 2) {
+            py = py - 2;
+            draw_col = 2;
+            draw_h = 2;
+            draw_val = 0xFF;
+            fill_rows(py);
+            draw_val = 0;
+            fill_rows(py + 24);
+        }
+    }
+    // Down: erase the old top at py-2, stamp two new rows at py+22
+    // (the paddle now ends at py+24).
+    if ((joy & 0x04) == 0) {
+        if (py < 214) {
+            py = py + 2;
+            draw_col = 2;
+            draw_h = 2;
+            draw_val = 0;
+            fill_rows(py - 2);
+            draw_val = 0xFF;
+            fill_rows(py + 22);
+        }
+    }
+}
+
+void serve() {
+    u8 keys;
+    keys = read_row(7);
+    if (vx == 0 && (keys & 0x20) == 0) {
+        vx = 1;
+        vy = 1;
+        state = 1;
+    }
+}
+
+// One raster per frame, and only while the ball is moving, so the player
+// (step 2) can outrun it. Compare centres: ball is 4 tall, paddle 24.
+void move_ai() {
+    u8 ball;
+    u8 pad;
+    if (vx == 0) {
+        return;
+    }
+    ball = by + 2;
+    pad = ay + 12;
+    if (ball < pad) {
+        if (ay != 0) {
+            ay = ay - 1;
+            draw_col = 61;
+            draw_h = 1;
+            draw_val = 0xFF;
+            fill_rows(ay);
+            draw_val = 0;
+            fill_rows(ay + 24);
+        }
+    } else {
+        if (ball > pad) {
+            if (ay < 216) {
+                ay = ay + 1;
+                draw_col = 61;
+                draw_h = 1;
+                draw_val = 0;
+                fill_rows(ay - 1);
+                draw_val = 0xFF;
+                fill_rows(ay + 23);
+            }
+        }
+    }
+}
+
+// After physics(), (ox, oy) is where the ball was. Same column: slide
+// vertically (paint the uncovered edge, clear the vacated one). Column
+// changed: erase the old 4-row stamp and draw a new one — even if Y moved
+// too. A paddle bounce keeps X still, so it takes the Y-only path.
+void ball_sync(u8 ox, u8 oy) {
+    if (bx == ox) {
+        if (by == oy) {
+            return;
+        }
+        draw_col = bx;
+        if (by < oy) {
+            draw_h = oy - by;
+            draw_val = 0xFF;
+            fill_rows(by);
+            draw_val = 0;
+            fill_rows(by + 4);
+        } else {
+            draw_h = by - oy;
+            draw_val = 0;
+            fill_rows(oy);
+            draw_val = 0xFF;
+            fill_rows(oy + 4);
+        }
+        return;
+    }
+    draw_h = 4;
+    draw_col = ox;
+    draw_val = 0;
+    fill_rows(oy);
+    draw_col = bx;
+    draw_val = 0xFF;
+    fill_rows(by);
+}
+
+void physics() {
+    u8 ox;
+    u8 oy;
+    if (vx == 0) {
+        return;
+    }
+    ox = bx;
+    oy = by;
+    // Ball is 4 rasters; 236+4 = 240, the first row past the paper.
+    if (vy < 0) {
+        if (by == 0) {
+            vy = 1;
+        } else {
+            by = by - 1;
+        }
+    } else {
+        if (by >= 236) {
+            vy = -1;
+        } else {
+            by = by + 1;
+        }
+    }
+    // Flip vx on the paddle columns without moving X, so ball_sync can
+    // keep the same column. Miss and walk off 0 or 63 to score.
+    if (vx < 0) {
+        if (bx <= 3 && hits(py)) {
+            vx = 1;
+        } else {
+            if (bx == 0) {
+                scored(false);
+            } else {
+                bx = bx - 1;
+            }
+        }
+    } else {
+        if (bx >= 60 && hits(ay)) {
+            vx = -1;
+        } else {
+            if (bx >= 63) {
+                scored(true);
+            } else {
+                bx = bx + 1;
+            }
+        }
+    }
+    ball_sync(ox, oy);
+}
+
+void setup() {
+    ptr<u8> pal;
+    ptr<u8> vram;
+    // ROM ISR would stamp a cursor into VID0. Stay DI until restore().
+    cpu::di();
+    // Palette 0..3 and a dark border. 0x0B13 is the firmware copy of port
+    // 06H; force bits 0-1 to 01 (GRAPHICS 4) and write it back.
+    cpu::out(0x60, 0);
+    cpu::out(0x61, 0x14);
+    cpu::out(0x62, 0x44);
+    cpu::out(0x63, 0x55);
+    cpu::out(0x00, 0x20);
+    pal = ptr<u8>(0x0B13);
+    *pal = (*pal & 0xFC) | 0x01;
+    cpu::out(0x06, *pal);
+    // 50H: VID0 in the 8000H window. 70H (restore) puts U2 back there.
+    cpu::out(0x02, 0x50);
+    // R10/R11: cursor shape. R14-R15 = 0x0EFF, last paper byte, so the
+    // cursor IRQ (and wait_frame) lands on raster 239. VT-DOS leaves
+    // 0x0AFF (raster 175) and would sync mid-screen.
+    cpu::out(0x70, 0x0A);
+    cpu::out(0x71, 0x03);
+    cpu::out(0x70, 0x0B);
+    cpu::out(0x71, 0x03);
+    cpu::out(0x70, 0x0E);
+    cpu::out(0x71, 0x0E);
+    cpu::out(0x70, 0x0F);
+    cpu::out(0x71, 0xFF);
+    // 240 * 64 = 0x3C00 paper bytes. Zero the first, LDIR the rest
+    // (HL is source, DE is dest — Z80 order, not memcpy).
+    vram = ptr<u8>(0x8000);
+    *vram = 0;
+    cpu::ldir(vram, ptr<u8>(0x8001), 0x3BFF);
+}
+
+void restore() {
+    cpu::out(0x02, 0x70);
+    cpu::ei();
+}
+
+// USR argument arrives in HL and is ignored. Return 1 or -1 in HL.
+@fastcall pub i16 play(i16 unused) {
+    setup();
+    pscore = 0;
+    ascore = 0;
+    py = 108;
+    ay = 108;
+    place_ball();
+    draw_val = 0xFF;
+    draw_h = 24;
+    draw_col = 2;
+    fill_rows(py);
+    draw_col = 61;
+    fill_rows(ay);
+    draw_h = 4;
+    draw_col = bx;
+    fill_rows(by);
+    while (state < 2) {
+        wait_frame();
+        move_player();
+        serve();
+        move_ai();
+        physics();
+    }
+    restore();
+    if (state == 2) {
+        return 1;
+    }
+    return -1;
+}
