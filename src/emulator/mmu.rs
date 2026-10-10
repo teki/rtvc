@@ -253,6 +253,29 @@ impl TvcMmu {
         }
     }
 
+    /// CPU addresses where this physical ROM byte is visible. Page 0 is listed
+    /// before page 3 when SYS is mapped in both. Empty when the byte is not
+    /// in the current map.
+    pub fn rom_cpu_addresses(&self, bank: RomBank, offset: u16) -> Vec<u16> {
+        let mut addresses = Vec::new();
+        for page in 0..4 {
+            let Some(bank_id) = self.map[page] else {
+                continue;
+            };
+            let page_base = (page as u16) << 14;
+            match bank {
+                RomBank::Sys if bank_id == 8 && (offset as usize) < self.sys.len() => {
+                    addresses.push(page_base | offset);
+                }
+                RomBank::Exth if bank_id == 10 && (offset as usize) < self.exth.len() => {
+                    addresses.push(page_base | (offset + 0x2000));
+                }
+                _ => {}
+            }
+        }
+        addresses
+    }
+
     #[inline]
     pub fn ext_card_offset(&self, addr: u16) -> Option<u16> {
         if (self.map_val & 0xC0) != 0xC0 {

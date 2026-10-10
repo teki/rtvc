@@ -1,0 +1,34 @@
+{
+  "comments": [
+    {
+      "address": "C000H",
+      "source": "hbf",
+      "text": "MOPS signature and the length-prefixed name DISK. Page 0, not this page, supplies the C00BH initializer and the C00DH function table."
+    },
+    {
+      "address": "C1DCH",
+      "source": "hbf",
+      "text": "CLI command table. Each record is a length, the name, and a little-endian handler. A 00H length ends the table. Names: CD, MD, RD, DEL, ERA, VOL, DIR, DOS, REN, CLS, VAR, LDIR, COPY, DATE, HELP, TIME, MOVE, TYPE, LTYPE, MVDIR, RNDIR, CHDIR, ERASE, MKDIR, RMDIR, ERASE, FORMAT, RENAME."
+    },
+    {
+      "address": "C2A0H",
+      "source": "hbf",
+      "text": "Eight-byte character bitmap placed immediately before the CD handler at C2A9H."
+    },
+    {
+      "address": "C545H",
+      "source": "hbf",
+      "text": "NUL-terminated directory tag: space, <dir>, two spaces."
+    },
+    {
+      "address": "CC83H",
+      "source": "hbf",
+      "text": "Nine-byte separator table, scanned with CPIR."
+    },
+    {
+      "address": "CF81H",
+      "source": "hbf",
+      "text": "Unused FFH fill through the end of the page."
+    }
+  ]
+}

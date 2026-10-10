@@ -1,4 +1,4 @@
-//! Regenerates `roms/rom_symbols_1_2.json` from the standalone ROM listings.
+//! Regenerates the per-listing `roms/TVC12_*.64K.symbols.json` files.
 //!
 //! Label addresses come from the real assembler (`rtvc-asm --format toml`),
 //! so the database can never drift from what the listings assemble to. The
@@ -8,21 +8,47 @@
 //!
 //! Curated prose (`summary`, `tags`, `usage`, …) is merged from the previous
 //! database by `(bank, offset)`. Labels without a curated entry become
-//! low-confidence stubs for a human to fill in.
+//! low-confidence stubs for a human to fill in. Each listing keeps its own
+//! symbol file, named like the matching `*.comments.json`.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-/// (ASM listing relative to the workspace root, bank id).
-const LISTINGS: &[(&str, &str)] = &[
-    ("roms/TVC12_D4.64K.asm", "sys"),
-    ("roms/TVC12_D3.64K.asm", "sys"),
-    ("roms/TVC12_D7.64K.asm", "exth"),
+struct Listing {
+    asm: &'static str,
+    bank: &'static str,
+    json: &'static str,
+    /// Image offsets in `bank`, inclusive start and exclusive end.
+    offset_start: u16,
+    offset_end: u16,
+}
+
+const LISTINGS: &[Listing] = &[
+    Listing {
+        asm: "roms/TVC12_D4.64K.asm",
+        bank: "sys",
+        json: "roms/TVC12_D4.64K.symbols.json",
+        offset_start: 0x0000,
+        offset_end: 0x2000,
+    },
+    Listing {
+        asm: "roms/TVC12_D3.64K.asm",
+        bank: "sys",
+        json: "roms/TVC12_D3.64K.symbols.json",
+        offset_start: 0x2000,
+        offset_end: 0x4000,
+    },
+    Listing {
+        asm: "roms/TVC12_D7.64K.asm",
+        bank: "exth",
+        json: "roms/TVC12_D7.64K.symbols.json",
+        offset_start: 0x0000,
+        offset_end: 0x2000,
+    },
 ];
 
-const JSON_PATH: &str = "roms/rom_symbols_1_2.json";
 const IMAGE_LEN: u16 = 0x2000;
 
 struct AsmLabel {
@@ -36,28 +62,96 @@ struct AsmLabel {
 pub fn rom_symbols(check: bool) -> Result<(), String> {
     let workspace = super::workspace_dir()?;
     let mut labels = Vec::new();
-    for (asm, bank) in LISTINGS {
-        labels.extend(labels_from_listing(&workspace, asm, bank)?);
+    for listing in LISTINGS {
+        labels.extend(labels_from_listing(&workspace, listing.asm, listing.bank)?);
     }
-    let json_path = workspace.join(JSON_PATH);
-    let previous = fs::read_to_string(&json_path)
-        .map_err(|err| format!("failed to read {}: {err}", json_path.display()))?;
-    let output = merge_database(&previous, labels)?;
+    let mut previous_docs = Vec::new();
+    let mut combined_symbols = Vec::new();
+    for listing in LISTINGS {
+        let json_path = workspace.join(listing.json);
+        let previous = fs::read_to_string(&json_path)
+            .map_err(|err| format!("failed to read {}: {err}", json_path.display()))?;
+        let document: serde_json::Value = serde_json::from_str(&previous)
+            .map_err(|err| format!("{} is invalid JSON: {err}", listing.json))?;
+        let symbols = document
+            .get("symbols")
+            .and_then(|symbols| symbols.as_array())
+            .ok_or_else(|| format!("{} has no symbols array", listing.json))?;
+        combined_symbols.extend(symbols.iter().cloned());
+        previous_docs.push((listing, previous, document));
+    }
+    let mut combined = previous_docs[0].2.clone();
+    combined["symbols"] = serde_json::Value::Array(combined_symbols);
+    let combined_text = serde_json::to_string(&combined)
+        .map_err(|err| format!("failed to serialize combined symbols: {err}"))?;
+    let merged = merge_database(&combined_text, labels)?;
+    let merged_doc: serde_json::Value = serde_json::from_str(&merged)
+        .map_err(|err| format!("merged symbols JSON is invalid: {err}"))?;
+    let merged_symbols = merged_doc
+        .get("symbols")
+        .and_then(|symbols| symbols.as_array())
+        .ok_or_else(|| "merged symbols JSON has no symbols array".to_string())?;
+    let mut outputs = Vec::new();
+    for (listing, previous, mut document) in previous_docs {
+        let mut symbols = Vec::new();
+        for symbol in merged_symbols {
+            if listing_for_symbol(symbol)? == listing.json {
+                symbols.push(symbol.clone());
+            }
+        }
+        document["symbols"] = serde_json::Value::Array(symbols);
+        document["schema_version"] = merged_doc["schema_version"].clone();
+        document["status"] = merged_doc["status"].clone();
+        let mut output = serde_json::to_string_pretty(&document)
+            .map_err(|err| format!("failed to serialize {}: {err}", listing.json))?;
+        output.push('\n');
+        outputs.push((listing, previous, output));
+    }
     if check {
-        if output == previous {
-            println!("{JSON_PATH} is current");
+        let stale: Vec<&str> = outputs
+            .iter()
+            .filter(|(_, previous, output)| previous != output)
+            .map(|(listing, _, _)| listing.json)
+            .collect();
+        if stale.is_empty() {
+            println!("ROM symbol files are current");
             Ok(())
         } else {
             Err(format!(
-                "{JSON_PATH} is stale: run `cargo xtask rom-symbols` to regenerate"
+                "{} stale: run `cargo xtask rom-symbols` to regenerate",
+                stale.join(", ")
             ))
         }
     } else {
-        fs::write(&json_path, &output)
-            .map_err(|err| format!("failed to write {}: {err}", json_path.display()))?;
-        println!("wrote {}", json_path.display());
+        for (listing, _, output) in &outputs {
+            let json_path = workspace.join(listing.json);
+            fs::write(&json_path, output)
+                .map_err(|err| format!("failed to write {}: {err}", json_path.display()))?;
+            println!("wrote {}", json_path.display());
+        }
         Ok(())
     }
+}
+
+/// `listing.json` for the image that owns this `(bank, offset)`.
+fn listing_for_symbol(symbol: &serde_json::Value) -> Result<&'static str, String> {
+    let bank = symbol
+        .get("bank")
+        .and_then(|bank| bank.as_str())
+        .ok_or_else(|| "a symbol has no bank".to_string())?;
+    let offset_text = symbol
+        .get("offset")
+        .and_then(|offset| offset.as_str())
+        .ok_or_else(|| "a symbol has no offset".to_string())?;
+    let offset = parse_0x_number(offset_text)
+        .ok_or_else(|| format!("a symbol has an invalid offset {offset_text}"))?;
+    LISTINGS
+        .iter()
+        .find(|listing| {
+            listing.bank == bank && offset >= listing.offset_start && offset < listing.offset_end
+        })
+        .map(|listing| listing.json)
+        .ok_or_else(|| format!("symbol at {bank} offset {offset_text} matches no listing"))
 }
 
 /// Assembles one listing with `rtvc-asm` and converts its symbol table to

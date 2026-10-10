@@ -83,8 +83,8 @@ tables as `DB` statements while emitting instructions for code:
 ```bash
 cargo run --bin rtvc-disasm -- \
   --origin C000H \
-  --symbols roms/rom_symbols_1_2.json \
-  --comments roms/rom_comments_1_2.json \
+  --symbols roms/TVC12_D4.64K.symbols.json \
+  --comments roms/TVC12_D4.64K.comments.json \
   --bank sys --bank-offset 0000H \
   --data-range C003H-C228H \
   roms/TVC12_D4.64K -o roms/TVC12_D4.64K.asm

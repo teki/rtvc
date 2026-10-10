@@ -1,0 +1,14 @@
+{
+  "comments": [
+    {
+      "address": "C000H",
+      "source": "hbf",
+      "text": "MOPS signature and the length-prefixed name DISK. Page 0, not this page, supplies the C00BH initializer and the C00DH function table."
+    },
+    {
+      "address": "CEACH",
+      "source": "hbf",
+      "text": "Dollar-terminated banner: TV COMPUTER BASIC 1.!"
+    }
+  ]
+}

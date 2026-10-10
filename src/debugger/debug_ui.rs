@@ -675,6 +675,7 @@ impl DebuggerUi {
                     let at_pc = instruction.addr == pc;
                     let has_breakpoint = breakpoints.binary_search(&instruction.addr).is_ok();
                     let symbol = symbol_at_mapped_address(emu, instruction.addr);
+                    let comment = comment_at_mapped_address(emu, instruction.addr);
                     let background = at_pc.then_some(egui::Color32::from_rgb(35, 70, 105));
                     egui::Frame::NONE
                         .fill(background.unwrap_or(egui::Color32::TRANSPARENT))
@@ -709,15 +710,7 @@ impl DebuggerUi {
                                     response.on_hover_text(details.join("\n"));
                                 }
                             });
-                            if let Some(symbol) = symbol {
-                                ui.horizontal(|ui| {
-                                    ui.add_space(28.0);
-                                    ui.colored_label(
-                                        egui::Color32::from_rgb(130, 190, 255),
-                                        format!("{}: {}", symbol.name, symbol.summary),
-                                    );
-                                });
-                            }
+                            show_rom_notes(ui, symbol, comment);
                         });
                 }
             });
@@ -785,7 +778,15 @@ impl DebuggerUi {
                                 }
                             })
                             .collect();
-                        ui.monospace(format!("{address:04X}  {hex:<47}  {ascii}"));
+                        let response = ui.monospace(format!("{address:04X}  {hex:<47}  {ascii}"));
+                        let notes = memory_row_notes(emu, self.memory_source, address, chunk.len());
+                        if !notes.hover.is_empty() {
+                            response.on_hover_text(notes.hover.as_str());
+                        }
+                        if !notes.label.is_empty() {
+                            ui.colored_label(egui::Color32::from_rgb(130, 190, 255), &notes.label)
+                                .on_hover_text(notes.hover.as_str());
+                        }
                     }
                 }
                 Some(_) => {
@@ -862,6 +863,8 @@ impl DebuggerUi {
         );
         ui.separator();
         let search = self.symbol_search.trim().to_ascii_lowercase();
+        let pc = emu.z80_state().get_reg16(11);
+        let prefer = [self.disassembly_address, pc];
         egui::ScrollArea::vertical()
             .auto_shrink([false; 2])
             .show(ui, |ui| {
@@ -869,10 +872,22 @@ impl DebuggerUi {
                     .iter()
                     .filter(|symbol| symbol.matches(&search))
                 {
+                    let cpu_address = symbol_cpu_address(emu, symbol, &prefer);
                     ui.horizontal(|ui| {
-                        if ui.small_button("Disasm").clicked() {
+                        let disasm = ui.add_enabled(
+                            cpu_address.is_some(),
+                            egui::Button::new("Disasm").small(),
+                        );
+                        if disasm.clicked()
+                            && let Some(address) = cpu_address
+                        {
                             self.follow_pc = false;
-                            self.set_disassembly_address(symbol.address);
+                            self.set_disassembly_address(address);
+                        }
+                        if cpu_address.is_none() {
+                            disasm.on_hover_text(
+                                "This ROM byte is not visible in the current memory map.",
+                            );
                         }
                         if ui.small_button("Memory").clicked() {
                             self.memory_source = match symbol.bank {
@@ -881,10 +896,24 @@ impl DebuggerUi {
                             };
                             self.set_memory_address(symbol.offset);
                         }
-                        if ui.small_button("BP").clicked() {
-                            emu.set_breakpoint(symbol.address);
+                        let breakpoint =
+                            ui.add_enabled(cpu_address.is_some(), egui::Button::new("BP").small());
+                        if breakpoint.clicked()
+                            && let Some(address) = cpu_address
+                        {
+                            emu.set_breakpoint(address);
                         }
-                        ui.monospace(format!("{}:{:04X}", symbol.bank.name(), symbol.address));
+                        if cpu_address.is_none() {
+                            breakpoint.on_hover_text(
+                                "This ROM byte is not visible in the current memory map.",
+                            );
+                        }
+                        let location = match cpu_address {
+                            Some(address) => format!("{}:{address:04X}", symbol.bank.name()),
+                            None => format!("{}+{:04X}", symbol.bank.name(), symbol.offset),
+                        };
+                        ui.monospace(location)
+                            .on_hover_text(format!("image offset {:04X}", symbol.offset));
                         ui.strong(&symbol.name);
                         if !symbol.alt_names.is_empty() {
                             ui.weak(format!("(aka {})", symbol.alt_names.join(", ")));
@@ -1061,6 +1090,27 @@ struct RomSymbol {
     tags: Vec<String>,
 }
 
+#[derive(Debug)]
+struct RomComment {
+    bank: RomBank,
+    offset: u16,
+    source: String,
+    text: String,
+}
+
+#[derive(Deserialize)]
+struct RomCommentDocument {
+    comments: Vec<RomCommentRaw>,
+}
+
+#[derive(Deserialize)]
+struct RomCommentRaw {
+    address: String,
+    #[serde(default)]
+    source: String,
+    text: String,
+}
+
 impl RomSymbol {
     fn matches(&self, search: &str) -> bool {
         search.is_empty()
@@ -1075,6 +1125,7 @@ impl RomSymbol {
                 .iter()
                 .any(|tag| tag.to_ascii_lowercase().contains(search))
             || format!("{:04x}", self.address).contains(search)
+            || format!("{:04x}", self.offset).contains(search)
             || self.bank.name().contains(search)
     }
 }
@@ -1082,33 +1133,43 @@ impl RomSymbol {
 fn rom_symbols() -> &'static [RomSymbol] {
     static SYMBOLS: OnceLock<Vec<RomSymbol>> = OnceLock::new();
     SYMBOLS.get_or_init(|| {
-        let document: RomSymbolDocument =
-            serde_json::from_str(include_str!("../../roms/rom_symbols_1_2.json"))
-                .expect("embedded ROM symbol database must be valid");
-        document
-            .symbols
-            .into_iter()
-            .filter_map(|symbol| {
-                let bank = match symbol.bank.as_str() {
-                    "sys" => RomBank::Sys,
-                    "exth" => RomBank::Exth,
-                    _ => return None,
-                };
-                Some(RomSymbol {
-                    bank,
-                    address: parse_address(&symbol.address)?,
-                    offset: parse_address(&symbol.offset)?,
-                    name: symbol.name,
-                    alt_names: symbol.alt_names,
-                    usage: symbol.usage,
-                    summary: symbol.summary,
-                    input: symbol.input,
-                    output: symbol.output,
-                    tags: symbol.tags,
-                })
-            })
-            .collect()
+        [
+            include_str!("../../roms/TVC12_D4.64K.symbols.json"),
+            include_str!("../../roms/TVC12_D3.64K.symbols.json"),
+            include_str!("../../roms/TVC12_D7.64K.symbols.json"),
+        ]
+        .into_iter()
+        .flat_map(decode_rom_symbols)
+        .collect()
     })
+}
+
+fn decode_rom_symbols(text: &str) -> Vec<RomSymbol> {
+    let document: RomSymbolDocument =
+        serde_json::from_str(text).expect("embedded ROM symbol database must be valid");
+    document
+        .symbols
+        .into_iter()
+        .filter_map(|symbol| {
+            let bank = match symbol.bank.as_str() {
+                "sys" => RomBank::Sys,
+                "exth" => RomBank::Exth,
+                _ => return None,
+            };
+            Some(RomSymbol {
+                bank,
+                address: parse_address(&symbol.address)?,
+                offset: parse_address(&symbol.offset)?,
+                name: symbol.name,
+                alt_names: symbol.alt_names,
+                usage: symbol.usage,
+                summary: symbol.summary,
+                input: symbol.input,
+                output: symbol.output,
+                tags: symbol.tags,
+            })
+        })
+        .collect()
 }
 
 fn current_symbol(emu: &Emu) -> Option<&'static RomSymbol> {
@@ -1116,11 +1177,143 @@ fn current_symbol(emu: &Emu) -> Option<&'static RomSymbol> {
 }
 
 fn symbol_at_mapped_address(emu: &Emu, address: u16) -> Option<&'static RomSymbol> {
-    if emu.system() != System::Tvc || emu.machine_type.rom_version != RomVersion::V1_2 {
+    if !basic_12_symbols(emu) {
         return None;
     }
     let (bank, offset) = emu.tvc()?.bus.mmu.mapped_rom_offset(address)?;
     symbol_at(bank, offset)
+}
+
+fn comment_at_mapped_address(emu: &Emu, address: u16) -> Option<&'static RomComment> {
+    if !basic_12_symbols(emu) {
+        return None;
+    }
+    let (bank, offset) = emu.tvc()?.bus.mmu.mapped_rom_offset(address)?;
+    comment_at(bank, offset)
+}
+
+fn basic_12_symbols(emu: &Emu) -> bool {
+    emu.system() == System::Tvc && emu.machine_type.rom_version == RomVersion::V1_2
+}
+
+/// CPU address where this symbol is visible. `prefer` lists CPU addresses
+/// whose 16 KiB page should win when the byte is mapped more than once.
+/// The stored listing address is not used.
+fn symbol_cpu_address(emu: &Emu, symbol: &RomSymbol, prefer: &[u16]) -> Option<u16> {
+    if !basic_12_symbols(emu) {
+        return None;
+    }
+    let addresses = emu
+        .tvc()?
+        .bus
+        .mmu
+        .rom_cpu_addresses(symbol.bank, symbol.offset);
+    choose_mapped_address(&addresses, prefer)
+}
+
+fn choose_mapped_address(addresses: &[u16], prefer: &[u16]) -> Option<u16> {
+    if addresses.len() == 1 {
+        return Some(addresses[0]);
+    }
+    for hint in prefer {
+        let page = hint & 0xC000;
+        if let Some(address) = addresses
+            .iter()
+            .copied()
+            .find(|address| address & 0xC000 == page)
+        {
+            return Some(address);
+        }
+    }
+    addresses.first().copied()
+}
+
+fn symbol_for_memory(emu: &Emu, source: MemorySource, address: u16) -> Option<&'static RomSymbol> {
+    if !basic_12_symbols(emu) {
+        return None;
+    }
+    match source {
+        MemorySource::Mapped => symbol_at_mapped_address(emu, address),
+        MemorySource::Sys => symbol_at(RomBank::Sys, address),
+        MemorySource::Exth => symbol_at(RomBank::Exth, address),
+        _ => None,
+    }
+}
+
+fn comment_for_memory(
+    emu: &Emu,
+    source: MemorySource,
+    address: u16,
+) -> Option<&'static RomComment> {
+    if !basic_12_symbols(emu) {
+        return None;
+    }
+    match source {
+        MemorySource::Mapped => comment_at_mapped_address(emu, address),
+        MemorySource::Sys => comment_at(RomBank::Sys, address),
+        MemorySource::Exth => comment_at(RomBank::Exth, address),
+        _ => None,
+    }
+}
+
+struct MemoryRowNotes {
+    label: String,
+    hover: String,
+}
+
+fn memory_row_notes(
+    emu: &Emu,
+    source: MemorySource,
+    row_address: u16,
+    len: usize,
+) -> MemoryRowNotes {
+    let mut labels = Vec::new();
+    let mut hover = Vec::new();
+    for index in 0..len {
+        let address = row_address.wrapping_add(index as u16);
+        if let Some(symbol) = symbol_for_memory(emu, source, address) {
+            labels.push(format!("{address:04X} {}", symbol.name));
+            if !symbol.summary.is_empty() {
+                hover.push(format!("{}: {}", symbol.name, symbol.summary));
+            }
+        }
+        if let Some(comment) = comment_for_memory(emu, source, address) {
+            if labels
+                .last()
+                .is_none_or(|label| !label.starts_with(&format!("{address:04X} ")))
+            {
+                labels.push(format!("{address:04X} {}", comment.source));
+            }
+            hover.push(format!("{}: {}", comment.source, comment.text));
+        }
+    }
+    MemoryRowNotes {
+        label: labels.join("  "),
+        hover: hover.join("\n"),
+    }
+}
+
+fn show_rom_notes(ui: &mut egui::Ui, symbol: Option<&RomSymbol>, comment: Option<&RomComment>) {
+    if let Some(symbol) = symbol {
+        let text = if symbol.summary.is_empty() {
+            format!("{} {}", symbol.bank.name(), symbol.name)
+        } else {
+            format!("{} {}: {}", symbol.bank.name(), symbol.name, symbol.summary)
+        };
+        ui.horizontal_wrapped(|ui| {
+            ui.add_space(28.0);
+            ui.colored_label(egui::Color32::from_rgb(130, 190, 255), text);
+        });
+    }
+    if let Some(comment) = comment {
+        ui.horizontal_wrapped(|ui| {
+            ui.add_space(28.0);
+            ui.colored_label(
+                egui::Color32::from_rgb(170, 190, 150),
+                format!("{}: {}", comment.source, comment.text),
+            );
+        });
+    }
 }
 
 /// Offset-keyed lookup: (physical bank, image offset) is the stable identity
@@ -1141,6 +1334,83 @@ fn rom_symbol_index() -> &'static HashMap<(RomBank, u16), usize> {
             .map(|(position, symbol)| ((symbol.bank, symbol.offset), position))
             .collect()
     })
+}
+
+fn comment_at(bank: RomBank, offset: u16) -> Option<&'static RomComment> {
+    rom_comment_index()
+        .get(&(bank, offset))
+        .and_then(|position| rom_comments().get(*position))
+}
+
+fn rom_comments() -> &'static [RomComment] {
+    static COMMENTS: OnceLock<Vec<RomComment>> = OnceLock::new();
+    COMMENTS.get_or_init(|| {
+        [
+            (
+                include_str!("../../roms/TVC12_D4.64K.comments.json"),
+                RomBank::Sys,
+                0xC000u16,
+                0u16,
+            ),
+            (
+                include_str!("../../roms/TVC12_D3.64K.comments.json"),
+                RomBank::Sys,
+                0xE000,
+                0x2000,
+            ),
+            (
+                include_str!("../../roms/TVC12_D7.64K.comments.json"),
+                RomBank::Exth,
+                0xE000,
+                0,
+            ),
+        ]
+        .into_iter()
+        .flat_map(|(text, bank, origin, offset_base)| {
+            decode_rom_comments(text, bank, origin, offset_base)
+        })
+        .collect()
+    })
+}
+
+fn rom_comment_index() -> &'static HashMap<(RomBank, u16), usize> {
+    static INDEX: OnceLock<HashMap<(RomBank, u16), usize>> = OnceLock::new();
+    INDEX.get_or_init(|| {
+        rom_comments()
+            .iter()
+            .enumerate()
+            .map(|(position, comment)| ((comment.bank, comment.offset), position))
+            .collect()
+    })
+}
+
+/// `origin` is the listing CPU address of image offset 0. `offset_base` is
+/// that image's offset inside the physical bank (D3 sits at SYS 0x2000).
+fn decode_rom_comments(
+    text: &str,
+    bank: RomBank,
+    origin: u16,
+    offset_base: u16,
+) -> Vec<RomComment> {
+    let document: RomCommentDocument =
+        serde_json::from_str(text).expect("embedded ROM comment file must be valid");
+    document
+        .comments
+        .into_iter()
+        .filter_map(|comment| {
+            let address = parse_address(&comment.address)?;
+            let local = address.checked_sub(origin)?;
+            if local >= 0x2000 {
+                return None;
+            }
+            Some(RomComment {
+                bank,
+                offset: offset_base + local,
+                source: comment.source,
+                text: comment.text,
+            })
+        })
+        .collect()
 }
 
 fn parse_address(text: &str) -> Option<u16> {

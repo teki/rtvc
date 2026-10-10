@@ -1,6 +1,8 @@
 ; -----------------------------------------------------------------------------
 ; TVC BASIC 1.2 SYS upper ROM overlay - TVC12_D3.64K
 ; Source: roms/TVC12_D3.64K
+; Comments: roms/TVC12_D3.64K.comments.json
+; Symbols: roms/TVC12_D3.64K.symbols.json
 ; ORG: E000H
 ; Size: 8192 bytes
 ; Instructions use CPU-visible addresses at ORG; the ROM bank is recorded separately.

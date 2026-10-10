@@ -1,0 +1,24 @@
+{
+  "comments": [
+    {
+      "address": "C000H",
+      "source": "hbf",
+      "text": "MOPS signature and the length-prefixed name DISK. Page 0, not this page, supplies the C00BH initializer and the C00DH function table."
+    },
+    {
+      "address": "C0A2H",
+      "source": "hbf",
+      "text": "NUL-terminated VOL_ID string."
+    },
+    {
+      "address": "C86FH",
+      "source": "hbf",
+      "text": "19-byte filename punctuation table, scanned with CPIR."
+    },
+    {
+      "address": "CC3EH",
+      "source": "hbf",
+      "text": "CLI message table. Each record is a length byte, a code byte, the text, and a NUL. An FFH sentinel follows the last record."
+    }
+  ]
+}

@@ -46,12 +46,45 @@ rtvc-asm --format bin --origin E000H roms/TVC12_D7.64K.asm -o /tmp/TVC12_D7.64K.
 ```
 
 Mapping entries are preserved in TOML output as `[[mappings]]` metadata but do
-not change binary output. The separate
-[rom_symbols_1_2.json](rom_symbols_1_2.json) file is the emulator debugger's
-BASIC 1.2 symbol database; it is generated from these listings by
-`cargo xtask rom-symbols` (curated prose is merged by bank and offset), not
-hand-maintained.
+not change binary output. Landmark notes live in the matching
+`TVC12_*.64K.comments.json` files. The matching `TVC12_*.64K.symbols.json`
+files are the emulator debugger's BASIC 1.2 symbol database; they are
+generated from these listings by `cargo xtask rom-symbols` (curated prose is
+merged by bank and offset), not hand-maintained.
 
 When a book diagram and a ROM byte disagree, retain the ROM byte and record the
 uncertainty in an ASM comment. Do not repair executable bytes by copying OCR
 text directly.
+
+## VT-DOS 1.2 HBF disk ROM
+
+[VT-DOS12-DISK.ROM](VT-DOS12-DISK.ROM) is the 16 KiB HBF card ROM. The card
+maps one of four 4 KiB pages at CPU `C000H-CFFFH` (`D000H-DFFFH` is the card's
+private RAM). Each listing is one page, assembled at `C000H`, because that is
+the only CPU window where the bytes are visible.
+
+| Listing | HBF page | File offset |
+| --- | ---: | ---: |
+| [VT-DOS12-DISK.page0.asm](VT-DOS12-DISK.page0.asm) | 0 | `0000H` |
+| [VT-DOS12-DISK.page1.asm](VT-DOS12-DISK.page1.asm) | 1 | `1000H` |
+| [VT-DOS12-DISK.page2.asm](VT-DOS12-DISK.page2.asm) | 2 | `2000H` |
+| [VT-DOS12-DISK.page3.asm](VT-DOS12-DISK.page3.asm) | 3 | `3000H` |
+
+Page 0 is the MOPS entry page. `C00BH` is the initializer pointer (`C21CH`),
+and `C00DH` is the counted function table (functions 0 through 0BH). Function
+0 is also the IRQ vector; its target `DBC1H` is in HBF RAM. Pages 1-3 repeat
+the `MOPS`/`DISK` signature and are reached after the card writes its page
+register. Page 1 holds the CLI message table and page 3 holds the command
+table (`CD`, `DIR`, `COPY`, `FORMAT`, and the rest).
+
+Landmark notes live in the matching `VT-DOS12-DISK.pageN.comments.json` files.
+`DB` ranges cover the MOPS header, those tables, the filename and banner
+strings, and unused fill at the end of pages 0 and 3. Other bytes are a linear
+disassembly, so a data table that was not marked can still appear as
+instructions.
+
+Assemble a page and compare it with the 4 KiB slice at that file offset:
+
+```text
+rtvc-asm --format bin --origin C000H roms/VT-DOS12-DISK.page0.asm -o /tmp/VT-DOS12-DISK.page0.bin
+```

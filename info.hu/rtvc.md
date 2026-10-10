@@ -394,9 +394,12 @@ Az interaktív kliens a [scripts/rtvc_debug.py](../scripts/rtvc_debug.py).
 
 ## ROM szimbólum adatbázis
 
-A [roms/rom_symbols_1_2.json](../roms/rom_symbols_1_2.json) gondosan válogatott
-BASIC 1.2 végrehajtási tereptárgyakat, hívható rutinokat és adatokat tartalmaz. A fájlt
-a `cargo xtask rom-symbols` állítja elő a [roms/](../roms/) önálló listáiból;
+A BASIC 1.2 végrehajtási tereptárgyak, hívható rutinok és adatok ROM-képenként
+egy szimbólumfájlban vannak:
+[TVC12_D4.64K.symbols.json](../roms/TVC12_D4.64K.symbols.json),
+[TVC12_D3.64K.symbols.json](../roms/TVC12_D3.64K.symbols.json) és
+[TVC12_D7.64K.symbols.json](../roms/TVC12_D7.64K.symbols.json).
+A `cargo xtask rom-symbols` a [roms/](../roms/) önálló listáiból állítja elő őket;
 a címeket nem szabad kézzel szerkeszteni. A címkék címei a valódi assemblerből
 származnak, a gondozott leírások pedig `(bank, offset)` kulcs alapján egyesülnek.
 
@@ -405,6 +408,10 @@ Egy CPU cím önmagában nem stabil ROM azonosító, mert a SYS és EXTH
 eltolás, a hibakereső pedig az élő CPU címet az MMU-n keresztül oldja fel erre a
 kulcsra, így minden tereptárgy abban a lapozási nézetben is jelez, amelyben a CPU
 eléri. A hibakereső csak akkor annotál, ha a releváns bank éppen le van képezve.
+A szimbólumlista disassembler és töréspont művelete azt a CPU-címet nyitja meg,
+ahol a bájt a jelenlegi térképen látszik, és kikapcsolva marad, ha nem látszik.
+A képenkénti megjegyzések ugyanazt a bankot és eltolást használják, ezért az
+`E000H-FFFFH` ablak a ténylegesen kiválasztott SYS vagy EXTH jegyzetet mutatja.
 
 A `usage` értékek: `trace`, `call` és `data`. A `call` címke nem jelent ABI
 garanciát; a szoftvernek továbbra is teljesítenie kell a lapozási, regiszter, BASIC állapot és munka

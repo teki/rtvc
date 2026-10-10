@@ -1,0 +1,174 @@
+{
+  "comments": [
+    {
+      "address": "C000H",
+      "source": "hbf",
+      "text": "MOPS signature. C004H is the name length 04H and C005H-C008H is the card name DISK. The same nine bytes open every HBF ROM page."
+    },
+    {
+      "address": "C009H",
+      "source": "hbf",
+      "text": "Two constant bytes, 6FH DBH, present on every page and not part of the DISK name."
+    },
+    {
+      "address": "C00BH",
+      "source": "hbf",
+      "text": "Little-endian initializer. EXT_INIT reads (C00BH) and calls it through FFF9H while this page is mapped. The target is C21CH."
+    },
+    {
+      "address": "C00DH",
+      "source": "hbf",
+      "text": "Counted function table. The count byte is 0CH, so function numbers 0 through 0BH are valid. Each entry is a little-endian address."
+    },
+    {
+      "address": "C00EH",
+      "source": "hbf",
+      "text": "Function 0 and the card IRQ vector. The target DBC1H is in HBF private RAM at D000H-DFFFH."
+    },
+    {
+      "address": "C010H",
+      "source": "hbf",
+      "text": "Function 1 at C499H."
+    },
+    {
+      "address": "C012H",
+      "source": "hbf",
+      "text": "Function 2 at C4FFH."
+    },
+    {
+      "address": "C014H",
+      "source": "hbf",
+      "text": "Function 3 at C35BH."
+    },
+    {
+      "address": "C016H",
+      "source": "hbf",
+      "text": "Function 4 at C53BH."
+    },
+    {
+      "address": "C018H",
+      "source": "hbf",
+      "text": "Function 5 at C5D5H."
+    },
+    {
+      "address": "C01AH",
+      "source": "hbf",
+      "text": "Function 6 at C5F5H."
+    },
+    {
+      "address": "C01CH",
+      "source": "hbf",
+      "text": "Function 7 at C5F9H."
+    },
+    {
+      "address": "C01EH",
+      "source": "hbf",
+      "text": "Function 8 at C5FDH."
+    },
+    {
+      "address": "C020H",
+      "source": "hbf",
+      "text": "Function 9 at C6E8H."
+    },
+    {
+      "address": "C022H",
+      "source": "hbf",
+      "text": "Function 10 at C6FDH."
+    },
+    {
+      "address": "C024H",
+      "source": "hbf",
+      "text": "Function 11 at C703H."
+    },
+    {
+      "address": "C168H",
+      "source": "hbf",
+      "text": "Blank 8.3 name pad: two dots, spaces, and a NUL."
+    },
+    {
+      "address": "C21BH",
+      "source": "hbf",
+      "text": "Byte DBH sitting between the short routine at C214H and the initializer at C21CH."
+    },
+    {
+      "address": "C21CH",
+      "source": "hbf",
+      "text": "Card initializer entered from the C00BH pointer. Disables interrupts and branches on the warm-reset flag at 0B21H."
+    },
+    {
+      "address": "C31CH",
+      "source": "hbf",
+      "text": "Parameter block referenced by the initializer. The VT-DOS# text starts at C32CH."
+    },
+    {
+      "address": "C48EH",
+      "source": "hbf",
+      "text": "Default filename START.CAS as an 11-byte 8.3 name. The CAS extension begins at C496H."
+    },
+    {
+      "address": "C499H",
+      "source": "hbf",
+      "text": "Function 1 entry."
+    },
+    {
+      "address": "C4FFH",
+      "source": "hbf",
+      "text": "Function 2 entry."
+    },
+    {
+      "address": "C35BH",
+      "source": "hbf",
+      "text": "Function 3 entry."
+    },
+    {
+      "address": "C53BH",
+      "source": "hbf",
+      "text": "Function 4 entry."
+    },
+    {
+      "address": "C5D5H",
+      "source": "hbf",
+      "text": "Function 5 entry."
+    },
+    {
+      "address": "C5F5H",
+      "source": "hbf",
+      "text": "Function 6 entry."
+    },
+    {
+      "address": "C5F9H",
+      "source": "hbf",
+      "text": "Function 7 entry."
+    },
+    {
+      "address": "C5FDH",
+      "source": "hbf",
+      "text": "Function 8 entry."
+    },
+    {
+      "address": "C6E8H",
+      "source": "hbf",
+      "text": "Function 9 entry."
+    },
+    {
+      "address": "C6FDH",
+      "source": "hbf",
+      "text": "Function 10 entry."
+    },
+    {
+      "address": "C703H",
+      "source": "hbf",
+      "text": "Function 11 entry."
+    },
+    {
+      "address": "CC88H",
+      "source": "hbf",
+      "text": "Volume identity text VTDOS1.2VOL_ID."
+    },
+    {
+      "address": "CEFCH",
+      "source": "hbf",
+      "text": "Unused zero fill through the end of the page."
+    }
+  ]
+}

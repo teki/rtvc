@@ -94,6 +94,40 @@ fn mapped_rom_offset_identifies_bytes_across_paging_views() {
 }
 
 #[test]
+fn rom_cpu_addresses_follow_the_pages_that_show_the_byte() {
+    let mut mmu = TvcMmu::new(false);
+    // Reset mapping: page 0 shows SYS, page 3 shows CART.
+    mmu.set_map(0x00);
+    assert_eq!(mmu.rom_cpu_addresses(RomBank::Sys, 0x0229), vec![0x0229]);
+    assert!(mmu.rom_cpu_addresses(RomBank::Exth, 0x1000).is_empty());
+    // SYS in pages 0 and 3: one physical byte, two CPU addresses.
+    mmu.set_map(0x40);
+    assert_eq!(
+        mmu.rom_cpu_addresses(RomBank::Sys, 0x0229),
+        vec![0x0229, 0xC229]
+    );
+    // Normal mapping: page 0 shows U0 RAM, page 3 shows SYS.
+    mmu.set_map(0x50);
+    assert_eq!(mmu.rom_cpu_addresses(RomBank::Sys, 0x0229), vec![0xC229]);
+    assert!(mmu.rom_cpu_addresses(RomBank::Exth, 0x1000).is_empty());
+    // Page 0 is U0 and page 3 is EXT. F000H is EXTH offset 0x1000, not SYS.
+    mmu.set_map(0xD0);
+    assert!(mmu.rom_cpu_addresses(RomBank::Sys, 0x0229).is_empty());
+    assert_eq!(mmu.rom_cpu_addresses(RomBank::Exth, 0x0000), vec![0xE000]);
+    assert_eq!(mmu.rom_cpu_addresses(RomBank::Exth, 0x1000), vec![0xF000]);
+    for (bank, offset) in [
+        (RomBank::Sys, 0x0229u16),
+        (RomBank::Exth, 0x0000),
+        (RomBank::Exth, 0x1000),
+    ] {
+        mmu.set_map(if bank == RomBank::Sys { 0x50 } else { 0xD0 });
+        for address in mmu.rom_cpu_addresses(bank, offset) {
+            assert_eq!(mmu.mapped_rom_offset(address), Some((bank, offset)));
+        }
+    }
+}
+
+#[test]
 fn map_labels_describe_standard_and_plus_video_banks() {
     let mut standard = TvcMmu::new(false);
     standard.set_map(0x90);

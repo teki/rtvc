@@ -1,6 +1,8 @@
 ; -----------------------------------------------------------------------------
 ; TVC BASIC 1.2 EXTH ROM - TVC12_D7.64K
 ; Source: roms/TVC12_D7.64K
+; Comments: roms/TVC12_D7.64K.comments.json
+; Symbols: roms/TVC12_D7.64K.symbols.json
 ; ORG: E000H
 ; Size: 8192 bytes
 ; Instructions use CPU-visible addresses at ORG; the ROM bank is recorded separately.
