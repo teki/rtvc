@@ -1,0 +1,296 @@
+{
+  "schema_version": 1,
+  "language": "en",
+  "sources": [
+    "KL-tvcrom.md",
+    "TVC_ROM.md"
+  ],
+  "translation_note": "English comments are translated and normalized from OCR-derived Hungarian book text; source tags identify the origin. OCR lines that could not be translated cleanly are omitted.",
+  "comments": [
+    {
+      "address": "0xE002",
+      "source": "KL",
+      "text": "DEF routine."
+    },
+    {
+      "address": "0xE053",
+      "source": "KL",
+      "text": "DIM routine."
+    },
+    {
+      "address": "0xE104",
+      "source": "KL",
+      "text": "ELSE routine."
+    },
+    {
+      "address": "0xE10E",
+      "source": "KL",
+      "text": "END routine."
+    },
+    {
+      "address": "0xE117",
+      "source": "KL",
+      "text": "EXT routine."
+    },
+    {
+      "address": "0xE15C",
+      "source": "KL",
+      "text": "FOR routine."
+    },
+    {
+      "address": "0xE1CB",
+      "source": "KL",
+      "text": "INPUT routine."
+    },
+    {
+      "address": "0xE1DD",
+      "source": "KL",
+      "text": "INPUT PROMPT routine."
+    },
+    {
+      "address": "0xE21B",
+      "source": "KL",
+      "text": "READ routine."
+    },
+    {
+      "address": "0xE2EE",
+      "source": "KL",
+      "text": "IF routine."
+    },
+    {
+      "address": "0xE332",
+      "source": "KL",
+      "text": "ON routine."
+    },
+    {
+      "address": "0xE382",
+      "source": "KL",
+      "text": "GOSUB routine."
+    },
+    {
+      "address": "0xE3B2",
+      "source": "KL",
+      "text": "GOTO routine."
+    },
+    {
+      "address": "0xE3C1",
+      "source": "KL",
+      "text": "LET routine."
+    },
+    {
+      "address": "0xE452",
+      "source": "KL",
+      "text": "LOMEM routine."
+    },
+    {
+      "address": "0xE4B6",
+      "source": "KL",
+      "text": "NEXT routine."
+    },
+    {
+      "address": "0xE542",
+      "source": "KL",
+      "text": "OUT routine."
+    },
+    {
+      "address": "0xE553",
+      "source": "KL",
+      "text": "POKE routine."
+    },
+    {
+      "address": "0xE570",
+      "source": "KL",
+      "text": "LPRINT routine."
+    },
+    {
+      "address": "0xE6BD",
+      "source": "KL",
+      "text": "Special format-control characters used by PRINT USING."
+    },
+    {
+      "address": "0xE6C7",
+      "source": "KL",
+      "text": "RANDOMIZE routine."
+    },
+    {
+      "address": "0xE6F4",
+      "source": "KL",
+      "text": "RESTORE routine."
+    },
+    {
+      "address": "0xE70F",
+      "source": "KL",
+      "text": "RETURN routine."
+    },
+    {
+      "address": "0xE733",
+      "source": "KL",
+      "text": "GRAPHICS routine."
+    },
+    {
+      "address": "0xE754",
+      "source": "KL",
+      "text": "PLOT routine."
+    },
+    {
+      "address": "0xE75A",
+      "source": "KL",
+      "text": "PLOT PAINT routine."
+    },
+    {
+      "address": "0xE7E4",
+      "source": "KL",
+      "text": "SET subcommand dispatch table; token plus relative routine selector."
+    },
+    {
+      "address": "0xE7F7",
+      "source": "KL",
+      "text": "SET MODE routine."
+    },
+    {
+      "address": "0xE7FA",
+      "source": "KL",
+      "text": "SET STYLE routine."
+    },
+    {
+      "address": "0xE7FD",
+      "source": "KL",
+      "text": "SET INK routine."
+    },
+    {
+      "address": "0xE800",
+      "source": "KL",
+      "text": "SET PAPER routine."
+    },
+    {
+      "address": "0xE803",
+      "source": "KL",
+      "text": "SET DELAY routine."
+    },
+    {
+      "address": "0xE806",
+      "source": "KL",
+      "text": "SET RATE routine."
+    },
+    {
+      "address": "0xE816",
+      "source": "KL",
+      "text": "SET CHARACTER routine."
+    },
+    {
+      "address": "0xE821",
+      "source": "KL",
+      "text": "SET PALETTE routine."
+    },
+    {
+      "address": "0xE82A",
+      "source": "KL",
+      "text": "SET BORDER routine."
+    },
+    {
+      "address": "0xE833",
+      "source": "KL",
+      "text": "SOUND routine."
+    },
+    {
+      "address": "0xE87B",
+      "source": "KL",
+      "text": "SOUND subcommand dispatch table; same format as SET table."
+    },
+    {
+      "address": "0xE89B",
+      "source": "KL",
+      "text": "BASIC CLOSE routine."
+    },
+    {
+      "address": "0xE8C9",
+      "source": "KL",
+      "text": "OPEN BASIC routine."
+    },
+    {
+      "address": "0xE910",
+      "source": "KL",
+      "text": "GET routine."
+    },
+    {
+      "address": "0xE951",
+      "source": "KL",
+      "text": "LOAD routine."
+    },
+    {
+      "address": "0xE982",
+      "source": "KL",
+      "text": "SAVE routine."
+    },
+    {
+      "address": "0xE9D3",
+      "source": "KL",
+      "text": "VERIFY routine."
+    },
+    {
+      "address": "0xEDD2",
+      "source": "KL",
+      "text": "Memory paging: U U V S page layout."
+    },
+    {
+      "address": "0xF726",
+      "source": "KL",
+      "text": "Arithmetic routine 4: negates the sign of the 9-byte number on the BASIC Stack."
+    },
+    {
+      "address": "0xFB28",
+      "source": "KL",
+      "text": "Arithmetic routine 13: moves from BASIC Stack to the address in HL; 9 bytes freed from Stack."
+    },
+    {
+      "address": "0xFB5B",
+      "source": "KL",
+      "text": "Bytes copied into RAM at initialization (addresses 0008H-002FH): error handlers, RST 18H entry, and function call dispatcher."
+    },
+    {
+      "address": "0xFB6B",
+      "source": "KL",
+      "text": "Character matrix table for character codes 128-160, ten bytes per character."
+    },
+    {
+      "address": "0xFD74",
+      "source": "KL",
+      "text": "\" \" text prefix for BASIC error messages."
+    },
+    {
+      "address": "0xFD9C",
+      "source": "KL",
+      "text": "\"System error\" text."
+    },
+    {
+      "address": "0xFDC6",
+      "source": "KL",
+      "text": "BASIC error message table; entries contain code, length, text, and FFH terminator."
+    },
+    {
+      "address": "0xFF3F",
+      "source": "KL",
+      "text": "PRINT special-character dispatch table."
+    },
+    {
+      "address": "0xFF47",
+      "source": "KL",
+      "text": "Binary constants 1000, 100, 10, and 1 for decimal conversion."
+    },
+    {
+      "address": "0xFFA3",
+      "source": "KL",
+      "text": "STOP routine."
+    },
+    {
+      "address": "0xFFB1",
+      "source": "KL",
+      "text": "\"STOP\" message text."
+    },
+    {
+      "address": "0xFFCA",
+      "source": "KL",
+      "text": "\" at line \" message text."
+    }
+  ]
+}

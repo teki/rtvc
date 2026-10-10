@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "language": "en",
+  "sources": [
+    "KL-tvcrom.md",
+    "TVC_ROM.md"
+  ],
+  "translation_note": "English comments are translated and normalized from OCR-derived Hungarian book text; source tags identify the origin. OCR lines that could not be translated cleanly are omitted.",
+  "comments": [
+    {
+      "address": "0xF000",
+      "source": "KL",
+      "text": "Extension ROM initialization; copies tables to RAM, initializes expansion devices, then returns to the main ROM."
+    },
+    {
+      "address": "0xF0FD",
+      "source": "KL",
+      "text": "Memory paging: U U U E page layout."
+    },
+    {
+      "address": "0xF12B",
+      "source": "KL",
+      "text": "Memory paging: U U U E page layout."
+    },
+    {
+      "address": "0xF13D",
+      "source": "KL",
+      "text": "Reset integrity check; decides between warm reset and cold reset."
+    },
+    {
+      "address": "0xF140",
+      "source": "KL",
+      "text": "Memory paging: U U V E page layout."
+    },
+    {
+      "address": "0xF166",
+      "source": "KL",
+      "text": "Expansion input dispatch."
+    },
+    {
+      "address": "0xF16C",
+      "source": "KL",
+      "text": "Expansion output dispatch."
+    },
+    {
+      "address": "0xF1E6",
+      "source": "KL",
+      "text": "Expansion-call error recovery; restores default device assignments."
+    },
+    {
+      "address": "0xF227",
+      "source": "KL",
+      "text": "Expansion-card interrupt dispatch."
+    },
+    {
+      "address": "0xF291",
+      "source": "KL",
+      "text": "Serial-line routine jump table; first byte is the routine count, followed by routine addresses."
+    },
+    {
+      "address": "0xF3C6",
+      "source": "KL",
+      "text": "Serial-line baud-rate divisor table."
+    },
+    {
+      "address": "0xF741",
+      "source": "KL",
+      "text": "\"Reading:\" cassette status text."
+    },
+    {
+      "address": "0xF74E",
+      "source": "KL",
+      "text": "\"Searching\" cassette status text."
+    },
+    {
+      "address": "0xF758",
+      "source": "KL",
+      "text": "\"Found:\" cassette status text."
+    },
+    {
+      "address": "0xFAF3",
+      "source": "KL",
+      "text": "Cassette work bytes used by cassette routines."
+    },
+    {
+      "address": "0xFB0E",
+      "source": "KL",
+      "text": "Initialization bytes copied to RAM addresses 0B00H-0B48H; includes the I/O assignment table."
+    },
+    {
+      "address": "0xFB54",
+      "source": "KL",
+      "text": "\"MOPS\" cartridge signature text."
+    },
+    {
+      "address": "0xFB58",
+      "source": "KL",
+      "text": "\"VGB\" device identifier."
+    },
+    {
+      "address": "0xFB5C",
+      "source": "KL",
+      "text": "\"RS232\" device identifier."
+    },
+    {
+      "address": "0xFB62",
+      "source": "KL",
+      "text": "\"DISK\" device identifier."
+    },
+    {
+      "address": "0xFB67",
+      "source": "KL",
+      "text": "\"CISL\" text."
+    },
+    {
+      "address": "0xFFDE",
+      "source": "KL",
+      "text": "\"(c)1985ISL\" text."
+    }
+  ]
+}
