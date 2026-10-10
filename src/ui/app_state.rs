@@ -2,7 +2,7 @@
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::emu::{MachineType, RomVersion};
+use crate::emu::MachineType;
 use crate::vid::VidModel;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -322,45 +322,14 @@ fn escape_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-fn machine_type_id(machine_type: Option<MachineType>) -> &'static str {
-    match machine_type.unwrap_or(MachineType {
-        is_plus: true,
-        rom_version: RomVersion::V1_2,
-        has_dos: true,
-    }) {
-        MachineType {
-            is_plus: true,
-            rom_version: RomVersion::V1_2,
-            has_dos: true,
-        } => "64k-plus-1.2-vtdos",
-        MachineType {
-            is_plus: true,
-            rom_version: RomVersion::V2_2,
-            has_dos: true,
-        } => "64k-plus-2.2-vtdos",
-        MachineType {
-            is_plus: false,
-            rom_version: RomVersion::V1_2,
-            has_dos: false,
-        } => "64k-1.2",
-        MachineType {
-            is_plus: true,
-            rom_version: RomVersion::V1_2,
-            has_dos: false,
-        } => "64k-plus-1.2",
-        MachineType {
-            is_plus: true,
-            rom_version: RomVersion::V2_2,
-            has_dos: false,
-        } => "64k-plus-2.2",
-        _ => "64k-plus-1.2-vtdos",
-    }
+fn machine_type_id(machine_type: Option<MachineType>) -> String {
+    machine_type
+        .unwrap_or_else(|| MachineType::all_types()[0])
+        .id()
 }
 
 fn machine_type_from_id(id: &str) -> Option<MachineType> {
-    MachineType::all_types()
-        .into_iter()
-        .find(|machine_type| machine_type_id(Some(*machine_type)) == id)
+    MachineType::from_id(id)
 }
 
 fn vid_model_id(vid_model: Option<VidModel>) -> &'static str {

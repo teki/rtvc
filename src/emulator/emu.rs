@@ -8,7 +8,7 @@ use crate::disasm::DisassembledInstruction;
 use crate::instruction_trace::{InstructionTrace, InstructionTraceEntry};
 use crate::machine::{DebugRunToIrqResult, FramebufferRef, Machine, System};
 use crate::mmu::RomBank;
-use crate::snapshot::{self, Reader, SnapshotError, Writer};
+use crate::snapshot::{self, Reader, Writer};
 use crate::tvc::{ExecutionTrace, Tvc};
 use crate::vid::VidModel;
 use crate::z80::Z80State;
@@ -48,135 +48,12 @@ impl DiskGeometry {
     };
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub enum RomVersion {
-    V1_2,
-    V2_2,
-}
+use crate::machine_type::place_machine_rom;
+pub use crate::machine_type::{CartId, ExpansionCard, MachineType, RomVersion};
 
 #[cfg(test)]
 #[path = "emu_tests.rs"]
 mod tests;
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub struct MachineType {
-    pub is_plus: bool,
-    pub rom_version: RomVersion,
-    pub has_dos: bool,
-}
-
-impl MachineType {
-    pub fn label(&self) -> String {
-        match (self.is_plus, self.rom_version, self.has_dos) {
-            (true, RomVersion::V1_2, true) => "64k+ 1.2, VT-DOS",
-            (true, RomVersion::V2_2, true) => "64k+ 2.2, VT-DOS",
-            (false, RomVersion::V1_2, false) => "64k  1.2",
-            (true, RomVersion::V1_2, false) => "64k+ 1.2",
-            (true, RomVersion::V2_2, false) => "64k+ 2.2",
-            _ => "64k  1.2",
-        }
-        .to_string()
-    }
-
-    pub fn all_types() -> Vec<MachineType> {
-        vec![
-            MachineType {
-                is_plus: true,
-                rom_version: RomVersion::V1_2,
-                has_dos: true,
-            },
-            MachineType {
-                is_plus: true,
-                rom_version: RomVersion::V2_2,
-                has_dos: true,
-            },
-            MachineType {
-                is_plus: false,
-                rom_version: RomVersion::V1_2,
-                has_dos: false,
-            },
-            MachineType {
-                is_plus: true,
-                rom_version: RomVersion::V1_2,
-                has_dos: false,
-            },
-            MachineType {
-                is_plus: true,
-                rom_version: RomVersion::V2_2,
-                has_dos: false,
-            },
-        ]
-    }
-
-    pub fn for_snapshot(is_plus: bool, has_dos: bool, preferred_rom_version: RomVersion) -> Self {
-        Self::all_types()
-            .into_iter()
-            .find(|machine_type| {
-                machine_type.is_plus == is_plus
-                    && machine_type.has_dos == has_dos
-                    && machine_type.rom_version == preferred_rom_version
-            })
-            .or_else(|| {
-                Self::all_types().into_iter().find(|machine_type| {
-                    machine_type.is_plus == is_plus && machine_type.has_dos == has_dos
-                })
-            })
-            .unwrap_or(MachineType {
-                is_plus,
-                rom_version: RomVersion::V1_2,
-                has_dos,
-            })
-    }
-
-    fn rom_version_id(&self) -> u8 {
-        match self.rom_version {
-            RomVersion::V1_2 => 0,
-            RomVersion::V2_2 => 1,
-        }
-    }
-
-    fn from_snapshot_chunk(data: &[u8]) -> snapshot::Result<Self> {
-        let mut reader = Reader::new(data);
-        let is_plus = reader.u8()? != 0;
-        let rom_version = match reader.u8()? {
-            0 => RomVersion::V1_2,
-            1 => RomVersion::V2_2,
-            value => {
-                return Err(SnapshotError::InvalidData(format!(
-                    "unknown machine ROM version {value}"
-                )));
-            }
-        };
-        let has_dos = reader.u8()? != 0;
-        Self::all_types()
-            .into_iter()
-            .find(|machine_type| {
-                machine_type.is_plus == is_plus
-                    && machine_type.rom_version == rom_version
-                    && machine_type.has_dos == has_dos
-            })
-            .ok_or_else(|| SnapshotError::InvalidData("unknown machine type".to_string()))
-    }
-
-    fn write_snapshot_chunk(&self) -> Vec<u8> {
-        let mut writer = Writer::new();
-        writer.u8(self.is_plus as u8);
-        writer.u8(self.rom_version_id());
-        writer.u8(self.has_dos as u8);
-        writer.into_inner()
-    }
-
-    fn rom_files(&self) -> Vec<&'static str> {
-        let mut files = match self.rom_version {
-            RomVersion::V1_2 => vec!["TVC12_D3.64K", "TVC12_D4.64K", "TVC12_D7.64K"],
-            RomVersion::V2_2 => vec!["TVC22_D4.64K", "TVC22_D6.64K", "TVC22_D7.64K"],
-        };
-        if self.has_dos {
-            files.push("VT-DOS12-DISK.ROM");
-        }
-        files
-    }
-}
 
 #[derive(Default)]
 struct EmuSnapshotState {
@@ -925,25 +802,18 @@ impl Emu {
     }
 
     pub fn load_roms(&mut self) {
+        let jobs = self.machine_type.rom_uses();
         #[cfg(target_arch = "wasm32")]
         {
-            let roms: &[(&str, &[u8])] = &[
-                ("TVC12_D3.64K", include_bytes!("../../roms/TVC12_D3.64K")),
-                ("TVC12_D4.64K", include_bytes!("../../roms/TVC12_D4.64K")),
-                ("TVC12_D7.64K", include_bytes!("../../roms/TVC12_D7.64K")),
-                ("TVC22_D4.64K", include_bytes!("../../roms/TVC22_D4.64K")),
-                ("TVC22_D6.64K", include_bytes!("../../roms/TVC22_D6.64K")),
-                ("TVC22_D7.64K", include_bytes!("../../roms/TVC22_D7.64K")),
-                (
-                    "VT-DOS12-DISK.ROM",
-                    include_bytes!("../../roms/VT-DOS12-DISK.ROM"),
-                ),
-            ];
-            for name in self.machine_type.rom_files() {
-                if let Some((_, data)) = roms.iter().find(|(n, _)| *n == name) {
-                    self.tvc_mut().expect("TVC ROM loading").add_rom(name, data);
+            let tvc = self.tvc_mut().expect("TVC ROM loading");
+            for (name, use_) in jobs {
+                if let Some(data) = builtin_rom(&name) {
+                    place_machine_rom(tvc, &name, data, use_);
                 }
             }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
             self.roms_loaded = true;
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -953,19 +823,15 @@ impl Emu {
                 std::fs::create_dir_all(&roms_dir).ok();
             }
             let mut any_loaded = false;
-
-            for name in self.machine_type.rom_files() {
-                match std::fs::read(roms_dir.join(name)) {
-                    Ok(data) => {
-                        self.tvc_mut()
-                            .expect("TVC ROM loading")
-                            .add_rom(name, &data);
+            {
+                let tvc = self.tvc_mut().expect("TVC ROM loading");
+                for (name, use_) in jobs {
+                    if let Ok(data) = std::fs::read(roms_dir.join(&name)) {
+                        place_machine_rom(tvc, &name, &data, use_);
                         any_loaded = true;
                     }
-                    Err(_) => {}
                 }
             }
-
             if any_loaded {
                 self.roms_loaded = true;
             }
@@ -1264,7 +1130,7 @@ impl Emu {
 
     pub fn save_disk_bytes(&self, drive: usize) -> Option<Vec<u8>> {
         let tvc = self.tvc()?;
-        let ext = tvc.bus.extensions.slot0()?;
+        let ext = tvc.bus.extensions.hbf()?;
         ext.disk_bytes(drive).map(|b| b.to_vec())
     }
 
@@ -1654,6 +1520,53 @@ fn recent_media_key(path: &str) -> String {
         .and_then(|name| name.to_str())
         .unwrap_or(path)
         .to_lowercase()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn builtin_rom(name: &str) -> Option<&'static [u8]> {
+    Some(match name {
+        "TVC12_D3.64K" => include_bytes!("../../roms/TVC12_D3.64K"),
+        "TVC12_D4.64K" => include_bytes!("../../roms/TVC12_D4.64K"),
+        "TVC12_D7.64K" => include_bytes!("../../roms/TVC12_D7.64K"),
+        "TVC22_D4.64K" => include_bytes!("../../roms/TVC22_D4.64K"),
+        "TVC22_D6.64K" => include_bytes!("../../roms/TVC22_D6.64K"),
+        "TVC22_D7.64K" => include_bytes!("../../roms/TVC22_D7.64K"),
+        "VT-DOS12-DISK.ROM" => include_bytes!("../../roms/VT-DOS12-DISK.ROM"),
+        "VT-DOS12-CART.crt" => include_bytes!("../../roms/VT-DOS12-CART.crt"),
+        "pack_man.crt" => include_bytes!("../../roms/pack_man.crt"),
+        _ => return None,
+    })
+}
+
+pub fn cartridge_stems() -> Vec<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        vec!["VT-DOS12-CART".to_string(), "pack_man".to_string()]
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut stems = Vec::new();
+        let dir = data_dir("roms");
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Some(extension) = path.extension().and_then(|ext| ext.to_str()) else {
+                    continue;
+                };
+                if !extension.eq_ignore_ascii_case("crt") {
+                    continue;
+                }
+                let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                    continue;
+                };
+                if CartId::new(stem).is_some() {
+                    stems.push(stem.to_string());
+                }
+            }
+        }
+        stems.sort_by(|left, right| left.to_ascii_lowercase().cmp(&right.to_ascii_lowercase()));
+        stems
+    }
 }
 
 fn data_dir(name: &str) -> PathBuf {

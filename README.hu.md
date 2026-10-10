@@ -26,7 +26,7 @@ További történeti háttér a
 ## Funkciók
 
 - TVC 64K és 64K+ gépváltozatok.
-- ROM 1.2 és ROM 2.2 gépválasztás, opcionális VT-DOS/HBF bővítéssel.
+- ROM 1.2 és ROM 2.2 gépválasztás, opcionális VT-DOS/HBF kártyával és programmodullal.
 - Z80 CPU-emuláció FUSE és ZEX validációs tesztkészletekkel.
 - MC6845-alapú videokimenet gyors képkockás és interleaved renderelési móddal.
 - Natív billentyűzet-, video- és hangkezelés az asztali felületen.

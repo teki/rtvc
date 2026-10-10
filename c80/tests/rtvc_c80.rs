@@ -296,12 +296,12 @@ fn mixed_cli_emit_segments_contains_basic_and_runs_usr() {
 
 #[test]
 fn pong_cas_inject_starts_the_playfield() {
+    use rtvc_c80::project::{
+        ProjectUnitInput, UnitKind, compile_project, parse_manifest, render_rtvc_asm_v1,
+    };
     use rtvc_core::cas::{
         TVC_CAS_HEADER_LEN, TVC_CAS_LOAD_ADDR, TVC_CAS_TYPE_BASIC, encode_tvc_cas,
         flatten_cas_image,
-    };
-    use rtvc_c80::project::{
-        ProjectUnitInput, UnitKind, compile_project, parse_manifest, render_rtvc_asm_v1,
     };
 
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../info/c80/pong");

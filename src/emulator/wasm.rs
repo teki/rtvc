@@ -33,10 +33,10 @@ impl WasmTvc {
 
     #[wasm_bindgen(js_name = loadSnapshot)]
     pub fn load_snapshot(&mut self, data: &[u8]) -> Result<(), JsValue> {
-        if let Some((is_plus, rom_version, has_dos)) = snapshot_machine_type(data)? {
+        if let Some(machine) = snapshot_machine_type(data)? {
             let fast_boot = self.tvc.fast_boot();
-            self.tvc = Tvc::new_with_vid_model(is_plus, self.tvc.vid_model());
-            load_builtin_roms(&mut self.tvc, rom_version, has_dos);
+            self.tvc = Tvc::new_with_vid_model(machine.is_plus, self.tvc.vid_model());
+            load_builtin_roms(&mut self.tvc, machine);
             self.tvc.set_fast_boot(fast_boot);
         }
         self.tvc
@@ -150,52 +150,39 @@ fn default_web_vid_model() -> VidModel {
     VidModel::FastFrame
 }
 
-fn snapshot_machine_type(data: &[u8]) -> Result<Option<(bool, u8, bool)>, JsValue> {
+fn snapshot_machine_type(data: &[u8]) -> Result<Option<crate::machine_type::MachineType>, JsValue> {
     let chunks =
         crate::snapshot::read_file(data).map_err(|err| JsValue::from_str(&err.to_string()))?;
     let Some(chunk) = chunks.iter().find(|chunk| chunk.id == *b"EMUT") else {
         return Ok(None);
     };
-    let mut reader = crate::snapshot::Reader::new(chunk.data);
-    let is_plus = reader
-        .u8()
-        .map_err(|err| JsValue::from_str(&err.to_string()))?
-        != 0;
-    let rom_version = reader
-        .u8()
-        .map_err(|err| JsValue::from_str(&err.to_string()))?;
-    if rom_version > 1 {
-        return Err(JsValue::from_str("unknown snapshot ROM version"));
-    }
-    let has_dos = reader
-        .u8()
-        .map_err(|err| JsValue::from_str(&err.to_string()))?
-        != 0;
-    Ok(Some((is_plus, rom_version, has_dos)))
+    crate::machine_type::MachineType::from_snapshot_chunk(chunk.data)
+        .map(Some)
+        .map_err(|err| JsValue::from_str(&err.to_string()))
 }
 
-fn load_builtin_roms(tvc: &mut Tvc, rom_version: u8, has_dos: bool) {
-    let roms: &[(&str, &[u8])] = match rom_version {
-        1 => &[
-            ("TVC22_D4.64K", include_bytes!("../../roms/TVC22_D4.64K")),
-            ("TVC22_D6.64K", include_bytes!("../../roms/TVC22_D6.64K")),
-            ("TVC22_D7.64K", include_bytes!("../../roms/TVC22_D7.64K")),
-        ],
-        _ => &[
-            ("TVC12_D3.64K", include_bytes!("../../roms/TVC12_D3.64K")),
-            ("TVC12_D4.64K", include_bytes!("../../roms/TVC12_D4.64K")),
-            ("TVC12_D7.64K", include_bytes!("../../roms/TVC12_D7.64K")),
-        ],
-    };
-    for (name, bytes) in roms {
-        tvc.add_rom(name, bytes);
+fn load_builtin_roms(tvc: &mut Tvc, machine: crate::machine_type::MachineType) {
+    for (name, use_) in machine.rom_uses() {
+        let Some(bytes) = builtin_rom(&name) else {
+            continue;
+        };
+        crate::machine_type::place_machine_rom(tvc, &name, bytes, use_);
     }
-    if has_dos {
-        tvc.add_rom(
-            "VT-DOS12-DISK.ROM",
-            include_bytes!("../../roms/VT-DOS12-DISK.ROM"),
-        );
-    }
+}
+
+fn builtin_rom(name: &str) -> Option<&'static [u8]> {
+    Some(match name {
+        "TVC12_D3.64K" => include_bytes!("../../roms/TVC12_D3.64K"),
+        "TVC12_D4.64K" => include_bytes!("../../roms/TVC12_D4.64K"),
+        "TVC12_D7.64K" => include_bytes!("../../roms/TVC12_D7.64K"),
+        "TVC22_D4.64K" => include_bytes!("../../roms/TVC22_D4.64K"),
+        "TVC22_D6.64K" => include_bytes!("../../roms/TVC22_D6.64K"),
+        "TVC22_D7.64K" => include_bytes!("../../roms/TVC22_D7.64K"),
+        "VT-DOS12-DISK.ROM" => include_bytes!("../../roms/VT-DOS12-DISK.ROM"),
+        "VT-DOS12-CART.crt" => include_bytes!("../../roms/VT-DOS12-CART.crt"),
+        "pack_man.crt" => include_bytes!("../../roms/pack_man.crt"),
+        _ => return None,
+    })
 }
 
 #[cfg(feature = "wasm-full")]

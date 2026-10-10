@@ -909,6 +909,7 @@ Common dumped filenames used by rtvc are included only to clarify placement:
 | `TVC22_D4.64K` | SYS upper 8 KiB overlay at bank offset `0x2000` |
 | `TVC22_D7.64K` | EXTH |
 | `VT-DOS12-DISK.ROM` | HBF card ROM |
+| `VT-DOS12-CART.crt` | CART bank |
 
 These names are preservation conventions, not hardware identifiers.
 

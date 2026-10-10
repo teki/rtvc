@@ -1,8 +1,8 @@
 use super::*;
-use rtvc_core::asm::assemble_line;
-use rtvc_core::bus::FakeBus;
 use crate::abi::{assign_params, return_home};
 use crate::harness::{AccessKind, ExecConfig, execute_function, execute_function_with};
+use rtvc_core::asm::assemble_line;
+use rtvc_core::bus::FakeBus;
 use rtvc_core::disasm::disassemble_at;
 
 fn compile_ok(src: &str) -> CompilationResult {

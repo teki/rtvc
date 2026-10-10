@@ -38,8 +38,9 @@ This skill provides step-by-step instructions and references for compiling, exec
   cargo run --bin rtvc -- path/to/game.z80
   ```
   - Place ROM files (`TVC12_D3.64K`, `TVC12_D4.64K`, `TVC12_D7.64K`) in `roms/` for the TVC to boot.
-  - Use the Machine menu to run/pause, reset, select TVC or Zx82, choose the
-    TVC profile, and select the video model.
+  - Use the Machine menu to run/pause, reset, select TVC or Zx82, choose a
+    TVC preset or override memory, system ROM, a `roms/*.crt` cartridge, and expansion
+    slots, and select the video model.
   - Use View > Developer Workspace to enable docking. View > Panes > IO Log
     reopens or closes the log pane, and Reset Workspace restores Screen above
     IO Log.

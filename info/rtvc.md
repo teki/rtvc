@@ -578,9 +578,28 @@ than a constant address shift.
 
 ## Configuration and Persistence
 
-Machine choices combine standard/Plus memory, BASIC 1.2/2.2 ROMs, and optional
-VT-DOS. Native and full-web applications retain machine type, video model,
-fast-boot setting, and restorable media references.
+The Machine menu keeps five TVC presets: 64K+ BASIC 1.2 or 2.2 with the HBF
+card in expansion slot 0, and the three machines without a card (64K 1.2,
+64K+ 1.2, 64K+ 2.2). Overrides under that list change memory (64K or 64K+),
+the system ROM pair (BASIC 1.2 or 2.2, SYS and EXTH together), the cartridge
+(`roms/*.crt`, or empty), and which of the four expansion connectors
+holds the VT-DOS 1.2 HBF card. Only one HBF card is attached. Slot `ex0` is
+I/O `0x10-0x1F`, connector CH1.
+
+A preset stays highlighted while the machine matches it. Any other mix is
+shown by its id, for example `64ktvc12+ex1:vtdos12+cart:pack_man`. A
+cartridge image is a 16 KiB `.crt` file in `roms/`. BASIC autostarts an image
+whose first four bytes are `MOPS`, which covers `pack_man.crt` and
+`VT-DOS12-CART.crt`. The HBF card and the VT-DOS cartridge are separate: the
+card serves BASIC disk commands, and the cartridge is the CART bank used by
+the `DOS` command. Disk images follow the connector that holds the card.
+
+Native and full-web applications store that id in `rtvc.toml` (or browser
+local storage), together with the video model, fast-boot setting, and
+restorable media references. Older preset ids such as `64k-plus-1.2-vtdos`
+still load. Snapshots record the same machine. A snapshot written before
+cartridge and slot selection loads as the matching preset with the HBF card
+in slot 0 and an empty cartridge socket.
 
 The native application searches runtime ROM and program assets in the current
 working directory first and beside the executable second. Packaged macOS apps

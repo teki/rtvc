@@ -1,4 +1,5 @@
 use super::*;
+use crate::emu::RomVersion;
 
 #[test]
 fn parses_minimal_app_state() {
@@ -22,11 +23,7 @@ recent = ["Games.dsk"]
 
     assert_eq!(
         state.machine_type,
-        Some(MachineType {
-            is_plus: true,
-            rom_version: RomVersion::V2_2,
-            has_dos: true,
-        })
+        Some(MachineType::standard(true, RomVersion::V2_2, true))
     );
     assert_eq!(state.vid_model, Some(VidModel::FastFrame));
     assert!(state.fast_boot);
@@ -42,4 +39,17 @@ recent = ["Games.dsk"]
     );
     assert!(!state.disk_loaded);
     assert_eq!(state.recent_disks, vec!["Games.dsk".to_string()]);
+}
+
+#[test]
+fn parses_custom_machine_id() {
+    let state = parse_state("machine_type = \"64ktvc12+ex1:vtdos12+cart:vtdos12\"\n");
+    assert_eq!(
+        state.machine_type,
+        Some(
+            MachineType::standard(false, RomVersion::V1_2, false)
+                .with_hbf_slot(1)
+                .with_cart("VT-DOS12-CART")
+        )
+    );
 }

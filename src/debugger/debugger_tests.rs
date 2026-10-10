@@ -45,11 +45,7 @@ fn frame_stats_drop_frames_outside_the_window() {
 fn tcp_debugger_reads_and_writes_active_zx82_memory() {
     let mut snapshot = vec![0; 30 + 0xC000];
     snapshot[6..8].copy_from_slice(&0x4000u16.to_le_bytes());
-    let mut emu = Emu::new(MachineType {
-        is_plus: false,
-        rom_version: RomVersion::V1_2,
-        has_dos: false,
-    });
+    let mut emu = Emu::new(MachineType::standard(false, RomVersion::V1_2, false));
     emu.load_z80_bytes(&snapshot).unwrap();
 
     let response = handle_command(
@@ -81,11 +77,7 @@ fn tcp_debugger_reads_and_writes_active_zx82_memory() {
 
 #[test]
 fn tcp_debugger_schedules_frame_timed_key_press() {
-    let mut emu = Emu::new(MachineType {
-        is_plus: false,
-        rom_version: RomVersion::V1_2,
-        has_dos: false,
-    });
+    let mut emu = Emu::new(MachineType::standard(false, RomVersion::V1_2, false));
 
     let response = handle_command(
         &mut emu,
@@ -101,11 +93,7 @@ fn tcp_debugger_schedules_frame_timed_key_press() {
 
 #[test]
 fn tcp_debugger_queues_typed_text_for_frame_paced_input() {
-    let mut emu = Emu::new(MachineType {
-        is_plus: false,
-        rom_version: RomVersion::V1_2,
-        has_dos: false,
-    });
+    let mut emu = Emu::new(MachineType::standard(false, RomVersion::V1_2, false));
 
     let response = handle_command(
         &mut emu,
@@ -146,11 +134,7 @@ fn tcp_debugger_controls_and_lists_instruction_trace() {
     let mut snapshot = vec![0; 30 + 0xC000];
     snapshot[6..8].copy_from_slice(&0x4000u16.to_le_bytes());
     snapshot[30..33].copy_from_slice(&[0x32, 0x00, 0x80]);
-    let mut emu = Emu::new(MachineType {
-        is_plus: false,
-        rom_version: RomVersion::V1_2,
-        has_dos: false,
-    });
+    let mut emu = Emu::new(MachineType::standard(false, RomVersion::V1_2, false));
     emu.load_z80_bytes(&snapshot).unwrap();
     emu.set_z80_register("A", 0x2A);
 

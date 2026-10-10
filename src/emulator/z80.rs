@@ -26,6 +26,8 @@ pub struct Z80 {
     pub state: Z80State,
     pub sz53_table: [u8; 256],
     pub sz53p_table: [u8; 256],
+    // Set by EI. Maskable interrupts are accepted after the following instruction.
+    after_ei: bool,
 }
 pub type Z80A = Z80;
 
@@ -35,6 +37,7 @@ impl Z80 {
             state: Z80State::new(),
             sz53_table: [0; 256],
             sz53p_table: [0; 256],
+            after_ei: false,
         };
         for i in 0..256 {
             let mut flags = (i as u8 & F_S) | (i as u8 & F_5) | (i as u8 & F_3);
@@ -55,6 +58,7 @@ impl Z80 {
 
     pub fn reset(&mut self) {
         self.state.reset();
+        self.after_ei = false;
     }
     pub fn initialize(&mut self) {
         self.state.initialize();
@@ -282,20 +286,31 @@ impl Z80 {
     }
 
     pub fn irq<M: CpuBus>(&mut self, bus: &mut M) -> u32 {
-        if self.state.iff1 != 0 {
-            self.state.halted = 0;
-            self.state.iff1 = 0;
-            self.state.iff2 = 0;
-            let pc = self.state.pc;
-            self.push16(bus, pc);
-            self.state.pc = 0x0038;
-            13
-        } else {
-            0
+        if self.after_ei || self.state.iff1 == 0 {
+            return 0;
+        }
+        self.state.halted = 0;
+        self.state.iff1 = 0;
+        self.state.iff2 = 0;
+        let pc = self.state.pc;
+        self.push16(bus, pc);
+        match self.state.im {
+            2 => {
+                let vector = (u16::from(self.state.r8[R_I]) << 8) | u16::from(bus.irq_vector());
+                self.state.pc = bus.r16(vector);
+                19
+            }
+            _ => {
+                // Mode 1, and mode 0 when the acknowledge byte is the open-bus
+                // RST 38H opcode 0xFF.
+                self.state.pc = 0x0038;
+                13
+            }
         }
     }
 
     pub fn step<M: CpuBus>(&mut self, bus: &mut M, _run_for: i32) -> u32 {
+        self.after_ei = false;
         if self.state.halted != 0 {
             return 4;
         }
@@ -1426,9 +1441,10 @@ impl Z80 {
                 }
             }
             0xFB => {
-                // EI
+                // EI. The enable takes effect after the following instruction.
                 self.state.iff1 = 1;
                 self.state.iff2 = 1;
+                self.after_ei = true;
                 (4, 1)
             }
             0xFC => {

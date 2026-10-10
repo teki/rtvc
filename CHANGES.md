@@ -4,6 +4,13 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+- TVC presets can be overridden with mixed memory, system ROM, a `.crt`
+  cartridge, and HBF expansion-slot choices. The active mix is saved with
+  the machine id.
+- The VT-DOS cartridge can boot with the HBF card. Maskable interrupts now
+  follow Z80 mode 2 and the one-instruction delay after `EI`, and a 64K+
+  machine scans out the video bank selected by port `0x0C`.
+
 ## v0.8.7 - 2026-09-18
 
 - Cassette inject binds BASIC `TEXT`/`CHAIN`/`TOP`, and `rtvc -i` types `RUN`

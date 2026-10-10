@@ -704,12 +704,17 @@ impl Tvc {
     }
 
     pub fn add_rom(&mut self, name: &str, data: &[u8]) {
-        if name.contains("DOS") {
-            let hbf = HBF::new(data);
-            self.bus.extension_attach(0, hbf);
+        if name.contains("CART") {
+            self.load_cart_rom(data);
+        } else if name.contains("DOS") {
+            self.attach_hbf(0, data);
         } else {
             self.bus.mmu.add_rom(name, data);
         }
+    }
+
+    pub fn attach_hbf(&mut self, slot: usize, data: &[u8]) {
+        self.bus.extension_attach(slot as u8, HBF::new(data));
     }
 
     pub fn load_cart_rom(&mut self, data: &[u8]) {
@@ -717,7 +722,7 @@ impl Tvc {
     }
 
     pub fn load_disk(&mut self, drive: usize, name: &str, data: &[u8]) {
-        if let Some(ext) = self.bus.extensions.slot0_mut() {
+        if let Some(ext) = self.bus.extensions.hbf_mut() {
             ext.load_disk(drive, name, data);
         }
     }
@@ -725,12 +730,12 @@ impl Tvc {
     pub fn disk_dirty(&self, drive: usize) -> bool {
         self.bus
             .extensions
-            .slot0()
+            .hbf()
             .is_some_and(|ext| ext.disk_dirty(drive))
     }
 
     pub fn clear_disk_dirty(&mut self, drive: usize) {
-        if let Some(ext) = self.bus.extensions.slot0_mut() {
+        if let Some(ext) = self.bus.extensions.hbf_mut() {
             ext.clear_disk_dirty(drive);
         }
     }

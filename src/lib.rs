@@ -25,6 +25,8 @@ pub mod key;
 pub mod log;
 #[path = "emulator/machine.rs"]
 pub mod machine;
+#[path = "emulator/machine_type.rs"]
+pub mod machine_type;
 #[path = "emulator/mmu.rs"]
 pub mod mmu;
 #[path = "emulator/snapshot.rs"]

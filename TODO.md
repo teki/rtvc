@@ -150,9 +150,9 @@ Open issues and planned improvements for the TVC emulator.
   - [x] Support two floppy drives.
 
 - [ ] Add cartridge support.
-  - Support VT-DOS cartridges.
+  - [x] Support VT-DOS cartridges.
   - Support UPM cartridges.
-  - Support cartridge-based games.
+  - [x] Support cartridge-based games.
 
 - [ ] Allow the user to select a custom media directory.
   - Let the user point to a directory containing their own CAS and DSK files.

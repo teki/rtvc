@@ -13,7 +13,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use crate::app_state::{AppState, AppStateFile};
 use crate::audio::NativeAudioSink;
 use crate::debug_ui::DebuggerUi;
-use crate::emu::{DiskGeometry, Emu, MachineType, ProgEntry};
+use crate::emu::{CartId, DiskGeometry, Emu, MachineType, ProgEntry, RomVersion, cartridge_stems};
 use crate::machine::System;
 use crate::vid::VidModel;
 use crate::workspace::{self, Workspace, WorkspaceMode, WorkspaceTab};
@@ -339,7 +339,7 @@ pub struct EmuApp {
     screen_captured: bool,
     file_status: Option<String>,
     machine_types: Vec<MachineType>,
-    selected_machine: usize,
+    selected_machine: Option<usize>,
     audio: Option<NativeAudioSink>,
     audio_status: Option<String>,
     app_state_file: AppStateFile,
@@ -403,11 +403,117 @@ impl EmuApp {
         }
     }
 
-    fn selected_machine_index(machine_types: &[MachineType], machine_type: MachineType) -> usize {
+    fn selected_machine_index(
+        machine_types: &[MachineType],
+        machine_type: MachineType,
+    ) -> Option<usize> {
         machine_types
             .iter()
             .position(|candidate| *candidate == machine_type)
-            .unwrap_or(0)
+    }
+
+    fn apply_machine_type(&mut self, machine_type: MachineType) {
+        if machine_type == self.emu.machine_type {
+            return;
+        }
+        let vid_model = self.emu.vid_model();
+        if let Err(err) = self.emu.reload(machine_type) {
+            self.file_status = Some(err);
+        }
+        self.emu.set_vid_model(vid_model);
+        self.sync_selection_from_emu();
+        self.save_app_state();
+    }
+
+    fn draw_machine_overrides(&mut self, ui: &mut egui::Ui) {
+        ui.separator();
+        ui.label("Overrides");
+        let current = self.emu.machine_type;
+
+        ui.label("Memory");
+        if ui.selectable_label(!current.is_plus, "64k").clicked() {
+            let mut machine = current;
+            machine.is_plus = false;
+            self.apply_machine_type(machine);
+        }
+        if ui.selectable_label(current.is_plus, "64k+").clicked() {
+            let mut machine = current;
+            machine.is_plus = true;
+            self.apply_machine_type(machine);
+        }
+
+        ui.label("System ROM");
+        if ui
+            .selectable_label(current.rom_version == RomVersion::V1_2, "1.2")
+            .clicked()
+        {
+            let mut machine = current;
+            machine.rom_version = RomVersion::V1_2;
+            self.apply_machine_type(machine);
+        }
+        if ui
+            .selectable_label(current.rom_version == RomVersion::V2_2, "2.2")
+            .clicked()
+        {
+            let mut machine = current;
+            machine.rom_version = RomVersion::V2_2;
+            self.apply_machine_type(machine);
+        }
+
+        ui.label("Cartridge");
+        if ui
+            .selectable_label(current.cart.is_none(), "(none)")
+            .clicked()
+        {
+            let mut machine = current;
+            machine.cart = None;
+            self.apply_machine_type(machine);
+        }
+        let mut stems = cartridge_stems();
+        if let Some(cart) = current.cart {
+            let stem = cart.as_str().to_string();
+            if !stems.iter().any(|candidate| candidate == &stem) {
+                stems.push(stem);
+            }
+        }
+        for stem in stems {
+            let Some(cart) = CartId::new(&stem) else {
+                continue;
+            };
+            if ui
+                .selectable_label(current.cart == Some(cart), &stem)
+                .clicked()
+            {
+                let mut machine = current;
+                machine.cart = Some(cart);
+                self.apply_machine_type(machine);
+            }
+        }
+
+        ui.label("Expansion");
+        ui.label("ex0 = I/O 10h, connector CH1");
+        for slot in 0..4 {
+            let occupied = current.hbf_slot() == Some(slot);
+            let title = if occupied {
+                format!("ex{slot}: VT-DOS 1.2")
+            } else {
+                format!("ex{slot}: (none)")
+            };
+            ui.menu_button(title, |ui| {
+                if ui.selectable_label(!occupied, "(none)").clicked() && occupied {
+                    let mut machine = current;
+                    machine.set_hbf_slot(None);
+                    self.apply_machine_type(machine);
+                    ui.close_menu();
+                }
+                if ui.selectable_label(occupied, "VT-DOS 1.2").clicked() {
+                    let mut machine = current;
+                    machine.set_hbf_slot(Some(slot));
+                    self.apply_machine_type(machine);
+                    ui.close_menu();
+                }
+            });
+        }
     }
 
     pub fn set_audio_status(&mut self, status: String) {
@@ -1228,19 +1334,20 @@ impl EmuApp {
                 let machine_types = self.machine_types.clone();
                 for (index, machine_type) in machine_types.into_iter().enumerate() {
                     if ui
-                        .selectable_label(self.selected_machine == index, machine_type.label())
+                        .selectable_label(
+                            self.selected_machine == Some(index),
+                            machine_type.label(),
+                        )
                         .clicked()
                     {
-                        self.selected_machine = index;
-                        let vid_model = self.emu.vid_model();
-                        if let Err(err) = self.emu.reload(machine_type) {
-                            self.file_status = Some(err);
-                        }
-                        self.emu.set_vid_model(vid_model);
-                        self.save_app_state();
+                        self.apply_machine_type(machine_type);
                         ui.close_menu();
                     }
                 }
+                if self.selected_machine.is_none() {
+                    let _ = ui.selectable_label(true, self.emu.machine_type.id());
+                }
+                self.draw_machine_overrides(ui);
             }
 
             ui.separator();

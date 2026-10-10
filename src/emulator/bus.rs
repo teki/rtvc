@@ -32,6 +32,12 @@ pub trait CpuBus {
     fn in8(&mut self, _port: u8, val: u8) -> u8 {
         val
     }
+
+    /// Data-bus byte supplied during interrupt acknowledge. `0xFF` is the
+    /// open-bus value used by both the TVC and the ZX Spectrum ULA.
+    fn irq_vector(&mut self) -> u8 {
+        0xFF
+    }
 }
 
 /// Simple flat CPU bus for testing.

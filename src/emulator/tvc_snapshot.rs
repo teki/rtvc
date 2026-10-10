@@ -41,7 +41,7 @@ pub(crate) fn save(tvc: &Tvc) -> Vec<u8> {
     tvc.bus.vid.write_snapshot(&mut vid);
     chunks.push((*b"VID ", vid.into_inner()));
 
-    if let Some(ext) = tvc.bus.extensions.slot0() {
+    if let Some(ext) = tvc.bus.extensions.hbf() {
         let mut hbf = Writer::new();
         ext.write_snapshot(&mut hbf);
         chunks.push((*b"HBF ", hbf.into_inner()));
@@ -109,7 +109,7 @@ pub(crate) fn load(tvc: &mut Tvc, data: &[u8]) -> snapshot::Result<()> {
             b"HBF " => {
                 tvc.bus
                     .extensions
-                    .slot0_mut()
+                    .hbf_mut()
                     .ok_or(SnapshotError::InvalidChunk("HBF "))?
                     .read_snapshot(&mut reader)?;
             }

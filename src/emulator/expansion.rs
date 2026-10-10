@@ -110,7 +110,11 @@ impl ExpansionSlots {
         self.slots[0].as_ref()
     }
 
-    pub(crate) fn slot0_mut(&mut self) -> Option<&mut HBF> {
-        self.slots[0].as_mut()
+    pub(crate) fn hbf(&self) -> Option<&HBF> {
+        self.slots.iter().find_map(Option::as_ref)
+    }
+
+    pub(crate) fn hbf_mut(&mut self) -> Option<&mut HBF> {
+        self.slots.iter_mut().find_map(Option::as_mut)
     }
 }

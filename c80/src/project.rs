@@ -1484,9 +1484,9 @@ fn hex16(value: u16) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::harness::execute_function;
     use rtvc_core::asm::parse_rtvc_asm_v1;
     use rtvc_core::bus::CpuBus;
-    use crate::harness::execute_function;
 
     fn compile_units(
         units: &[ProjectUnitInput<'_>],
@@ -2394,7 +2394,8 @@ mod tests {
     }
 
     fn boot_tvc12() -> rtvc_core::tvc::Tvc {
-        let mut tvc = rtvc_core::tvc::Tvc::new_with_vid_model(false, rtvc_core::vid::VidModel::Interleaved);
+        let mut tvc =
+            rtvc_core::tvc::Tvc::new_with_vid_model(false, rtvc_core::vid::VidModel::Interleaved);
         tvc.add_rom("TVC12_D4.64K", include_bytes!("../../roms/TVC12_D4.64K"));
         tvc.add_rom("TVC12_D3.64K", include_bytes!("../../roms/TVC12_D3.64K"));
         tvc.add_rom("TVC12_D7.64K", include_bytes!("../../roms/TVC12_D7.64K"));

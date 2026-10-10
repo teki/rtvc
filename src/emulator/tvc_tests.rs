@@ -253,6 +253,49 @@ fn debug_step_redraws_fast_frame_video() {
 }
 
 #[test]
+fn ei_delays_maskable_interrupt_by_one_instruction() {
+    let mut tvc = Tvc::new_with_vid_model(false, VidModel::FastFrame);
+    tvc.bus.mmu.set_map(0x70);
+    tvc.bus.mmu.w8(0x0100, 0xFB);
+    tvc.bus.mmu.w8(0x0101, 0x00);
+    tvc.z80.state.pc = 0x0100;
+    tvc.z80.state.iff1 = 0;
+    tvc.request_cursor_irq();
+
+    tvc.debug_step_instruction();
+    assert_eq!(tvc.z80.state.pc, 0x0101);
+    assert_eq!(tvc.z80.state.iff1, 1);
+
+    tvc.debug_step_instruction();
+    assert_eq!(tvc.z80.state.pc, 0x0038);
+    assert_eq!(tvc.z80.state.iff1, 0);
+}
+
+#[test]
+fn interrupt_mode_2_uses_the_vector_table() {
+    let mut tvc = Tvc::new_with_vid_model(true, VidModel::FastFrame);
+    tvc.bus.mmu.set_map(0xB0);
+    tvc.bus.mmu.w8(0x0100, 0x00);
+    tvc.bus.mmu.w8(0xFEFF, 0xFD);
+    tvc.bus.mmu.w8(0xFF00, 0xFD);
+    tvc.bus.mmu.w8(0xFDFD, 0xC3);
+    tvc.bus.mmu.w8(0xFDFE, 0x00);
+    tvc.bus.mmu.w8(0xFDFF, 0x40);
+    tvc.z80.state.pc = 0x0100;
+    tvc.z80.state.sp = 0x8000;
+    tvc.z80.state.im = 2;
+    tvc.z80.state.iff1 = 1;
+    tvc.z80.state.iff2 = 1;
+    tvc.z80.state.set_reg16(12, 0xFE00);
+    tvc.request_cursor_irq();
+
+    tvc.debug_step_instruction();
+
+    assert_eq!(tvc.z80.state.pc, 0xFDFD);
+    assert_eq!(tvc.z80.state.iff1, 0);
+}
+
+#[test]
 fn debug_run_to_interrupt_wakes_a_halted_cpu() {
     let mut tvc = Tvc::new_with_vid_model(false, VidModel::Interleaved);
     tvc.z80.state.halted = 1;

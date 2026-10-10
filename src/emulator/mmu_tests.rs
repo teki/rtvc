@@ -140,6 +140,17 @@ fn map_labels_describe_standard_and_plus_video_banks() {
 }
 
 #[test]
+fn displayed_video_bank_follows_port_0c_bits_4_and_5() {
+    let mut mmu = TvcMmu::new(true);
+    mmu.write_raw_bank("vid1", 0, &[0xA5]).unwrap();
+    assert_eq!(mmu.get_vid_mem()[0], 0);
+    mmu.set_vid_map(0x10);
+    assert_eq!(mmu.get_vid_mem()[0], 0xA5);
+    mmu.set_vid_map(0x00);
+    assert_eq!(mmu.get_vid_mem()[0], 0);
+}
+
+#[test]
 fn fast_ram_test_preserves_both_entry_point_stack_contracts() {
     run_fast_ram_test(FastBootRom::V1_2, 0xC338);
     run_fast_ram_test(FastBootRom::V1_2, 0xC33E);

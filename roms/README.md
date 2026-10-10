@@ -83,6 +83,11 @@ strings, and unused fill at the end of pages 0 and 3. Other bytes are a linear
 disassembly, so a data table that was not marked can still appear as
 instructions.
 
+Cartridge images use the `.crt` extension and fill the 16 KiB CART bank.
+[VT-DOS12-CART.crt](VT-DOS12-CART.crt) is the VT-DOS cartridge.
+[pack_man.crt](pack_man.crt) is a MOPS game cartridge used to test autostart.
+Neither file is the HBF card ROM above.
+
 Assemble a page and compare it with the 4 KiB slice at that file offset:
 
 ```text

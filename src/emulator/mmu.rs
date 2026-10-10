@@ -206,7 +206,27 @@ impl TvcMmu {
     }
 
     pub fn get_vid_mem(&self) -> &[u8] {
-        &self.vid0
+        if !self.is_plus {
+            return &self.vid0;
+        }
+        match (self.map_val_vid >> 4) & 0x03 {
+            0x01 => self
+                .vid1
+                .as_ref()
+                .map(|bank| bank.as_slice())
+                .unwrap_or(&self.vid0),
+            0x02 => self
+                .vid2
+                .as_ref()
+                .map(|bank| bank.as_slice())
+                .unwrap_or(&self.vid0),
+            0x03 => self
+                .vid3
+                .as_ref()
+                .map(|bank| bank.as_slice())
+                .unwrap_or(&self.vid0),
+            _ => &self.vid0,
+        }
     }
 
     pub fn get_map_val(&self) -> u8 {

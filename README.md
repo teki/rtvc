@@ -25,7 +25,7 @@ More historical background is available on the
 ## Features
 
 - TVC 64K and 64K+ machine variants.
-- ROM 1.2 and ROM 2.2 machine selections, with optional VT-DOS/HBF extension.
+- ROM 1.2 and ROM 2.2 machine selections, with optional VT-DOS/HBF card and cartridge.
 - Z80 CPU emulation with FUSE and ZEX validation test harnesses.
 - MC6845-based video output with fast-frame and interleaved rendering modes.
 - Native keyboard, video, and sound through the desktop UI.

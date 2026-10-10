@@ -420,9 +420,32 @@ pedig egy konstans címeltolásra.
 
 ## Konfiguráció és perzisztencia
 
-A gépválasztások kombinálják a standard/Plus memóriát, a BASIC 1.2/2.2 ROM-okat és az opcionális
-VT-DOS-t. A natív és teljes-webes alkalmazások megőrzik a géptípust, videó modellt,
-gyors rendszerindítás beállítást és a visszaállítható média hivatkozásokat.
+A Gép menü öt TVC előbeállítást tart meg: 64K+ BASIC 1.2 vagy 2.2, a HBF
+kártyával a 0. bővítőhelyen, és a három kártya nélküli gépet (64K 1.2, 64K+
+1.2, 64K+ 2.2). Az alatta lévő felülírások a memóriát (64K vagy 64K+), a
+rendszer-ROM párt (BASIC 1.2 vagy 2.2, a SYS és az EXTH együtt), a
+programmodult (`roms/*.crt` vagy üres), és azt adják meg, hogy a négy
+bővítőcsatlakozó melyikében van a VT-DOS 1.2 HBF kártya. Egyszerre csak egy
+HBF kártya lehet csatlakoztatva. Az `ex0` hely az `0x10-0x1F` I/O tartomány,
+a CH1 csatlakozó.
+
+Amíg a gép egy előbeállításnak megfelel, az marad kijelölve. Minden más
+összeállítás az azonosítójával jelenik meg, például
+`64ktvc12+ex1:vtdos12+cart:pack_man`. A programmodul 16 KiB-os `.crt` fájl
+a `roms/` könyvtárban. A BASIC automatikusan elindítja azt a modult, amelynek
+első négy bájtja `MOPS`; ilyen a `pack_man.crt` és a `VT-DOS12-CART.crt`.
+A HBF kártya és a VT-DOS programmodul külön van: a kártya a BASIC
+lemezparancsait szolgálja, a modul a `DOS` parancs CART bankja. A lemezképek
+ahhoz a csatlakozóhoz kötődnek,
+amelyikben a kártya van.
+
+A natív és a teljes webes alkalmazás ezt az azonosítót menti az `rtvc.toml`
+fájlba (vagy a böngésző helyi tárolójába), a videó modell, a gyors
+rendszerindítás és a visszaállítható média hivatkozások mellett. A régebbi
+előbeállítás-azonosítók, például a `64k-plus-1.2-vtdos`, továbbra is
+betöltődnek. A pillanatképek ugyanezt a gépet rögzítik. A programmodul- és
+helyválasztás előtti pillanatkép a megfelelő előbeállításként töltődik, a
+HBF kártyával a 0. helyen és üres programmodul-foglalattal.
 
 A natív alkalmazás a futásidejű ROM és program eszközöket először az aktuális
 munkakönyvtárban, majd a futtatható fájl mellett keresi. A csomagolt macOS alkalmazások
