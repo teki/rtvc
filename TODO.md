@@ -2,6 +2,13 @@
 
 Open issues and planned improvements for the TVC emulator.
 
+## CPU Emulation
+
+- [ ] Implement the Z80 maskable-interrupt delay after `EI`: a pending
+  interrupt must not be accepted until the instruction following `EI` has
+  completed, including the customary `EI; RET` sequence. Add focused tests for
+  pending interrupts across this instruction boundary.
+
 ## Video Emulation
 
 - [ ] Separate the TVC video path into CRTC timing, final TVC color/sync signal
@@ -64,6 +71,11 @@ Open issues and planned improvements for the TVC emulator.
     real-time emulation.
 
 ## Debugger
+
+- [ ] Extend instruction tracing with resumable focused capture, file export,
+  historical memory maps and mapping changes, compact block-instruction output,
+  and verified negligible disabled overhead. See the
+  [Focused Execution Trace plan](.agents/plans/instruction-trace.md).
 
 - [ ] Unify debugger infrastructure across the dock UI and TCP interface.
   - Move event generation and buffering out of the integrated UI into a shared

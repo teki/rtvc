@@ -35,6 +35,7 @@ implementation order, limitations, and focused validation.
   ([progress](cleanup-laser-port1-progress.md))
 - [Frame History Debugger](frame-history-debugger.md)
   ([progress](frame-history-debugger-progress.md))
-- [Instruction Trace](instruction-trace-progress.md)
+- [Focused Execution Trace](instruction-trace.md)
+  ([existing implementation progress](instruction-trace-progress.md))
 - [Multi-System Architecture](multi-system-architecture.md)
 - [TVC Video Signal Pipeline and Television Sync](tvc-video-signal-pipeline.md)
