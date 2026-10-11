@@ -25,7 +25,8 @@ More historical background is available on the
 ## Features
 
 - TVC 64K and 64K+ machine variants.
-- ROM 1.2 and ROM 2.2 machine selections, with optional VT-DOS/HBF card and cartridge.
+- ROM 1.2 and ROM 2.2 machine selections, with optional VT-DOS/HBF cards and cartridge.
+- Host file expansion card: BASIC `LOAD`/`SAVE` straight to a host folder.
 - Z80 CPU emulation with FUSE and ZEX validation test harnesses.
 - MC6845-based video output with fast-frame and interleaved rendering modes.
 - Native keyboard, video, and sound through the desktop UI.
@@ -141,6 +142,28 @@ Supported user files:
 Snapshots are the easiest way to preserve the current machine state. The native
 app can save compressed `.rtvcsnap.zip` files, load `.rtvcsnap` or
 `.rtvcsnap.zip` files, and start directly from a snapshot path.
+
+### Host files
+
+The **Host files** expansion card loads and saves programs in a folder on your
+computer instead of on tape. In **Machine > Expansion**, pick an empty slot
+(for example `ex1`) and choose **Host files**. The machine id then
+contains `+ex1:hostfile`. With **Use as default cassette device** ticked (the
+default), BASIC's `LOAD "NAME"` and `SAVE "NAME"` and the other cassette
+commands use the folder instead of the tape:
+
+- `SAVE "HELLO"` writes `hello.cas`, a normal CAS image that also loads as a
+  tape.
+- `LOAD "HELLO"` reads `hello.cas`, or a file named exactly `hello`. Names are
+  matched without regard to case.
+- A name with an extension, such as `SAVE "HELLO.BIN"`, is kept as is and
+  stored without the 128-byte CAS container block.
+
+The native app uses the `files/` folder by default; **Choose folder...** in the
+same submenu selects another one, saved as `host_file_dir` in `rtvc.toml`. The
+browser version stores the files in the browser and offers **Upload file...**
+and **Download** in the same menu. A changed default-device setting applies
+after reset.
 
 ## Run From Source
 

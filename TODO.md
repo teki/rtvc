@@ -149,7 +149,7 @@ Open issues and planned improvements for the TVC emulator.
   - [x] Add disk write support.
   - [x] Support two floppy drives.
 
-- [ ] Generalize expansion cards and add a host file device.
+- [x] Generalize expansion cards and add a host file device.
   - Model cards on the TVC expansion connector so any slot can hold any card,
     including two HBF floppy cards.
   - Add a virtual `FILE` card that loads and saves CAS files from a host

@@ -1,13 +1,24 @@
+use crate::expansion::SlotDevice;
+use crate::machine_type::ExpansionCard;
 use crate::snapshot::{self, Reader, SnapshotError, Writer};
 use crate::tvc::Tvc;
 use crate::vid::VidModel;
+
+const SLOT_CHUNKS: [[u8; 4]; 4] = [*b"SLT0", *b"SLT1", *b"SLT2", *b"SLT3"];
+
+fn card_tag(card: ExpansionCard) -> u8 {
+    match card {
+        ExpansionCard::VtDos12 => 1,
+        ExpansionCard::HostFile => 2,
+    }
+}
 
 pub(crate) fn save(tvc: &Tvc) -> Vec<u8> {
     let mut chunks = Vec::new();
 
     let mut meta = Writer::new();
     meta.u8(tvc.bus.mmu.is_plus() as u8);
-    meta.u8(tvc.bus.extensions.slot0().is_some() as u8);
+    meta.u8(tvc.has_hbf() as u8);
     meta.u8(match tvc.vid_model {
         VidModel::FastFrame => 0,
         VidModel::Interleaved => 1,
@@ -41,10 +52,14 @@ pub(crate) fn save(tvc: &Tvc) -> Vec<u8> {
     tvc.bus.vid.write_snapshot(&mut vid);
     chunks.push((*b"VID ", vid.into_inner()));
 
-    if let Some(ext) = tvc.bus.extensions.hbf() {
-        let mut hbf = Writer::new();
-        ext.write_snapshot(&mut hbf);
-        chunks.push((*b"HBF ", hbf.into_inner()));
+    for (slot, id) in SLOT_CHUNKS.iter().enumerate() {
+        let Some(card) = tvc.bus.extensions.card(slot) else {
+            continue;
+        };
+        let mut w = Writer::new();
+        w.u8(card_tag(card.kind()));
+        card.write_snapshot(&mut w);
+        chunks.push((*id, w.into_inner()));
     }
 
     let mut bus = Writer::new();
@@ -53,6 +68,7 @@ pub(crate) fn save(tvc: &Tvc) -> Vec<u8> {
     bus.u8(tvc.bus.extensions.selected_mapping());
     tvc.bus.write_tape_snapshot(&mut bus);
     tvc.bus.write_sound_snapshot(&mut bus);
+    bus.u8(tvc.bus.extensions.irq_enable());
     chunks.push((*b"BUS ", bus.into_inner()));
 
     snapshot::write_file(&chunks)
@@ -113,6 +129,24 @@ pub(crate) fn load(tvc: &mut Tvc, data: &[u8]) -> snapshot::Result<()> {
                     .ok_or(SnapshotError::InvalidChunk("HBF "))?
                     .read_snapshot(&mut reader)?;
             }
+            id if SLOT_CHUNKS.contains(id) => {
+                let slot = SLOT_CHUNKS
+                    .iter()
+                    .position(|slot_id| slot_id == id)
+                    .unwrap();
+                let tag = reader.u8()?;
+                let card = tvc
+                    .bus
+                    .extensions
+                    .card_mut(slot)
+                    .filter(|card| card_tag(card.kind()) == tag)
+                    .ok_or_else(|| {
+                        SnapshotError::InvalidData(format!(
+                            "snapshot card in slot {slot} does not match the machine"
+                        ))
+                    })?;
+                card.read_snapshot(&mut reader)?;
+            }
             b"BUS " => {
                 tvc.bus.pend_it = reader.u8()?;
                 tvc.bus.extensions.set_type_status(reader.u8()?);
@@ -124,6 +158,9 @@ pub(crate) fn load(tvc: &mut Tvc, data: &[u8]) -> snapshot::Result<()> {
                 }
                 if reader.remaining() > 0 {
                     tvc.bus.read_sound_snapshot(&mut reader)?;
+                }
+                if reader.remaining() > 0 {
+                    tvc.bus.extensions.set_irq_enable(reader.u8()?);
                 }
             }
             _ => {}

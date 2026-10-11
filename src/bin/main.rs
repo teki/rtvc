@@ -14,6 +14,12 @@ fn main() -> eframe::Result<()> {
         emu.set_vid_model(vid_model);
     }
     emu.set_fast_boot(app_state_file.state.fast_boot);
+    if let Some(dir) = &app_state_file.state.host_file_dir {
+        emu.set_host_file_dir(dir.into());
+    }
+    if let Some(enabled) = app_state_file.state.host_file_default {
+        emu.set_host_file_default(enabled);
+    }
     emu.load_roms();
     // Command-line arguments parsing
     let args = std::env::args().collect::<Vec<String>>();

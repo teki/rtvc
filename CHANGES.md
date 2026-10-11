@@ -10,6 +10,9 @@ Release notes start here. Older release history is intentionally not backfilled.
 - The VT-DOS cartridge can boot with the HBF card. Maskable interrupts now
   follow Z80 mode 2 and the one-instruction delay after `EI`, and a 64K+
   machine scans out the video bank selected by port `0x0C`.
+- Each expansion slot takes its own card, including several HBF floppy cards.
+- New host file card: a `FILE` device that loads and saves programs and data
+  files in a host folder (or browser storage on the web) instead of tape.
 
 ## v0.8.7 - 2026-09-18
 

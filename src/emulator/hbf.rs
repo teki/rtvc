@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
+use crate::expansion::SlotDevice;
 use crate::fd1793::FD1793;
+use crate::snapshot::{Reader, Result, Writer};
 
 struct MemBlock {
     name: String,
@@ -75,17 +77,7 @@ impl HBF {
     }
 
     pub fn r8(&mut self, addr: u16) -> u8 {
-        if addr >= 0x1000 {
-            self.ram.data[addr as usize - 0x1000]
-        } else {
-            let rom = match self.rom {
-                0 => &self.rom0,
-                1 => &self.rom1,
-                2 => &self.rom2,
-                _ => &self.rom3,
-            };
-            rom.data[addr as usize]
-        }
+        self.peek(addr)
     }
 
     pub fn w8(&mut self, addr: u16, val: u8) {
@@ -118,16 +110,49 @@ impl HBF {
         &mut self.fdc
     }
 
-    pub fn write_snapshot(&self, w: &mut crate::snapshot::Writer) {
+    fn peek(&self, addr: u16) -> u8 {
+        if addr >= 0x1000 {
+            self.ram.data[addr as usize - 0x1000]
+        } else {
+            let rom = match self.rom {
+                0 => &self.rom0,
+                1 => &self.rom1,
+                2 => &self.rom2,
+                _ => &self.rom3,
+            };
+            rom.data[addr as usize]
+        }
+    }
+}
+
+impl SlotDevice for HBF {
+    fn id_bits(&self) -> u8 {
+        self.get_type()
+    }
+
+    fn mem_peek(&self, offset: u16) -> u8 {
+        self.peek(offset)
+    }
+
+    fn mem_write(&mut self, offset: u16, val: u8) {
+        self.w8(offset, val);
+    }
+
+    fn io_read(&mut self, port: u16) -> u8 {
+        self.read_port(port as u8 & 0x0F)
+    }
+
+    fn io_write(&mut self, port: u16, val: u8) {
+        self.write_port(port as u8 & 0x0F, val);
+    }
+
+    fn write_snapshot(&self, w: &mut Writer) {
         w.usize(self.rom);
         w.raw_bytes(&self.ram.data);
         self.fdc.write_snapshot(w);
     }
 
-    pub fn read_snapshot(
-        &mut self,
-        r: &mut crate::snapshot::Reader<'_>,
-    ) -> crate::snapshot::Result<()> {
+    fn read_snapshot(&mut self, r: &mut Reader<'_>) -> Result<()> {
         self.rom = r.usize()?.min(3);
         self.ram.data.copy_from_slice(r.raw_bytes(0x1000)?);
         self.fdc.read_snapshot(r)

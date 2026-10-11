@@ -231,16 +231,16 @@ This allows drawing into one bank while another bank is being scanned out.
 | `0x30-0x3F` | slot 2 registers | slot 2 registers |
 | `0x40-0x4F` | slot 3 registers | slot 3 registers |
 | `0x50-0x57` | toggle cassette output, return bus value | toggle cassette output |
-| `0x58` | selected keyboard row | expansion interrupt/configuration control |
-| `0x59`, `0x5D` | interrupt and system status | expansion interrupt/configuration control |
-| `0x5A`, `0x5E` | expansion type identifiers | expansion interrupt/configuration control |
-| `0x5B`, `0x5F` | restart sound divider/counter | expansion interrupt/configuration control |
+| `0x58` | selected keyboard row | slot 0 interrupt enable/clear (bit 7) |
+| `0x59`, `0x5D` | interrupt and system status | slot 1 interrupt enable/clear (bit 7) |
+| `0x5A`, `0x5E` | expansion type identifiers | slot 2 interrupt enable/clear (bit 7) |
+| `0x5B`, `0x5F` | restart sound divider/counter | slot 3 interrupt enable/clear (bit 7) |
 | `0x60-0x63` | unspecified | palette registers 0-3 |
 | `0x70-0x7F` | mirrored CRTC access | mirrored CRTC access |
 
-Not all write-side expansion interrupt controls are currently characterized in
-this document. Emulator authors should preserve unknown bits and avoid deriving
-new hardware claims from rtvc's current no-op handling of those writes.
+The slot interrupt controls are described under
+[Interrupts and identification](#interrupts-and-identification). Other bits of
+those writes are not characterized here; preserve them as unknown.
 
 ### Port `0x03`
 
@@ -275,8 +275,17 @@ bits 5-4  slot 2
 bits 7-6  slot 3
 ```
 
+The identifier lines are wired on each card:
+
+| Bits | Card class | OS name |
+| --- | --- | --- |
+| `00` | serial (RS232) | `RS232` |
+| `01` | video game module | `VGB` |
+| `10` | floppy interface | `DISK` |
+| `11` | empty slot, or a card that identifies itself through a `MOPS` ROM header | from the header |
+
 An unoccupied slot reports type `3` (`11b`). The HBF card reports type `2`
-(`10b`).
+(`10b`). See [Operating system card discovery](#operating-system-card-discovery).
 
 ## Interrupt System
 
@@ -685,11 +694,94 @@ Each slot receives 16 card-local port offsets. Missing devices normally read
 Only one card at a time appears in the `0xC000-0xDFFF` EXT window. Port `0x03`
 bits 6-7 select slots 0-3. The `0xE000-0xFFFF` half remains EXTH ROM.
 
+### Connector signals
+
+Each connector carries the full address and data bus, read/write strobes,
+reset and clock, plus these per-slot signals:
+
+| Signal | Meaning for a card |
+| --- | --- |
+| `NSLOTn` | I/O select for the slot's 16 ports; the card decodes the low address bits. |
+| `NEXPn` | memory select for `0xC000-0xDFFF` while page 3 maps EXT and port `0x03` bits 6-7 select the slot |
+| ID lines | the two identifier bits read through `0x5A`/`0x5E` |
+| interrupt | active-low request, visible in `0x59`/`0x5D` bits 0-3 |
+| `NNMI` | non-maskable interrupt request |
+| `NSLOWEXP` | wait-state request (32k/64k boards) |
+
+Port assignment is positional: the same card answers on `0x11` in slot 0 and on
+`0x21` in slot 1. Card firmware must therefore discover its own slot.
+
 ### Interrupts and identification
 
 Each slot has one active-low status/interrupt bit in port `0x59`/`0x5D`.
+Writing to `0x58`/`0x59`/`0x5A`/`0x5B` controls slot 0/1/2/3: bit 7 set
+enables that slot's request, bit 7 clear disables and clears it. The
+system ROM's interrupt handler writes bit 7 to these ports only for cards
+that request service and are enabled in its IRQ-STAT mask at `0x0B1F`.
 Port `0x5A`/`0x5E` reports the two-bit card type identifiers described in the
 I/O map.
+
+### Operating system card discovery
+
+The BASIC 1.2 system ROM (EXT bank, `F050`-`F13A` in the commented listing)
+discovers cards at boot:
+
+1. It reads `0x5A` and, for each slot, selects the slot's IOMEM with port
+   `0x03` and fills a 0x30-byte card table entry at `0x0040 + slot * 0x30`
+   (`0x0040`, `0x0070`, `0x00A0`, `0x00D0`, in U0).
+2. Identifiers `00`/`01`/`10` produce the built-in names `RS232`/`VGB`/`DISK`
+   without reading card memory. Identifier `11` makes the ROM look for `MOPS`
+   at `0xC000`; if found, the length-prefixed name that follows is copied into
+   the entry, otherwise the entry starts with `0xFF` (no card).
+3. Entries with identical names get increasing unit numbers at entry `+7`.
+4. For each identified non-serial card, the ROM pages the card in, sets
+   `IX` to the entry address, and calls the address stored at `0xC00B`
+   through the `0xFFF9` gateway with page map `U0 U1 U2 EXT`.
+
+A `MOPS` ROM header therefore has a fixed layout:
+
+| Address | Contents |
+| --- | --- |
+| `0xC000` | `"MOPS"` |
+| `0xC004` | name length, `4` |
+| `0xC005` | 4-character device name |
+| `0xC009` | word, interrupt routine |
+| `0xC00B` | word, init routine |
+| `0xC00D` | function count; must exceed the highest function number used |
+| `0xC00E` | words, function 0, 1, ... routine addresses |
+
+Function 0 is also the interrupt entry: the expansion IRQ dispatcher reads the
+vector at `0xC00E` for each requesting slot. Init code can compute its slot
+from `IX`: `slot = ((IX & 0xF0) - 0x10) >> 6`, giving port base
+`0x10 + slot * 0x10`. Bytes from entry `+0x0F` onward are not used by the OS.
+
+Device I/O reaches a card through `RST 30H`. The class selector bytes at
+`0x0B00-0x0B07` (input) and `0x0B08-0x0B0F` (output) name the device for each
+class; `0x80 | slot` selects a card, so cassette class 5 is redirected by
+`0x0B05`/`0x0B0D`. The ROM validates the slot, pages the card in, looks up the
+requested routine in the counted table, and calls it with:
+
+- `A` = the function byte (bit 7 set for input), flags from `OR A`;
+- `BC`, `DE` = the caller's values, returned to the caller;
+- `IX` = card table entry `+8` for the slot (`0x0048 + slot * 0x30`);
+- page map `U0 U1 U2 EXT`, so U0 system variables are addressable.
+
+The routine returns a status in `A` (`0` for success). An out-of-range
+function number returns `0xFF`, and a missing card resets the selector to its
+default. Cassette-class routines are: 1 character I/O (`C` = byte), 2 block
+I/O (`DE` address, `BC` length; returns the next address and remaining count),
+3 open input / create output (`DE` = length-prefixed name), 4 close,
+5 verify. The cassette routines keep the buffered-file flag at `0x0B6B` and
+the end-of-file flag at `0x0B6E`.
+
+Status codes used by the cassette routines include `0xE7` (read failure or
+invalid header), `0xE8` (verify mismatch), `0xE9` (file not open), `0xEB`
+(already open) and `0xEC` (end of file). VT-DOS uses `0xA1` for "File not
+found" and `0xAD` for "Disk operation aborted". BASIC 1.2 prints unknown OS
+codes as `System error NNN`, for example `System error 161` for `0xA1`.
+
+VT-DOS 1.2 works from a non-zero slot: with the HBF card in slot 1 or 2 it
+drives the FDC through that slot's ports and lists a disk directory.
 
 ## HBF Floppy Interface
 

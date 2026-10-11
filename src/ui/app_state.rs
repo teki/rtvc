@@ -19,6 +19,8 @@ pub struct AppState {
     pub disk_loaded: bool,
     pub recent_tapes: Vec<String>,
     pub recent_disks: Vec<String>,
+    pub host_file_dir: Option<String>,
+    pub host_file_default: Option<bool>,
 }
 
 pub struct AppStateFile {
@@ -115,8 +117,9 @@ impl AppStateFile {
             "video_model = \"{}\"\n",
             vid_model_id(state.vid_model)
         ));
-        text.push_str(&format!("fast_boot = {}\n\n", state.fast_boot));
-        text.push_str("[tape]\n");
+        text.push_str(&format!("fast_boot = {}\n", state.fast_boot));
+        text.push_str(&host_file_lines(state));
+        text.push_str("\n[tape]\n");
         if let Some(file_name) = &state.tape_file_name {
             text.push_str(&format!("selected = \"{}\"\n", escape_string(file_name)));
         }
@@ -190,6 +193,7 @@ fn write_state_file(path: &std::path::Path, state: &AppState) -> std::io::Result
     )?;
     writeln!(file, "video_model = \"{}\"", vid_model_id(state.vid_model))?;
     writeln!(file, "fast_boot = {}", state.fast_boot)?;
+    write!(file, "{}", host_file_lines(state))?;
     writeln!(file)?;
     writeln!(file, "[tape]")?;
     if let Some(file_name) = &state.tape_file_name {
@@ -270,6 +274,8 @@ fn parse_state(text: &str) -> AppState {
                 "fast_boot" => {
                     state.fast_boot = parse_bool(value).unwrap_or(state.fast_boot);
                 }
+                "host_file_dir" => state.host_file_dir = parse_string(value),
+                "host_file_default" => state.host_file_default = parse_bool(value),
                 _ => {}
             },
             Section::Tape => match key {
@@ -288,6 +294,17 @@ fn parse_state(text: &str) -> AppState {
     }
 
     state
+}
+
+fn host_file_lines(state: &AppState) -> String {
+    let mut text = String::new();
+    if let Some(dir) = &state.host_file_dir {
+        text.push_str(&format!("host_file_dir = \"{}\"\n", escape_string(dir)));
+    }
+    if let Some(enabled) = state.host_file_default {
+        text.push_str(&format!("host_file_default = {enabled}\n"));
+    }
+    text
 }
 
 fn parse_string(value: &str) -> Option<String> {

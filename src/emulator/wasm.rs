@@ -1,7 +1,11 @@
+use std::sync::Arc;
 #[cfg(feature = "wasm-full")]
 use wasm_bindgen::JsCast;
+
 use wasm_bindgen::prelude::*;
 
+use crate::host_file::{HostFileStore, MemoryStore};
+use crate::machine_type::ExpansionCard;
 use crate::tvc::Tvc;
 use crate::vid::VidModel;
 
@@ -11,6 +15,16 @@ pub const SCREEN_HEIGHT: usize = 288;
 #[wasm_bindgen]
 pub struct WasmTvc {
     tvc: Tvc,
+    host_files: Arc<MemoryStore>,
+}
+
+impl WasmTvc {
+    fn configure_host_file_cards(&mut self) {
+        let store: Arc<dyn HostFileStore> = self.host_files.clone();
+        for card in self.tvc.host_file_cards_mut() {
+            card.set_store(Some(store.clone()));
+        }
+    }
 }
 
 #[wasm_bindgen]
@@ -19,6 +33,7 @@ impl WasmTvc {
     pub fn new(is_plus: bool) -> Self {
         WasmTvc {
             tvc: Tvc::new_with_vid_model(is_plus, default_web_vid_model()),
+            host_files: Arc::new(MemoryStore::new()),
         }
     }
 
@@ -37,6 +52,7 @@ impl WasmTvc {
             let fast_boot = self.tvc.fast_boot();
             self.tvc = Tvc::new_with_vid_model(machine.is_plus, self.tvc.vid_model());
             load_builtin_roms(&mut self.tvc, machine);
+            self.configure_host_file_cards();
             self.tvc.set_fast_boot(fast_boot);
         }
         self.tvc
@@ -81,9 +97,46 @@ impl WasmTvc {
         self.tvc.take_audio_samples()
     }
 
+    /// Loads a system or cartridge ROM. A `*DOS*` ROM name keeps its earlier
+    /// meaning and plugs an HBF card into slot 0.
     #[wasm_bindgen(js_name = addRom)]
     pub fn add_rom(&mut self, name: &str, data: &[u8]) {
-        self.tvc.add_rom(name, data);
+        if name.contains("DOS") && !name.contains("CART") {
+            self.tvc.attach_card(0, ExpansionCard::VtDos12, data);
+        } else {
+            self.tvc.add_rom(name, data);
+        }
+    }
+
+    /// Plugs a card into `slot` (0-3): `vtdos12` with its ROM in `data`, or
+    /// `hostfile`, backed by the files managed with `putHostFile`.
+    #[wasm_bindgen(js_name = attachCard)]
+    pub fn attach_card(&mut self, slot: usize, card: &str, data: &[u8]) -> Result<(), JsValue> {
+        let kind = ExpansionCard::from_id_name(card)
+            .ok_or_else(|| JsValue::from_str("expected `vtdos12` or `hostfile`"))?;
+        if slot > 3 {
+            return Err(JsValue::from_str("slot must be 0-3"));
+        }
+        self.tvc.attach_card(slot, kind, data);
+        self.configure_host_file_cards();
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = putHostFile)]
+    pub fn put_host_file(&mut self, name: &str, data: &[u8]) -> Result<(), JsValue> {
+        self.host_files
+            .insert(name, data.to_vec())
+            .map_err(|err| JsValue::from_str(&err.to_string()))
+    }
+
+    #[wasm_bindgen(js_name = getHostFile)]
+    pub fn get_host_file(&self, name: &str) -> Option<Vec<u8>> {
+        self.host_files.get(name)
+    }
+
+    #[wasm_bindgen(js_name = listHostFiles)]
+    pub fn list_host_files(&self) -> Vec<String> {
+        self.host_files.names()
     }
 
     #[wasm_bindgen(js_name = loadCartRom)]
@@ -91,9 +144,17 @@ impl WasmTvc {
         self.tvc.load_cart_rom(data);
     }
 
+    /// Inserts a disk into drive 0/1 of the first HBF card.
     #[wasm_bindgen(js_name = loadDisk)]
     pub fn load_disk(&mut self, drive: usize, name: &str, data: &[u8]) {
-        self.tvc.load_disk(drive, name, data);
+        if let Some(&slot) = self.tvc.hbf_slots().first() {
+            self.tvc.load_disk(slot, drive, name, data);
+        }
+    }
+
+    #[wasm_bindgen(js_name = loadSlotDisk)]
+    pub fn load_slot_disk(&mut self, slot: usize, drive: usize, name: &str, data: &[u8]) {
+        self.tvc.load_disk(slot, drive, name, data);
     }
 
     #[wasm_bindgen(js_name = keyDown)]
@@ -162,6 +223,7 @@ fn snapshot_machine_type(data: &[u8]) -> Result<Option<crate::machine_type::Mach
 }
 
 fn load_builtin_roms(tvc: &mut Tvc, machine: crate::machine_type::MachineType) {
+    machine.attach_builtin_cards(tvc);
     for (name, use_) in machine.rom_uses() {
         let Some(bytes) = builtin_rom(&name) else {
             continue;
@@ -225,12 +287,18 @@ impl WebHandle {
             emu.set_vid_model(vid_model);
         }
         emu.set_fast_boot(app_state_file.state.fast_boot);
+        if let Some(enabled) = app_state_file.state.host_file_default {
+            emu.set_host_file_default(enabled);
+        }
         emu.load_roms();
         let audio_error = startup_audio_error();
         let storage_error = startup_storage_error();
-        let (recent_tapes, recent_disks) = load_recent_media()?;
+        let (recent_tapes, recent_disks, host_files) = load_recent_media()?;
         emu.recent_tapes_wasm = recent_tapes;
         emu.recent_disks_wasm = recent_disks;
+        for file in host_files {
+            let _ = emu.host_file_memory().insert(&file.name, file.bytes);
+        }
 
         let mut app = crate::ui::EmuApp::new(emu, app_state_file, None);
         if let Some(error) = audio_error {
@@ -285,6 +353,7 @@ fn load_recent_media() -> Result<
     (
         Vec<crate::emu::WasmRecentFile>,
         Vec<crate::emu::WasmRecentFile>,
+        Vec<crate::emu::WasmRecentFile>,
     ),
     JsValue,
 > {
@@ -293,6 +362,7 @@ fn load_recent_media() -> Result<
         .map_err(|_| JsValue::from_str("recent media result is not an array"))?;
     let mut tapes = Vec::new();
     let mut disks = Vec::new();
+    let mut host_files = Vec::new();
 
     for record in records.iter() {
         let kind = js_sys::Reflect::get(&record, &JsValue::from_str("kind"))?
@@ -308,10 +378,11 @@ fn load_recent_media() -> Result<
         match kind.as_str() {
             "tape" => tapes.push(recent),
             "disk" => disks.push(recent),
+            "hostfile" => host_files.push(recent),
             _ => {}
         }
     }
     tapes.truncate(5);
     disks.truncate(5);
-    Ok((tapes, disks))
+    Ok((tapes, disks, host_files))
 }

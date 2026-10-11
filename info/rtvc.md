@@ -43,8 +43,10 @@ and full-web frontends.
 | [src/sound.rs](../src/sound.rs) | sound divider, timer, DAC, PCM generation |
 | [src/cas.rs](../src/cas.rs) | CAS container encoding and CAS-to-pulse-interval conversion |
 | [src/tape.rs](../src/tape.rs) | cassette transport and signal sampling |
-| [src/expansion.rs](../src/expansion.rs) | four-slot expansion routing |
-| [src/hbf.rs](../src/hbf.rs) | HBF card memory and registers |
+| [src/emulator/expansion.rs](../src/emulator/expansion.rs) | `SlotDevice` card interface, `Card` enum, four-slot routing and slot interrupts |
+| [src/emulator/hbf.rs](../src/emulator/hbf.rs) | HBF card memory and registers |
+| [src/emulator/host_file.rs](../src/emulator/host_file.rs) | host file card, its port protocol, name mapping, and file stores |
+| [roms/RTVC-HOSTFILE.asm](../roms/RTVC-HOSTFILE.asm) | rtvc-original `FILE` device ROM for the host file card |
 | [src/emulator/asm.rs](../src/emulator/asm.rs) | Z80 single-line and two-pass helper assembler |
 | [src/emulator/basic.rs](../src/emulator/basic.rs) | TVC BASIC tokenizer and detokenizer |
 | [src/emulator/disasm.rs](../src/emulator/disasm.rs) | Z80 disassembler and debugger instruction metadata |
@@ -259,7 +261,12 @@ Many machine-code programs include a small BASIC loader that calls code near
 
 ### Floppy and archives
 
-DSK bytes can be attached to drives A: (0) and B: (1) of an HBF card. The disk
+DSK bytes can be attached to drives A: (0) and B: (1) of an HBF card. With
+several HBF cards, `Emu` numbers disk units two per card in slot order: units
+0 and 1 are the first card's A: and B:, units 2 and 3 the second card's, and so
+on. Single-card behavior and the drive-based APIs are unchanged. The Disk menu
+and status bar label the units `ex<slot> A:` when more than one card is
+present, and `EMUI` stores one media name per unit. The disk
 model parses FAT12 boot-sector geometry and supports the controller paths
 needed by the included software, including restore, seek, step in, step out,
 read sector, write sector, read address, and force interrupt. FD1793 behavior
@@ -287,6 +294,112 @@ and unsaved empty disks remain in memory until the user chooses Save Disk.
 
 Native builds can open ZIP archives and recursively select CAS or DSK members.
 The lightweight WASM core excludes zip support.
+
+### Expansion cards
+
+[expansion.rs](../src/emulator/expansion.rs) models the connector. Each
+slot holds an optional `Card` (`Hbf` or `HostFile`), and `Card` implements the
+`SlotDevice` trait by matching on the variant: two-bit `id_bits`, EXT-window
+`mem_read`/`mem_peek`/`mem_write`, `io_read`/`io_write` with the full 16-bit
+port address, `irq_active`, `reset`, and snapshot state. Any card kind may sit
+in any slot, and several cards of one kind may coexist. NMI, wait states and
+time-based `advance` stay out of the trait until a card needs them.
+
+`ExpansionSlots` routes `0x10-0x4F` and the EXT window per slot, builds the
+`0x5A` identifier byte, and keeps the per-slot interrupt enables written
+through bit 7 of `0x58-0x5B` (disabled at reset). Port `0x59`/`0x5D` bits 0-3
+report enabled card requests, and the CPU interrupt line is the OR of the
+shared cursor/sound request and those slot requests. Neither current card
+raises an interrupt. FDC write logging covers the ports of every slot holding
+an HBF card and names the slot for non-zero slots.
+
+`Tvc::attach_card(slot, ExpansionCard, rom)` plugs a card in, and
+`load_disk`, `disk_dirty` and `clear_disk_dirty` take a slot and a drive.
+`Tvc::add_rom` no longer turns a `*DOS*` ROM into an HBF card; machine
+setup places cards through `MachineType::rom_uses` (HBF ROM files) and
+`attach_builtin_cards` (cards with an embedded ROM). The lightweight WASM
+`addRom` keeps the old `*DOS*` meaning for JavaScript callers.
+
+### Host file card
+
+The host file card (`hostfile`, ID bits `11`) gives TVC software a `FILE`
+device backed by a host directory (native) or browser storage (web). Its
+ROM, [RTVC-HOSTFILE.asm](../roms/RTVC-HOSTFILE.asm), is original rtvc code
+assembled with `rtvc-asm` and embedded with `include_bytes!`; a unit test
+reassembles the source and compares it with the checked-in
+`RTVC-HOSTFILE.ROM`. The idea comes from ep128emu's `tvcfileio.s`, but no code
+is shared: rtvc uses card I/O ports instead of an `ED FE` trap and keeps CAS
+handling in Rust.
+
+The ROM's `MOPS` header registers the name `FILE`. Its init routine derives
+the slot from `IX`, resets the card, and, when the card's default-device flag
+is set, writes `0x80 | slot` to `0x0B05`/`0x0B0D` so BASIC `LOAD`, `SAVE`,
+`OPEN` and friends use the card instead of the cassette. Cards are initialized
+in slot order, so with HBF and the host file card both claiming channel 5 the
+higher slot wins. Without the flag, `POKE 2821,128+slot` and
+`POKE 2829,128+slot` select the card manually. Implemented device functions:
+character I/O, block I/O, open/create, close, verify, and seek from start,
+current position or end (`BC:DE` offset, functions 6-8, as in ep128emu's ROM).
+
+Card-local ports:
+
+| Offset | Read | Write |
+| ---: | --- | --- |
+| `0` | status of the last command or data access | command |
+| `1` | next input byte | append output byte |
+| `2` | — | append one file name byte |
+| `3` | bit 0 input exhausted, bit 1 input open, bit 2 output open | — |
+| `4-7` | 32-bit parameter/result, little-endian | 32-bit parameter |
+| `8` | bit 0 register as default device | — |
+| `F` | signature `'H'` | — |
+
+Commands: `00` no-op (status `0`), `01` close all without committing, `02`
+clear name, `03` open input (parameter byte 0 returns the CAS file type), `04`
+create output (parameter byte 0 selects `0x11` unbuffered or `0x01`
+buffered), `05` close input, `06` close output and commit, `07-09` input seek
+set/current/end, `0A-0C` output seek set/current/end (signed offset for
+current/end; the new position is returned in the parameter). Opening a new
+input replaces the old one; creating an output while one is open commits the
+first. Closing a file that is not open succeeds.
+
+Status codes: `0xA1` file not found, `0xAD` host store failure, `0xE7` invalid
+CAS container, `0xE9` file not open, `0xEC` end of file or seek beyond the
+end, `0xFF` unknown command; the ROM adds `0xE8` for verify mismatches.
+
+Files are buffered whole: opening reads the file, closing an output writes it.
+`.cas` files are presented to the OS from offset `0x80`, the 16-byte program
+header, which is the stream the cassette routines expect. The 128-byte
+container block is stripped on read and rebuilt with
+`cas::encode_cas_container` on close; files with other extensions are raw
+bytes. A program saved through the card therefore loads through the tape path
+too.
+
+Name mapping: the TVC name is trimmed, lowercased, and every character outside
+`a-z 0-9 - _ .` becomes `_` (a leading `.` too), so the result is always one
+safe path component; an empty name becomes `start`. Opening for input tries
+`<name>.cas`, then `<name>`, matched case-insensitively against the store's
+file list. Creating a file without an extension writes `<name>.cas`.
+
+Stores implement `HostFileStore` (`list`, `read`, `write`). `DirStore` serves
+one directory, created on first write, and rejects any name that is not a
+single normal path component. `MemoryStore` backs the browser builds and
+queues card writes. Open files, the name buffer and the parameter register are
+saved in the card's snapshot chunk; the store contents are not.
+
+When a host file card is fitted, Machine > Expansion shows a Host files section
+under the slot choices, with the default-device checkbox (applied at the next
+reset) and:
+
+- Native: the folder and a Choose folder button. The default is an existing
+  `files/` in the working directory, then one beside the executable, otherwise
+  a new `files/` beside the `roms/` directory in use, created on the first
+  save.
+- Full web: Upload file and Download. Files live in the `recent-media`
+  IndexedDB store with kind `hostfile` and no recent-list limit; card writes
+  are mirrored to IndexedDB each frame.
+- Lightweight WASM: `attachCard(slot, "hostfile" | "vtdos12", rom)`,
+  `putHostFile(name, bytes)`, `getHostFile(name)`, `listHostFiles()` and
+  `loadSlotDisk(slot, drive, name, bytes)`; files are kept in memory.
 
 ### Gamebase
 
@@ -382,10 +495,18 @@ Unknown chunks are ignored. Version 2 uses:
 | `CPUZ` | Z80 registers, interrupt and HALT state |
 | `MMU ` | RAM, model-appropriate VRAM, paging state |
 | `VID ` | TVC mode, CRTC state, palette, border |
-| `HBF ` | optional HBF RAM and controller state |
-| `BUS ` | interrupt latch, expansion selection, tape and sound state |
+| `SLT0`-`SLT3` | one per occupied slot: card kind tag (`1` HBF, `2` host file) and card state |
+| `HBF ` | legacy: first HBF card's RAM and controller state; still loaded |
+| `BUS ` | interrupt latch, expansion selection, tape and sound state, slot interrupt enables |
 | `EMUT` | optional UI machine selection and ROM revision |
 | `EMUI` | optional selected media references |
+
+`EMUT` stores is-plus, ROM revision, a legacy slot-0 HBF flag, the cartridge,
+and one card byte per slot (`0` empty, `1` VT-DOS 1.2 HBF, `2` host file
+card). The three-byte pre-cartridge form still loads. The `META` slot-0 HBF
+flag is still checked, and a legacy `HBF ` chunk loads into the first HBF
+slot of the restored layout. A slot chunk whose kind tag does not match the
+card in that slot rejects the snapshot.
 
 Keyboard state, logs, pending frontend PCM, ROM bytes, and disk bytes are not
 serialized. The wrapper reconstructs the selected machine from normal ROM
@@ -420,8 +541,8 @@ Native preferences are stored in `rtvc.toml`, searched in the working directory
 and then beside the executable. The versioned dock layout is stored separately
 as `rtvc-workspace.json`.
 
-Full web stores small preferences in `localStorage`, recent media bytes in
-IndexedDB, and the workspace under `rtvc_workspace_v1`. Lightweight WASM has no
+Full web stores small preferences in `localStorage`, recent media bytes and
+host files in IndexedDB, and the workspace under `rtvc_workspace_v1`. Lightweight WASM has no
 egui workspace dependency.
 
 ## Debugger
@@ -578,16 +699,24 @@ than a constant address shift.
 
 ## Configuration and Persistence
 
-The Machine menu keeps five TVC presets: 64K+ BASIC 1.2 or 2.2 with the HBF
-card in expansion slot 0, and the three machines without a card (64K 1.2,
-64K+ 1.2, 64K+ 2.2). Overrides under that list change memory (64K or 64K+),
-the system ROM pair (BASIC 1.2 or 2.2, SYS and EXTH together), the cartridge
-(`roms/*.crt`, or empty), and which of the four expansion connectors
-holds the VT-DOS 1.2 HBF card. Only one HBF card is attached. Slot `ex0` is
-I/O `0x10-0x1F`, connector CH1.
+The Machine menu's Preset submenu keeps five TVC presets: 64K+ BASIC 1.2 or
+2.2 with the HBF card in expansion slot 0, and the three machines without a
+card (64K 1.2, 64K+ 1.2, 64K+ 2.2). The rows below it override memory (64K or
+64K+) and the system ROM pair (BASIC 1.2 or 2.2, SYS and EXTH together); the
+Cartridge submenu picks a `roms/*.crt` image or none; and the Expansion
+submenu sets, independently for each of the four connectors, the card it
+holds: none, the VT-DOS 1.2 HBF card, or the host file card. Several HBF cards
+may be fitted. Slot `ex0` is I/O `0x10-0x1F`, connector CH1. System and Video
+are single rows of choices, so the top level stays short.
 
 A preset stays highlighted while the machine matches it. Any other mix is
-shown by its id, for example `64ktvc12+ex1:vtdos12+cart:pack_man`. A
+shown by its id, for example `64ktvc12+ex1:vtdos12+cart:pack_man`. Each card
+adds a `+ex<slot>:<card>` part, with card names `vtdos12` and `hostfile`;
+naming a slot twice or an unknown card makes the id invalid.
+
+`rtvc.toml` also stores the host file card settings beside the machine id:
+`host_file_dir` (native folder) and `host_file_default` (claim channel 5 at
+boot; default `true`, applied after reset). A
 cartridge image is a 16 KiB `.crt` file in `roms/`. BASIC autostarts an image
 whose first four bytes are `MOPS`, which covers `pack_man.crt` and
 `VT-DOS12-CART.crt`. The HBF card and the VT-DOS cartridge are separate: the

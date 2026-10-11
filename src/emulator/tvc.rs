@@ -4,13 +4,15 @@ use std::collections::HashSet;
 
 use crate::bus::CpuBus;
 use crate::cas::{TVC_CAS_HEADER_LEN, TVC_CAS_LOAD_ADDR, TapeBitstreamGenerator};
-use crate::expansion::ExpansionSlots;
+use crate::expansion::{Card, ExpansionSlots};
 use crate::hbf::HBF;
+use crate::host_file::HostFileCard;
 use crate::instruction_trace::{
     InstructionEffects, InstructionTrace, InstructionTraceEntry, TraceRegisters,
 };
 use crate::key::Key;
 use crate::log::{Log, LogCategory, LogEntry, Logger};
+use crate::machine_type::ExpansionCard;
 use crate::mmu::{RomBank, TvcMmu};
 use crate::snapshot;
 use crate::sound::SoundTimer;
@@ -76,11 +78,13 @@ impl TvcBus {
         self.instruction_effects.take().unwrap_or_default()
     }
 
-    pub fn extension_attach(&mut self, port: u8, ext: HBF) {
-        self.extensions.attach_hbf(port as usize, ext);
+    pub fn write_port(&mut self, addr: u8, val: u8) {
+        self.write_port16(addr as u16, val);
     }
 
-    pub fn write_port(&mut self, addr: u8, val: u8) {
+    /// Port write with the full 16-bit address; TVC devices decode the low byte.
+    fn write_port16(&mut self, port: u16, val: u8) {
+        let addr = port as u8;
         match addr {
             0x00 => self.vid.set_border(val),
 
@@ -123,9 +127,9 @@ impl TvcBus {
 
             0x70..=0x7F => self.write_crtc_port(addr, val),
 
-            0x58 => {}
-            0x59 => {}
-            0x5A => {}
+            0x58..=0x5B => self
+                .extensions
+                .write_irq_control((addr - 0x58) as usize, val),
             0x50..=0x57 => {
                 let level = self.tape.toggle_output();
                 self.log.log_with_category(
@@ -137,65 +141,63 @@ impl TvcBus {
                     ),
                 );
             }
-            0x5B => {}
-
             _ => {
-                if addr >= 0x10 && addr <= 0x14 {
-                    match addr & 0x0F {
-                        0x00 => {
-                            let cmd_name = match val >> 4 {
-                                0x00 => "Restore",
-                                0x01 => "Seek",
-                                0x02 | 0x03 => "Step In",
-                                0x04 | 0x05 => "Step Out",
-                                0x06 | 0x07 => "Step",
-                                0x08 | 0x09 => "Read Sector",
-                                0x0A | 0x0B => "Write Sector",
-                                0x0C => "Read Address",
-                                0x0D => "Force Interrupt",
-                                0x0E => "Read Track",
-                                0x0F => "Write Track",
-                                _ => "Unknown",
-                            };
-                            self.log.log_with_category(
-                                LogCategory::Disk,
-                                &format!(
-                                    "FDC command: 0x{:02X} [{}] (pc 0x{:04X})",
-                                    val, cmd_name, self.trace_pc
-                                ),
-                            );
-                        }
-                        0x01 => self.log.log_with_category(
-                            LogCategory::Disk,
-                            &format!("FDC track: {} (pc 0x{:04X})", val, self.trace_pc),
-                        ),
-                        0x02 => self.log.log_with_category(
-                            LogCategory::Disk,
-                            &format!("FDC sector: {} (pc 0x{:04X})", val, self.trace_pc),
-                        ),
-                        0x04 => {
-                            let drive = if (val & 1) != 0 {
-                                "A:"
-                            } else if (val & 2) != 0 {
-                                "B:"
-                            } else {
-                                "none"
-                            };
-                            let side = (val & 0x80) >> 7;
-                            self.log.log_with_category(
-                                LogCategory::Disk,
-                                &format!(
-                                    "FDC select: drive {}, side {} (pc 0x{:04X})",
-                                    drive, side, self.trace_pc
-                                ),
-                            );
-                        }
-                        _ => {}
-                    }
+                let hbf_slot = ExpansionSlots::port_slot(addr)
+                    .filter(|slot| self.extensions.hbf_at(*slot).is_some());
+                if let Some(slot) = hbf_slot {
+                    self.log_fdc_write(slot, addr & 0x0F, val);
                 }
-                self.extensions.write_port(addr, val);
+                self.extensions.write_port(port, val);
             }
         }
+    }
+
+    fn log_fdc_write(&mut self, slot: usize, reg: u8, val: u8) {
+        let prefix = if slot == 0 {
+            "FDC".to_string()
+        } else {
+            format!("FDC slot {slot}")
+        };
+        let message = match reg {
+            0x00 => {
+                let cmd_name = match val >> 4 {
+                    0x00 => "Restore",
+                    0x01 => "Seek",
+                    0x02 | 0x03 => "Step In",
+                    0x04 | 0x05 => "Step Out",
+                    0x06 | 0x07 => "Step",
+                    0x08 | 0x09 => "Read Sector",
+                    0x0A | 0x0B => "Write Sector",
+                    0x0C => "Read Address",
+                    0x0D => "Force Interrupt",
+                    0x0E => "Read Track",
+                    0x0F => "Write Track",
+                    _ => "Unknown",
+                };
+                format!(
+                    "{prefix} command: 0x{:02X} [{}] (pc 0x{:04X})",
+                    val, cmd_name, self.trace_pc
+                )
+            }
+            0x01 => format!("{prefix} track: {} (pc 0x{:04X})", val, self.trace_pc),
+            0x02 => format!("{prefix} sector: {} (pc 0x{:04X})", val, self.trace_pc),
+            0x04 => {
+                let drive = if (val & 1) != 0 {
+                    "A:"
+                } else if (val & 2) != 0 {
+                    "B:"
+                } else {
+                    "none"
+                };
+                let side = (val & 0x80) >> 7;
+                format!(
+                    "{prefix} select: drive {}, side {} (pc 0x{:04X})",
+                    drive, side, self.trace_pc
+                )
+            }
+            _ => return,
+        };
+        self.log.log_with_category(LogCategory::Disk, &message);
     }
 
     fn log_sound_change(&mut self, was_on: bool, old_divisor: u16, port: u8) {
@@ -362,6 +364,16 @@ impl TvcBus {
         (self.pend_it & SHARED_CURSOR_SOUND_IT) == 0
     }
 
+    fn irq_pending(&self) -> bool {
+        self.shared_it_pending() || self.extensions.irq_requested()
+    }
+
+    /// Port `0x59` low five bits: shared cursor/sound request in bit 4 and
+    /// active-low slot requests in bits 0-3.
+    fn interrupt_status(&self) -> u8 {
+        (self.pend_it & !0x0F) | self.extensions.irq_status()
+    }
+
     fn request_shared_irq(&mut self) {
         self.pend_it &= !SHARED_CURSOR_SOUND_IT;
     }
@@ -451,10 +463,11 @@ impl TvcBus {
         self.tape.set_motor_from_port5(port5_shadow);
     }
 
-    fn read_port(&mut self, addr: u8) -> u8 {
+    fn read_port(&mut self, port: u16) -> u8 {
+        let addr = port as u8;
         let val = match addr {
             0x58 => self.key.read_row(),
-            0x59 | 0x5D => (self.tape_input_bit() << 5) | 0x40 | self.pend_it,
+            0x59 | 0x5D => (self.tape_input_bit() << 5) | 0x40 | self.interrupt_status(),
             0x50..=0x57 => {
                 let level = self.tape.toggle_output();
                 self.log.log_with_category(
@@ -473,7 +486,7 @@ impl TvcBus {
             }
             0x5A | 0x5E => self.extensions.type_status(),
             0x70..=0x7F => self.vid.read_crtc_port(addr),
-            _ => self.extensions.read_port(addr).unwrap_or(0xFF),
+            _ => self.extensions.read_port(port).unwrap_or(0xFF),
         };
         val
     }
@@ -540,11 +553,11 @@ impl CpuBus for TvcBus {
         if let Some(effects) = &mut self.instruction_effects {
             effects.record_port_write(u16::from_be_bytes([high_addr, port]), val);
         }
-        self.write_port(port, val);
+        self.write_port16(u16::from_be_bytes([high_addr, port]), val);
     }
 
-    fn in8(&mut self, port: u8, _val: u8) -> u8 {
-        self.read_port(port)
+    fn in8(&mut self, port: u8, high_addr: u8) -> u8 {
+        self.read_port(u16::from_be_bytes([high_addr, port]))
     }
 }
 
@@ -610,8 +623,9 @@ impl Tvc {
         self.bus.mmu.is_plus()
     }
 
+    /// Legacy snapshot check: whether slot 0 holds an HBF card.
     pub fn has_hbf(&self) -> bool {
-        self.bus.extensions.slot0().is_some()
+        self.bus.extensions.hbf_at(0).is_some()
     }
 
     pub fn set_vid_model(&mut self, vid_model: VidModel) {
@@ -706,36 +720,54 @@ impl Tvc {
     pub fn add_rom(&mut self, name: &str, data: &[u8]) {
         if name.contains("CART") {
             self.load_cart_rom(data);
-        } else if name.contains("DOS") {
-            self.attach_hbf(0, data);
         } else {
             self.bus.mmu.add_rom(name, data);
         }
     }
 
-    pub fn attach_hbf(&mut self, slot: usize, data: &[u8]) {
-        self.bus.extension_attach(slot as u8, HBF::new(data));
+    /// Plugs a card into `slot`. `rom` is the card ROM image for cards that
+    /// need one (HBF); built-in cards ignore it.
+    pub fn attach_card(&mut self, slot: usize, card: ExpansionCard, rom: &[u8]) {
+        let card = match card {
+            ExpansionCard::VtDos12 => Card::Hbf(HBF::new(rom)),
+            ExpansionCard::HostFile => Card::HostFile(HostFileCard::new(None, true)),
+        };
+        self.bus.extensions.attach(slot, card);
+    }
+
+    /// Slot holding the card, if any.
+    pub fn card_kind(&self, slot: usize) -> Option<ExpansionCard> {
+        self.bus.extensions.kind(slot)
+    }
+
+    /// Slots holding an HBF card, in slot order.
+    pub fn hbf_slots(&self) -> Vec<usize> {
+        self.bus.extensions.hbf_slots()
+    }
+
+    pub fn host_file_cards_mut(&mut self) -> impl Iterator<Item = &mut HostFileCard> {
+        self.bus.extensions.host_file_cards_mut()
     }
 
     pub fn load_cart_rom(&mut self, data: &[u8]) {
         self.bus.mmu.load_cart_rom(data);
     }
 
-    pub fn load_disk(&mut self, drive: usize, name: &str, data: &[u8]) {
-        if let Some(ext) = self.bus.extensions.hbf_mut() {
+    pub fn load_disk(&mut self, slot: usize, drive: usize, name: &str, data: &[u8]) {
+        if let Some(ext) = self.bus.extensions.hbf_at_mut(slot) {
             ext.load_disk(drive, name, data);
         }
     }
 
-    pub fn disk_dirty(&self, drive: usize) -> bool {
+    pub fn disk_dirty(&self, slot: usize, drive: usize) -> bool {
         self.bus
             .extensions
-            .hbf()
+            .hbf_at(slot)
             .is_some_and(|ext| ext.disk_dirty(drive))
     }
 
-    pub fn clear_disk_dirty(&mut self, drive: usize) {
-        if let Some(ext) = self.bus.extensions.hbf_mut() {
+    pub fn clear_disk_dirty(&mut self, slot: usize, drive: usize) {
+        if let Some(ext) = self.bus.extensions.hbf_at_mut(slot) {
             ext.clear_disk_dirty(drive);
         }
     }
@@ -921,7 +953,7 @@ impl Tvc {
     }
 
     fn service_pending_shared_irq(&mut self) -> (u32, bool) {
-        if self.bus.shared_it_pending() {
+        if self.bus.irq_pending() {
             self.service_shared_irq()
         } else {
             (0, false)

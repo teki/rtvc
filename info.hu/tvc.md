@@ -52,11 +52,13 @@ A natív egui felület nem futtat TVC képkockát minden host repaintre. Futás 
 | `0x06` | Többfunkciós | 0-1. bit: videomód; 2-5. bit: hangerő / 4 bites DAC; 7. bit: printer ACK |
 | `0x07` | Interrupt | kurzor/hang interrupt nyugtázása |
 | `0x0C - 0x0F` | MMU | videó bankválasztás TVC 64K+ gépen |
-| `0x58 - 0x5B` | Bővítők | kártya konfiguráció |
+| `0x58 - 0x5B` | Bővítők | a 0-3. slot interruptjának engedélyezése (7. bit = 1) vagy tiltása és törlése (7. bit = 0) |
 | `0x60 - 0x63` | Videó | palettaregiszterek |
 | `0x70 - 0x7F` | CRTC | tükrözött MC6845 portok; páros cím választja a címregisztert, páratlan cím írja a kiválasztott adatregisztert |
 | `0x10 - 0x1F` | Slot 0 | kártya portok |
 | `0x20 - 0x2F` | Slot 1 | kártya portok |
+| `0x30 - 0x3F` | Slot 2 | kártya portok |
+| `0x40 - 0x4F` | Slot 3 | kártya portok |
 
 ### Olvasások
 
@@ -69,6 +71,8 @@ A natív egui felület nem futtat TVC képkockát minden host repaintre. Futás 
 | `0x70 - 0x7F` | CRTC | tükrözött MC6845 portok; a páros címregiszter olvasása `0xFF`, a páratlan adatregiszter olvasása a CRTC hozzáférési szabályait követi |
 | `0x10 - 0x1F` | Slot 0 | kártyaolvasás |
 | `0x20 - 0x2F` | Slot 1 | kártyaolvasás |
+| `0x30 - 0x3F` | Slot 2 | kártyaolvasás |
+| `0x40 - 0x4F` | Slot 3 | kártyaolvasás |
 
 ## Interruptok
 
@@ -80,6 +84,69 @@ Az interrupt életciklusa:
 2. Ha a Z80 interrupt engedélyezett, a gépmag meghívja a Z80 interrupt rutinját.
 3. A ROM szoftveresen különbözteti meg a kurzor és hangforrást.
 4. A `0x07` portra írás törli a közös interrupt flaget.
+
+A bővítőkártyák kérését slotonként a `0x58`/`0x59`/`0x5A`/`0x5B` port 7. bitje
+vezérli: `1` engedélyezi, `0` letiltja és törli. Reset után minden slot
+interruptja tiltott. A rendszer-ROM interruptkezelője csak azokra a kártyákra ír
+1-et, amelyek kérnek, és amelyek a `0x0B1F` IRQ-STAT maszkban engedélyezettek.
+
+## Bővítőkártyák
+
+A négy bővítőhely mindegyike 16 portot kap (`0x10 + slot * 0x10` + az alsó
+nibble), és a `0xC000-0xDFFF` EXT ablakban egyszerre egy kártya memóriája
+látszik; a slotot a `0x03` port 6-7. bitje választja. A portkiosztás
+helyfüggő, ezért a kártya firmware-ének ki kell derítenie a saját slotját.
+
+A `0x5A`/`0x5E` port slotonként két azonosítóbitet ad (0. slot: 1-0. bit, ...,
+3. slot: 7-6. bit):
+
+| Bitek | Kártya | OS név |
+| --- | --- | --- |
+| `00` | soros (RS232) | `RS232` |
+| `01` | videójáték-modul | `VGB` |
+| `10` | floppy csatoló (HBF) | `DISK` |
+| `11` | üres hely, vagy `MOPS` ROM-fejléccel azonosított kártya | a fejlécből |
+
+Bootoláskor a BASIC 1.2 rendszer-ROM minden slotra kitölt egy `0x30` bájtos
+kártyatábla-bejegyzést a `0x0040 + slot * 0x30` címen (U0). `11` azonosító
+esetén a `0xC000` címen `MOPS` szöveget keres, és az utána álló, hosszbájttal
+kezdődő nevet másolja a bejegyzésbe. Az azonos nevű kártyák növekvő
+egységszámot kapnak a bejegyzés `+7` bájtjában. Ezután a ROM `IX` = bejegyzés
+címmel és `U0 U1 U2 EXT` lapkiosztással meghívja a `0xC00B` címen tárolt
+init rutint.
+
+A `MOPS` fejléc felépítése:
+
+| Cím | Tartalom |
+| --- | --- |
+| `0xC000` | `"MOPS"` |
+| `0xC004` | névhossz, `4` |
+| `0xC005` | 4 karakteres eszköznév |
+| `0xC009` | szó, interrupt rutin |
+| `0xC00B` | szó, init rutin |
+| `0xC00D` | funkciók száma |
+| `0xC00E` | szavak, a 0., 1., ... funkció címe; a 0. funkció egyben az interrupt belépési pont |
+
+A kártya a slotját `IX`-ből számolhatja: `slot = ((IX & 0xF0) - 0x10) >> 6`.
+A bejegyzés `+0x0F` bájtjától kezdődő részt az OS nem használja.
+
+Az eszközhívások `RST 30H`-n keresztül érkeznek. A `0x0B00-0x0B07` (bemenet) és
+`0x0B08-0x0B0F` (kimenet) osztályválasztó bájtok `0x80 | slot` értéke egy
+kártyát jelöl ki, így a kazetta (5. osztály) a `0x0B05`/`0x0B0D` bájtokkal
+irányítható át. A hívott rutin `A`-ban a funkcióbájtot kapja (7. bit = bemenet),
+`IX` = bejegyzés `+8`, `BC` és `DE` a hívótól jön és oda tér vissza, a státusz
+`A`-ban jön vissza (`0` = siker). Kazettás funkciók: 1 karakteres I/O, 2 blokkos
+I/O, 3 megnyitás/létrehozás, 4 lezárás, 5 ellenőrzés. Hibakódok: `0xE7`
+olvasási vagy fejléchiba, `0xE8` ellenőrzési eltérés, `0xE9` nincs megnyitva,
+`0xEB` már meg van nyitva, `0xEC` fájl vége; a VT-DOS `0xA1` (nincs meg a fájl)
+és `0xAD` (megszakított lemezművelet) kódot használ. A BASIC az ismeretlen
+kódokat `System error NNN` formában írja ki, például `0xA1` esetén
+`System error 161`.
+
+A VT-DOS 1.2 nem nulla slotból is működik: az 1. vagy 2. slotba tett HBF
+kártyán keresztül vezérli a floppyvezérlőt és kilistázza a lemezt.
+
+Részletes angol leírás: [TVC Technical Reference](../info/tvc.md#expansion-system).
 
 ## ROM és média
 

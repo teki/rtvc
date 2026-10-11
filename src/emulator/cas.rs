@@ -1,4 +1,9 @@
 pub const TVC_CAS_HEADER_LEN: usize = 144;
+/// Container block before the cassette stream (program header and payload).
+pub const TVC_CAS_CONTAINER_LEN: usize = 128;
+/// Container file type: unbuffered (program) and buffered (data) files.
+pub const TVC_CAS_TYPE_UNBUFFERED: u8 = 0x11;
+pub const TVC_CAS_TYPE_BUFFERED: u8 = 0x01;
 pub const TVC_CAS_TYPE_BASIC: u8 = 0x01;
 /// CAS header byte: non-zero means BASIC should auto-run after load.
 pub const TVC_CAS_AUTOSTART_OFF: usize = 0x84;
@@ -89,17 +94,48 @@ pub fn tvc_cas_autostarts(data: &[u8]) -> bool {
     data.len() > TVC_CAS_AUTOSTART_OFF && data[0] == 0x11 && data[TVC_CAS_AUTOSTART_OFF] != 0
 }
 
+/// Encode the 128-byte CAS container block that precedes a `stream_len`-byte
+/// cassette stream (the 16-byte program header and payload).
+pub fn encode_cas_container(file_type: u8, stream_len: usize) -> [u8; TVC_CAS_CONTAINER_LEN] {
+    let file_size = TVC_CAS_CONTAINER_LEN + stream_len;
+    let blocks = file_size / 128;
+    let remainder = file_size % 128;
+    let mut block = [0; TVC_CAS_CONTAINER_LEN];
+    block[0] = file_type;
+    block[2] = (blocks & 0xFF) as u8;
+    block[3] = (blocks >> 8) as u8;
+    block[4] = (remainder & 0xFF) as u8;
+    block[5] = (remainder >> 8) as u8;
+    block
+}
+
+/// Split a CAS file into its file type and the cassette stream after the
+/// 128-byte container block. The declared size is honored when it fits.
+pub fn decode_cas_container(data: &[u8]) -> Option<(u8, &[u8])> {
+    if data.len() < TVC_CAS_CONTAINER_LEN
+        || !matches!(data[0], TVC_CAS_TYPE_UNBUFFERED | TVC_CAS_TYPE_BUFFERED)
+    {
+        return None;
+    }
+    let blocks = u16::from_le_bytes([data[2], data[3]]) as usize;
+    let remainder = u16::from_le_bytes([data[4], data[5]]) as usize;
+    let declared = blocks * 128 + remainder;
+    let end = if declared > TVC_CAS_CONTAINER_LEN {
+        declared.min(data.len())
+    } else {
+        data.len()
+    };
+    Some((data[0], &data[TVC_CAS_CONTAINER_LEN..end]))
+}
+
 /// Build a TVC CAS container: 144-byte header followed by payload.
 pub fn encode_tvc_cas(payload: &[u8], file_type: u8, autostart: u8, load_addr: u16) -> Vec<u8> {
     let dfsize = TVC_CAS_HEADER_LEN + payload.len();
-    let blocks = dfsize / 128;
-    let remainder = dfsize % 128;
     let mut cas = vec![0; dfsize];
-    cas[0] = 0x11;
-    cas[2] = (blocks & 0xFF) as u8;
-    cas[3] = (blocks >> 8) as u8;
-    cas[4] = (remainder & 0xFF) as u8;
-    cas[5] = (remainder >> 8) as u8;
+    cas[..TVC_CAS_CONTAINER_LEN].copy_from_slice(&encode_cas_container(
+        TVC_CAS_TYPE_UNBUFFERED,
+        dfsize - TVC_CAS_CONTAINER_LEN,
+    ));
     cas[0x80] = 0x00;
     cas[0x81] = file_type;
     cas[0x82] = (payload.len() & 0xFF) as u8;

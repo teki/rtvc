@@ -77,11 +77,11 @@ fn snapshot_stores_only_model_ram_and_mutable_hbf_state() {
             .len(),
         3 + 5 * 0x4000
     );
-    assert!(chunks.iter().all(|chunk| chunk.id != *b"HBF "));
+    assert!(chunks.iter().all(|chunk| &chunk.id[..3] != b"SLT"));
 
     let mut plus = Tvc::new(true);
-    plus.add_rom("VT-DOS12-DISK.ROM", &[0xA5; 0x4000]);
-    plus.load_disk(0, "large.dsk", &[0xE5; 368_640]);
+    plus.attach_card(0, ExpansionCard::VtDos12, &[0xA5; 0x4000]);
+    plus.load_disk(0, 0, "large.dsk", &[0xE5; 368_640]);
     let snapshot = plus.save_snapshot();
     let chunks = crate::snapshot::read_file(&snapshot).unwrap();
     assert_eq!(
@@ -96,12 +96,109 @@ fn snapshot_stores_only_model_ram_and_mutable_hbf_state() {
     assert!(
         chunks
             .iter()
-            .find(|chunk| chunk.id == *b"HBF ")
+            .find(|chunk| chunk.id == *b"SLT0")
             .unwrap()
             .data
             .len()
             < 0x1200
     );
+}
+
+#[test]
+fn two_hbf_cards_answer_only_on_their_own_slot() {
+    let mut tvc = Tvc::new(true);
+    tvc.attach_card(0, ExpansionCard::VtDos12, &[0x10; 0x4000]);
+    tvc.attach_card(1, ExpansionCard::VtDos12, &[0x20; 0x4000]);
+    assert_eq!(tvc.bus.read_port(0x5A), 0xFA);
+    assert_eq!(tvc.hbf_slots(), vec![0, 1]);
+
+    tvc.bus.write_port(0x11, 5);
+    tvc.bus.write_port(0x21, 9);
+    assert_eq!(tvc.bus.read_port(0x11), 5);
+    assert_eq!(tvc.bus.read_port(0x21), 9);
+    assert_eq!(tvc.bus.read_port(0x31), 0xFF);
+
+    tvc.bus.write_port(0x03, 0x40);
+    assert_eq!(tvc.bus.extensions.read_mem(0), 0x20);
+    tvc.bus.write_port(0x03, 0x00);
+    assert_eq!(tvc.bus.extensions.read_mem(0), 0x10);
+
+    tvc.load_disk(1, 0, "second.dsk", &[0xE5; 368_640]);
+    assert!(tvc.bus.extensions.hbf_at(0).unwrap().disk_name(0).is_none());
+    assert_eq!(
+        tvc.bus.extensions.hbf_at(1).unwrap().disk_name(0),
+        Some("second.dsk")
+    );
+}
+
+#[test]
+fn slot_interrupt_writes_enable_and_clear_per_slot() {
+    let mut bus = TvcBus::new(true);
+    assert_eq!(bus.extensions.irq_enable(), 0);
+    bus.write_port(0x59, 0x80);
+    bus.write_port(0x5B, 0x80);
+    assert_eq!(bus.extensions.irq_enable(), 0b1010);
+    bus.write_port(0x59, 0x00);
+    assert_eq!(bus.extensions.irq_enable(), 0b1000);
+    // No card raises a request, so the active-low slot bits stay high.
+    assert_eq!(bus.read_port(0x59) & 0x0F, 0x0F);
+    assert!(!bus.irq_pending());
+}
+
+#[test]
+fn per_slot_snapshot_chunks_round_trip_each_card_kind() {
+    let mut tvc = Tvc::new(true);
+    tvc.attach_card(1, ExpansionCard::VtDos12, &[0xA5; 0x4000]);
+    tvc.attach_card(3, ExpansionCard::HostFile, &[]);
+    tvc.bus.write_port(0x18, 0x20);
+    tvc.bus.write_port(0x5A, 0x80);
+    tvc.bus.write_port(0x40, crate::host_file::CMD_NAME_CLEAR);
+    tvc.bus.write_port(0x42, b'X');
+    let snapshot = tvc.save_snapshot();
+    let ids: Vec<[u8; 4]> = crate::snapshot::read_file(&snapshot)
+        .unwrap()
+        .iter()
+        .map(|chunk| chunk.id)
+        .collect();
+    assert!(ids.contains(b"SLT1") && ids.contains(b"SLT3"));
+    assert!(!ids.contains(b"SLT0") && !ids.contains(b"HBF "));
+
+    let mut restored = Tvc::new(true);
+    restored.attach_card(1, ExpansionCard::VtDos12, &[0xA5; 0x4000]);
+    restored.attach_card(3, ExpansionCard::HostFile, &[]);
+    restored.load_snapshot(&snapshot).unwrap();
+    assert_eq!(restored.bus.extensions.irq_enable(), 0b0100);
+    assert_eq!(restored.save_snapshot(), snapshot);
+
+    let mut mismatched = Tvc::new(true);
+    mismatched.attach_card(1, ExpansionCard::HostFile, &[]);
+    mismatched.attach_card(3, ExpansionCard::HostFile, &[]);
+    assert!(mismatched.load_snapshot(&snapshot).is_err());
+}
+
+#[test]
+fn legacy_hbf_chunk_loads_into_first_hbf_slot() {
+    let mut source = Tvc::new(true);
+    source.attach_card(1, ExpansionCard::VtDos12, &[0xA5; 0x4000]);
+    source.bus.write_port(0x28, 0x30);
+    let snapshot = source.save_snapshot();
+    let legacy: Vec<([u8; 4], Vec<u8>)> = crate::snapshot::read_file(&snapshot)
+        .unwrap()
+        .into_iter()
+        .map(|chunk| {
+            if chunk.id == *b"SLT1" {
+                (*b"HBF ", chunk.data[1..].to_vec())
+            } else {
+                (chunk.id, chunk.data.to_vec())
+            }
+        })
+        .collect();
+    let legacy = crate::snapshot::write_file(&legacy);
+
+    let mut restored = Tvc::new(true);
+    restored.attach_card(1, ExpansionCard::VtDos12, &[0xA5; 0x4000]);
+    restored.load_snapshot(&legacy).unwrap();
+    assert_eq!(restored.save_snapshot(), snapshot);
 }
 
 #[test]

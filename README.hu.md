@@ -26,7 +26,8 @@ További történeti háttér a
 ## Funkciók
 
 - TVC 64K és 64K+ gépváltozatok.
-- ROM 1.2 és ROM 2.2 gépválasztás, opcionális VT-DOS/HBF kártyával és programmodullal.
+- ROM 1.2 és ROM 2.2 gépválasztás, opcionális VT-DOS/HBF kártyákkal és programmodullal.
+- Gazdagépes fájlkártya: a BASIC `LOAD`/`SAVE` közvetlenül egy mappába dolgozik.
 - Z80 CPU-emuláció FUSE és ZEX validációs tesztkészletekkel.
 - MC6845-alapú videokimenet gyors képkockás és interleaved renderelési móddal.
 - Natív billentyűzet-, video- és hangkezelés az asztali felületen.
@@ -127,6 +128,30 @@ Támogatott felhasználói fájlok:
 A snapshot a legegyszerűbb módja az aktuális gépállapot megőrzésének. A natív
 alkalmazás tud tömörített `.rtvcsnap.zip` fájlokat menteni, `.rtvcsnap` és
 `.rtvcsnap.zip` fájlokat betölteni, és közvetlenül snapshot-útvonalról indulni.
+
+### Gazdagépes fájlok
+
+A **Host files** bővítőkártya a programokat kazetta helyett a számítógéped egy
+mappájába menti, és onnan tölti be. A **Machine > Expansion** almenüben
+válassz egy üres csatlakozót (például `ex1`), majd a **Host files** kártyát.
+A gépazonosítóban ekkor megjelenik a `+ex1:hostfile` rész. Ha a **Use as
+default cassette device** be van jelölve (ez az alapértelmezés), a BASIC
+`LOAD "NÉV"` és `SAVE "NÉV"` utasításai és a többi kazettás parancs a mappát
+használják a kazetta helyett:
+
+- `SAVE "HELLO"` a `hello.cas` fájlt írja, amely szabályos CAS kép, így
+  kazettaként is betölthető.
+- `LOAD "HELLO"` a `hello.cas` fájlt olvassa, vagy a pontosan `hello` nevű
+  fájlt. A nevek összevetése kis- és nagybetűtől független.
+- A kiterjesztéssel megadott név, például `SAVE "HELLO.BIN"`, változatlan
+  marad, és a fájl a 128 bájtos CAS-tárolóblokk nélkül kerül mentésre.
+
+A natív alkalmazás alapértelmezésben a `files/` mappát használja; ugyanennek
+az almenünek a **Choose folder...** gombjával másik választható, ez az `rtvc.toml`
+`host_file_dir` kulcsába kerül. A böngészős változat a böngészőben tárolja a
+fájlokat, és ugyanebben a menüben **Upload file...** és **Download** pontot
+kínál. Az alapértelmezett eszköz beállításának változása újraindítás (reset)
+után lép életbe.
 
 ## Futtatás forrásból
 

@@ -71,6 +71,66 @@ fn cas_autostart_follows_header_byte() {
 }
 
 #[test]
+fn encode_tvc_cas_matches_the_inline_container_layout() {
+    for len in [0usize, 1, 111, 112, 113, 400, 4096] {
+        let payload: Vec<u8> = (0..len).map(|i| i as u8).collect();
+        let cas = encode_tvc_cas(&payload, TVC_CAS_TYPE_BASIC, 0xFF, TVC_CAS_LOAD_ADDR);
+        let dfsize = TVC_CAS_HEADER_LEN + len;
+        let mut expected = vec![0; dfsize];
+        expected[0] = 0x11;
+        expected[2] = (dfsize / 128) as u8;
+        expected[3] = ((dfsize / 128) >> 8) as u8;
+        expected[4] = (dfsize % 128) as u8;
+        expected[0x81] = TVC_CAS_TYPE_BASIC;
+        expected[0x82] = len as u8;
+        expected[0x83] = (len >> 8) as u8;
+        expected[TVC_CAS_AUTOSTART_OFF] = 0xFF;
+        expected[0x87] = 0xEF;
+        expected[0x88] = 0x19;
+        expected[TVC_CAS_HEADER_LEN..].copy_from_slice(&payload);
+        assert_eq!(cas, expected, "payload length {len}");
+    }
+}
+
+#[test]
+fn cas_container_round_trips_checked_in_programs() {
+    let Ok(entries) = std::fs::read_dir("progs") else {
+        return;
+    };
+    let mut checked = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("cas"))
+        {
+            continue;
+        }
+        let data = std::fs::read(&path).unwrap();
+        let (file_type, stream) = decode_cas_container(&data)
+            .unwrap_or_else(|| panic!("{} has no CAS container", path.display()));
+        let mut rebuilt = encode_cas_container(file_type, stream.len()).to_vec();
+        rebuilt.extend_from_slice(stream);
+        assert_eq!(rebuilt[..6], data[..6], "{}", path.display());
+        assert_eq!(rebuilt[6..], data[6..rebuilt.len()], "{}", path.display());
+        checked += 1;
+    }
+    assert!(checked > 0);
+}
+
+#[test]
+fn cas_container_rejects_unknown_types_and_short_data() {
+    assert!(decode_cas_container(&[0x11; 64]).is_none());
+    let mut data = vec![0; 200];
+    assert!(decode_cas_container(&data).is_none());
+    data[0] = TVC_CAS_TYPE_BUFFERED;
+    let (file_type, stream) = decode_cas_container(&data).unwrap();
+    assert_eq!(file_type, TVC_CAS_TYPE_BUFFERED);
+    assert_eq!(stream.len(), 72);
+}
+
+#[test]
 fn flatten_allows_adjacent_segments() {
     let stub = stub();
     let next = TVC_CAS_LOAD_ADDR + stub.len() as u16;

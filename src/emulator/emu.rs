@@ -2,9 +2,15 @@ use std::collections::{HashMap, VecDeque};
 use std::io::Read;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::cas::TapeBitstreamGenerator;
 use crate::disasm::DisassembledInstruction;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::host_file::DirStore;
+use crate::host_file::HostFileStore;
+#[cfg(target_arch = "wasm32")]
+use crate::host_file::MemoryStore;
 use crate::instruction_trace::{InstructionTrace, InstructionTraceEntry};
 use crate::machine::{DebugRunToIrqResult, FramebufferRef, Machine, System};
 use crate::mmu::RomBank;
@@ -17,6 +23,8 @@ use crate::zx82::Zx82;
 const GAMEBASE_BOOT_SNAPSHOT: &[u8] = include_bytes!("../../snapshots/boot12dos.rtvcsnap.zip");
 const TYPED_KEY_HOLD_FRAMES: u32 = 3;
 const TYPED_KEY_GAP_FRAMES: u32 = 1;
+/// Two drives for each of up to four HBF cards.
+pub const MAX_DISK_UNITS: usize = 8;
 
 #[derive(Clone, Copy)]
 pub struct DiskGeometry {
@@ -59,7 +67,7 @@ mod tests;
 struct EmuSnapshotState {
     machine_type: Option<MachineType>,
     selected_prog_file_name: Option<String>,
-    loaded_disk_file_names: [Option<String>; 2],
+    loaded_disk_file_names: [Option<String>; MAX_DISK_UNITS],
 }
 
 #[derive(Clone)]
@@ -84,9 +92,9 @@ pub struct Emu {
     pub progs: Vec<ProgEntry>,
     pub selected_prog: usize,
     pub loaded_tape: Option<String>,
-    pub loaded_disk: [Option<String>; 2],
+    pub loaded_disk: [Option<String>; MAX_DISK_UNITS],
     pub loaded_tape_file_name: Option<String>,
-    pub loaded_disk_file_name: [Option<String>; 2],
+    pub loaded_disk_file_name: [Option<String>; MAX_DISK_UNITS],
     pub recent_tapes: Vec<String>,
     pub recent_disks: Vec<String>,
     #[cfg(target_arch = "wasm32")]
@@ -96,7 +104,7 @@ pub struct Emu {
     #[cfg(target_arch = "wasm32")]
     loaded_tape_wasm: Option<WasmRecentFile>,
     #[cfg(target_arch = "wasm32")]
-    loaded_disk_wasm: [Option<WasmRecentFile>; 2],
+    loaded_disk_wasm: [Option<WasmRecentFile>; MAX_DISK_UNITS],
     #[cfg(target_arch = "wasm32")]
     loaded_tape_was_injected: bool,
     typed_text: VecDeque<char>,
@@ -105,10 +113,24 @@ pub struct Emu {
     typed_gap_frames: u32,
     timed_keys: HashMap<u32, u32>,
     tvc_fast_boot: bool,
+    host_file_store: Option<Arc<dyn HostFileStore>>,
+    host_file_default: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    host_file_dir: PathBuf,
+    #[cfg(target_arch = "wasm32")]
+    host_file_memory: Arc<MemoryStore>,
 }
 
 impl Emu {
     pub fn new(machine_type: MachineType) -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
+        let host_file_dir = default_host_file_dir();
+        #[cfg(not(target_arch = "wasm32"))]
+        let host_file_store: Arc<dyn HostFileStore> = Arc::new(DirStore::new(&host_file_dir));
+        #[cfg(target_arch = "wasm32")]
+        let host_file_memory = Arc::new(MemoryStore::new());
+        #[cfg(target_arch = "wasm32")]
+        let host_file_store: Arc<dyn HostFileStore> = host_file_memory.clone();
         let mut emu = Emu {
             machine: Machine::Tvc(Tvc::new(machine_type.is_plus)),
             running: true,
@@ -117,9 +139,9 @@ impl Emu {
             progs: Vec::new(),
             selected_prog: 0,
             loaded_tape: None,
-            loaded_disk: [None, None],
+            loaded_disk: Default::default(),
             loaded_tape_file_name: None,
-            loaded_disk_file_name: [None, None],
+            loaded_disk_file_name: Default::default(),
             recent_tapes: Vec::new(),
             recent_disks: Vec::new(),
             #[cfg(target_arch = "wasm32")]
@@ -129,7 +151,7 @@ impl Emu {
             #[cfg(target_arch = "wasm32")]
             loaded_tape_wasm: None,
             #[cfg(target_arch = "wasm32")]
-            loaded_disk_wasm: [None, None],
+            loaded_disk_wasm: Default::default(),
             #[cfg(target_arch = "wasm32")]
             loaded_tape_was_injected: false,
             typed_text: VecDeque::new(),
@@ -138,9 +160,55 @@ impl Emu {
             typed_gap_frames: 0,
             timed_keys: HashMap::new(),
             tvc_fast_boot: false,
+            host_file_store: Some(host_file_store),
+            host_file_default: true,
+            #[cfg(not(target_arch = "wasm32"))]
+            host_file_dir,
+            #[cfg(target_arch = "wasm32")]
+            host_file_memory,
         };
         emu.scan_progs();
         emu
+    }
+
+    /// Directory behind the host file card.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn host_file_dir(&self) -> &Path {
+        &self.host_file_dir
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_host_file_dir(&mut self, dir: PathBuf) {
+        self.host_file_store = Some(Arc::new(DirStore::new(&dir)));
+        self.host_file_dir = dir;
+        self.configure_host_file_cards();
+    }
+
+    /// Browser-side file store behind the host file card.
+    #[cfg(target_arch = "wasm32")]
+    pub fn host_file_memory(&self) -> &Arc<MemoryStore> {
+        &self.host_file_memory
+    }
+
+    pub fn host_file_default(&self) -> bool {
+        self.host_file_default
+    }
+
+    /// Whether the host file card claims channel 5 at boot; applies after reset.
+    pub fn set_host_file_default(&mut self, enabled: bool) {
+        self.host_file_default = enabled;
+        self.configure_host_file_cards();
+    }
+
+    fn configure_host_file_cards(&mut self) {
+        let store = self.host_file_store.clone();
+        let default_device = self.host_file_default;
+        if let Some(tvc) = self.machine.tvc_mut() {
+            for card in tvc.host_file_cards_mut() {
+                card.set_store(store.clone());
+                card.set_default_device(default_device);
+            }
+        }
     }
 
     pub fn system(&self) -> System {
@@ -374,9 +442,9 @@ impl Emu {
         self.machine = Machine::Zx82(zx82);
         self.roms_loaded = true;
         self.loaded_tape = None;
-        self.loaded_disk = [None, None];
+        self.loaded_disk = Default::default();
         self.loaded_tape_file_name = None;
-        self.loaded_disk_file_name = [None, None];
+        self.loaded_disk_file_name = Default::default();
     }
 
     pub fn load_z80_file(&mut self, path: &Path) -> Result<(), String> {
@@ -487,8 +555,14 @@ impl Emu {
                 .map(|entry| entry.file_name.as_str())
                 .unwrap_or(""),
         );
-        writer.string(self.loaded_disk_file_name[0].as_deref().unwrap_or(""));
-        writer.string(self.loaded_disk_file_name[1].as_deref().unwrap_or(""));
+        let units = self
+            .loaded_disk_file_name
+            .iter()
+            .rposition(Option::is_some)
+            .map_or(2, |last| (last + 1).max(2));
+        for name in &self.loaded_disk_file_name[..units] {
+            writer.string(name.as_deref().unwrap_or(""));
+        }
         chunks.push((*b"EMUI", writer.into_inner()));
         snapshot::write_file(&chunks)
     }
@@ -520,28 +594,19 @@ impl Emu {
         let fast_boot = self.fast_boot();
         let snapshot_state = Self::read_emu_snapshot_state(data)?;
         #[cfg(target_arch = "wasm32")]
-        let snapshot_disks: [Option<WasmRecentFile>; 2] = [
-            snapshot_state.loaded_disk_file_names[0]
-                .as_ref()
-                .and_then(|name| {
-                    self.loaded_disk_wasm
-                        .iter()
-                        .flatten()
-                        .chain(self.recent_disks_wasm.iter())
-                        .find(|media| recent_media_key(&media.name) == recent_media_key(name))
-                        .cloned()
-                }),
-            snapshot_state.loaded_disk_file_names[1]
-                .as_ref()
-                .and_then(|name| {
-                    self.loaded_disk_wasm
-                        .iter()
-                        .flatten()
-                        .chain(self.recent_disks_wasm.iter())
-                        .find(|media| recent_media_key(&media.name) == recent_media_key(name))
-                        .cloned()
-                }),
-        ];
+        let snapshot_disks: [Option<WasmRecentFile>; MAX_DISK_UNITS] =
+            std::array::from_fn(|unit| {
+                snapshot_state.loaded_disk_file_names[unit]
+                    .as_ref()
+                    .and_then(|name| {
+                        self.loaded_disk_wasm
+                            .iter()
+                            .flatten()
+                            .chain(self.recent_disks_wasm.iter())
+                            .find(|media| recent_media_key(&media.name) == recent_media_key(name))
+                            .cloned()
+                    })
+            });
         let machine_type = snapshot_state.machine_type.unwrap_or_else(|| {
             self.machine.tvc().map_or(self.machine_type, |tvc| {
                 MachineType::for_snapshot(
@@ -560,13 +625,13 @@ impl Emu {
         self.tvc_fast_boot = fast_boot;
         tvc.load_snapshot(data)?;
         self.loaded_tape = None;
-        self.loaded_disk = [None, None];
+        self.loaded_disk = Default::default();
         self.loaded_tape_file_name = None;
-        self.loaded_disk_file_name = [None, None];
+        self.loaded_disk_file_name = Default::default();
         #[cfg(target_arch = "wasm32")]
         {
             self.loaded_tape_wasm = None;
-            self.loaded_disk_wasm = [None, None];
+            self.loaded_disk_wasm = Default::default();
             self.loaded_tape_was_injected = false;
         }
         if let Some(file_name) = snapshot_state
@@ -579,7 +644,7 @@ impl Emu {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let mut any_disk_restored = false;
-            for drive in 0..2 {
+            for drive in 0..MAX_DISK_UNITS {
                 if let Some(file_name) = snapshot_state.loaded_disk_file_names[drive].clone() {
                     self.insert_disk_by_file_name_drive(drive, &file_name);
                     any_disk_restored = true;
@@ -592,7 +657,7 @@ impl Emu {
         #[cfg(target_arch = "wasm32")]
         {
             let mut any_disk_restored = false;
-            for drive in 0..2 {
+            for drive in 0..MAX_DISK_UNITS {
                 if let Some(media) = snapshot_disks[drive].clone() {
                     let _ = self.insert_disk_bytes_drive(drive, &media.name, &media.bytes);
                     any_disk_restored = true;
@@ -618,10 +683,13 @@ impl Emu {
                     if !disk_file_name_0.is_empty() {
                         state.loaded_disk_file_names[0] = Some(disk_file_name_0);
                     }
-                    // Drive B file name — absent in older snapshots
-                    if let Ok(disk_file_name_1) = reader.string() {
-                        if !disk_file_name_1.is_empty() {
-                            state.loaded_disk_file_names[1] = Some(disk_file_name_1);
+                    // Later disk units are absent in older snapshots.
+                    for unit in 1..MAX_DISK_UNITS {
+                        let Ok(name) = reader.string() else {
+                            break;
+                        };
+                        if !name.is_empty() {
+                            state.loaded_disk_file_names[unit] = Some(name);
                         }
                     }
                 }
@@ -703,7 +771,7 @@ impl Emu {
         #[cfg(target_arch = "wasm32")]
         {
             let mut errors = Vec::new();
-            for drive in 0..2 {
+            for drive in 0..MAX_DISK_UNITS {
                 if let Some(media) = loaded_disk[drive].clone() {
                     if let Err(err) = self.insert_disk_bytes_drive(drive, &media.name, &media.bytes)
                     {
@@ -738,7 +806,7 @@ impl Emu {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let mut errors = Vec::new();
-            for drive in 0..2 {
+            for drive in 0..MAX_DISK_UNITS {
                 if let Some(file_name) = self.loaded_disk_file_name[drive].clone() {
                     if !self.insert_disk_by_file_name_drive(drive, &file_name) {
                         self.loaded_disk[drive] = None;
@@ -803,6 +871,9 @@ impl Emu {
 
     pub fn load_roms(&mut self) {
         let jobs = self.machine_type.rom_uses();
+        let machine_type = self.machine_type;
+        machine_type.attach_builtin_cards(self.tvc_mut().expect("TVC card setup"));
+        self.configure_host_file_cards();
         #[cfg(target_arch = "wasm32")]
         {
             let tvc = self.tvc_mut().expect("TVC ROM loading");
@@ -1109,9 +1180,7 @@ impl Emu {
         path: &Path,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (display_name, buf) = read_dsk_data(path)?;
-        self.tvc_mut()
-            .ok_or("disk loading is available only on TVC")?
-            .load_disk(drive, &display_name, &buf);
+        self.load_disk_unit(drive, &display_name, &buf)?;
         self.loaded_disk[drive] = Some(display_name);
         let path_str = path.to_string_lossy().to_string();
         self.loaded_disk_file_name[drive] = Some(path_str.clone());
@@ -1128,19 +1197,67 @@ impl Emu {
         }
     }
 
+    /// HBF slot and drive behind disk unit `unit`: two drives per HBF card,
+    /// numbered in slot order, so units 0 and 1 are the first card's A: and B:.
+    pub fn disk_unit_target(&self, unit: usize) -> Option<(usize, usize)> {
+        let slot = *self
+            .machine_type
+            .slots_with(ExpansionCard::VtDos12)
+            .get(unit / 2)?;
+        Some((slot, unit % 2))
+    }
+
+    /// Number of disk units provided by the configured HBF cards.
+    pub fn disk_unit_count(&self) -> usize {
+        (self.machine_type.slots_with(ExpansionCard::VtDos12).len() * 2).min(MAX_DISK_UNITS)
+    }
+
+    /// Menu label for a disk unit: `A:`/`B:`, prefixed by the slot when
+    /// more than one HBF card is configured.
+    pub fn disk_unit_label(&self, unit: usize) -> String {
+        let drive = if unit % 2 == 0 { "A:" } else { "B:" };
+        match self.disk_unit_target(unit) {
+            Some((slot, _)) if self.disk_unit_count() > 2 => format!("ex{slot} {drive}"),
+            _ => drive.to_string(),
+        }
+    }
+
+    fn load_disk_unit(
+        &mut self,
+        unit: usize,
+        name: &str,
+        data: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if unit >= MAX_DISK_UNITS {
+            return Err(format!("disk unit {unit} is out of range").into());
+        }
+        let target = self.disk_unit_target(unit);
+        let tvc = self
+            .tvc_mut()
+            .ok_or("disk loading is available only on TVC")?;
+        if let Some((slot, drive)) = target {
+            tvc.load_disk(slot, drive, name, data);
+        }
+        Ok(())
+    }
+
     pub fn save_disk_bytes(&self, drive: usize) -> Option<Vec<u8>> {
-        let tvc = self.tvc()?;
-        let ext = tvc.bus.extensions.hbf()?;
+        let (slot, drive) = self.disk_unit_target(drive)?;
+        let ext = self.tvc()?.bus.extensions.hbf_at(slot)?;
         ext.disk_bytes(drive).map(|b| b.to_vec())
     }
 
     pub fn disk_dirty(&self, drive: usize) -> bool {
-        self.tvc().is_some_and(|tvc| tvc.disk_dirty(drive))
+        self.disk_unit_target(drive)
+            .zip(self.tvc())
+            .is_some_and(|((slot, drive), tvc)| tvc.disk_dirty(slot, drive))
     }
 
     pub fn clear_disk_dirty(&mut self, drive: usize) {
-        if let Some(tvc) = self.tvc_mut() {
-            tvc.clear_disk_dirty(drive);
+        if let Some((slot, drive)) = self.disk_unit_target(drive)
+            && let Some(tvc) = self.tvc_mut()
+        {
+            tvc.clear_disk_dirty(slot, drive);
         }
     }
 
@@ -1333,9 +1450,7 @@ impl Emu {
         bytes: &[u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (display_name, buf) = unpack_dsk_bytes(name, bytes)?;
-        self.tvc_mut()
-            .ok_or("disk loading is available only on TVC")?
-            .load_disk(drive, &display_name, &buf);
+        self.load_disk_unit(drive, &display_name, &buf)?;
         self.loaded_disk[drive] = Some(display_name);
         self.loaded_disk_file_name[drive] = Some(name.to_string());
         #[cfg(target_arch = "wasm32")]
@@ -1381,9 +1496,7 @@ impl Emu {
         cursor.set_position(0);
         std::io::Write::write_all(&mut cursor, &boot_sector)?;
 
-        self.tvc_mut()
-            .ok_or("disk loading is available only on TVC")?
-            .load_disk(drive, geometry.file_name, &disk_data);
+        self.load_disk_unit(drive, geometry.file_name, &disk_data)?;
 
         self.loaded_disk[drive] = Some(geometry.file_name.to_string());
         self.loaded_disk_file_name[drive] = None;
@@ -1567,6 +1680,19 @@ pub fn cartridge_stems() -> Vec<String> {
         stems.sort_by(|left, right| left.to_ascii_lowercase().cmp(&right.to_ascii_lowercase()));
         stems
     }
+}
+
+/// Creating `files/` in a Finder-launched app's working directory (`/`) fails,
+/// so a missing folder goes beside the `roms/` the app actually uses.
+#[cfg(not(target_arch = "wasm32"))]
+fn default_host_file_dir() -> PathBuf {
+    let dir = data_dir("files");
+    if dir.exists() {
+        return dir;
+    }
+    data_dir("roms")
+        .parent()
+        .map_or(dir, |parent| parent.join("files"))
 }
 
 fn data_dir(name: &str) -> PathBuf {

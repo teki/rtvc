@@ -419,12 +419,13 @@ fn machine_ids_round_trip_presets_and_custom_mixes() {
         Some(MachineType::standard(true, RomVersion::V1_2, true))
     );
     let custom = MachineType::standard(false, RomVersion::V1_2, false)
-        .with_hbf_slot(1)
+        .with_slot(1, Some(ExpansionCard::VtDos12))
         .with_cart("pack_man");
     assert_eq!(custom.id(), "64ktvc12+ex1:vtdos12+cart:pack_man");
     assert_eq!(MachineType::from_id(&custom.id()), Some(custom));
     assert!(custom.preset_label().is_none());
-    assert!(MachineType::from_id("64k+tvc12+ex1:vtdos12+ex2:vtdos12").is_none());
+    assert!(MachineType::from_id("64k+tvc12+ex1:vtdos12+ex1:hostfile").is_none());
+    assert!(MachineType::from_id("64k+tvc12+ex1:floppy").is_none());
     assert!(MachineType::from_id("64ktvc12+ex4:vtdos12").is_none());
     assert_eq!(
         MachineType::from_id("64ktvc12+cart:vtdos12")
@@ -432,6 +433,152 @@ fn machine_ids_round_trip_presets_and_custom_mixes() {
             .map(|cart| cart.as_str().to_string()),
         Some("VT-DOS12-CART".to_string())
     );
+}
+
+#[test]
+fn machine_ids_and_emut_round_trip_multiple_cards() {
+    let machine = MachineType::standard(true, RomVersion::V1_2, true)
+        .with_slot(1, Some(ExpansionCard::VtDos12))
+        .with_slot(3, Some(ExpansionCard::HostFile));
+    assert_eq!(
+        machine.id(),
+        "64k+tvc12+ex0:vtdos12+ex1:vtdos12+ex3:hostfile"
+    );
+    assert_eq!(MachineType::from_id(&machine.id()), Some(machine));
+    assert_eq!(machine.slots_with(ExpansionCard::VtDos12), vec![0, 1]);
+    assert!(machine.preset_label().is_none());
+    let chunk = machine.write_snapshot_chunk();
+    assert_eq!(chunk[2], 1);
+    assert_eq!(&chunk[chunk.len() - 4..], &[1, 1, 0, 2]);
+    assert_eq!(MachineType::from_snapshot_chunk(&chunk).unwrap(), machine);
+
+    let host_only = MachineType::standard(true, RomVersion::V2_2, false)
+        .with_slot(0, Some(ExpansionCard::HostFile));
+    let chunk = host_only.write_snapshot_chunk();
+    assert_eq!(chunk[2], 0);
+    assert_eq!(MachineType::from_snapshot_chunk(&chunk).unwrap(), host_only);
+    assert!(MachineType::from_snapshot_chunk(&[1, 0, 0, 2, 0, 3, 0, 0, 0]).is_err());
+}
+
+#[test]
+fn two_hbf_cards_get_separate_disk_units() {
+    let machine = MachineType::standard(true, RomVersion::V1_2, true)
+        .with_slot(2, Some(ExpansionCard::VtDos12));
+    let mut emu = Emu::new(machine);
+    emu.load_roms();
+    assert_eq!(emu.disk_unit_count(), 4);
+    assert_eq!(emu.disk_unit_target(3), Some((2, 1)));
+    assert_eq!(emu.disk_unit_label(2), "ex2 A:");
+    let disk = formatted_disk(DiskGeometry::TVC_360K);
+    emu.insert_disk_bytes_drive(2, "second.dsk", &disk).unwrap();
+    assert_eq!(emu.save_disk_bytes(2).unwrap(), disk);
+    assert!(emu.save_disk_bytes(0).is_none());
+
+    let snapshot = emu.save_snapshot();
+    let state = Emu::read_emu_snapshot_state(&snapshot).unwrap();
+    assert_eq!(
+        state.loaded_disk_file_names[2].as_deref(),
+        Some("second.dsk")
+    );
+    assert_eq!(state.machine_type, Some(machine));
+}
+
+fn host_file_emu(name: &str, hbf_slot0: bool) -> (Box<Emu>, PathBuf) {
+    let dir = std::env::temp_dir().join(format!("rtvc-hostcard-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let machine = MachineType::standard(true, RomVersion::V1_2, hbf_slot0)
+        .with_slot(1, Some(ExpansionCard::HostFile));
+    let mut emu = Box::new(Emu::new(machine));
+    emu.set_host_file_dir(dir.clone());
+    emu.set_fast_boot(true);
+    emu.load_roms();
+    emu.running = true;
+    (emu, dir)
+}
+
+fn run_frames(emu: &mut Emu, frames: usize) {
+    for _ in 0..frames {
+        emu.tick();
+    }
+}
+
+#[test]
+fn host_file_card_is_registered_as_file_device_at_boot() {
+    for hbf_slot0 in [false, true] {
+        let (mut emu, dir) = host_file_emu(&format!("boot{hbf_slot0}"), hbf_slot0);
+        run_frames(&mut emu, if hbf_slot0 { 700 } else { 300 });
+        assert_eq!(
+            emu.read_raw_bank("u0", 0x0070, 5).unwrap(),
+            b"\x04FILE",
+            "hbf in slot 0: {hbf_slot0}"
+        );
+        // INIT routes channel 5 to the card in slot 1.
+        assert_eq!(emu.read_raw_bank("u0", 0x0B05, 1).unwrap(), vec![0x81]);
+        assert_eq!(emu.read_raw_bank("u0", 0x0B0D, 1).unwrap(), vec![0x81]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[test]
+fn basic_save_and_load_go_through_the_host_file_card() {
+    let (mut emu, dir) = host_file_emu("saveload", false);
+    run_frames(&mut emu, 300);
+    emu.type_text("10 PRINT 42\r");
+    run_frames(&mut emu, 100);
+    emu.type_text("SAVE \"HELLO\"\r");
+    run_frames(&mut emu, 200);
+
+    let saved = std::fs::read(dir.join("hello.cas")).expect("SAVE created hello.cas");
+    let (file_type, stream) = crate::cas::decode_cas_container(&saved).unwrap();
+    assert_eq!(file_type, crate::cas::TVC_CAS_TYPE_UNBUFFERED);
+    let payload = &saved[crate::cas::TVC_CAS_HEADER_LEN..];
+    assert!(stream.len() > 16 && payload.contains(&0x0A));
+    let generator = TapeBitstreamGenerator::new(&saved, "hello.cas");
+    assert!(generator.is_ok(), "saved file is not a valid tape image");
+
+    let program = emu.read_raw_bank("u0", 0x19EF, payload.len()).unwrap();
+    assert_eq!(program, payload);
+
+    emu.type_text("NEW\r");
+    run_frames(&mut emu, 100);
+    assert_ne!(
+        emu.read_raw_bank("u0", 0x19EF, payload.len()).unwrap(),
+        payload
+    );
+    emu.type_text("LOAD \"HELLO\"\r");
+    run_frames(&mut emu, 200);
+    assert_eq!(
+        emu.read_raw_bank("u0", 0x19EF, payload.len()).unwrap(),
+        payload
+    );
+
+    emu.type_text("NEW\r");
+    run_frames(&mut emu, 100);
+    assert!(emu.tvc_mut().unwrap().load_cas(&saved));
+    assert_eq!(
+        emu.read_raw_bank("u0", 0x19EF, payload.len()).unwrap(),
+        payload
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn existing_cas_program_loads_through_the_host_file_card() {
+    let (mut emu, dir) = host_file_emu("tvball", false);
+    let cas = std::fs::read("progs/TVBALL.CAS").unwrap();
+    std::fs::write(dir.join("TVBALL.CAS"), &cas).unwrap();
+    run_frames(&mut emu, 300);
+    emu.type_text("LOAD \"tvball\"\r");
+    run_frames(&mut emu, 300);
+    let (_, stream) = crate::cas::decode_cas_container(&cas).unwrap();
+    // TVBALL autostarts and rewrites later lines, so compare only the first line.
+    let payload = &stream[16..32];
+    assert_eq!(
+        emu.read_raw_bank("u0", 0x19EF, payload.len()).unwrap(),
+        payload
+    );
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -494,13 +641,13 @@ fn legacy_three_byte_machine_chunk_is_slot0_without_cart() {
 #[test]
 fn custom_machine_snapshot_keeps_cart_and_hbf_slot() {
     let machine = MachineType::standard(false, RomVersion::V1_2, false)
-        .with_hbf_slot(1)
+        .with_slot(1, Some(ExpansionCard::VtDos12))
         .with_cart("VT-DOS12-CART");
     let mut emu = Emu::new(machine);
     emu.load_roms();
     assert!(emu.roms_loaded);
-    assert!(emu.tvc().unwrap().bus.extensions.slot0().is_none());
-    assert!(emu.tvc().unwrap().bus.extensions.hbf().is_some());
+    assert!(emu.tvc().unwrap().card_kind(0).is_none());
+    assert!(emu.tvc().unwrap().hbf_slots() == vec![1]);
     let cart = std::fs::read("roms/VT-DOS12-CART.crt").unwrap();
     assert_eq!(emu.read_raw_bank("cart", 0, 16).unwrap(), cart[..16]);
 
@@ -508,8 +655,8 @@ fn custom_machine_snapshot_keeps_cart_and_hbf_slot() {
     let mut restored = Emu::new(MachineType::standard(true, RomVersion::V2_2, true));
     restored.load_snapshot(&snapshot).unwrap();
     assert_eq!(restored.machine_type, machine);
-    assert!(restored.tvc().unwrap().bus.extensions.slot0().is_none());
-    assert!(restored.tvc().unwrap().bus.extensions.hbf().is_some());
+    assert!(restored.tvc().unwrap().card_kind(0).is_none());
+    assert!(restored.tvc().unwrap().hbf_slots() == vec![1]);
     assert_eq!(restored.read_raw_bank("cart", 0, 16).unwrap(), cart[..16]);
 
     let disk = formatted_disk(DiskGeometry::TVC_360K);

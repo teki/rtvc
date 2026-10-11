@@ -40,8 +40,10 @@ Az `rtvc` egy Rust library crate natív, fej nélküli, könnyűsúlyú WebAssem
 | [src/cas.rs](../src/cas.rs) | CAS tároló kódolás és CAS-ból impulzus-intervallum konverzió |
 | [src/emulator/basic.rs](../src/emulator/basic.rs) | TVC BASIC tokenizáló és visszafejtő |
 | [src/tape.rs](../src/tape.rs) | kazetta szállítás és jelmintavételezés |
-| [src/expansion.rs](../src/expansion.rs) | négyfoglalatos bővítőkártya-útválasztás |
-| [src/hbf.rs](../src/hbf.rs) | HBF kártya memória és regiszterek |
+| [src/emulator/expansion.rs](../src/emulator/expansion.rs) | `SlotDevice` kártyafelület, `Card` enum, négyfoglalatos útválasztás és slot interruptok |
+| [src/emulator/hbf.rs](../src/emulator/hbf.rs) | HBF kártya memória és regiszterek |
+| [src/emulator/host_file.rs](../src/emulator/host_file.rs) | gazdagépes fájlkártya, portprotokoll, névleképezés és fájltárolók |
+| [roms/RTVC-HOSTFILE.asm](../roms/RTVC-HOSTFILE.asm) | a gazdagépes fájlkártya saját fejlesztésű `FILE` eszköz ROM-ja |
 | [src/fd1793.rs](../src/fd1793.rs) | FD1793 floppy vezérlő kétmeghajtós írási/olvasási támogatással |
 | [src/emu.rs](../src/emu.rs) | gépválasztás, média, futási állapot |
 | [src/machine.rs](../src/machine.rs) | explicit TVC/Zx82 gép határfelület és közös hibakereső műveletek |
@@ -223,7 +225,11 @@ tartalmaz egy kis BASIC betöltőt, amely a `0x1B00` közelében hív kódot.
 
 ### Floppy és archívumok
 
-A DSK bájtok egy HBF kártya A: (0) és B: (1) meghajtóihoz csatlakoztathatók. A lemez
+A DSK bájtok egy HBF kártya A: (0) és B: (1) meghajtóihoz csatlakoztathatók.
+Több HBF kártya esetén az `Emu` kártyánként két lemezegységet számoz slot
+sorrendben: a 0. és 1. egység az első kártya A: és B: meghajtója, a 2. és 3. a
+másodiké, és így tovább. A Lemez menü és az állapotsor ilyenkor `ex<slot> A:`
+formában nevezi meg az egységeket. A lemez
 modell FAT12 boot szektor geometriát elemez, és támogatja a mellékelt szoftverek által
 igényelt vezérlő útvonalakat, beleértve a visszaállítást, keresést, befelé léptetést, kifelé léptetést,
 szektor olvasást, szektor írást, cím olvasást és kényszerített megszakítást. Az FD1793 viselkedés
@@ -243,6 +249,34 @@ az emulált szektor írások után. A böngészőből betöltött lemezek, ZIP t
 
 A natív fordítások képesek ZIP archívumokat megnyitni és rekurzívan kiválasztani a CAS vagy DSK tagokat.
 A könnyűsúlyú WASM mag nem tartalmaz zip támogatást.
+
+### Bővítőkártyák
+
+Minden slot egy opcionális `Card` értéket (`Hbf` vagy `HostFile`) tartalmaz,
+amely a `SlotDevice` trait-et valósítja meg: azonosítóbitek, EXT ablak
+olvasás/írás, 16 bites portcímes I/O, interruptkérés, reset és pillanatkép
+állapot. Bármely kártya bármely slotba tehető, és egy fajtából több is lehet.
+A `0x58-0x5B` portok 7. bitje slotonként engedélyezi vagy törli az interruptot;
+a `0x59`/`0x5D` 0-3. bitje az engedélyezett kártyakéréseket mutatja.
+
+### Gazdagépes fájlkártya
+
+A `hostfile` kártya (azonosító `11`) `FILE` eszközt ad a TVC programoknak, natív
+módban egy gazdagépes mappával, a weben a böngésző tárolójával. ROM-ja, a
+[RTVC-HOSTFILE.asm](../roms/RTVC-HOSTFILE.asm), az rtvc saját kódja; egy
+egységteszt újrafordítja a forrást, és összeveti a `RTVC-HOSTFILE.ROM`
+fájllal. Az ötlet az ep128emu `tvcfileio.s` fájljából jön, de kód nincs
+átvéve: az rtvc kártyaportokat használ, a CAS kezelés Rustban van.
+
+Ha a kártya alapértelmezett eszközként van beállítva, az init rutin a
+`0x0B05`/`0x0B0D` bájtokba `0x80 | slot` értéket ír, így a BASIC `LOAD` és
+`SAVE` a kártyát használja a kazetta helyett. A `.cas` fájlokból a 128 bájtos
+tárolóblokk olvasáskor lekerül, íráskor újra elkészül; más kiterjesztésű
+fájlok nyers bájtok. A TVC név kisbetűssé válik, a nem biztonságos karakterek
+`_` jelre cserélődnek, és bemenetnél először `<név>.cas`, majd `<név>`
+keresődik, kis- és nagybetűtől függetlenül. A portprotokoll, a parancsok és a
+hibakódok részletes leírása az
+[angol referenciában](../info/rtvc.md#host-file-card) található.
 
 ### Gamebase
 
@@ -313,8 +347,9 @@ Az ismeretlen chunkok figyelmen kívül maradnak. A 2-es verzió a következőke
 | `CPUZ` | Z80 regiszterek, megszakítás és HALT állapot |
 | `MMU ` | RAM, modellnek megfelelő VRAM, lapozási állapot |
 | `VID ` | TVC mód, CRTC állapot, paletta, keret |
-| `HBF ` | opcionális HBF RAM és vezérlő állapot |
-| `BUS ` | megszakítás tároló, bővítő kiválasztás, kazetta és hang állapot |
+| `SLT0`-`SLT3` | foglalt slotonként: kártyafajta (`1` HBF, `2` gazdagépes fájlkártya) és kártyaállapot |
+| `HBF ` | régi formátum: az első HBF kártya RAM és vezérlő állapota; továbbra is betöltődik |
+| `BUS ` | megszakítás tároló, bővítő kiválasztás, kazetta és hang állapot, slot interrupt engedélyek |
 | `EMUT` | opcionális felhasználói felület gépválasztás és ROM verzió |
 | `EMUI` | opcionális kiválasztott média hivatkozások |
 
@@ -420,18 +455,21 @@ pedig egy konstans címeltolásra.
 
 ## Konfiguráció és perzisztencia
 
-A Gép menü öt TVC előbeállítást tart meg: 64K+ BASIC 1.2 vagy 2.2, a HBF
-kártyával a 0. bővítőhelyen, és a három kártya nélküli gépet (64K 1.2, 64K+
-1.2, 64K+ 2.2). Az alatta lévő felülírások a memóriát (64K vagy 64K+), a
-rendszer-ROM párt (BASIC 1.2 vagy 2.2, a SYS és az EXTH együtt), a
-programmodult (`roms/*.crt` vagy üres), és azt adják meg, hogy a négy
-bővítőcsatlakozó melyikében van a VT-DOS 1.2 HBF kártya. Egyszerre csak egy
-HBF kártya lehet csatlakoztatva. Az `ex0` hely az `0x10-0x1F` I/O tartomány,
-a CH1 csatlakozó.
+A Gép menü Preset almenüje öt TVC előbeállítást tart meg: 64K+ BASIC 1.2 vagy
+2.2, a HBF kártyával a 0. bővítőhelyen, és a három kártya nélküli gépet (64K
+1.2, 64K+ 1.2, 64K+ 2.2). Az alatta lévő sorok a memóriát (64K vagy 64K+) és a
+rendszer-ROM párt (BASIC 1.2 vagy 2.2, a SYS és az EXTH együtt) írják felül; a
+Cartridge almenü a programmodult (`roms/*.crt` vagy üres), az Expansion almenü
+pedig a négy bővítőcsatlakozó mindegyikére külön a benne lévő kártyát
+választja: nincs, VT-DOS 1.2 HBF kártya vagy gazdagépes fájlkártya. Több HBF kártya is lehet. Az `ex0` hely az `0x10-0x1F` I/O
+tartomány, a CH1 csatlakozó.
 
 Amíg a gép egy előbeállításnak megfelel, az marad kijelölve. Minden más
 összeállítás az azonosítójával jelenik meg, például
-`64ktvc12+ex1:vtdos12+cart:pack_man`. A programmodul 16 KiB-os `.crt` fájl
+`64ktvc12+ex1:vtdos12+cart:pack_man`. Minden kártya egy `+ex<slot>:<kártya>`
+részt ad hozzá (`vtdos12` vagy `hostfile`). Az `rtvc.toml` a gépazonosító
+mellett a `host_file_dir` (natív mappa) és a `host_file_default` (alapértelmezett
+eszköz, alapból `true`) kulcsot is tárolja. A programmodul 16 KiB-os `.crt` fájl
 a `roms/` könyvtárban. A BASIC automatikusan elindítja azt a modult, amelynek
 első négy bájtja `MOPS`; ilyen a `pack_man.crt` és a `VT-DOS12-CART.crt`.
 A HBF kártya és a VT-DOS programmodul külön van: a kártya a BASIC

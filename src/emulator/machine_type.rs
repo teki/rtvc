@@ -48,6 +48,46 @@ impl CartId {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ExpansionCard {
     VtDos12,
+    HostFile,
+}
+
+impl ExpansionCard {
+    pub const ALL: [ExpansionCard; 2] = [ExpansionCard::VtDos12, ExpansionCard::HostFile];
+
+    /// Card name used in machine ids (`+ex<n>:<name>`).
+    pub fn id_name(self) -> &'static str {
+        match self {
+            ExpansionCard::VtDos12 => "vtdos12",
+            ExpansionCard::HostFile => "hostfile",
+        }
+    }
+
+    pub fn from_id_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|card| card.id_name() == name)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ExpansionCard::VtDos12 => "VT-DOS 1.2",
+            ExpansionCard::HostFile => "Host files",
+        }
+    }
+
+    fn snapshot_code(self) -> u8 {
+        match self {
+            ExpansionCard::VtDos12 => 1,
+            ExpansionCard::HostFile => 2,
+        }
+    }
+
+    fn from_snapshot_code(code: u8) -> Option<Option<Self>> {
+        match code {
+            0 => Some(None),
+            1 => Some(Some(ExpansionCard::VtDos12)),
+            2 => Some(Some(ExpansionCard::HostFile)),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -80,8 +120,8 @@ impl MachineType {
         machine
     }
 
-    pub fn with_hbf_slot(mut self, slot: usize) -> Self {
-        self.set_hbf_slot(Some(slot));
+    pub fn with_slot(mut self, slot: usize, card: Option<ExpansionCard>) -> Self {
+        self.set_slot(slot, card);
         self
     }
 
@@ -90,15 +130,17 @@ impl MachineType {
         self
     }
 
-    pub fn set_hbf_slot(&mut self, slot: Option<usize>) {
-        self.slots = [None; 4];
-        if let Some(slot) = slot.filter(|slot| *slot < self.slots.len()) {
-            self.slots[slot] = Some(ExpansionCard::VtDos12);
+    pub fn set_slot(&mut self, slot: usize, card: Option<ExpansionCard>) {
+        if let Some(entry) = self.slots.get_mut(slot) {
+            *entry = card;
         }
     }
 
-    pub fn hbf_slot(&self) -> Option<usize> {
-        self.slots.iter().position(|slot| slot.is_some())
+    /// Slots holding `card`, in slot order.
+    pub fn slots_with(&self, card: ExpansionCard) -> Vec<usize> {
+        (0..self.slots.len())
+            .filter(|slot| self.slots[*slot] == Some(card))
+            .collect()
     }
 
     pub fn label(&self) -> String {
@@ -111,12 +153,14 @@ impl MachineType {
         if self.cart.is_some() {
             return None;
         }
-        match (self.is_plus, self.rom_version, self.hbf_slot()) {
-            (true, RomVersion::V1_2, Some(0)) => Some("64k+ 1.2, VT-DOS"),
-            (true, RomVersion::V2_2, Some(0)) => Some("64k+ 2.2, VT-DOS"),
-            (false, RomVersion::V1_2, None) => Some("64k  1.2"),
-            (true, RomVersion::V1_2, None) => Some("64k+ 1.2"),
-            (true, RomVersion::V2_2, None) => Some("64k+ 2.2"),
+        const HBF0: [Option<ExpansionCard>; 4] = [Some(ExpansionCard::VtDos12), None, None, None];
+        const EMPTY: [Option<ExpansionCard>; 4] = [None; 4];
+        match (self.is_plus, self.rom_version, self.slots) {
+            (true, RomVersion::V1_2, HBF0) => Some("64k+ 1.2, VT-DOS"),
+            (true, RomVersion::V2_2, HBF0) => Some("64k+ 2.2, VT-DOS"),
+            (false, RomVersion::V1_2, EMPTY) => Some("64k  1.2"),
+            (true, RomVersion::V1_2, EMPTY) => Some("64k+ 1.2"),
+            (true, RomVersion::V2_2, EMPTY) => Some("64k+ 2.2"),
             _ => None,
         }
     }
@@ -131,8 +175,8 @@ impl MachineType {
             }
         );
         for (slot, card) in self.slots.iter().enumerate() {
-            if let Some(ExpansionCard::VtDos12) = card {
-                id.push_str(&format!("+ex{slot}:vtdos12"));
+            if let Some(card) = card {
+                id.push_str(&format!("+ex{slot}:{}", card.id_name()));
             }
         }
         if let Some(cart) = self.cart {
@@ -169,13 +213,11 @@ impl MachineType {
             if let Some(slot) = part.strip_prefix("ex") {
                 let (index, card) = slot.split_once(':')?;
                 let index: usize = index.parse().ok()?;
-                if card != "vtdos12" || machine.hbf_slot().is_some() {
+                let card = ExpansionCard::from_id_name(card)?;
+                if machine.slots.get(index)?.is_some() {
                     return None;
                 }
-                machine.set_hbf_slot(Some(index));
-                if machine.hbf_slot() != Some(index) {
-                    return None;
-                }
+                machine.set_slot(index, Some(card));
             } else if let Some(stem) = part.strip_prefix("cart:") {
                 if machine.cart.is_some() {
                     return None;
@@ -279,25 +321,11 @@ impl MachineType {
             }
         };
         let mut slots = [None; 4];
-        let mut hbf_count = 0;
         for slot in &mut slots {
-            match reader.u8()? {
-                0 => {}
-                1 => {
-                    hbf_count += 1;
-                    *slot = Some(ExpansionCard::VtDos12);
-                }
-                value => {
-                    return Err(SnapshotError::InvalidData(format!(
-                        "unknown expansion card {value}"
-                    )));
-                }
-            }
-        }
-        if hbf_count > 1 {
-            return Err(SnapshotError::InvalidData(
-                "only one HBF card is supported".to_string(),
-            ));
+            let value = reader.u8()?;
+            *slot = ExpansionCard::from_snapshot_code(value).ok_or_else(|| {
+                SnapshotError::InvalidData(format!("unknown expansion card {value}"))
+            })?;
         }
         Ok(Self {
             is_plus,
@@ -312,7 +340,7 @@ impl MachineType {
         let mut writer = Writer::new();
         writer.u8(self.is_plus as u8);
         writer.u8(self.rom_version_id());
-        writer.u8(self.slots[0].is_some() as u8);
+        writer.u8((self.slots[0] == Some(ExpansionCard::VtDos12)) as u8);
         writer.u8(2);
         if let Some(cart) = self.cart {
             let stem = cart.as_str();
@@ -322,10 +350,7 @@ impl MachineType {
             writer.u8(0);
         }
         for slot in self.slots {
-            writer.u8(match slot {
-                None => 0,
-                Some(ExpansionCard::VtDos12) => 1,
-            });
+            writer.u8(slot.map_or(0, ExpansionCard::snapshot_code));
         }
         writer.into_inner()
     }
@@ -346,12 +371,17 @@ impl MachineType {
         if let Some(cart) = self.cart {
             uses.push((cart.file_name(), RomUse::Cart));
         }
-        for (slot, card) in self.slots.iter().enumerate() {
-            if let Some(ExpansionCard::VtDos12) = card {
-                uses.push(("VT-DOS12-DISK.ROM".to_string(), RomUse::Hbf(slot)));
-            }
+        for slot in self.slots_with(ExpansionCard::VtDos12) {
+            uses.push(("VT-DOS12-DISK.ROM".to_string(), RomUse::Hbf(slot)));
         }
         uses
+    }
+
+    /// Attaches cards that carry their own ROM and need no file from `roms/`.
+    pub(crate) fn attach_builtin_cards(&self, tvc: &mut Tvc) {
+        for slot in self.slots_with(ExpansionCard::HostFile) {
+            tvc.attach_card(slot, ExpansionCard::HostFile, &[]);
+        }
     }
 }
 
@@ -359,6 +389,6 @@ pub(crate) fn place_machine_rom(tvc: &mut Tvc, name: &str, data: &[u8], use_: Ro
     match use_ {
         RomUse::System => tvc.add_rom(name, data),
         RomUse::Cart => tvc.load_cart_rom(data),
-        RomUse::Hbf(slot) => tvc.attach_hbf(slot, data),
+        RomUse::Hbf(slot) => tvc.attach_card(slot, ExpansionCard::VtDos12, data),
     }
 }

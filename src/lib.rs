@@ -17,6 +17,8 @@ pub mod expansion;
 pub mod fd1793;
 #[path = "emulator/hbf.rs"]
 pub mod hbf;
+#[path = "emulator/host_file.rs"]
+pub mod host_file;
 #[path = "emulator/instruction_trace.rs"]
 pub mod instruction_trace;
 #[path = "emulator/key.rs"]

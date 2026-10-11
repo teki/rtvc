@@ -13,7 +13,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use crate::app_state::{AppState, AppStateFile};
 use crate::audio::NativeAudioSink;
 use crate::debug_ui::DebuggerUi;
-use crate::emu::{CartId, DiskGeometry, Emu, MachineType, ProgEntry, RomVersion, cartridge_stems};
+use crate::emu::{
+    CartId, DiskGeometry, Emu, ExpansionCard, MachineType, ProgEntry, RomVersion, cartridge_stems,
+};
 use crate::machine::System;
 use crate::vid::VidModel;
 use crate::workspace::{self, Workspace, WorkspaceMode, WorkspaceTab};
@@ -43,6 +45,10 @@ pub enum PendingFile {
     },
     RecentCleared {
         kind: String,
+    },
+    HostFile {
+        name: String,
+        bytes: Vec<u8>,
     },
 }
 
@@ -301,6 +307,25 @@ fn egui_key_to_js_code(key: egui::Key) -> Option<u32> {
     })
 }
 
+/// One labelled row of mutually exclusive choices; returns the clicked value.
+fn choice_row<T: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    label: &str,
+    current: T,
+    options: &[(T, &str)],
+) -> Option<T> {
+    let mut clicked = None;
+    ui.horizontal(|ui| {
+        ui.label(label);
+        for &(value, text) in options {
+            if ui.selectable_label(current == value, text).clicked() {
+                clicked = Some(value);
+            }
+        }
+    });
+    clicked
+}
+
 fn selected_media_matches<F>(emu: &Emu, filter: F) -> bool
 where
     F: Fn(&ProgEntry) -> bool,
@@ -425,95 +450,148 @@ impl EmuApp {
         self.save_app_state();
     }
 
-    fn draw_machine_overrides(&mut self, ui: &mut egui::Ui) {
-        ui.separator();
-        ui.label("Overrides");
+    fn draw_tvc_machine_options(&mut self, ui: &mut egui::Ui) {
         let current = self.emu.machine_type;
 
-        ui.label("Memory");
-        if ui.selectable_label(!current.is_plus, "64k").clicked() {
+        ui.menu_button(
+            format!("Preset: {}", current.preset_label().unwrap_or("Custom")),
+            |ui| {
+                let machine_types = self.machine_types.clone();
+                for (index, machine_type) in machine_types.into_iter().enumerate() {
+                    if ui
+                        .selectable_label(
+                            self.selected_machine == Some(index),
+                            machine_type.label(),
+                        )
+                        .clicked()
+                    {
+                        self.apply_machine_type(machine_type);
+                        ui.close_menu();
+                    }
+                }
+                if self.selected_machine.is_none() {
+                    let _ = ui.selectable_label(true, current.id());
+                }
+            },
+        );
+
+        if let Some(is_plus) = choice_row(
+            ui,
+            "Memory:",
+            current.is_plus,
+            &[(false, "64k"), (true, "64k+")],
+        ) {
             let mut machine = current;
-            machine.is_plus = false;
-            self.apply_machine_type(machine);
-        }
-        if ui.selectable_label(current.is_plus, "64k+").clicked() {
-            let mut machine = current;
-            machine.is_plus = true;
+            machine.is_plus = is_plus;
             self.apply_machine_type(machine);
         }
 
-        ui.label("System ROM");
-        if ui
-            .selectable_label(current.rom_version == RomVersion::V1_2, "1.2")
-            .clicked()
-        {
+        if let Some(rom_version) = choice_row(
+            ui,
+            "System ROM:",
+            current.rom_version,
+            &[(RomVersion::V1_2, "1.2"), (RomVersion::V2_2, "2.2")],
+        ) {
             let mut machine = current;
-            machine.rom_version = RomVersion::V1_2;
-            self.apply_machine_type(machine);
-        }
-        if ui
-            .selectable_label(current.rom_version == RomVersion::V2_2, "2.2")
-            .clicked()
-        {
-            let mut machine = current;
-            machine.rom_version = RomVersion::V2_2;
+            machine.rom_version = rom_version;
             self.apply_machine_type(machine);
         }
 
-        ui.label("Cartridge");
-        if ui
-            .selectable_label(current.cart.is_none(), "(none)")
-            .clicked()
-        {
-            let mut machine = current;
-            machine.cart = None;
-            self.apply_machine_type(machine);
-        }
-        let mut stems = cartridge_stems();
-        if let Some(cart) = current.cart {
-            let stem = cart.as_str().to_string();
-            if !stems.iter().any(|candidate| candidate == &stem) {
-                stems.push(stem);
-            }
-        }
-        for stem in stems {
-            let Some(cart) = CartId::new(&stem) else {
-                continue;
-            };
+        let cart_title = format!(
+            "Cartridge: {}",
+            current.cart.as_ref().map_or("(none)", |cart| cart.as_str())
+        );
+        ui.menu_button(cart_title, |ui| {
             if ui
-                .selectable_label(current.cart == Some(cart), &stem)
+                .selectable_label(current.cart.is_none(), "(none)")
                 .clicked()
             {
                 let mut machine = current;
-                machine.cart = Some(cart);
+                machine.cart = None;
                 self.apply_machine_type(machine);
+                ui.close_menu();
+            }
+            let mut stems = cartridge_stems();
+            if let Some(cart) = current.cart {
+                let stem = cart.as_str().to_string();
+                if !stems.iter().any(|candidate| candidate == &stem) {
+                    stems.push(stem);
+                }
+            }
+            for stem in stems {
+                let Some(cart) = CartId::new(&stem) else {
+                    continue;
+                };
+                if ui
+                    .selectable_label(current.cart == Some(cart), &stem)
+                    .clicked()
+                {
+                    let mut machine = current;
+                    machine.cart = Some(cart);
+                    self.apply_machine_type(machine);
+                    ui.close_menu();
+                }
+            }
+        });
+
+        ui.menu_button("Expansion", |ui| {
+            ui.label("ex0 = I/O 10h, connector CH1");
+            for slot in 0..4 {
+                let installed = current.slots[slot];
+                let title = format!(
+                    "ex{slot}: {}",
+                    installed.map_or("(none)", ExpansionCard::label)
+                );
+                ui.menu_button(title, |ui| {
+                    let choices =
+                        std::iter::once(None).chain(ExpansionCard::ALL.into_iter().map(Some));
+                    for choice in choices {
+                        let label = choice.map_or("(none)", ExpansionCard::label);
+                        if ui.selectable_label(installed == choice, label).clicked() {
+                            if installed != choice {
+                                let mut machine = current;
+                                machine.set_slot(slot, choice);
+                                self.apply_machine_type(machine);
+                            }
+                            ui.close_menu();
+                        }
+                    }
+                });
+            }
+            if !current.slots_with(ExpansionCard::HostFile).is_empty() {
+                ui.separator();
+                self.draw_host_file_options(ui);
+            }
+        });
+    }
+
+    fn draw_host_file_options(&mut self, ui: &mut egui::Ui) {
+        ui.label("Host files");
+        let mut default_device = self.emu.host_file_default();
+        if ui
+            .checkbox(&mut default_device, "Use as default cassette device")
+            .on_hover_text("Takes effect after reset")
+            .changed()
+        {
+            self.emu.set_host_file_default(default_device);
+            self.save_app_state();
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            ui.label(format!("Folder: {}", self.emu.host_file_dir().display()));
+            if ui.button("Choose folder...").clicked() {
+                ui.close_menu();
+                if let Some(dir) = rfd::FileDialog::new()
+                    .set_directory(self.emu.host_file_dir())
+                    .pick_folder()
+                {
+                    self.emu.set_host_file_dir(dir);
+                    self.save_app_state();
+                }
             }
         }
-
-        ui.label("Expansion");
-        ui.label("ex0 = I/O 10h, connector CH1");
-        for slot in 0..4 {
-            let occupied = current.hbf_slot() == Some(slot);
-            let title = if occupied {
-                format!("ex{slot}: VT-DOS 1.2")
-            } else {
-                format!("ex{slot}: (none)")
-            };
-            ui.menu_button(title, |ui| {
-                if ui.selectable_label(!occupied, "(none)").clicked() && occupied {
-                    let mut machine = current;
-                    machine.set_hbf_slot(None);
-                    self.apply_machine_type(machine);
-                    ui.close_menu();
-                }
-                if ui.selectable_label(occupied, "VT-DOS 1.2").clicked() {
-                    let mut machine = current;
-                    machine.set_hbf_slot(Some(slot));
-                    self.apply_machine_type(machine);
-                    ui.close_menu();
-                }
-            });
-        }
+        #[cfg(target_arch = "wasm32")]
+        self.draw_wasm_host_file_menu(ui);
     }
 
     pub fn set_audio_status(&mut self, status: String) {
@@ -1300,25 +1378,22 @@ impl EmuApp {
             }
 
             ui.separator();
-            ui.label("System");
-            if ui
-                .selectable_label(self.emu.system() == System::Tvc, "TVC")
-                .clicked()
-            {
-                let vid_model = self.emu.vid_model();
-                if let Err(err) = self.emu.reload(self.emu.machine_type) {
-                    self.file_status = Some(err);
-                }
-                self.emu.set_vid_model(vid_model);
-                self.save_app_state();
-                ui.close_menu();
-            }
             #[cfg(not(target_arch = "wasm32"))]
-            {
-                if ui
-                    .selectable_label(self.emu.system() == System::Zx82, "Zx82 (Spectrum 48K)")
-                    .clicked()
-                {
+            let systems = [(System::Tvc, "TVC"), (System::Zx82, "Zx82 (Spectrum 48K)")];
+            #[cfg(target_arch = "wasm32")]
+            let systems = [(System::Tvc, "TVC")];
+            match choice_row(ui, "System:", self.emu.system(), &systems) {
+                Some(System::Tvc) => {
+                    let vid_model = self.emu.vid_model();
+                    if let Err(err) = self.emu.reload(self.emu.machine_type) {
+                        self.file_status = Some(err);
+                    }
+                    self.emu.set_vid_model(vid_model);
+                    self.save_app_state();
+                    ui.close_menu();
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                Some(System::Zx82) => {
                     if let Err(err) = self.emu.switch_to_zx82() {
                         self.file_status = Some(err);
                     } else {
@@ -1326,46 +1401,24 @@ impl EmuApp {
                     }
                     ui.close_menu();
                 }
+                _ => {}
             }
 
             if self.emu.system() == System::Tvc {
-                ui.separator();
-                ui.label("TVC type");
-                let machine_types = self.machine_types.clone();
-                for (index, machine_type) in machine_types.into_iter().enumerate() {
-                    if ui
-                        .selectable_label(
-                            self.selected_machine == Some(index),
-                            machine_type.label(),
-                        )
-                        .clicked()
-                    {
-                        self.apply_machine_type(machine_type);
-                        ui.close_menu();
-                    }
-                }
-                if self.selected_machine.is_none() {
-                    let _ = ui.selectable_label(true, self.emu.machine_type.id());
-                }
-                self.draw_machine_overrides(ui);
+                self.draw_tvc_machine_options(ui);
             }
 
             ui.separator();
-            ui.label("Video");
-            let vid_model = self.emu.vid_model();
-            if ui
-                .selectable_label(vid_model == VidModel::FastFrame, "Fast frame")
-                .clicked()
-            {
-                self.emu.set_vid_model(VidModel::FastFrame);
-                self.save_app_state();
-                ui.close_menu();
-            }
-            if ui
-                .selectable_label(vid_model == VidModel::Interleaved, "Interleaved")
-                .clicked()
-            {
-                self.emu.set_vid_model(VidModel::Interleaved);
+            if let Some(vid_model) = choice_row(
+                ui,
+                "Video:",
+                self.emu.vid_model(),
+                &[
+                    (VidModel::FastFrame, "Fast frame"),
+                    (VidModel::Interleaved, "Interleaved"),
+                ],
+            ) {
+                self.emu.set_vid_model(vid_model);
                 self.save_app_state();
                 ui.close_menu();
             }
@@ -1498,9 +1551,8 @@ impl EmuApp {
                 return;
             }
 
-            let drive_labels = ["Drive A:", "Drive B:"];
-            for drive in 0..2 {
-                ui.menu_button(drive_labels[drive], |ui| {
+            for drive in 0..self.emu.disk_unit_count().max(2) {
+                ui.menu_button(format!("Drive {}", self.emu.disk_unit_label(drive)), |ui| {
                     if ui.button("Open Disk File...").clicked() {
                         self.load_disk_dialog(drive, ui.ctx().clone());
                         ui.close_menu();
@@ -1855,16 +1907,21 @@ PI                           — π (3.141592654)
                         self.emu.loaded_tape.as_deref().unwrap_or("(none)")
                     ));
                     ui.separator();
-                    let disk_label = match (
-                        self.emu.loaded_disk[0].as_deref(),
-                        self.emu.loaded_disk[1].as_deref(),
-                    ) {
-                        (None, None) => "Disk: (none)".to_string(),
-                        (Some(a), None) => format!("A: {a}"),
-                        (None, Some(b)) => format!("B: {b}"),
-                        (Some(a), Some(b)) => format!("A: {a}  B: {b}"),
-                    };
-                    ui.label(disk_label);
+                    let disks: Vec<String> = self
+                        .emu
+                        .loaded_disk
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(unit, name)| {
+                            name.as_deref()
+                                .map(|name| format!("{} {name}", self.emu.disk_unit_label(unit)))
+                        })
+                        .collect();
+                    ui.label(if disks.is_empty() {
+                        "Disk: (none)".to_string()
+                    } else {
+                        disks.join("  ")
+                    });
                     ui.separator();
                     ui.label(if self.emu.running {
                         "Running"
@@ -1910,6 +1967,11 @@ PI                           — π (3.141592654)
             disk_loaded: self.emu.loaded_disk_file_name[0].is_some(),
             recent_tapes: self.emu.recent_tapes.clone(),
             recent_disks: self.emu.recent_disks.clone(),
+            #[cfg(not(target_arch = "wasm32"))]
+            host_file_dir: Some(self.emu.host_file_dir().to_string_lossy().to_string()),
+            #[cfg(target_arch = "wasm32")]
+            host_file_dir: None,
+            host_file_default: Some(self.emu.host_file_default()),
         }
     }
 
@@ -1992,6 +2054,38 @@ PI                           — π (3.141592654)
             let error = result.err().map(js_value_string);
             let _ = tx.send(PendingFile::StorageResult { error });
             ctx.request_repaint();
+        });
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn draw_wasm_host_file_menu(&mut self, ui: &mut egui::Ui) {
+        if ui.button("Upload file...").clicked() {
+            ui.close_menu();
+            let file_tx = self.file_tx.clone();
+            let ctx = ui.ctx().clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                if let Some(file) = rfd::AsyncFileDialog::new().pick_file().await {
+                    let name = file.file_name();
+                    let bytes = file.read().await;
+                    let _ = file_tx.send(PendingFile::HostFile { name, bytes });
+                    ctx.request_repaint();
+                }
+            });
+        }
+        let names = self.emu.host_file_memory().names();
+        if names.is_empty() {
+            ui.add_enabled(false, egui::Label::new("No host files"));
+            return;
+        }
+        ui.menu_button("Download", |ui| {
+            for name in names {
+                if ui.button(&name).clicked() {
+                    if let Some(bytes) = self.emu.host_file_memory().get(&name) {
+                        download_file(&name, &bytes, "application/octet-stream");
+                    }
+                    ui.close_menu();
+                }
+            }
         });
     }
 
@@ -2446,7 +2540,28 @@ impl eframe::App for EmuApp {
                     }
                     _ => {}
                 },
+                PendingFile::HostFile { name, bytes } => {
+                    match self.emu.host_file_memory().insert(&name, bytes.clone()) {
+                        Ok(()) => {
+                            let recent = crate::emu::WasmRecentFile {
+                                name: name.clone(),
+                                bytes,
+                            };
+                            self.persist_wasm_recent("hostfile", recent, ctx.clone());
+                            self.file_status = Some(format!("Added host file: {name}"));
+                        }
+                        Err(err) => {
+                            self.file_status = Some(format!("Host file upload failed: {err}"));
+                        }
+                    }
+                }
             }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        for (name, bytes) in self.emu.host_file_memory().take_pending() {
+            let recent = crate::emu::WasmRecentFile { name, bytes };
+            self.persist_wasm_recent("hostfile", recent, ctx.clone());
         }
 
         self.handle_game_events(ctx);

@@ -39,8 +39,10 @@ This skill provides step-by-step instructions and references for compiling, exec
   ```
   - Place ROM files (`TVC12_D3.64K`, `TVC12_D4.64K`, `TVC12_D7.64K`) in `roms/` for the TVC to boot.
   - Use the Machine menu to run/pause, reset, select TVC or Zx82, choose a
-    TVC preset or override memory, system ROM, a `roms/*.crt` cartridge, and expansion
-    slots, and select the video model.
+    TVC preset or override memory, system ROM, a `roms/*.crt` cartridge, and the
+    card in each expansion slot (HBF or host files), and select the video model.
+  - The host file card serves BASIC `LOAD`/`SAVE` from `files/` (or the folder
+    chosen in Machine > Expansion, `host_file_dir` in `rtvc.toml`).
   - Use View > Developer Workspace to enable docking. View > Panes > IO Log
     reopens or closes the log pane, and Reset Workspace restores Screen above
     IO Log.
@@ -273,6 +275,14 @@ This skill provides step-by-step instructions and references for compiling, exec
   ```
   - `roms/TVC12_*.64K.symbols.json` is generated, never hand-edited: one file per listing, label addresses come from `rtvc-asm`, keyed by `(bank, image offset)`, with curated prose merged by the same key.
   - Run `--check` after touching `roms/TVC12_*.asm` (e.g. renames, new labels) to verify the checked-in JSON is current; it exits nonzero when stale.
+
+- **Reassemble the host file card ROM after editing its source:**
+  ```bash
+  cargo run --bin rtvc-asm -- --format bin --origin C000H roms/RTVC-HOSTFILE.asm -o roms/RTVC-HOSTFILE.ROM
+  cargo test --lib host_file
+  ```
+  - The binary is embedded with `include_bytes!`. `rom_binary_matches_its_source` fails when the checked-in `.ROM` is stale.
+  - `cargo test --lib host_file_card` runs the boot, BASIC `SAVE`/`LOAD`, and CAS-loading tests that drive the ROM through the emulated OS.
 
 ### Cross-Target Validation
 
