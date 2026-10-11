@@ -68,21 +68,53 @@ slot from `IX` during init: `slot = (IX - 0x40) / 0x30`, so
 
 ### Current rtvc state
 
+Slot configuration already exists, but it allows only one card kind and one
+card instance.
+
+- [machine_type.rs](../../src/emulator/machine_type.rs): `MachineType` holds
+  `slots: [Option<ExpansionCard>; 4]` next to the system ROM version and the
+  cartridge socket (`cart`, a `roms/*.crt` image, which is not an expansion
+  card). `ExpansionCard` has the single variant `VtDos12`.
+  `set_hbf_slot` clears every slot before placing the card, and `hbf_slot()`
+  returns the first occupied slot. The machine id appends `+ex<n>:vtdos12`;
+  `from_id` rejects unknown card names and a second card. `rom_uses` maps each
+  HBF slot to `VT-DOS12-DISK.ROM` with `RomUse::Hbf(slot)`, and
+  `place_machine_rom` calls `Tvc::attach_hbf(slot, data)`.
+- The `EMUT` snapshot chunk (written in [emu.rs](../../src/emulator/emu.rs))
+  stores the machine config: a legacy slot-0 flag, then one card byte per slot
+  (`0` empty, `1` VT-DOS 1.2), and loading rejects more than one HBF. The
+  layout is restored before the TVC snapshot itself is loaded.
+- [ui.rs](../../src/ui/ui.rs): the Machine menu shows `ex0`-`ex3` with
+  "(none)" or "VT-DOS 1.2"; choosing a slot moves the single card there.
 - [expansion.rs](../../src/emulator/expansion.rs): `ExpansionSlots` stores
-  `[Option<HBF>; 4]`, routes `0x10-0x4F` by slot, builds the `0x5A` ID byte,
-  and maps the EXT window to the slot selected by port `0x03`.
-- [tvc.rs](../../src/emulator/tvc.rs): `add_rom` attaches any ROM whose name
-  contains `DOS` as HBF in slot 0; disk APIs use `slot0()`/`slot0_mut()`;
-  writes to `0x58-0x5B` are ignored; `0x59` reports `pend_it` without slot
-  interrupt bits; FDC logging is hard-wired to ports `0x10-0x14`.
-- [tvc_snapshot.rs](../../src/emulator/tvc_snapshot.rs): `META` stores a
-  `has_hbf` flag and an optional `HBF ` chunk for slot 0.
+  `[Option<HBF>; 4]`, already routes `0x10-0x4F` and the EXT window (port
+  `0x03` bits 6-7) per slot, and builds the `0x5A` ID byte per slot.
+  `hbf()`/`hbf_mut()` return the first card; `slot0()` remains for slot-0
+  checks.
+- [tvc.rs](../../src/emulator/tvc.rs): `add_rom` still attaches any ROM whose
+  name contains `DOS` (but not `CART`) as HBF in slot 0; `load_disk`,
+  `disk_dirty` and `clear_disk_dirty` take a drive only and act on the first
+  HBF; `has_hbf()` checks slot 0 only; writes to `0x58-0x5B` are ignored;
+  `0x59` reports `pend_it` without slot interrupt bits; FDC logging is
+  hard-wired to ports `0x10-0x14`.
+- [tvc_snapshot.rs](../../src/emulator/tvc_snapshot.rs): `META` stores
+  `has_hbf` from slot 0, and one optional `HBF ` chunk is written from and
+  loaded into the first HBF, whatever its slot.
+- [emu.rs](../../src/emulator/emu.rs): loaded disk names and recent-media
+  restore are two-element arrays indexed by drive, with no slot.
 - [cas.rs](../../src/emulator/cas.rs): CAS constants, `encode_tvc_cas`, and the
   144-byte header model (128-byte container block + 16-byte program header).
 
 ## Design Decisions
 
-1. **Card interface mirrors the connector.** One `ExpansionCard` trait with:
+1. **Two layers: config descriptor and runtime card.** The existing
+   `ExpansionCard` enum in [machine_type.rs](../../src/emulator/machine_type.rs)
+   stays the `Copy` descriptor used by the machine id, `EMUT`, the UI and ROM
+   placement; it gains a `HostFile` variant. The runtime device is a separate
+   type in [expansion.rs](../../src/emulator/expansion.rs), built from the
+   descriptor when the machine is created.
+2. **Card interface mirrors the connector.** One `SlotDevice` trait (not named
+   `ExpansionCard`, which is taken by the descriptor) with:
    - `id_bits() -> u8` (two bits, `NIDENT`);
    - `mem_read(offset) / mem_write(offset, val)` for the 8 KiB window, called
      only while selected; `mem_peek(offset)` for side-effect-free debugger reads;
@@ -95,25 +127,28 @@ slot from `IX` during init: `slot = (IX - 0x40) / 0x30`, so
 
    NMI, wait states, audio input and the other rare signals stay out of the
    trait until a card needs them.
-2. **Static dispatch with an enum.** `enum Card { Hbf(Hbf), HostFile(HostFileCard) }`
+3. **Static dispatch with an enum.** `enum Card { Hbf(HBF), HostFile(HostFileCard) }`
    implements the trait by matching. This keeps EXT-window accesses cheap,
    avoids downcasting for card-specific media APIs, and keeps the lightweight
    WASM build small.
-3. **Per-slot instances everywhere.** Disk media, dirty flags, snapshots, UI and
-   logging address a card by slot. No `slot0()` shortcuts remain outside a thin
-   compatibility layer during migration.
-4. **Host file card reports ID `11`** and is discovered through its `MOPS`
+4. **Per-slot instances everywhere.** Disk media, dirty flags, snapshots, UI and
+   logging address a card by slot. `slot0()`, `hbf()`/`hbf_mut()` and
+   `has_hbf()` survive only as a thin compatibility layer during migration.
+5. **One configuration path.** Slot layouts are expressed through
+   `MachineType` and its id (`rtvc.toml`, browser storage, `EMUT`); no separate
+   slot list is added. Existing ids and presets keep their meaning.
+6. **Host file card reports ID `11`** and is discovered through its `MOPS`
    header like any third-party card.
-5. **CAS handling lives in Rust.** The card presents the TVC OS with the stream
+7. **CAS handling lives in Rust.** The card presents the TVC OS with the stream
    the cassette routines expect, which starts at the 16-byte program header
    (file offset `0x80`). Rust strips the 128-byte container block on read and
    rebuilds it on close after writing, sharing helpers with
    [cas.rs](../../src/emulator/cas.rs).
-6. **Whole-file buffering.** Opening reads the whole file into the card;
+8. **Whole-file buffering.** Opening reads the whole file into the card;
    closing an output file commits the buffer to the store. TVC files are small,
    this makes the card snapshot-friendly, and the web store can stay
    synchronous from the emulator's point of view.
-7. **ROM is rtvc-original**, assembled with rtvc's own assembler and checked
+9. **ROM is rtvc-original**, assembled with rtvc's own assembler and checked
    into the repository together with its source.
 
 ## Host File Card
@@ -181,19 +216,34 @@ status, and the ROM checks status after each block.
    discovery belongs next to the expansion section) or
    [info/vt-dos.md](../../info/vt-dos.md).
 2. **Card abstraction refactor, no behavior change.** Introduce the trait and
-   `Card` enum, move HBF behind it, make routing and the ID byte fully per
-   slot, and replace `slot0()` callers with slot-aware APIs. Existing tests and
-   VT-DOS boot must pass unchanged.
+   `Card` enum, store `[Option<Card>; 4]` in `ExpansionSlots`, and move HBF
+   behind it (routing and the ID byte are already per slot). Replace
+   `Tvc::attach_hbf` with a slot-aware `attach_card(slot, ExpansionCard, rom)`
+   driven by `rom_uses`/`place_machine_rom`, and give `load_disk`,
+   `disk_dirty` and `clear_disk_dirty` a slot argument. Decide whether the
+   `add_rom` `DOS`-name fallback is still needed outside tests; remove it if
+   not. Existing tests, including the HBF-in-slot-1 tests in
+   [emu_tests.rs](../../src/emulator/emu_tests.rs), and VT-DOS boot must pass
+   unchanged.
 3. **Slot interrupts.** Implement `0x58-0x5B` bit-7 enable/clear writes and
    merge card `irq_active()` lines into `0x59`/`0x5D` bits 0-3. HBF keeps its
    current behavior unless the FDC interrupt is already wired.
-4. **Multiple cards.** Configurable slot layout (for example
-   `slots = ["hbf", "hostfile", "", ""]`), with existing `*-vtdos` machine
-   types mapping to HBF in slot 0. Per-slot disk menus when more than one HBF
-   is present, and FDC logging driven by the slot's port range.
-5. **Snapshots.** Per-slot chunks (for example `SLT0`-`SLT3`, each with a card
-   kind tag and card state). Keep loading old `HBF ` chunks into slot 0 and
-   keep the `META` `has_hbf` compatibility check for old snapshots.
+4. **Multiple cards in `MachineType`.** Replace the single-card helpers
+   (`set_hbf_slot`, `hbf_slot`, `with_hbf_slot`) with per-slot
+   `set_slot(slot, Option<ExpansionCard>)` and a query for the slots holding a
+   given kind; keep a convenience for the presets. Let `from_id` accept several
+   `+ex<n>:vtdos12` parts and `+ex<n>:hostfile`, rejecting only a slot that is
+   named twice. Give the Machine menu an independent card choice per slot.
+   Presets and legacy ids are unchanged. Make loaded-disk state and the disk
+   menus in [emu.rs](../../src/emulator/emu.rs) and the UI address
+   `(slot, drive)` when more than one HBF is present, and drive FDC logging
+   from the slot's port range.
+5. **Snapshots.** In `EMUT`, assign card byte `2` to the host file card and
+   drop the one-HBF limit; the legacy slot-0 flag stays. In the TVC snapshot,
+   add per-slot chunks (for example `SLT0`-`SLT3`, each with a card kind tag
+   and card state). Today's `HBF ` chunk holds the first HBF, whatever its
+   slot, so old snapshots load it into the first HBF slot of the restored
+   layout. Keep the `META` `has_hbf` (slot 0) check for old snapshots.
 6. **CAS container helpers** in [cas.rs](../../src/emulator/cas.rs): split the
    128-byte container block encode/decode out of `encode_tvc_cas` so both the
    tape path and the host file card use one implementation.
@@ -201,8 +251,9 @@ status, and the ROM checks status after each block.
    tests.
 8. **ROM** source and binary, plus a test that reassembles the source and
    compares it with the checked-in binary.
-9. **Integration:** desktop configuration for the root directory, `wasm-full`
-   file store and UI, optional lightweight WASM API.
+9. **Integration:** desktop configuration for the root directory (stored
+   beside the machine id in `rtvc.toml`), `wasm-full` file store and UI,
+   optional lightweight WASM API.
 10. **Documentation:** see below.
 
 ## Validation
@@ -210,8 +261,11 @@ status, and the ROM checks status after each block.
 - Unit tests for slot routing: two HBF instances in slots 0 and 1 respond only
   on their own ranges, keep independent disk state, and produce ID byte `0xFA`.
 - Unit tests for interrupt enable/clear and status bits per slot.
-- Snapshot round trips for each card kind, plus loading an existing
-  HBF-in-slot-0 snapshot.
+- `MachineType` tests: ids with two HBF cards and with the host file card
+  round-trip through `id`/`from_id` and `EMUT`; legacy ids, presets and the
+  three-byte pre-cartridge `EMUT` chunk still load.
+- Snapshot round trips for each card kind, plus loading existing snapshots
+  with the HBF in slot 0 and in slot 1.
 - CAS helper tests: decode/encode of the 128-byte block is byte-identical to
   the current `encode_tvc_cas` output and round-trips existing `progs/*.CAS`.
 - Host file card tests: name mapping, `.cas` fallback, not-found status `0xA1`,
@@ -229,9 +283,10 @@ status, and the ROM checks status after each block.
 - [info/tvc.md](../../info/tvc.md): connector signals, ID code meanings, slot
   interrupt enable/clear writes, OS card discovery (card table, `MOPS` header
   layout, unit numbers, init call convention). Hardware facts only.
-- [info/rtvc.md](../../info/rtvc.md): card architecture, slot configuration,
-  snapshot chunks, host file card protocol, file name mapping, storage
-  backends.
+- [info/rtvc.md](../../info/rtvc.md): card architecture, slot configuration
+  (replace "Only one HBF card is attached" in Configuration and Persistence and
+  document the `+ex<n>:<card>` id parts), snapshot chunks, host file card
+  protocol, file name mapping, storage backends.
 - [README.md](../../README.md) and [README.hu.md](../../README.hu.md): how to
   enable the card and choose the directory.
 - Hungarian references under `info.hu/` following `L10N.md`.
