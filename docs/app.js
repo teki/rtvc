@@ -102,6 +102,9 @@ globalThis.rtvcStoreRecentMedia = async (kind, name, bytes) => {
     usedAt: Date.now(),
   });
   await transactionDone(transaction);
+  if (kind === "hostfile") {
+    return;
+  }
 
   const all = await requestResult(
     db.transaction(MEDIA_STORE, "readonly").objectStore(MEDIA_STORE).getAll()

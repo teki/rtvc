@@ -4,6 +4,8 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+## v0.8.8 - 2026-10-12
+
 - TVC presets can be overridden with mixed memory, system ROM, a `.crt`
   cartridge, and HBF expansion-slot choices. The active mix is saved with
   the machine id.
@@ -11,12 +13,14 @@ Release notes start here. Older release history is intentionally not backfilled.
   follow Z80 mode 2 and the one-instruction delay after `EI`, and a 64K+
   machine scans out the video bank selected by port `0x0C`.
 - Each expansion slot takes its own card, including several HBF floppy cards.
-- New host file card: a `FILE` device that loads and saves programs and data
+- New host file card: a device that loads and saves programs and data
   files in a host folder (or browser storage on the web) instead of tape.
 - Raster-timed effects now land where real hardware puts them: port accesses
   happen inside the instruction's I/O cycle, the cursor interrupt fires on the
   falling edge of the cursor pulse, and CPU accesses to video RAM get wait
   states.
+- The debugger shows BASIC 1.2 ROM symbols at the address where the ROM is
+  currently mapped, and the VT-DOS disk ROM has a commented listing per page.
 
 ## v0.8.7 - 2026-09-18
 
