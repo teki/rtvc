@@ -33,6 +33,7 @@ implementation order, limitations, and focused validation.
   [status](c80-compiler-progress.md), [findings](c80-compiler-findings.md))
 - [Clean Up the `laser-port1` Porting Effort](cleanup-laser-port1.md)
   ([progress](cleanup-laser-port1-progress.md))
+- [Expansion Card Abstraction and Host File Device](expansion-cards-and-host-file-device.md)
 - [Frame History Debugger](frame-history-debugger.md)
   ([progress](frame-history-debugger-progress.md))
 - [Focused Execution Trace](instruction-trace.md)
