@@ -326,6 +326,15 @@ The lightweight web dependency tree should contain `wasm-bindgen` but not cpal, 
     cargo run --bin fuse_test
     ```
 
+- **Regenerate the Z80 memory-cycle timing table:**
+  [src/emulator/z80_bus_cycles_table.rs](../../../src/emulator/z80_bus_cycles_table.rs)
+  drives TVC video RAM wait states and is generated from the FUSE vectors. The
+  `z80_bus_cycles` lib test fails when it is stale; regenerate it after Z80 core
+  or FUSE vector changes that alter memory-access order or timing:
+  ```bash
+  RTVC_REGEN_BUS_CYCLES=1 cargo test --lib z80_bus_cycles
+  ```
+
 - **Run ZEX (Z80 Instruction Exercise) tests:**
   These tests (`zexdoc` and `zexall`) are **even stricter** Z80 instruction validators. However, they are **very time-consuming** to execute and are therefore **rarely run** (e.g., during final validation or major CPU core refactors).
   - Run both `zexdoc` and `zexall`:

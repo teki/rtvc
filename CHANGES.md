@@ -13,6 +13,10 @@ Release notes start here. Older release history is intentionally not backfilled.
 - Each expansion slot takes its own card, including several HBF floppy cards.
 - New host file card: a `FILE` device that loads and saves programs and data
   files in a host folder (or browser storage on the web) instead of tape.
+- Raster-timed effects now land where real hardware puts them: port accesses
+  happen inside the instruction's I/O cycle, the cursor interrupt fires on the
+  falling edge of the cursor pulse, and CPU accesses to video RAM get wait
+  states.
 
 ## v0.8.7 - 2026-09-18
 

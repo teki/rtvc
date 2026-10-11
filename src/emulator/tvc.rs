@@ -19,12 +19,16 @@ use crate::sound::SoundTimer;
 use crate::tape::TapeInterface;
 use crate::vid::{Vid, VidModel};
 use crate::z80::Z80;
+use crate::z80_bus_cycles::BusCycles;
 
 const CPU_CLOCK_HZ: u64 = 3_125_000;
 const FRAME_RATE_HZ: u64 = 50;
 const FRAME_CLOCKS: u64 = CPU_CLOCK_HZ / FRAME_RATE_HZ;
 const SYNC_TIMEOUT_HOST_FRAMES: u32 = 8;
 const SHARED_CURSOR_SOUND_IT: u8 = 0x10;
+// Devices latch or drive the data bus this many T-states into an I/O cycle.
+const IO_ACCESS_TSTATE: u32 = 3;
+const MAX_TIMED_ACCESSES: usize = 8;
 pub const DEBUG_RUN_TO_IRQ_MAX_CYCLES: u32 = FRAME_CLOCKS as u32 * 2;
 
 pub struct TvcBus {
@@ -40,6 +44,21 @@ pub struct TvcBus {
     // Last Z80 PC before an I/O instruction, used only for debug logging.
     pub trace_pc: u16,
     instruction_effects: Option<InstructionEffects>,
+    // Device time already advanced inside the current instruction.
+    instruction_synced_cycles: u32,
+    stream_video: bool,
+    // Memory cycles of the current instruction, for video RAM wait states.
+    timing_active: bool,
+    access_count: usize,
+    access_values: [u8; MAX_TIMED_ACCESSES],
+    video_access_mask: u32,
+    // Video RAM wait states of the current instruction, in half T-states,
+    // resolved for its first `waits_resolved` memory cycles.
+    wait_half_tstates: u32,
+    waits_resolved: usize,
+    // CPU time in half T-states modulo the 4-half-T-state video RAM slot,
+    // which is aligned with the CRTC character clock.
+    half_tstate_phase: u32,
 }
 
 impl TvcBus {
@@ -55,12 +74,22 @@ impl TvcBus {
             sound: SoundTimer::new(),
             trace_pc: 0,
             instruction_effects: None,
+            instruction_synced_cycles: 0,
+            stream_video: false,
+            timing_active: false,
+            access_count: 0,
+            access_values: [0; MAX_TIMED_ACCESSES],
+            video_access_mask: 0,
+            wait_half_tstates: 0,
+            waits_resolved: 0,
+            half_tstate_phase: 0,
         }
     }
 
     pub fn reset(&mut self) {
         self.mmu.reset();
         self.vid.reset();
+        self.reset_video_slot_phase();
         self.key.reset();
         self.pend_it = 0x1F;
         self.extensions.reset();
@@ -396,6 +425,107 @@ impl TvcBus {
         }
     }
 
+    fn advance_devices(&mut self, cycles: u32) {
+        if cycles == 0 {
+            return;
+        }
+        self.tape.advance(cycles as u64);
+        self.advance_sound_timer(cycles as u64);
+        if self.stream_video {
+            let mut cursor_it = self.vid.stream_some(self.mmu.get_vid_mem(), cycles);
+            while cursor_it {
+                self.request_shared_irq();
+                cursor_it = self.vid.stream_some(self.mmu.get_vid_mem(), 0);
+            }
+        }
+    }
+
+    /// Realigns the CPU clock with a video circuit that restarted its
+    /// character clock.
+    pub(crate) fn reset_video_slot_phase(&mut self) {
+        self.half_tstate_phase = 0;
+    }
+
+    fn begin_instruction_timing(&mut self, stream_video: bool) {
+        self.instruction_synced_cycles = 0;
+        self.stream_video = stream_video;
+        self.timing_active = true;
+        self.access_count = 0;
+        self.video_access_mask = 0;
+        self.wait_half_tstates = 0;
+        self.waits_resolved = 0;
+    }
+
+    /// Advances devices through the rest of an instruction that took
+    /// `tstates` T-states without wait states, and returns its length
+    /// including video RAM wait states.
+    fn finish_instruction_timing(&mut self, tstates: u32) -> u32 {
+        self.timing_active = false;
+        self.resolve_video_waits(Some(tstates));
+        let half_tstates = 2 * tstates + self.wait_half_tstates;
+        let elapsed = self.elapsed_cycles(half_tstates);
+        self.half_tstate_phase = (self.half_tstate_phase + half_tstates) & 3;
+        let remaining = elapsed.saturating_sub(self.instruction_synced_cycles);
+        self.instruction_synced_cycles = 0;
+        self.advance_devices(remaining);
+        elapsed
+    }
+
+    /// Whole device cycles elapsed `half_tstates` into the instruction.
+    fn elapsed_cycles(&self, half_tstates: u32) -> u32 {
+        ((self.half_tstate_phase + half_tstates) >> 1) - (self.half_tstate_phase >> 1)
+    }
+
+    fn sync_devices_to(&mut self, cycles: u32) {
+        if cycles > self.instruction_synced_cycles {
+            let delta = cycles - self.instruction_synced_cycles;
+            self.instruction_synced_cycles = cycles;
+            self.advance_devices(delta);
+        }
+    }
+
+    #[inline]
+    fn record_memory_cycle(&mut self, addr: u16, val: u8) {
+        if !self.timing_active {
+            return;
+        }
+        let index = self.access_count;
+        if index < MAX_TIMED_ACCESSES {
+            self.access_values[index] = val;
+            if self.mmu.is_video(addr) {
+                self.video_access_mask |= 1 << index;
+            }
+        }
+        self.access_count += 1;
+    }
+
+    /// Accumulates the video RAM wait states of the memory cycles performed
+    /// so far. The CPU is stretched until the video circuit's access slot.
+    fn resolve_video_waits(&mut self, tstates: Option<u32>) {
+        let count = self.access_count.min(MAX_TIMED_ACCESSES);
+        let pending = self.video_access_mask >> self.waits_resolved;
+        let resolved = std::mem::replace(&mut self.waits_resolved, count);
+        if pending == 0 {
+            return;
+        }
+        let Some(cycles) =
+            BusCycles::lookup(&self.access_values[..count], tstates, self.access_count)
+        else {
+            return;
+        };
+        for index in resolved..count {
+            if self.video_access_mask & (1 << index) == 0 {
+                continue;
+            }
+            let Some(cycle) = cycles.get(index) else {
+                break;
+            };
+            let start = self.half_tstate_phase + 2 * cycle.tstate + self.wait_half_tstates;
+            let slot_offset = if cycle.m1 { start + 3 } else { start };
+            self.wait_half_tstates += 4 - (slot_offset & 3);
+        }
+    }
+
     fn tape_input_bit(&mut self) -> u8 {
         self.tape.input_bit()
     }
@@ -532,13 +662,17 @@ fn cursor_mode_label(mode: u8) -> &'static str {
 
 impl CpuBus for TvcBus {
     fn r8(&mut self, addr: u16) -> u8 {
-        if let Some(offset) = self.mmu.ext_card_offset(addr) {
-            return self.extensions.read_mem(offset);
-        }
-        self.mmu.r8(addr)
+        let val = if let Some(offset) = self.mmu.ext_card_offset(addr) {
+            self.extensions.read_mem(offset)
+        } else {
+            self.mmu.r8(addr)
+        };
+        self.record_memory_cycle(addr, val);
+        val
     }
 
     fn w8(&mut self, addr: u16, val: u8) {
+        self.record_memory_cycle(addr, val);
         if let Some(effects) = &mut self.instruction_effects {
             effects.record_memory_write(addr, val);
         }
@@ -547,6 +681,12 @@ impl CpuBus for TvcBus {
             return;
         }
         self.mmu.w8(addr, val);
+    }
+
+    fn io_cycle_start(&mut self, tstates: u32) {
+        self.resolve_video_waits(None);
+        let access = 2 * (tstates + IO_ACCESS_TSTATE) + self.wait_half_tstates;
+        self.sync_devices_to(self.elapsed_cycles(access));
     }
 
     fn out8(&mut self, port: u8, val: u8, high_addr: u8) {
@@ -890,16 +1030,16 @@ impl Tvc {
                 effects: InstructionEffects::default(),
             }
         });
-        let cpu_time = self.z80.step(&mut self.bus, 0);
+        self.bus.begin_instruction_timing(sync_video);
+        let tstates = self.z80.step(&mut self.bus, 0);
         self.record_tracepoint();
 
+        let cpu_time = self.bus.finish_instruction_timing(tstates);
         self.clock += cpu_time as u64;
-        self.bus.advance_tape(cpu_time as u64);
-        self.bus.advance_sound_timer(cpu_time as u64);
 
         let mut frame_complete = false;
         if sync_video {
-            frame_complete = self.advance_video_for(cpu_time);
+            frame_complete = self.bus.vid.render_stream(&mut self.framebuffer, 608);
         }
 
         let (irq_time, irq_frame_complete) = self.service_pending_shared_irq();
@@ -942,14 +1082,6 @@ impl Tvc {
             let stripe = (x + y * 2 + phase) % 96 < 8;
             *pixel = if stripe { 0xFFFFFFFF } else { 0xFF000000 };
         }
-    }
-
-    fn advance_video_for(&mut self, cycles: u32) -> bool {
-        let cursor_it = self.bus.vid.stream_some(self.bus.mmu.get_vid_mem(), cycles);
-        if cursor_it {
-            self.request_cursor_irq();
-        }
-        self.bus.vid.render_stream(&mut self.framebuffer, 608)
     }
 
     fn service_pending_shared_irq(&mut self) -> (u32, bool) {
@@ -1022,13 +1154,8 @@ impl Tvc {
         let mut frame_complete = false;
         if irq_duration > 0 {
             self.clock += irq_duration as u64;
-            let irq_duration = irq_duration as u64;
-            self.bus.advance_tape(irq_duration);
-            self.bus.advance_sound_timer(irq_duration);
-            self.bus.vid.stream_some(
-                self.bus.mmu.get_vid_mem(),
-                irq_duration.try_into().unwrap_or(u32::MAX),
-            );
+            self.bus.begin_instruction_timing(true);
+            self.bus.finish_instruction_timing(irq_duration);
             frame_complete = self.bus.vid.render_stream(&mut self.framebuffer, 608);
         }
         (irq_duration, frame_complete)

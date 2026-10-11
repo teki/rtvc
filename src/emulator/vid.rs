@@ -606,6 +606,8 @@ pub struct Vid {
     ring: SignalRing,
     television: TelevisionReceiver,
     run_for: u32,
+    // The shared interrupt latches on the falling edge of the cursor pulse.
+    cursor_pulse: bool,
 }
 
 impl Vid {
@@ -616,6 +618,7 @@ impl Vid {
             ring: SignalRing::new(),
             television: TelevisionReceiver::new(),
             run_for: 0,
+            cursor_pulse: false,
         }
     }
 
@@ -628,6 +631,7 @@ impl Vid {
         self.ring.clear();
         self.television.lose_lock();
         self.run_for = 0;
+        self.cursor_pulse = false;
     }
 
     pub fn set_reg_idx(&mut self, index: u8) {
@@ -764,7 +768,9 @@ impl Vid {
         self.run_for = self.run_for.saturating_add(run_for);
         while self.run_for >= CPU_CLOCKS_PER_CHARACTER {
             let tick = self.crtc.tick();
-            let cursor_interrupt = tick.cursor && tick.ra == (self.crtc.reg[10] & 0x1f);
+            let cursor_pulse = tick.cursor && tick.ra == (self.crtc.reg[10] & 0x1f);
+            let cursor_interrupt = self.cursor_pulse && !cursor_pulse;
+            self.cursor_pulse = cursor_pulse;
             let signal = self.generator.emit(tick, vram);
             self.ring.push(signal);
             self.run_for -= CPU_CLOCKS_PER_CHARACTER;

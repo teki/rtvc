@@ -34,6 +34,7 @@ and full-web frontends.
 | File | Responsibility |
 | --- | --- |
 | [src/z80.rs](../src/z80.rs) | Z80 execution core |
+| [src/emulator/z80_bus_cycles.rs](../src/emulator/z80_bus_cycles.rs) | FUSE-derived memory-cycle timing per instruction, for wait states |
 | [src/bus.rs](../src/bus.rs) | CPU bus trait and flat test bus |
 | [src/mmu.rs](../src/mmu.rs) | TVC bank switching and ROM placement |
 | [src/vid.rs](../src/vid.rs) | CRTC state, TVC pixel decoding, renderers |
@@ -101,12 +102,32 @@ disassembly, and stepping operations dispatch through this boundary.
 The normal scheduler uses a 62,500-cycle host frame budget:
 
 1. execute one Z80 instruction;
-2. add its T-states to the machine clock;
+2. add its T-states, including video RAM wait states, to the machine clock;
 3. advance tape transport and sound by those T-states;
 4. advance interleaved video when selected;
 5. latch device interrupts and invoke the Z80 interrupt path when accepted;
 6. check execution breakpoints and optional ROM tracepoints;
 7. stop at the budget or a debugger condition.
+
+Steps 3 and 4 are split around port accesses. The Z80 core calls
+`CpuBus::io_cycle_start()` with the T-state at which the instruction's I/O
+machine cycle begins; `TvcBus` first advances tape, sound, and video to three
+T-states into that cycle, then performs the access, and advances the rest of
+the instruction afterwards. Border, palette, CRTC, and sound-timer accesses
+therefore land mid-instruction, as on hardware.
+
+`TvcBus` records each memory access of the instruction and whether it hit a
+video bank. When one did, it looks up the instruction's memory-cycle start
+T-states in [z80_bus_cycles.rs](../src/emulator/z80_bus_cycles.rs) and applies
+the [video RAM wait states](tvc.md#video-ram-wait-states) in half T-states,
+carrying the odd half to the next instruction. The table
+([z80_bus_cycles_table.rs](../src/emulator/z80_bus_cycles_table.rs)) is
+generated from the FUSE test vectors by pairing every access the Z80 core makes
+with the bus cycle FUSE recorded for it; its test fails when the table is
+stale. Redundant `DD`/`FD` prefixes are synthesized as extra opcode fetches.
+Interrupt acknowledge cycles do not wait. The 32K/64K boards' opcode-fetch
+[`/WAIT` for slow sources](tvc.md#opcode-fetch-wait-state-on-32k-and-64k-boards)
+is not emulated.
 
 `debug_step_instruction()` uses the same device advancement path. Debugger
 stepping therefore changes video, tape, sound, interrupts, and machine time,
@@ -139,8 +160,9 @@ carries eight final packed IGRB pixels per character clock plus shaped sync and
 blanking state; it never carries a VRAM byte that can be recolored later.
 
 This mode preserves mid-frame palette, border, mode, start-address, and CRTC
-changes. A cursor match latches the shared interrupt at the corresponding beam
-position; IRQ service time is also applied to video advancement.
+changes. The shared interrupt latches on the falling edge of the cursor pulse,
+one character clock after a cursor match; IRQ service time is also applied to
+video advancement.
 
 The television stage can see only final IGRB video, blanking, HSYNC, and VSYNC.
 It measures repeated sync edges and accepts PAL-like horizontal periods of
@@ -769,6 +791,13 @@ The fast CPU validation path is the 1,334-case FUSE suite:
 
 ```bash
 cargo run --bin fuse_test
+```
+
+After a Z80 core or FUSE vector change that alters memory-cycle timing,
+regenerate the wait-state timing table:
+
+```bash
+RTVC_REGEN_BUS_CYCLES=1 cargo test --lib z80_bus_cycles
 ```
 
 ZEXDOC/ZEXALL are stricter and slower:

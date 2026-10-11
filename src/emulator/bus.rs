@@ -27,6 +27,10 @@ pub trait CpuBus {
         self.w8(addr, (val & 0xFF) as u8);
     }
 
+    /// Called immediately before `in8`/`out8` with the number of T-states
+    /// elapsed in the current instruction when its I/O machine cycle begins.
+    fn io_cycle_start(&mut self, _tstates: u32) {}
+
     fn out8(&mut self, _port: u8, _val: u8, _expected_val: u8) {}
 
     fn in8(&mut self, _port: u8, val: u8) -> u8 {

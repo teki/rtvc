@@ -121,7 +121,10 @@ pub(crate) fn load(tvc: &mut Tvc, data: &[u8]) -> snapshot::Result<()> {
                 tvc.z80.state.iff2 = reader.u8()?;
             }
             b"MMU " => tvc.bus.mmu.read_snapshot(&mut reader)?,
-            b"VID " => tvc.bus.vid.read_snapshot(&mut reader)?,
+            b"VID " => {
+                tvc.bus.vid.read_snapshot(&mut reader)?;
+                tvc.bus.reset_video_slot_phase();
+            }
             b"HBF " => {
                 tvc.bus
                     .extensions

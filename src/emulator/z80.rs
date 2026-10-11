@@ -28,6 +28,8 @@ pub struct Z80 {
     pub sz53p_table: [u8; 256],
     // Set by EI. Maskable interrupts are accepted after the following instruction.
     after_ei: bool,
+    // T-states spent on DD/FD prefixes before the instruction being executed.
+    prefix_tstates: u32,
 }
 pub type Z80A = Z80;
 
@@ -38,6 +40,7 @@ impl Z80 {
             sz53_table: [0; 256],
             sz53p_table: [0; 256],
             after_ei: false,
+            prefix_tstates: 0,
         };
         for i in 0..256 {
             let mut flags = (i as u8 & F_S) | (i as u8 & F_5) | (i as u8 & F_3);
@@ -349,6 +352,7 @@ impl Z80 {
         }
         self.state.r8[R_R] =
             (self.state.r8[R_R] & 0x80) | ((self.state.r8[R_R].wrapping_add(r_add)) & 0x7F);
+        self.prefix_tstates = t_add;
         let (t, m) = self.execute(opcode, displ, bus, &mut t_add, &mut pc);
         if t == 0 {
             panic!("Opcode not implemented: 0x{:04X}", opcode);
@@ -383,6 +387,7 @@ impl Z80 {
                 return res;
             }
             *t_add += 4;
+            self.prefix_tstates = *t_add;
             *pc = pc.wrapping_add(1);
             return self.execute_base((opcode & 0xFF) as u8, bus);
         }
@@ -392,6 +397,7 @@ impl Z80 {
                 return res;
             }
             *t_add += 4;
+            self.prefix_tstates = *t_add;
             *pc = pc.wrapping_add(1);
             return self.execute_base((opcode & 0xFF) as u8, bus);
         }
@@ -1095,6 +1101,7 @@ impl Z80 {
                 // OUT (n),A
                 let pc = self.state.pc;
                 let n = bus.r8(pc.wrapping_add(1));
+                bus.io_cycle_start(self.prefix_tstates + 7);
                 bus.out8(n, self.state.r8[R_A], self.state.r8[R_A]);
                 (11, 2)
             }
@@ -1180,6 +1187,7 @@ impl Z80 {
                 // IN A,(n)
                 let pc = self.state.pc;
                 let n = bus.r8(pc.wrapping_add(1));
+                bus.io_cycle_start(self.prefix_tstates + 7);
                 self.state.r8[R_A] = bus.in8(n, self.state.r8[R_A]);
                 (11, 2)
             }
@@ -1582,6 +1590,7 @@ impl Z80 {
                         7 => R_A,
                         _ => unreachable!(),
                     };
+                    bus.io_cycle_start(8);
                     let val = bus.in8(self.state.r8[R_C], self.state.r8[R_B]);
                     if reg == 255 {
                         self.state.r8[R_F] =
@@ -1606,6 +1615,7 @@ impl Z80 {
                         7 => self.state.r8[R_A],
                         _ => unreachable!(),
                     };
+                    bus.io_cycle_start(8);
                     bus.out8(self.state.r8[R_C], val, self.state.r8[R_B]);
                     return (12, 2);
                 }
@@ -1773,6 +1783,7 @@ impl Z80 {
                 // RES 4,(IY+d),D
                 let bc = self.state.get_bc();
                 let hl = self.state.get_hl();
+                bus.io_cycle_start(9);
                 let regval = bus.in8(self.state.r8[R_C], self.state.r8[R_B]);
                 bus.w8(hl, regval);
                 let hl = hl.wrapping_add(1);
@@ -1797,6 +1808,7 @@ impl Z80 {
                 self.state.set_hl(hl);
                 let (res, flags) = self.sub8(self.state.r8[R_B], 1, false);
                 self.state.r8[R_B] = res;
+                bus.io_cycle_start(12);
                 bus.out8(self.state.r8[R_C], memval, self.state.r8[R_B]);
                 let tmp = (memval as u16).wrapping_add(self.state.r8[R_L] as u16);
                 self.state.r8[R_F] = (flags & (F_S | F_Z | F_5 | F_3))
@@ -1852,6 +1864,7 @@ impl Z80 {
                 // RES 5,(IY+d),D
                 let bc = self.state.get_bc();
                 let hl = self.state.get_hl();
+                bus.io_cycle_start(9);
                 let regval = bus.in8(self.state.r8[R_C], self.state.r8[R_B]);
                 bus.w8(hl, regval);
                 let hl = hl.wrapping_sub(1);
@@ -1876,6 +1889,7 @@ impl Z80 {
                 self.state.set_hl(hl);
                 let (res, flags) = self.sub8(self.state.r8[R_B], 1, false);
                 self.state.r8[R_B] = res;
+                bus.io_cycle_start(12);
                 bus.out8(self.state.r8[R_C], memval, self.state.r8[R_B]);
                 let tmp = (memval as u16).wrapping_add(self.state.r8[R_L] as u16);
                 self.state.r8[R_F] = (flags & (F_S | F_Z | F_5 | F_3))
@@ -1939,6 +1953,7 @@ impl Z80 {
                 // RES 6,(IY+d),D
                 let bc = self.state.get_bc();
                 let hl = self.state.get_hl();
+                bus.io_cycle_start(9);
                 let regval = bus.in8(self.state.r8[R_C], self.state.r8[R_B]);
                 bus.w8(hl, regval);
                 let hl = hl.wrapping_add(1);
@@ -1967,6 +1982,7 @@ impl Z80 {
                 self.state.set_hl(hl);
                 let (res, flags) = self.sub8(self.state.r8[R_B], 1, false);
                 self.state.r8[R_B] = res;
+                bus.io_cycle_start(12);
                 bus.out8(self.state.r8[R_C], memval, self.state.r8[R_B]);
                 let tmp = (memval as u16).wrapping_add(self.state.r8[R_L] as u16);
                 self.state.r8[R_F] = (flags & (F_S | F_Z | F_5 | F_3))
@@ -2034,6 +2050,7 @@ impl Z80 {
                 // RES 7,(IY+d),D
                 let bc = self.state.get_bc();
                 let hl = self.state.get_hl();
+                bus.io_cycle_start(9);
                 let regval = bus.in8(self.state.r8[R_C], self.state.r8[R_B]);
                 bus.w8(hl, regval);
                 let hl = hl.wrapping_sub(1);
@@ -2064,6 +2081,7 @@ impl Z80 {
                 self.state.set_hl(hl);
                 let (res, flags) = self.sub8(self.state.r8[R_B], 1, false);
                 self.state.r8[R_B] = res;
+                bus.io_cycle_start(12);
                 bus.out8(self.state.r8[R_C], memval, self.state.r8[R_B]);
                 let tmp = (memval as u16).wrapping_add(self.state.r8[R_L] as u16);
                 self.state.r8[R_F] = (flags & (F_S | F_Z | F_5 | F_3))

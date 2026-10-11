@@ -682,3 +682,220 @@ fn invalid_crtc_register_index_selects_no_data_register() {
     bus.write_port(0x70, 12);
     assert_eq!(bus.read_port(0x71), 0x12);
 }
+
+#[test]
+fn sound_timer_restart_happens_during_the_in_io_cycle() {
+    let mut tvc = Tvc::new_with_vid_model(false, VidModel::FastFrame);
+    tvc.bus.mmu.set_map(0xB0);
+    tvc.bus.write_port(0x04, 0xE7);
+    tvc.bus.write_port(0x05, 0x0F);
+    tvc.bus.advance_sound_timer(7);
+    tvc.bus.mmu.w8(0x0100, 0xDB); // IN A,(5BH)
+    tvc.bus.mmu.w8(0x0101, 0x5B);
+    tvc.z80.state.pc = 0x0100;
+
+    assert_eq!(tvc.debug_step_instruction(), 11);
+
+    // The restart reloads the 25-clock divider at T10; T11 still counts.
+    assert_eq!(tvc.bus.sound.counter(), 24);
+}
+
+fn video_ram_wait_tvc() -> Tvc {
+    let mut tvc = Tvc::new_with_vid_model(false, VidModel::FastFrame);
+    tvc.bus.mmu.set_map(0x90); // U0 at 0000H, video RAM at 8000H
+    tvc
+}
+
+#[test]
+fn video_ram_write_waits_for_the_crtc_access_slot() {
+    let mut tvc = video_ram_wait_tvc();
+    for addr in [0x0100, 0x0103, 0x0106] {
+        tvc.bus.mmu.w8(addr, 0x32); // LD (8000H),A
+        tvc.bus.mmu.w8(addr + 1, 0x00);
+        tvc.bus.mmu.w8(addr + 2, 0x80);
+    }
+    tvc.z80.state.pc = 0x0100;
+
+    // The write cycle starts at T10: on a slot boundary it waits a whole
+    // slot (2 T-states), afterwards half of one.
+    let times: Vec<u32> = (0..3).map(|_| tvc.debug_step_instruction()).collect();
+    assert_eq!(times, [15, 14, 14]);
+}
+
+#[test]
+fn opcode_fetch_from_video_ram_waits_for_the_crtc_access_slot() {
+    let mut tvc = video_ram_wait_tvc();
+    tvc.z80.state.pc = 0x8000; // NOPs in cleared video RAM
+
+    let times: Vec<u32> = (0..4).map(|_| tvc.debug_step_instruction()).collect();
+    assert_eq!(times, [4, 6, 6, 6]);
+}
+
+/// Clock stretch, in half T-states, when the memory cycle's T1 starts
+/// `offset` half T-states after the CPU's video RAM slot opens (DEB rising,
+/// two half T-states after a character clock boundary).
+fn video_ram_stretch(code: &[u8], start: u16, cycle_tstate: u32, offset: u32) -> u32 {
+    let mut tvc = video_ram_wait_tvc();
+    for (index, byte) in code.iter().enumerate() {
+        tvc.bus.mmu.w8(start + index as u16, *byte);
+    }
+    tvc.z80.state.pc = start;
+    tvc.bus.half_tstate_phase = (2 + offset).wrapping_sub(2 * cycle_tstate) & 3;
+    tvc.debug_step_instruction();
+    tvc.bus.wait_half_tstates
+}
+
+#[test]
+fn video_ram_clock_stretch_matches_the_hardware_timing_diagram() {
+    // TV-Computer hardware book (1988), 2.2.4, figure 20: cases (1)-(4) for
+    // memory reads and writes, (5)-(8) for opcode fetches.
+    let read = [0x3A, 0x00, 0x80]; // LD A,(8000H), read cycle at T10
+    let write = [0x32, 0x00, 0x80]; // LD (8000H),A, write cycle at T10
+    for (offset, expected) in [2, 1, 4, 3].into_iter().enumerate() {
+        let offset = offset as u32;
+        assert_eq!(video_ram_stretch(&read, 0x0100, 10, offset), expected);
+        assert_eq!(video_ram_stretch(&write, 0x0100, 10, offset), expected);
+    }
+    for (offset, expected) in [3, 2, 1, 4].into_iter().enumerate() {
+        assert_eq!(
+            video_ram_stretch(&[0x00], 0x8000, 0, offset as u32),
+            expected
+        );
+    }
+}
+
+#[test]
+fn memory_outside_video_ram_has_no_wait_states() {
+    let mut tvc = video_ram_wait_tvc();
+    tvc.bus.mmu.w8(0x0100, 0x32); // LD (4000H),A
+    tvc.bus.mmu.w8(0x0101, 0x00);
+    tvc.bus.mmu.w8(0x0102, 0x40);
+    tvc.z80.state.pc = 0x0100;
+
+    assert_eq!(tvc.debug_step_instruction(), 13);
+}
+
+const RASTER_TIMER_SOURCE: &str = "
+        DI
+        IM 1
+        LD A,4
+        OUT (70H),A
+        LD A,77
+        OUT (71H),A
+        LD A,5
+        OUT (70H),A
+        XOR A
+        OUT (71H),A
+        LD A,6
+        OUT (70H),A
+        LD A,60
+        OUT (71H),A
+        LD A,7
+        OUT (70H),A
+        LD A,66
+        OUT (71H),A
+        LD A,9
+        OUT (70H),A
+        LD A,3
+        OUT (71H),A
+        LD A,14
+        OUT (70H),A
+        XOR A
+        OUT (71H),A
+        LD A,15
+        OUT (70H),A
+        LD A,20H
+        OUT (71H),A
+        LD A,0E7H
+        OUT (04H),A
+        LD A,0FH
+        OUT (05H),A
+        LD A,0C3H
+        LD (0038H),A
+        LD HL,CURSOR
+        LD (0039H),HL
+        EI
+IDLE:   HALT
+        JP IDLE
+CURSOR: LD A,2FH
+        OUT (05H),A
+        IN A,(5BH)
+        OUT (07H),A
+        LD A,10
+        OUT (70H),A
+        LD A,20H
+        OUT (71H),A
+        LD HL,TIMER
+        LD (0039H),HL
+        EI
+        RETI
+TIMER:  EX AF,AF'
+        XOR 20H
+        OUT (00H),A
+        NOP
+        NOP
+        NOP
+        NOP
+        NOP
+        NOP
+        NOP
+        NOP
+        NOP
+        NOP
+        XOR 20H
+        OUT (00H),A
+        EX AF,AF'
+        OUT (07H),A
+        EI
+        RETI
+";
+
+/// Runs a 312-line frame with a sound-timer interrupt every second raster
+/// line; each interrupt pulses the border for 58 CPU clocks. Returns the
+/// widest stripe end relative to the paper start, in CPU clocks, for each of
+/// two consecutive frames.
+fn raster_timer_stripe_ends() -> [i32; 2] {
+    const WIDTH: usize = 608;
+    const PIXELS_PER_CLOCK: i32 = 4;
+    let program = crate::asm::assemble_program(RASTER_TIMER_SOURCE, 0x1A00).unwrap();
+    let mut tvc = Tvc::new_with_vid_model(false, VidModel::Interleaved);
+    tvc.bus.mmu.set_map(0xB0);
+    for (offset, byte) in program.bytes.iter().enumerate() {
+        tvc.bus.mmu.w8(0x1A00 + offset as u16, *byte);
+    }
+    for (reg, value) in [(0, 99), (1, 64), (2, 75), (3, 0x32), (10, 3), (11, 3)] {
+        tvc.bus.vid.set_reg_idx(reg);
+        tvc.bus.vid.set_reg(value);
+    }
+    tvc.bus.vid.set_palette(0, 0x01);
+    tvc.z80.state.pc = 0x1A00;
+    tvc.z80.state.sp = 0x1900;
+
+    let mut ends = [0; 2];
+    for end in &mut ends {
+        for _ in 0..10 {
+            tvc.run_for_a_frame();
+        }
+        let fb = &tvc.framebuffer;
+        let black = fb[WIDTH - 1];
+        let paper_row = fb.len() / WIDTH / 2;
+        let paper = fb[paper_row * WIDTH + WIDTH / 2];
+        assert_ne!(paper, black);
+        let paper_start = (0..WIDTH)
+            .find(|&x| fb[paper_row * WIDTH + x] == paper)
+            .unwrap() as i32;
+        let stripe_end = (0..paper_row)
+            .map(|y| &fb[y * WIDTH..(y + 1) * WIDTH])
+            .filter(|row| row[0] != black && row.iter().all(|&p| p != paper))
+            .map(|row| row.iter().position(|&p| p == black).unwrap() as i32)
+            .max()
+            .unwrap();
+        *end = (stripe_end - paper_start) / PIXELS_PER_CLOCK;
+    }
+    ends
+}
+
+#[test]
+fn sound_timer_border_stripes_keep_the_hardware_raster_phase() {
+    assert_eq!(raster_timer_stripe_ends(), [22, 22]);
+}

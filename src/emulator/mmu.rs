@@ -309,6 +309,12 @@ impl TvcMmu {
         if offset < 0x2000 { Some(offset) } else { None }
     }
 
+    /// Whether `addr` is currently mapped to video RAM.
+    #[inline]
+    pub fn is_video(&self, addr: u16) -> bool {
+        matches!(self.map[(addr >> 14) as usize], Some(4..=7))
+    }
+
     pub fn is_plus(&self) -> bool {
         self.is_plus
     }

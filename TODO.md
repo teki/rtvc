@@ -8,6 +8,15 @@ Open issues and planned improvements for the TVC emulator.
   interrupt must not be accepted until the instruction following `EI` has
   completed, including the customary `EI; RET` sequence. Add focused tests for
   pending interrupts across this instruction boundary.
+- [ ] Emulate the 32K/64K boards' one-T-state opcode-fetch `/WAIT` for slow
+  cartridges, expansion cards (`NSLOWEXP`), and jumpered system ROM, once the
+  factory jumper fitting is known. See
+  [Opcode fetch wait state](info/tvc.md#opcode-fetch-wait-state-on-32k-and-64k-boards).
+- [ ] Sample `/INT` at the rising edge of an instruction's final T-state, as the
+  Zilog manual specifies. rtvc currently accepts a request raised up to the
+  very end of the instruction, so one arriving during the last T-state is
+  taken one instruction earlier than on hardware. The shift is at most one
+  instruction and does not affect the `tvc-timer` raster test.
 
 ## Video Emulation
 

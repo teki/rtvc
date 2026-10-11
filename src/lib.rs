@@ -45,6 +45,8 @@ pub mod tvc_snapshot;
 pub mod vid;
 #[path = "emulator/z80.rs"]
 pub mod z80;
+#[path = "emulator/z80_bus_cycles.rs"]
+pub mod z80_bus_cycles;
 #[path = "emulator/z80_state.rs"]
 pub mod z80_state;
 #[path = "emulator/zx82.rs"]

@@ -33,8 +33,17 @@ A `run_for_a_frame()` képkockánként lépteti az emulációt:
 3. `VidModel::Interleaved` esetén a CRTC stream minden CPU utasítás után halad.
 4. A kazettatranszport és a hanggenerátor minden utasítás eltelt ciklusaival
    halad. A hang mono, 44,1 kHz-es `f32` PCM mintákként kérhető le.
-5. A kurzor interrupt azonnal összekapcsolja a CPU és CRTC időzítését.
-6. A UI akkor kap új képet, amikor megjeleníthető framebuffer készült. Szinkronvesztéskor a gép fekete hátteret és mozgó fehér csíkokat jelenít meg.
+   Az `IN`/`OUT` utasítások I/O ciklusa előtt a gép a hozzáférés pillanatáig
+   lépteti a kazettát, a hangot és a videót, így a keretszín-, paletta-, CRTC-
+   és hangidőzítő-hozzáférések az utasításon belül, a hardverrel egyező
+   T-állapotban hatnak.
+5. A kurzor interrupt a kurzorimpulzus lefutó élén keletkezik, egy karakterórával
+   a kurzoregyezés után.
+6. A videómemória CPU-hozzáféréseinél a gép 1-4 fél órajelnyi CLOCK STRECH
+   nyújtást alkalmaz, a CRTC karakterórájához (DEB) igazítva, a *TV-Computer
+   hardver* könyv 20. ábrája szerint (részletek:
+   [angol referencia](../info/tvc.md#video-ram-wait-states)).
+7. A UI akkor kap új képet, amikor megjeleníthető framebuffer készült. Szinkronvesztéskor a gép fekete hátteret és mozgó fehér csíkokat jelenít meg.
 
 A natív egui felület nem futtat TVC képkockát minden host repaintre. Futás közben folyamatos repaintet kér, de a TVC képkockák generálását valós időhöz, 50 Hz-hez köti.
 
