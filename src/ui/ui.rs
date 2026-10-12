@@ -1259,6 +1259,113 @@ impl EmuApp {
         }
     }
 
+    fn handle_dropped_files(&mut self, ctx: &egui::Context) {
+        let dropped = ctx.input_mut(|input| std::mem::take(&mut input.raw.dropped_files));
+        for file in dropped {
+            let name = file
+                .path
+                .as_deref()
+                .and_then(|path| path.file_name())
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| file.name.clone());
+            self.file_status = Some(match self.open_dropped_file(&name, &file, ctx) {
+                Ok(status) => status,
+                Err(err) => format!("Drop failed for {name}: {err}"),
+            });
+        }
+    }
+
+    fn open_dropped_file(
+        &mut self,
+        name: &str,
+        file: &egui::DroppedFile,
+        ctx: &egui::Context,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(path) = &file.path {
+            let lower = name.to_ascii_lowercase();
+            if lower.ends_with(".cas") || lower.ends_with(".dsk") {
+                self.emu.start_gamebase_media_file(name, path)?;
+                self.finish_dropped_launch(name, ctx);
+                return Ok(format!("Started {name} on TVC 1.2 VT-DOS"));
+            }
+        }
+
+        let bytes = match (&file.bytes, &file.path) {
+            (Some(bytes), _) => bytes.to_vec(),
+            (None, Some(path)) => std::fs::read(path)?,
+            (None, None) => return Err("dropped file has no data".into()),
+        };
+        match crate::emu::classify_dropped_media(name, &bytes)? {
+            crate::emu::DroppedMedia::Z80(data) => {
+                self.emu.load_z80_bytes(&data)?;
+                self.sync_selection_from_emu();
+                Ok(format!("Loaded Zx82 state: {name}"))
+            }
+            crate::emu::DroppedMedia::Snapshot(data) => {
+                self.emu.load_snapshot(&data)?;
+                self.sync_selection_from_emu();
+                Ok(format!("Loaded snapshot: {name}"))
+            }
+            crate::emu::DroppedMedia::Launch {
+                name: media_name,
+                bytes: media,
+            } => {
+                self.emu.start_gamebase_media_bytes(&media_name, &media)?;
+                self.finish_dropped_launch(&media_name, ctx);
+                Ok(format!("Started {media_name} on TVC 1.2 VT-DOS"))
+            }
+        }
+    }
+
+    fn finish_dropped_launch(&mut self, media_name: &str, _ctx: &egui::Context) {
+        self.sync_selection_from_emu();
+        self.emu_frame_accumulator = 0.0;
+        #[cfg(target_arch = "wasm32")]
+        {
+            let recent = if media_name.to_ascii_lowercase().ends_with(".cas") {
+                self.emu
+                    .recent_tapes_wasm
+                    .first()
+                    .cloned()
+                    .map(|r| ("tape", r))
+            } else {
+                self.emu
+                    .recent_disks_wasm
+                    .first()
+                    .cloned()
+                    .map(|r| ("disk", r))
+            };
+            if let Some((kind, recent)) = recent {
+                self.persist_wasm_recent(kind, recent, _ctx.clone());
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = media_name;
+            self.save_app_state();
+        }
+    }
+
+    fn draw_drop_overlay(&self, ctx: &egui::Context) {
+        if ctx.input(|input| input.raw.hovered_files.is_empty()) {
+            return;
+        }
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("media_drop_overlay"),
+        ));
+        let rect = ctx.screen_rect();
+        painter.rect_filled(rect, 0.0, Color32::from_black_alpha(180));
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "Drop CAS or DSK to boot TVC 1.2 VT-DOS and run it\n(ZIP and snapshots are accepted too)",
+            egui::FontId::proportional(22.0),
+            Color32::WHITE,
+        );
+    }
+
     fn save_screenshot_dialog(&mut self) {
         #[cfg(target_arch = "wasm32")]
         {
@@ -2565,6 +2672,7 @@ impl eframe::App for EmuApp {
         }
 
         self.handle_game_events(ctx);
+        self.handle_dropped_files(ctx);
 
         #[cfg(not(target_arch = "wasm32"))]
         if self.game_library.open
@@ -2694,6 +2802,7 @@ impl eframe::App for EmuApp {
 
         self.draw_game_library(ctx);
         self.draw_help_window(ctx);
+        self.draw_drop_overlay(ctx);
 
         if self.emu.running {
             ctx.request_repaint();

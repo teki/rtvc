@@ -1627,6 +1627,63 @@ pub fn extract_game_archive_member(
     Err(format!("{file_to_run} was not found in the game archive").into())
 }
 
+pub enum DroppedMedia {
+    /// Uncompressed `.rtvcsnap` bytes.
+    Snapshot(Vec<u8>),
+    Z80(Vec<u8>),
+    /// A `.cas` or `.dsk` image to start through the clean VT-DOS boot snapshot.
+    Launch {
+        name: String,
+        bytes: Vec<u8>,
+    },
+}
+
+/// Classifies a dropped file by name; ZIP archives resolve to their first
+/// `.rtvcsnap` member, otherwise to their first `.cas` or `.dsk` member.
+pub fn classify_dropped_media(
+    name: &str,
+    bytes: &[u8],
+) -> Result<DroppedMedia, Box<dyn std::error::Error>> {
+    let lower = name.to_ascii_lowercase();
+    if lower.ends_with(".z80") {
+        return Ok(DroppedMedia::Z80(bytes.to_vec()));
+    }
+    if lower.ends_with(".rtvcsnap") {
+        return Ok(DroppedMedia::Snapshot(bytes.to_vec()));
+    }
+    if lower.ends_with(".cas") || lower.ends_with(".dsk") {
+        return Ok(DroppedMedia::Launch {
+            name: name.to_string(),
+            bytes: bytes.to_vec(),
+        });
+    }
+    if !lower.ends_with(".zip") {
+        return Err(
+            format!("Unsupported file: {name} (expected CAS, DSK, ZIP, or snapshot)").into(),
+        );
+    }
+
+    if let Ok(snapshot) = unzip_snapshot(bytes) {
+        return Ok(DroppedMedia::Snapshot(snapshot));
+    }
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
+    for index in 0..archive.len() {
+        let mut file = archive.by_index(index)?;
+        let entry_name = file.name().replace('\\', "/");
+        let entry_lower = entry_name.to_ascii_lowercase();
+        if entry_lower.ends_with(".cas") || entry_lower.ends_with(".dsk") {
+            let mut media = Vec::new();
+            file.read_to_end(&mut media)?;
+            let file_name = entry_name.rsplit('/').next().unwrap_or(&entry_name);
+            return Ok(DroppedMedia::Launch {
+                name: file_name.to_string(),
+                bytes: media,
+            });
+        }
+    }
+    Err(format!("{name} contains no .rtvcsnap, .cas, or .dsk file").into())
+}
+
 fn recent_media_key(path: &str) -> String {
     Path::new(path)
         .file_name()

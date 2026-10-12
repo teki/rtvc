@@ -344,6 +344,62 @@ fn game_archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
 }
 
 #[test]
+fn dropped_zip_launches_first_cas_or_dsk_member() {
+    let zip = game_archive(&[("README.TXT", b"hi"), ("Games/Ball.CAS", &[0x11, 0x22])]);
+
+    let Ok(DroppedMedia::Launch { name, bytes }) = classify_dropped_media("ball.zip", &zip) else {
+        panic!("expected launchable media");
+    };
+
+    assert_eq!(name, "Ball.CAS");
+    assert_eq!(bytes, vec![0x11, 0x22]);
+}
+
+#[test]
+fn dropped_zip_prefers_snapshot_member() {
+    let zip = game_archive(&[("GAME.DSK", &[0; 4]), ("state.rtvcsnap", b"SNAP")]);
+
+    let Ok(DroppedMedia::Snapshot(bytes)) = classify_dropped_media("state.zip", &zip) else {
+        panic!("expected snapshot");
+    };
+
+    assert_eq!(bytes, b"SNAP");
+}
+
+#[test]
+fn dropped_files_classify_by_extension() {
+    assert!(matches!(
+        classify_dropped_media("GAME.dsk", &[1]),
+        Ok(DroppedMedia::Launch { .. })
+    ));
+    assert!(matches!(
+        classify_dropped_media("game.z80", &[1]),
+        Ok(DroppedMedia::Z80(_))
+    ));
+    assert!(classify_dropped_media("notes.txt", &[1]).is_err());
+    assert!(classify_dropped_media("empty.zip", &game_archive(&[("a.txt", b"")])).is_err());
+}
+
+#[test]
+fn dropped_cas_bytes_boot_vtdos_and_queue_run() {
+    let mut emu = Emu::new(MachineType::standard(false, RomVersion::V2_2, false));
+    let mut cas = vec![0; 145];
+    cas[0] = 0x11;
+    let zip = game_archive(&[("GAME.CAS", &cas)]);
+
+    let Ok(DroppedMedia::Launch { name, bytes }) = classify_dropped_media("game.zip", &zip) else {
+        panic!("expected launchable media");
+    };
+    emu.start_gamebase_media_bytes(&name, &bytes).unwrap();
+
+    assert_eq!(
+        emu.machine_type,
+        MachineType::standard(true, RomVersion::V1_2, true)
+    );
+    assert_eq!(emu.typed_text.iter().collect::<String>(), "RUN\r");
+}
+
+#[test]
 fn load_tape_snapshot_restores_selection_and_can_play() {
     let snapshot_path = std::path::Path::new("snapshots/load_tape.rtvcsnap.zip");
     if !snapshot_path.exists() {

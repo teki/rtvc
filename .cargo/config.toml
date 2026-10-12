@@ -3,6 +3,11 @@ bundle-web = "run --release --manifest-path xtask/Cargo.toml -- bundle-web"
 xtask = "run --release --manifest-path xtask/Cargo.toml --"
 fuse = "run --bin fuse_test"
 
+# The default 1 MiB WASM stack overflows while the emulator state is built,
+# leaving the web app blank with "memory access out of bounds".
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=-zstack-size=8388608"]
+
 [profile.profiling]
 inherits = "release"
 debug = true

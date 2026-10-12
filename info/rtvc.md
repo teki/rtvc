@@ -86,6 +86,10 @@ validation independent from machine emulation.
 | Compatibility lightweight web | `wasm,web-vid-realistic` | same API; runtime video selection remains available |
 | Full web | `wasm-full` | complete egui UI, browser files, IndexedDB, AudioWorklet |
 
+[.cargo/config.toml](../.cargo/config.toml) links every `wasm32-unknown-unknown`
+build with an 8 MiB stack. The 1 MiB default overflows while the emulator
+state is constructed, which leaves the full web canvas blank.
+
 The lightweight WASM target intentionally excludes egui, eframe, cpal, zip,
 native filesystem code, and the C80 compiler. Native desktop and `wasm-full`
 also omit C80. Browser-only dependencies must remain behind web features. C80
@@ -428,6 +432,14 @@ reset) and:
 Gamebase launches load the embedded clean VT-DOS boot snapshot, choose the
 matching TVC 1.2 VT-DOS machine, attach or inject media, start emulation, and
 type `RUN` for CAS or `LOAD "*"` for DSK.
+
+Dropping a file onto the native or full web window uses the same launch path.
+A `.cas` is injected and a `.dsk` is attached to drive A:. A ZIP resolves to
+its first `.rtvcsnap` member as a snapshot, otherwise to its first `.cas` or
+`.dsk` member. `.rtvcsnap` and `.z80` files load as states without a reboot.
+Native `.cas`/`.dsk` drops stay file-backed like Disk menu selections; web
+drops are added to the IndexedDB recent lists. Classification lives in
+`classify_dropped_media` in [emu.rs](../src/emulator/emu.rs).
 
 ## Command-Line Helper Assembler
 

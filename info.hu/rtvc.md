@@ -73,6 +73,10 @@ validációt függetleníti a gépemulációtól.
 | Kompatibilitási könnyűsúlyú web | `wasm,web-vid-realistic` | ugyanaz az API; futásidejű videóválasztás elérhető marad |
 | Teljes web | `wasm-full` | teljes egui felhasználói felület, böngésző fájlok, IndexedDB, AudioWorklet |
 
+A [.cargo/config.toml](../.cargo/config.toml) minden `wasm32-unknown-unknown`
+buildet 8 MiB-os veremmel linkel. Az alapértelmezett 1 MiB túlcsordul az
+emulátorállapot felépítése közben, és a teljes webes vászon üres marad.
+
 A könnyűsúlyú WASM cél szándékosan kizárja az egui, eframe, cpal, zip
 és natív fájlrendszer kódot. A csak böngészőhöz tartozó függőségeknek webes
 funkciók mögött kell maradniuk.
@@ -283,6 +287,12 @@ hibakódok részletes leírása az
 A Gamebase indítások betöltik a beágyazott tiszta VT-DOS rendszerindító pillanatképet, kiválasztják a
 megfelelő TVC 1.2 VT-DOS gépet, csatlakoztatják vagy befecskendezik a médiát, elindítják az emulációt, és
 beírják a `RUN`-t CAS esetén vagy a `LOAD "*"`-ot DSK esetén.
+
+A natív vagy a teljes webes ablakra húzott fájl ugyanezt az indítási utat
+használja: a `.cas` befecskendeződik, a `.dsk` az A: meghajtóba kerül. ZIP
+esetén az első `.rtvcsnap` tag pillanatképként töltődik be, ennek hiányában az
+első `.cas` vagy `.dsk` tag indul. A `.rtvcsnap` és `.z80` fájlok újraindítás
+nélkül, állapotként töltődnek be.
 
 ## Parancssori BASIC-fordító
 

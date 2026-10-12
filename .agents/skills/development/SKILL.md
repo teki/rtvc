@@ -75,6 +75,7 @@ This skill provides step-by-step instructions and references for compiling, exec
   - Use the File menu to write/read `.rtvcsnap.zip` snapshots, load tape/disk files via open file dialog, and save the current framebuffer as a 4:3 PNG (`768x576`).
   - Use the Tape and Disk menus to load cassette and floppy media (either from local list or by browsing for any file). Selecting an entry immediately loads it.
   - Gamebase launches use the clean boot snapshot embedded in the app, force the TVC 1.2 VT-DOS machine, attach or inject the selected media, start emulation, and type `RUN` for CAS or `LOAD "*"` for DSK.
+  - Dropping a CAS, DSK, or ZIP onto the native or full web window uses the same Gamebase launch path; dropped `.rtvcsnap`, `.rtvcsnap.zip`, and `.z80` files load as states. `cargo test --lib dropped` covers the classification.
   - The bottom status bar shows tape activity and playback percentage, loaded tape/disk media, run state, FPS, ROM state, audio status, and recent file status, plus a Reset button in the bottom right corner.
   - Native emulator preferences are stored in `rtvc.toml`, checked in the
     current working directory first and then beside the executable. The
@@ -169,6 +170,8 @@ This skill provides step-by-step instructions and references for compiling, exec
     `rtvc_workspace_v1` key.
   - Browser keyboard input uses DOM `KeyboardEvent.code` for key identity and `KeyboardEvent.key` for layout-aware character mapping, including AltGr.
   - Serve the output directory over HTTP; opening `index.html` directly with `file://` is not supported.
+  - [.cargo/config.toml](../../../.cargo/config.toml) sets an 8 MiB stack for `wasm32-unknown-unknown`. Without it the page stays blank and `new WebHandle()` reports `memory access out of bounds`. A `RUSTFLAGS` environment variable replaces config rustflags, so include `-C link-arg=-zstack-size=8388608` when overriding it.
+  - `xtask` reads WASM from `./target`; if `CARGO_TARGET_DIR` points elsewhere, the bundle silently reuses a stale `target/wasm32-unknown-unknown/release/rtvc_core.wasm`.
 
 - **Serve the web emulator / docs website locally:**
   On macOS / Linux:

@@ -4,6 +4,11 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+- Drag a CAS, DSK, or ZIP onto the emulator window (desktop or web) to boot
+  straight into TVC 1.2 VT-DOS and run it. Dropped snapshots load directly.
+- Web builds link with an 8 MiB stack, so fresh full web builds no longer
+  start to a blank page.
+
 ## v0.8.8 - 2026-10-12
 
 - TVC presets can be overridden with mixed memory, system ROM, a `.crt`

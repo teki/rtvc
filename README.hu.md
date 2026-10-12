@@ -228,7 +228,9 @@ média az aktív `rtvc.toml` melletti `rtvc-media/` könyvtárba kerül.
 Gamebase program indításakor az emulátor automatikusan visszaállítja az
 alkalmazásba ágyazott tiszta TVC 1.2 VT-DOS snapshotot, csatlakoztatja vagy
 injektálja a médiát, elindítja az emulációt, majd CAS esetén beírja a `RUN`,
-DSK esetén pedig a `LOAD "*"` parancsot.
+DSK esetén pedig a `LOAD "*"` parancsot. Ha egy CAS, DSK vagy ZIP fájlt az
+emulátor ablakára húzol, ugyanígy indul; a ráhúzott snapshotok közvetlenül
+töltődnek be.
 
 ## Fejlesztői jegyzetek
 

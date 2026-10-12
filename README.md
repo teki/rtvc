@@ -237,6 +237,8 @@ local CAS, DSK, ZIP, and snapshot files. Small web preferences use
 is cached under `rtvc-media/` beside the active `rtvc.toml`. Loading a Gamebase
 title automatically starts from the clean, embedded TVC 1.2 VT-DOS snapshot,
 attaches or injects its media, and types `RUN` for CAS or `LOAD "*"` for DSK.
+Dragging a CAS, DSK, or ZIP onto the emulator window starts it the same way;
+dropped snapshots load directly.
 
 ## Developer Notes
 
