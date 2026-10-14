@@ -369,9 +369,29 @@ pub fn draw_screen(
     let sense = if capture.is_some() {
         egui::Sense::click()
     } else {
-        egui::Sense::hover()
+        egui::Sense::focusable_noninteractive()
     };
     let response = ui.allocate_rect(rect, sense);
+    // Tab and the arrow keys are TVC keys (joystick fire and directions).
+    // egui would otherwise use them to move keyboard focus to other widgets.
+    // Without a capture flag (Simple mode) the screen always takes input.
+    let owns_keyboard = capture.as_ref().map_or(true, |captured| **captured);
+    if owns_keyboard {
+        if ui.memory(|m| m.focused().is_none()) {
+            response.request_focus();
+        }
+        ui.memory_mut(|m| {
+            m.set_focus_lock_filter(
+                response.id,
+                egui::EventFilter {
+                    tab: true,
+                    horizontal_arrows: true,
+                    vertical_arrows: true,
+                    escape: false,
+                },
+            );
+        });
+    }
 
     if let Some(texture) = screen_texture {
         ui.painter().image(
@@ -387,6 +407,7 @@ pub fn draw_screen(
     if let Some(captured) = capture {
         if response.clicked() {
             *captured = true;
+            response.request_focus();
         }
         let stroke = if *captured {
             egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(80, 170, 255))

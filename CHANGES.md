@@ -11,6 +11,8 @@ Release notes start here. Older release history is intentionally not backfilled.
 - F9 or Insert presses the TVC Ins key (matrix row 8, C0). The keyboard matrix
   is documented as 10 rows (0-9); rows 8 and 9 are the joystick rows. The Help
   window lists the host keyboard mapping.
+- Tab and the arrow keys are no longer taken by egui keyboard focus navigation
+  while the TVC screen has the keyboard, so Tab works as joystick fire.
 
 ## v0.8.8 - 2026-10-12
 
