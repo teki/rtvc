@@ -1,12 +1,12 @@
 # Frame History Debugger Progress
 
-Last updated: 2026-07-21
+Last updated: 2026-10-14
 
 ## Status
 
-A functional first vertical slice is implemented and compiles for native and
-full-web targets. It still needs a hands-on UI smoke test before the feature is
-considered complete.
+Complete. The feature compiles for native and full-web targets, and the user
+confirmed on 2026-10-14 that it works in hands-on use. The remaining items
+below are optional refinements.
 
 ## Completed
 
@@ -73,13 +73,8 @@ considered complete.
 
 ## Next Steps
 
-1. Manually smoke-test Record, Stop, navigation, thumbnail selection, screen
-   refresh, resume-from-history branching, and Save Selected Snapshot with a
-   running TVC game.
-2. Load the saved selected-frame snapshot in a fresh rtvc process and confirm
-   that it resumes from the selected PC and display state.
-3. Add a history-specific default snapshot filename and a convenient Copy Path
+1. Add a history-specific default snapshot filename and a convenient Copy Path
    action if the manual workflow shows they are useful.
-4. Decide whether TCP-issued stepping/continue commands should explicitly
+2. Decide whether TCP-issued stepping/continue commands should explicitly
    truncate a rewound UI timeline before execution; integrated UI controls
    already do so.

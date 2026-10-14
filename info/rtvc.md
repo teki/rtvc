@@ -771,6 +771,10 @@ directory.
 
 ## C80 Compiler
 
+> **Work in progress:** C80 is experimental. The language, ABI, and output
+> formats may change without notice, and it has not yet been used for real
+> programs beyond its own tests and tutorial examples.
+
 The C80 compiler is the [`rtvc-c80`](../c80/) crate. Implemented language, leaf codegen, branches
 (shortened to `JR` when the displacement fits), scalar globals, calls
 (register and `@stackcall`), arrays, pointers, prefixed strings, packed

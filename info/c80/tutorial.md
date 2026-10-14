@@ -1,5 +1,9 @@
 # C80 Tutorial
 
+> **Work in progress:** C80 is experimental. The language, ABI, and output
+> formats may change without notice, and it has not yet been used for real
+> programs beyond its own tests and tutorial examples.
+
 C80 is a small C-like language for Z80 programs in rtvc. It is not ISO C: no
 heap, no recursion, no implicit promotions, and no `*` `/` `%`. This tutorial
 walks through every implemented feature with sources in this directory. The

@@ -9,7 +9,7 @@ Refer to the following resources for detailed documentation on the system:
 - [TVC Technical Reference](info/tvc.md) — Detailed, implementation-neutral TVC hardware reference for emulator authors: timing, memory, I/O, interrupts, video, keyboard, sound, cassette, and expansion devices.
 - [Zx82 Technical Reference](info/zx82.md) — Scoped ZX Spectrum 48K hardware reference and minimum agent-friendly emulation model, including limited instant-load options.
 - [rtvc Implementation and Usage Reference](info/rtvc.md) — Rust architecture, emulation choices, media handling, snapshots, debugger, UI, persistence, and build targets.
-- [C80 Language Reference](info/c80.md) — implemented C80 compiler syntax, diagnostics, and library entry (in progress).
+- [C80 Language Reference](info/c80.md) — implemented C80 compiler syntax, diagnostics, and library entry (experimental, work in progress).
 - [C80 Tutorial](info/c80/tutorial.md) — walkthrough of implemented language features with compilable examples and `compile.sh` / `compile.bat`.
 - [rtvc Assembler Reference](info/assembler.md) — Built-in Z80 helper assembler syntax, `rtvc-asm` TOML output, and debugger loading workflow.
 - [Hungarian rtvc Assembler Reference](info.hu/assembler.md) — Hungarian-language reference for the helper assembler, disassembler, output formats, and debugger workflow.

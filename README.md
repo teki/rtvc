@@ -47,8 +47,10 @@ More historical background is available on the
 - [rtvc Implementation and Usage Reference](info/rtvc.md) — emulator
   architecture, media, snapshots, debugger, UI, and build targets.
 - [C80 Language Reference](info/c80.md) — implemented compiler syntax,
-  diagnostics, and library entry.
-- [C80 Tutorial](info/c80/tutorial.md) — walkthrough with compilable examples.
+  diagnostics, and library entry. **Work in progress:** C80 is experimental
+  and may change without notice.
+- [C80 Tutorial](info/c80/tutorial.md) — walkthrough with compilable examples
+  (work in progress).
 - [rtvc Assembler Reference](info/assembler.md) — helper assembler and
   disassembler syntax, formats, and debugger workflow.
 
@@ -82,7 +84,7 @@ run any tool with `--help` for its complete options:
 | --- | --- | --- |
 | `rtvc-dsk` | Create, inspect, and modify TVC FAT12 disk images. | `rtvc-dsk dir disk.dsk` |
 | `rtvc-asm` | Assemble small Z80 sources to TOML, CAS, or raw binary. | `rtvc-asm --format cas demo.asm -o demo.cas` |
-| `rtvc-c80` | Compile C80 sources or a project manifest to assembly, `rtvc-asm-v1` segments, or raw binary. | `rtvc-c80 build main.c80 --origin 0x8000 --emit-asm out.asm` |
+| `rtvc-c80` | (Experimental, work in progress.) Compile C80 sources or a project manifest to assembly, `rtvc-asm-v1` segments, or raw binary. | `rtvc-c80 build main.c80 --origin 0x8000 --emit-asm out.asm` |
 | `rtvc-basic` | Compile numbered TVC BASIC source to CAS or raw program bytes. | `rtvc-basic demo.bas -o demo.cas` |
 | `rtvc-tocas` | Convert `.bas`, `.asm`, and `rtvc-asm-v1` TOML sources to sibling `.cas` files. | `rtvc-tocas demo.bas helper.asm program.toml` |
 | `rtvc-disasm` | Convert binary or ROM bytes to round-trippable assembler source. | `rtvc-disasm --origin C000H rom.bin -o rom.asm` |
@@ -197,7 +199,7 @@ cargo run --bin rtvc -- -i path/to/tape.cas
 ```
 
 A non-zero CAS autostart byte makes `-i` type `RUN`. Combine with a booted
-snapshot for mixed C80 examples:
+snapshot for mixed C80 examples (C80 is experimental):
 
 ```bash
 cargo run --bin rtvc -- snapshots/boot12dos.rtvcsnap.zip -i info/c80/out/pong.cas

@@ -184,8 +184,8 @@ cargo run --bin rtvc -- -t utvonal/kazetta.cas
 cargo run --bin rtvc -- -i utvonal/kazetta.cas
 ```
 
-Nem nulla CAS autostart bájt esetén a `-i` begépeli a `RUN`-t. A kevert C80
-példákhoz indított snapshottal együtt:
+Nem nulla CAS autostart bájt esetén a `-i` begépeli a `RUN`-t. A kevert (kísérleti,
+fejlesztés alatt álló) C80 példákhoz indított snapshottal együtt:
 
 ```bash
 cargo run --bin rtvc -- snapshots/boot12dos.rtvcsnap.zip -i info/c80/out/pong.cas
@@ -257,8 +257,9 @@ A teljes fejlesztési munkafolyamathoz lásd:
 
 ## Dokumentáció
 
-- [C80 nyelvleírás (angol)](info/c80.md)
-- [C80 tutorial (angol)](info/c80/tutorial.md)
+- [C80 nyelvleírás (angol)](info/c80.md) — **fejlesztés alatt:** a C80
+  kísérleti, előzetes értesítés nélkül változhat.
+- [C80 tutorial (angol)](info/c80/tutorial.md) — fejlesztés alatt.
 - [rtvc assembler referencia](info.hu/assembler.md)
 - [Az rtvc implementációja és használata (angol)](info/rtvc.md)
 - [Részletes TVC hardverreferencia (angol)](info/tvc.md)
