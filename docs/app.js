@@ -302,6 +302,7 @@ function legacyKeyCode(event) {
     ArrowDown: 40,
     Insert: 45,
     Delete: 46,
+    F9: 120,
     Semicolon: 186,
     Equal: 187,
     Comma: 188,

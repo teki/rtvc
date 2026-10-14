@@ -71,7 +71,7 @@ interfaces, UI behavior, and build targets.
 | Normal active picture | 512 x 240 source pixels |
 | TVC color space | 16 colors encoded as intensity, green, red, blue |
 | Sound | One programmable divider/counter channel plus 4-bit amplitude/DAC |
-| Keyboard | 11 rows x 8 columns, active-low |
+| Keyboard | 10 rows x 8 columns, active-low (rows 8-9 carry joysticks) |
 | Cassette | Software-decoded input and software-toggled output |
 | Expansion | Four I/O slots and one selected 8 KiB memory window |
 
@@ -311,7 +311,7 @@ those writes are not characterized here; preserve them as unknown.
 ### Port `0x03`
 
 ```text
-bits 0-3  keyboard matrix row, 0-10
+bits 0-3  keyboard matrix row, 0-9
 bits 4-5  not described here
 bits 6-7  expansion card selected for the EXT memory window
 ```
@@ -619,13 +619,13 @@ address into R16-R17 when implemented.
 
 ## Keyboard
 
-The keyboard is an 11 x 8 active-low matrix:
+The keyboard is a 10 x 8 active-low matrix (hardware book §3.3.2, Figure 10):
 
 - write the row number to port `0x03` bits 0-3;
 - read the eight column bits from port `0x58`;
 - a zero bit means pressed;
 - a one bit means released;
-- an invalid/unconnected row reads `0xFF`.
+- an unconnected row (10-15) reads `0xFF`.
 
 ### Matrix
 
@@ -639,13 +639,16 @@ The keyboard is an 11 x 8 active-low matrix:
 | 5 | Backspace/Delete | `k` | `l` | `á` | Return | `ű` | `é` | `j` |
 | 6 | `b` | `c` | `x` | Shift | `n` | Lock | `y` | `v` |
 | 7 | Alt | `,` | `.` | Esc | Ctrl | Space | `-` | `m` |
-| 8 | - | Up | Down | Tab/Fire | - | Right | Left | - |
-| 9 | implementation/source reference required | | | | | | | |
-| 10 | implementation/source reference required | | | | | | | |
+| 8 | Ins | Up | Down | Fire | Accel | Right | Left | - |
+| 9 | - | Up | Down | Fire | Accel | Right | Left | - |
 
-Rows 9-10 are part of the electrical scan range but are not yet fully
-documented in this reference. Do not infer missing physical keys from a host
-keyboard mapping table.
+Rows 8 and 9 are the joystick rows; Ins is the only keyboard key on them. Row 8
+is shared by the keyboard's built-in joystick (up/down/left/right only, no fire
+or accelerator) and one external joystick port. Row 9 is the other external
+port. The hardware book is inconsistent about which port (CH6 left, CH7 right)
+is on which row: the text and Figure 10 put the right joystick on row 8, while
+the connector table and block diagram put CH6 on row 8 and CH7 on row 9.
+Rows 10-15 select nothing and read `0xFF`.
 
 Host keyboard auto-mapping, Unicode input, AltGr handling, and stuck-key
 prevention are emulator UI concerns and are documented in

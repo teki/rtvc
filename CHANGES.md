@@ -8,6 +8,9 @@ Release notes start here. Older release history is intentionally not backfilled.
   straight into TVC 1.2 VT-DOS and run it. Dropped snapshots load directly.
 - Web builds link with an 8 MiB stack, so fresh full web builds no longer
   start to a blank page.
+- F9 or Insert presses the TVC Ins key (matrix row 8, C0). The keyboard matrix
+  is documented as 10 rows (0-9); rows 8 and 9 are the joystick rows. The Help
+  window lists the host keyboard mapping.
 
 ## v0.8.8 - 2026-10-12
 

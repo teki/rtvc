@@ -256,6 +256,7 @@ fn egui_key_to_js_code(key: egui::Key) -> Option<u32> {
         egui::Key::PageUp => 33,
         egui::Key::PageDown => 34,
         egui::Key::Insert => 45,
+        egui::Key::F9 => 120,
         egui::Key::A => 65,
         egui::Key::B => 66,
         egui::Key::C => 67,
@@ -1868,6 +1869,26 @@ impl EmuApp {
             .default_size([560.0, 400.0])
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.heading("Keyboard");
+                    ui.separator();
+                    ui.label(
+                        "Host keys are mapped to the TVC keyboard by character, so
+shifted and AltGr symbols follow your host layout.  Special keys:
+
+  Backspace / Delete   TVC DEL
+  Enter                RETURN
+  Caps Lock            LOCK
+  Left Alt             ALT
+  Ctrl                 CTRL
+  F9 / Insert          INS
+  Arrow keys           cursor keys / keyboard joystick
+  Tab                  joystick fire
+
+Arrow keys and Tab act as the keyboard joystick (matrix row 8).
+The TVC has no Tab key of its own.
+",
+                    );
+
                     ui.heading("VT-DOS Reference");
                     ui.separator();
                     ui.label(

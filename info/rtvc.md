@@ -241,7 +241,7 @@ drains generated samples. The lightweight WASM API exposes equivalent methods.
 
 ## Keyboard Input
 
-The core stores the active-low 11 x 8 TVC matrix. Host adaptation is separate:
+The core stores the active-low 10 x 8 TVC matrix. Host adaptation is separate:
 
 - native input prefers egui's physical key identity and uses text events for
   layout-aware character mapping;
@@ -252,6 +252,20 @@ The core stores the active-low 11 x 8 TVC matrix. Host adaptation is separate:
   different modifier states;
 - key release clears all modifier-map candidates to prevent stuck keys;
 - focus loss, canvas blur, and visibility loss release held keys.
+
+Host keys with no TVC counterpart are mapped as follows:
+
+| Host key | TVC key | Matrix |
+| --- | --- | --- |
+| Tab | joystick fire | row 8, C3 |
+| F9 or Insert | Ins | row 8, C0 |
+| Arrow keys | cursor / keyboard joystick | row 8, C1, C2, C5, C6 |
+
+The TVC has no Tab key. Ins is on F9 because Mac laptops have no Insert key
+and the key must not produce text (the mapping is text-based, so a character
+key would remove that character from the host layout). F9 is not reserved by
+the browser or the common desktop shells; Insert is an alias. The joystick
+accelerator (row 8/9, C4) and the row 9 joystick port have no host key.
 
 In Developer mode, the user must click the Screen pane to capture TVC input.
 Escape, focus loss, hiding the pane, or clicking another pane releases capture.

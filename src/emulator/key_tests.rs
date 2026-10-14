@@ -42,3 +42,22 @@ fn altgr_character_mapping_releases_cleanly() {
 
     assert_all_released(&key);
 }
+
+#[test]
+fn f9_and_insert_press_ins_and_leave_backtick_typeable() {
+    for code in [120, 45] {
+        let mut key = Key::new();
+        key.key_down(code);
+        assert_eq!(key.state[8], 0xFF & !1);
+        key.key_up(code);
+        assert_all_released(&key);
+    }
+
+    let mut key = Key::new();
+    key.key_down(192);
+    key.key_press('`');
+    assert_eq!(key.state[8], 0xFF);
+    assert_ne!(key.state[2], 0xFF);
+    key.key_up(192);
+    assert_all_released(&key);
+}

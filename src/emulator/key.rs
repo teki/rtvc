@@ -63,6 +63,8 @@ impl Key {
         key.keymap.get_mut(&0).unwrap().insert(9, (8, 3, 0)); // tab -> fire
         key.keymap.get_mut(&0).unwrap().insert(39, (8, 5, 0)); // right
         key.keymap.get_mut(&0).unwrap().insert(37, (8, 6, 0)); // left
+        key.keymap.get_mut(&0).unwrap().insert(120, (8, 0, 0)); // F9 -> ins
+        key.keymap.get_mut(&0).unwrap().insert(45, (8, 0, 0)); // insert -> ins
 
         // Copy base mappings to all modifier states
         let base: HashMap<u32, Mapping> = key.keymap[&0].clone();

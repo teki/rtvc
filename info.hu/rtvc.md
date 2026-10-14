@@ -184,7 +184,7 @@ pedig kiolvassa a generált mintákat. A könnyűsúlyú WASM API ezzel egyenér
 
 ## Billentyűzetbemenet
 
-A mag az aktív-alacsony 11 x 8-as TVC mátrixot tárolja. A host adaptáció külön van választva:
+A mag az aktív-alacsony 10 x 8-as TVC mátrixot tárolja. A host adaptáció külön van választva:
 
 - a natív bemenet az egui fizikai billentyűazonosítóit részesíti előnyben, és szöveges eseményeket használ
   a kiosztásfüggő karakterleképezéshez;
