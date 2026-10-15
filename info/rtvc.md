@@ -229,6 +229,13 @@ instead of one 50 Hz frame, and drops their audio rather than queuing it.
 Warp ends by itself when the load does. The setting is saved as
 `warp_loading` in `rtvc.toml`.
 
+The TCP debugger's `warp` command sets and reports the same setting, so
+scripts can load tapes quickly. Headless mode honors it the same way: while a
+load is active it runs frames back to back for up to 15 ms between command
+checks. Loads have gaps (the CPC stops its motor between files), so a client
+that waits for a load should treat it as finished only after `tape_loading`
+has stayed false for a while; the interactive client's `warp wait` uses 2 s.
+
 ## Video Emulation
 
 `VidModel` has two runtime modes.
@@ -762,7 +769,7 @@ without its debugger socket.
 
 | Command | Purpose |
 | --- | --- |
-| `status` | CPU registers, clock, run/HALT state |
+| `status` | CPU registers, clock, run/HALT state, tape progress, loading and warp state |
 | `stats` | rolling host-time FPS |
 | `step` | execute one or more complete machine instructions |
 | `continue`, `pause`, `reset` | execution control |
@@ -774,6 +781,7 @@ without its debugger socket.
 | `save_screenshot` | 4:3 PNG |
 | `key` | key down/up or frame-paced typed text |
 | `key_press` | hold a host key code for a number of 50 Hz frames, then release it |
+| `warp` | with `"enabled": true`/`false`, set warp while loading; always report `warp`, `tape_loading`, `warp_active`, and `tape_progress` |
 | `instruction_trace_start`, `instruction_trace_stop` | start a new bounded trace or stop recording |
 | `instruction_trace_clear`, `instruction_trace_status` | discard entries or report trace state |
 | `instruction_trace_list` | return the newest captured instructions, including registers and writes |
@@ -804,6 +812,12 @@ Instruction tracing can be driven with JSON such as
 at 10,000 entries per request. The interactive client provides the equivalent
 `trace start [capacity]`, `trace stop`, `trace clear`, `trace status`, and
 `trace list [count]` commands; `itrace` is an alias.
+
+`{"cmd":"warp","enabled":true}` turns on warp while loading. The interactive
+client provides `warp`, `warp on`, `warp off`, and `warp wait [seconds]`,
+which prints progress until no load has been active for 2 s. Started with
+`--cpc --tape` and given `RUN"` plus a key, `warp on` then `warp wait` loads
+Laser Squad's main program in about 8 s instead of about 4.5 minutes.
 
 The `assemble` command uses rtvc's built-in two-pass helper assembler. It
 supports labels, `ORG` with persistent named address mappings, `EQU`,

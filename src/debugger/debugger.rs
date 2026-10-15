@@ -73,6 +73,9 @@ enum DebuggerCommand {
     },
     #[serde(rename = "key_press")]
     KeyPress { key: u32, duration: u32 },
+    /// Sets (when `enabled` is given) and reports warp while loading.
+    #[serde(rename = "warp")]
+    Warp { enabled: Option<bool> },
     #[serde(rename = "instruction_trace_start")]
     InstructionTraceStart { capacity: Option<usize> },
     #[serde(rename = "instruction_trace_stop")]
@@ -294,6 +297,9 @@ pub fn start_debugger_server(port: u16) -> std::io::Result<DebuggerInterface> {
     })
 }
 
+/// Host time spent running frames between command checks while warping.
+const HEADLESS_WARP_BUDGET: Duration = Duration::from_millis(15);
+
 pub fn run_headless(mut emu: Emu, port: u16) -> std::io::Result<()> {
     let debugger = start_debugger_server(port)?;
     let mut last_frame_time = Instant::now();
@@ -309,8 +315,23 @@ pub fn run_headless(mut emu: Emu, port: u16) -> std::io::Result<()> {
             return Ok(());
         }
 
-        // 2. Emulate frame if running
-        if emu.running {
+        // 2. Emulate frame if running. While warping, run frames back to back
+        // for a short budget, then return to serve commands.
+        if emu.warp_active() {
+            let start = Instant::now();
+            while emu.warp_active() && start.elapsed() < HEADLESS_WARP_BUDGET {
+                let hit_breakpoint = emu.tick();
+                debugger.record_frame();
+                let _ = emu.take_audio_samples();
+                if hit_breakpoint {
+                    emu.running = false;
+                    let pc = emu.z80_state().pc;
+                    println!("Hit breakpoint at PC = 0x{:04X}", pc);
+                    let _ = debugger.event_tx.send(DebuggerEvent::BreakpointHit { pc });
+                }
+            }
+            last_frame_time = Instant::now();
+        } else if emu.running {
             let now = Instant::now();
             let elapsed = now.duration_since(last_frame_time);
             if elapsed >= Duration::from_millis(20) {
@@ -354,6 +375,10 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                     "iy": state.get_reg16(5),
                     "halted": state.halted != 0,
                     "cycles": emu.clock(),
+                    "tape_loading": emu.tape_loading(),
+                    "tape_progress": emu.tape_progress_percent(),
+                    "warp": emu.warp_loading(),
+                    "warp_active": emu.warp_active(),
                 })
             }
             DebuggerCommand::Stats => {
@@ -597,6 +622,18 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                 }
                 _ => serde_json::json!({ "status": "error", "message": "Unknown key action" }),
             },
+            DebuggerCommand::Warp { enabled } => {
+                if let Some(enabled) = enabled {
+                    emu.set_warp_loading(enabled);
+                }
+                serde_json::json!({
+                    "status": "ok",
+                    "warp": emu.warp_loading(),
+                    "tape_loading": emu.tape_loading(),
+                    "warp_active": emu.warp_active(),
+                    "tape_progress": emu.tape_progress_percent(),
+                })
+            }
             DebuggerCommand::KeyPress { key, duration } => {
                 match emu.key_press_frames(key, duration) {
                     Ok(()) => serde_json::json!({

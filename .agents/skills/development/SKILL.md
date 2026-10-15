@@ -136,6 +136,9 @@ This skill provides step-by-step instructions and references for compiling, exec
     ```
   - The status bar's Warp checkbox (enabled while a TVC, CPC, or Spectrum
     tape is loading) runs at full host speed until the load finishes.
+    The TCP debugger and headless mode honor it too: in
+    `scripts/rtvc_debug.py`, `warp on` then `warp wait` (after typing the
+    load command) returns when the load has finished.
   - Check a real Spectrum tape at full speed, logging tape progress, playing,
     and loader state every 250 frames:
     ```bash

@@ -162,3 +162,32 @@ fn tcp_debugger_controls_and_lists_instruction_trace() {
     assert_eq!(response["entries"][0]["memory_writes"][0]["addr"], 0x8000);
     assert_eq!(response["entries"][0]["memory_writes"][0]["value"], 0x2A);
 }
+
+#[test]
+fn tcp_debugger_sets_and_reports_warp() {
+    let mut emu = Emu::new(MachineType::standard(false, RomVersion::V1_2, false));
+    let command = |emu: &mut Emu, line: &str| {
+        serde_json::from_str::<serde_json::Value>(&handle_command(
+            emu,
+            line,
+            FrameStatsSnapshot::default(),
+        ))
+        .unwrap()
+    };
+
+    let response = command(&mut emu, r#"{"cmd":"warp","enabled":true}"#);
+    assert_eq!(response["status"], "ok");
+    assert_eq!(response["warp"], true);
+    // No tape is loading, so warp is armed but not running.
+    assert_eq!(response["tape_loading"], false);
+    assert_eq!(response["warp_active"], false);
+    assert!(emu.warp_loading());
+
+    let status = command(&mut emu, r#"{"cmd":"status"}"#);
+    assert_eq!(status["warp"], true);
+    assert_eq!(status["tape_loading"], false);
+
+    let response = command(&mut emu, r#"{"cmd":"warp","enabled":false}"#);
+    assert_eq!(response["warp"], false);
+    assert_eq!(command(&mut emu, r#"{"cmd":"warp"}"#)["warp"], false);
+}

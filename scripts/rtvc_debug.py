@@ -5,6 +5,7 @@ import sys
 import argparse
 import cmd
 import shlex
+import time
 import readline # Enables command history and line editing
 
 class RtvcShell(cmd.Cmd):
@@ -58,6 +59,12 @@ class RtvcShell(cmd.Cmd):
         print(f"AF: 0x{resp.get('af', 0):04X}   BC: 0x{resp.get('bc', 0):04X}   DE: 0x{resp.get('de', 0):04X}   HL: 0x{resp.get('hl', 0):04X}")
         print(f"IX: 0x{resp.get('ix', 0):04X}   IY: 0x{resp.get('iy', 0):04X}   SP: 0x{resp.get('sp', 0):04X}   PC: 0x{resp.get('pc', 0):04X}")
         print(f"Halted: {resp.get('halted')}   Running: {resp.get('running')}   Cycles: {resp.get('cycles')}")
+        progress = resp.get("tape_progress")
+        print(
+            f"Tape: {'none' if progress is None else str(progress) + '%'}   "
+            f"Loading: {resp.get('tape_loading')}   Warp: {resp.get('warp')}"
+            f"{' (active)' if resp.get('warp_active') else ''}"
+        )
 
     def do_stats(self, arg):
         """Show average emulation FPS over the recent rolling window."""
@@ -878,6 +885,68 @@ class RtvcShell(cmd.Cmd):
             print(f"Key {key} pressed for {duration} frame(s).")
         elif resp:
             print(f"Error: {resp.get('message')}")
+
+    def do_warp(self, arg):
+        """Run at full speed while a tape loads.
+        Usage:
+          warp                 show warp and tape loading state
+          warp on | off        enable or disable warp while loading
+          warp wait [seconds]  wait until the current load finishes (default 600)
+        """
+        parts = arg.split()
+        if not parts:
+            self._print_warp(self._send_cmd({"cmd": "warp"}))
+        elif parts[0] in ("on", "off"):
+            self._print_warp(self._send_cmd({"cmd": "warp", "enabled": parts[0] == "on"}))
+        elif parts[0] == "wait":
+            timeout = float(parts[1]) if len(parts) > 1 else 600.0
+            self._wait_for_load(timeout)
+        else:
+            print("Usage: warp [on|off|wait [seconds]]")
+
+    def _print_warp(self, resp):
+        if not resp:
+            return
+        if resp.get("status") != "ok":
+            print(f"Error: {resp.get('message')}")
+            return
+        progress = resp.get("tape_progress")
+        print(
+            f"Warp: {'on' if resp.get('warp') else 'off'}"
+            f"{' (active)' if resp.get('warp_active') else ''}   "
+            f"Loading: {resp.get('tape_loading')}   "
+            f"Tape: {'none' if progress is None else str(progress) + '%'}"
+        )
+
+    def _wait_for_load(self, timeout, settle=2.0):
+        """Polls until no tape has been loading for `settle` seconds. Loaders
+        pause between files (the CPC stops its motor), so one idle poll is not
+        the end. A load must start within 5 s."""
+        start = time.monotonic()
+        idle_since = start
+        seen_loading = False
+        last_progress = None
+        while time.monotonic() - start < timeout:
+            resp = self._send_cmd({"cmd": "warp"})
+            if not resp or resp.get("status") != "ok":
+                return
+            now = time.monotonic()
+            if resp.get("tape_loading"):
+                seen_loading = True
+                idle_since = now
+                progress = resp.get("tape_progress")
+                if progress != last_progress:
+                    print(f"Loading... {progress}%")
+                    last_progress = progress
+            elif now - idle_since >= (settle if seen_loading else 5.0):
+                print(
+                    f"Load finished after {idle_since - start:.1f} s"
+                    if seen_loading
+                    else "No tape load started."
+                )
+                return
+            time.sleep(0.2)
+        print("Timed out waiting for the load to finish.")
 
     def do_trace(self, arg):
         """Control the bounded instruction trace.

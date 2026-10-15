@@ -273,6 +273,14 @@ impl Emu {
         self.machine.tape_loading()
     }
 
+    /// Playing progress of the inserted tape, if any.
+    pub fn tape_progress_percent(&self) -> Option<u8> {
+        match self.tape_player() {
+            Some(player) => Some(player.progress_percent()),
+            None => self.tvc().and_then(|tvc| tvc.bus.tape_progress_percent()),
+        }
+    }
+
     pub fn warp_active(&self) -> bool {
         self.warp_loading && self.running && self.tape_loading()
     }
