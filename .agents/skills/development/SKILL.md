@@ -38,7 +38,9 @@ This skill provides step-by-step instructions and references for compiling, exec
   cargo run --bin rtvc -- path/to/game.z80
   ```
   - Place ROM files (`TVC12_D3.64K`, `TVC12_D4.64K`, `TVC12_D7.64K`) in `roms/` for the TVC to boot.
-  - Use the Machine menu to run/pause, reset, select TVC, Zx82, or CPC 464, choose a
+  - Use the Machine menu to run/pause, reset, select TVC, Zx82, or CPC 464
+    (the System selector shows in Developer Workspace, or while a Zx82/CPC
+    is active), choose a
     TVC preset or override memory, system ROM, a `roms/*.crt` cartridge, and the
     card in each expansion slot (HBF or host files), and select the video model.
   - The host file card serves BASIC `LOAD`/`SAVE` from `files/` (or the folder
@@ -124,8 +126,8 @@ This skill provides step-by-step instructions and references for compiling, exec
   ```bash
   cargo run --bin rtvc -- --cpc
   ```
-  - Needs `roms/CPC_OS_464.ROM` and `roms/CPC_BASIC_1.0.ROM`; Machine >
-    System > CPC 464 switches to it from the UI. No audio or disk.
+  - Needs `roms/CPC_OS_464.ROM` and `roms/CPC_BASIC_1.0.ROM`; in Developer
+    Workspace, Machine > System > CPC 464 switches to it from the UI. No audio or disk.
   - Load a CDT tape: `cargo run --bin rtvc -- --cpc --tape game.cdt`, then
     type `RUN"`, press Enter and any key. The Spectrum equivalent is
     `--zx82 --tape game.tap` (TAP or TZX) and `LOAD ""` (`J`, then

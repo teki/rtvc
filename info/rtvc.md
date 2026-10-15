@@ -86,7 +86,7 @@ validation independent from machine emulation.
 | Native headless | default `native`, `--headless` CLI | machine loop and TCP debugger without GUI |
 | Integrated Zx82 | default `native` and `wasm-full` | Spectrum 48K state loading through the shared application and debugger |
 | Standalone Zx82 | default `native`, `cargo run --bin zx82` | focused Spectrum core runner |
-| Integrated CPC 464 | default `native` (`--cpc` or Machine > System) | experimental CPC 464 boot to BASIC; not offered on the web |
+| Integrated CPC 464 | default `native` (`--cpc`, or Machine > System in Developer mode) | experimental CPC 464 boot to BASIC; not offered on the web |
 | Lightweight web | `wasm,web-vid-simple` | small wasm-bindgen API, JavaScript-owned canvas and audio |
 | Compatibility lightweight web | `wasm,web-vid-realistic` | same API; runtime video selection remains available |
 | Full web | `wasm-full` | complete egui UI, browser files, IndexedDB, AudioWorklet |
@@ -685,6 +685,12 @@ snapshot. `cargo xtask bundle-web-full` builds the complete web UI.
 
 Simple mode shows the 4:3 TVC screen. Developer mode uses `egui_dock`; its
 default layout places Screen above IO Log.
+
+rtvc is a TVC emulator; the Zx82 and CPC 464 are aids for converting games.
+The Machine menu's System selector (TVC, Zx82, CPC 464) therefore appears
+only in Developer mode, or while a Zx82 or CPC is active (for example after
+loading a `.z80` file or a CPC snapshot), so that Simple mode can return to
+the TVC. `--cpc`, `--zx82`, and snapshots switch machines in either mode.
 
 Debugger Layout opens CPU, Disassembly, Memory, Breakpoints, ROM Symbols,
 Events, Frame History, Instruction Trace, Screen, and IO Log panes. Pane

@@ -1493,43 +1493,11 @@ impl EmuApp {
             }
 
             ui.separator();
-            #[cfg(not(target_arch = "wasm32"))]
-            let systems = [
-                (System::Tvc, "TVC"),
-                (System::Zx82, "Zx82 (Spectrum 48K)"),
-                (System::Cpc, "CPC 464"),
-            ];
-            #[cfg(target_arch = "wasm32")]
-            let systems = [(System::Tvc, "TVC")];
-            match choice_row(ui, "System:", self.emu.system(), &systems) {
-                Some(System::Tvc) => {
-                    let vid_model = self.emu.vid_model();
-                    if let Err(err) = self.emu.reload(self.emu.machine_type) {
-                        self.file_status = Some(err);
-                    }
-                    self.emu.set_vid_model(vid_model);
-                    self.save_app_state();
-                    ui.close_menu();
-                }
-                #[cfg(not(target_arch = "wasm32"))]
-                Some(System::Zx82) => {
-                    if let Err(err) = self.emu.switch_to_zx82() {
-                        self.file_status = Some(err);
-                    } else {
-                        self.file_status = Some("Booted Zx82 from roms/48.rom".to_string());
-                    }
-                    ui.close_menu();
-                }
-                #[cfg(not(target_arch = "wasm32"))]
-                Some(System::Cpc) => {
-                    if let Err(err) = self.emu.switch_to_cpc() {
-                        self.file_status = Some(err);
-                    } else {
-                        self.file_status = Some("Booted CPC 464 from roms/CPC_*.ROM".to_string());
-                    }
-                    ui.close_menu();
-                }
-                _ => {}
+            // The Zx82 and CPC are game-conversion aids, so the selector is a
+            // developer tool. It also shows while one of them is active (for
+            // example after loading a .z80 or CPC snapshot) as the way back.
+            if self.workspace.is_developer() || self.emu.system() != System::Tvc {
+                self.draw_system_selector(ui);
             }
 
             if self.emu.system() == System::Tvc {
@@ -1551,6 +1519,47 @@ impl EmuApp {
                 ui.close_menu();
             }
         });
+    }
+
+    fn draw_system_selector(&mut self, ui: &mut egui::Ui) {
+        #[cfg(not(target_arch = "wasm32"))]
+        let systems = [
+            (System::Tvc, "TVC"),
+            (System::Zx82, "Zx82 (Spectrum 48K)"),
+            (System::Cpc, "CPC 464"),
+        ];
+        #[cfg(target_arch = "wasm32")]
+        let systems = [(System::Tvc, "TVC")];
+        match choice_row(ui, "System:", self.emu.system(), &systems) {
+            Some(System::Tvc) => {
+                let vid_model = self.emu.vid_model();
+                if let Err(err) = self.emu.reload(self.emu.machine_type) {
+                    self.file_status = Some(err);
+                }
+                self.emu.set_vid_model(vid_model);
+                self.save_app_state();
+                ui.close_menu();
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            Some(System::Zx82) => {
+                if let Err(err) = self.emu.switch_to_zx82() {
+                    self.file_status = Some(err);
+                } else {
+                    self.file_status = Some("Booted Zx82 from roms/48.rom".to_string());
+                }
+                ui.close_menu();
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            Some(System::Cpc) => {
+                if let Err(err) = self.emu.switch_to_cpc() {
+                    self.file_status = Some(err);
+                } else {
+                    self.file_status = Some("Booted CPC 464 from roms/CPC_*.ROM".to_string());
+                }
+                ui.close_menu();
+            }
+            _ => {}
+        }
     }
 
     fn draw_tape_menu(&mut self, ui: &mut egui::Ui) {

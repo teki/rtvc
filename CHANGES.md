@@ -4,7 +4,8 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
-- Experimental Amstrad CPC 464 (Machine > System > CPC 464, or `--cpc`):
+- Experimental Amstrad CPC 464 (Machine > System > CPC 464 in Developer
+  Workspace, or `--cpc`):
   boots to BASIC 1.0 with Z80, Gate Array, 6845 CRTC, and keyboard. No audio
   or disk yet. Needs `roms/CPC_OS_464.ROM` and `roms/CPC_BASIC_1.0.ROM`.
 - The CPC 464 and Zx82 load tapes: CDT/TZX on the CPC, TAP/TZX on the
@@ -19,6 +20,8 @@ Release notes start here. Older release history is intentionally not backfilled.
   draws the Spectrum screen line by line, showing the loading border stripes.
 - Tape progress counts playing time, so a long silence at the start of a
   tape no longer sits at 0%.
+- The Machine menu's TVC/Zx82/CPC selector only shows in Developer Workspace
+  (or while a Zx82 or CPC is active, to switch back).
 - The TCP debugger has a `warp` command (and `warp on`/`off`/`wait` in
   `rtvc_debug.py`), and headless mode warps too, so scripts load tapes in
   seconds.
