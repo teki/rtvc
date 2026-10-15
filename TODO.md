@@ -52,6 +52,10 @@ Open issues and planned improvements for the TVC emulator.
     implementation into every build target.
   - Refactor incrementally, keeping TVC behavior and performance unchanged
     while extracting shared interfaces.
+- [ ] Extend the experimental CPC 464 beyond booting to BASIC and loading
+  CDT tapes: AY-3-8912 audio, CPC snapshot (`.sna`) loading, exact
+  Gate Array wait-state timing instead of 4 T-state rounding, and the web
+  build (ROMs are currently read from `roms/` on native only).
 
 ## Developer Workspace
 

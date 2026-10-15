@@ -74,7 +74,7 @@ Suggested flat layout:
 | --- | --- |
 | `src/tvc.rs` | `src/tvc_emu.rs` |
 | `src/mmu.rs` | `src/tvc_mmu.rs` |
-| `src/vid.rs` | `src/tvc_vid.rs` |
+| `src/vid.rs` | `src/tvc_vid.rs` (done; shared 6845 in `src/crtc.rs`) |
 | `src/key.rs` | `src/tvc_key.rs` |
 | `src/sound.rs` | `src/tvc_sound.rs` |
 | `src/tape.rs` | `src/tvc_tape.rs` |

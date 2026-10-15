@@ -32,7 +32,8 @@ Az `rtvc` egy Rust library crate natív, fej nélküli, könnyűsúlyú WebAssem
 | [src/z80.rs](../src/z80.rs) | Z80 végrehajtó mag |
 | [src/bus.rs](../src/bus.rs) | CPU busz trait és lapos teszt busz |
 | [src/mmu.rs](../src/mmu.rs) | TVC bankváltás és ROM elhelyezés |
-| [src/vid.rs](../src/vid.rs) | CRTC állapot, TVC pixel dekódolás, megjelenítők |
+| [src/emulator/crtc.rs](../src/emulator/crtc.rs) | közös 6845 CRTC számlálók és regiszterek (MC6845 és HD6845S változat) |
+| [src/emulator/tvc_vid.rs](../src/emulator/tvc_vid.rs) | TVC videójel-generátor, televízió-vevő, megjelenítők |
 | [src/tvc.rs](../src/tvc.rs) | TVC gép busz, időzítés, megszakítások, eszközök |
 | [src/zx82.rs](../src/zx82.rs) | kezdeti Spectrum 48K memória, ULA, képkocka időzítés és teljes képkockás megjelenítő |
 | [src/key.rs](../src/key.rs) | billentyűzetmátrix és host-billentyű adaptáció |

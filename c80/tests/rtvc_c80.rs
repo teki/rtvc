@@ -421,7 +421,7 @@ fn pong_cas_inject_starts_the_playfield() {
 
 fn boot_tvc12() -> rtvc_core::tvc::Tvc {
     let mut tvc =
-        rtvc_core::tvc::Tvc::new_with_vid_model(false, rtvc_core::vid::VidModel::Interleaved);
+        rtvc_core::tvc::Tvc::new_with_vid_model(false, rtvc_core::machine::VidModel::Interleaved);
     tvc.add_rom("TVC12_D4.64K", include_bytes!("../../roms/TVC12_D4.64K"));
     tvc.add_rom("TVC12_D3.64K", include_bytes!("../../roms/TVC12_D3.64K"));
     tvc.add_rom("TVC12_D7.64K", include_bytes!("../../roms/TVC12_D7.64K"));

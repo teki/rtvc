@@ -9,6 +9,12 @@ pub mod basic;
 pub mod bus;
 #[path = "emulator/cas.rs"]
 pub mod cas;
+#[path = "emulator/cpc.rs"]
+pub mod cpc;
+#[path = "emulator/cpc_vid.rs"]
+pub mod cpc_vid;
+#[path = "emulator/crtc.rs"]
+pub mod crtc;
 #[path = "emulator/disasm.rs"]
 pub mod disasm;
 #[path = "emulator/expansion.rs"]
@@ -41,8 +47,10 @@ pub mod tape;
 pub mod tvc;
 #[path = "emulator/tvc_snapshot.rs"]
 pub mod tvc_snapshot;
-#[path = "emulator/vid.rs"]
-pub mod vid;
+#[path = "emulator/tvc_vid.rs"]
+pub mod tvc_vid;
+#[path = "emulator/tzx.rs"]
+pub mod tzx;
 #[path = "emulator/z80.rs"]
 pub mod z80;
 #[path = "emulator/z80_bus_cycles.rs"]

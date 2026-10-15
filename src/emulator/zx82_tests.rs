@@ -309,3 +309,161 @@ fn append_z80_page(snapshot: &mut Vec<u8>, page: u8, data: &[u8], compressed: bo
         snapshot.extend_from_slice(data);
     }
 }
+
+#[test]
+fn rom_ld_bytes_loads_a_tap_block_through_ear() {
+    let Ok(rom) = std::fs::read("roms/48.rom") else {
+        return;
+    };
+    let mut zx82 = Zx82::new();
+    zx82.load_rom(&rom).unwrap();
+    for _ in 0..100 {
+        zx82.run_for_a_frame();
+    }
+
+    let payload: Vec<u8> = (0..200u32).map(|value| (value * 7) as u8).collect();
+    let mut block = vec![0xFF];
+    block.extend_from_slice(&payload);
+    block.push(block.iter().fold(0, |sum, byte| sum ^ byte));
+    let mut tap = Vec::new();
+    // The same block twice: the second must still be there after auto-stop.
+    for _ in 0..2 {
+        tap.extend_from_slice(&(block.len() as u16).to_le_bytes());
+        tap.extend_from_slice(&block);
+    }
+    zx82.insert_tape(crate::tzx::Tape::parse(&tap).unwrap());
+    assert!(!zx82.tape().unwrap().is_playing());
+
+    // Call LD-BYTES (A=0xFF flag, carry set to load) returning to `JR $`.
+    zx82.bus.w8(0x7000, 0x18);
+    zx82.bus.w8(0x7001, 0xFE);
+    zx82.bus.w16(0xFEFE, 0x7000);
+    let state = &mut zx82.z80.state;
+    state.set_reg16(10, 0xFEFE);
+    state.set_reg16(0, 0xFF01);
+    state.set_reg16(4, 0x9000);
+    state.set_reg16(2, payload.len() as u16);
+    state.set_reg16(11, 0x0556);
+
+    zx82.set_breakpoint(0x7000);
+    for _ in 0..300 {
+        if zx82.run_for_a_frame() {
+            break;
+        }
+    }
+    assert_eq!(zx82.z80.state.pc, 0x7000, "LD-BYTES did not return");
+    assert_eq!(
+        zx82.z80.state.get_reg16(0) & 1,
+        1,
+        "LD-BYTES reported an error"
+    );
+    assert_eq!(
+        &zx82.bus.ram()[0x5000..0x5000 + payload.len()],
+        &payload[..]
+    );
+    assert!(zx82.tape_loading());
+
+    // Once the program leaves the loader, the tape stops before block two.
+    zx82.clear_breakpoint(0x7000);
+    for _ in 0..20 {
+        zx82.run_for_a_frame();
+    }
+    let tape = zx82.tape().unwrap();
+    assert!(!tape.is_playing());
+    assert!(!tape.is_finished());
+    assert!(tape.progress_percent() < 60);
+    assert!(!zx82.tape_loading());
+}
+
+#[test]
+fn typed_symbol_replaces_the_host_keys_that_produced_it() {
+    let mut zx82 = Zx82::new();
+    // Host Shift+2 (or Shift+') producing '"' must not leave Caps Shift or 2
+    // down alongside Symbol Shift+P.
+    zx82.key_down(16);
+    zx82.key_down(50);
+    zx82.key_press('"');
+    let mut expected = [0x1F; 8];
+    expected[7] &= !(1 << 1); // Symbol Shift
+    expected[5] &= !1; // P
+    assert_eq!(zx82.bus.keyboard, expected);
+
+    // Releasing the host keys later is harmless.
+    zx82.key_up(50);
+    zx82.key_up(16);
+    zx82.run_for_a_frame();
+    assert_eq!(zx82.bus.keyboard, [0x1F; 8]);
+
+    // Letters keep host Shift as Caps Shift.
+    zx82.key_down(16);
+    zx82.key_press('a');
+    assert_eq!(zx82.bus.keyboard[0], 0x1F & !1);
+}
+
+#[test]
+fn interleaved_model_draws_border_changes_on_their_line() {
+    let mut zx82 = Zx82::new_with_vid_model(VidModel::Interleaved);
+    let frame_start = zx82.next_frame_clock - FRAME_CLOCKS;
+    zx82.bus.set_border_color(1);
+    zx82.draw_rows_until(frame_start + FIRST_ROW_DONE_CLOCK + 99 * LINE_CLOCKS);
+    zx82.bus.set_border_color(2);
+    zx82.draw_rows_until(zx82.next_frame_clock);
+
+    let pixel = |row: usize| zx82.framebuffer[row * FRAMEBUFFER_WIDTH];
+    assert_eq!(pixel(0), spectrum_color(1, false));
+    assert_eq!(pixel(99), spectrum_color(1, false));
+    assert_eq!(pixel(100), spectrum_color(2, false));
+    assert_eq!(pixel(FRAMEBUFFER_HEIGHT - 1), spectrum_color(2, false));
+}
+
+#[test]
+fn rows_complete_before_the_frame_ends() {
+    let last_row_done = FIRST_ROW_DONE_CLOCK + (FRAMEBUFFER_HEIGHT as u64 - 1) * LINE_CLOCKS;
+    assert!(last_row_done < FRAME_CLOCKS);
+    // Paper row 0 finishes 128 T after its first pixel plus the right border.
+    assert_eq!(
+        FIRST_ROW_DONE_CLOCK + TOP_BORDER as u64 * LINE_CLOCKS,
+        FIRST_PAPER_PIXEL_CLOCK + 128 + 24
+    );
+}
+
+/// Loads `ZX_TEST_TAPE` with `LOAD ""` at full speed and logs the tape state,
+/// for checking real tapes and the auto-stop:
+/// `ZX_TEST_TAPE=game.tap cargo test --release -- --ignored zx_loads_tape --nocapture`
+#[test]
+#[ignore]
+fn zx_loads_tape_from_env() {
+    let Ok(tape_path) = std::env::var("ZX_TEST_TAPE") else {
+        return;
+    };
+    let mut zx82 = Zx82::new_with_vid_model(VidModel::Interleaved);
+    zx82.load_rom(&std::fs::read("roms/48.rom").unwrap())
+        .unwrap();
+    zx82.insert_tape(crate::tzx::Tape::parse(&std::fs::read(&tape_path).unwrap()).unwrap());
+    for _ in 0..200 {
+        zx82.run_for_a_frame();
+    }
+    for ch in "j\"\"\r".chars() {
+        zx82.key_press(ch);
+        for _ in 0..5 {
+            zx82.run_for_a_frame();
+        }
+    }
+    let frames: usize = std::env::var("ZX_TEST_FRAMES")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(15_000);
+    for frame in 0..frames {
+        zx82.run_for_a_frame();
+        if frame % 250 == 0 {
+            let tape = zx82.tape().unwrap();
+            eprintln!(
+                "frame {frame}: tape {}% playing {} loading {} pc {:04X}",
+                tape.progress_percent(),
+                tape.is_playing(),
+                zx82.tape_loading(),
+                zx82.z80.state.pc
+            );
+        }
+    }
+}

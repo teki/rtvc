@@ -4,9 +4,9 @@ Plan: [tvc-video-signal-pipeline.md](tvc-video-signal-pipeline.md)
 
 ## Current state
 
-- The Interleaved pipeline lives in [`src/emulator/vid.rs`](../../src/emulator/vid.rs).
+- The Interleaved pipeline lives in [`src/emulator/tvc_vid.rs`](../../src/emulator/tvc_vid.rs), with the 6845 counters in [`src/emulator/crtc.rs`](../../src/emulator/crtc.rs).
   Parallel comparison copies (`vid2.rs`, `vid3.rs`) have been removed.
-- Video tests live in [`src/emulator/vid_tests.rs`](../../src/emulator/vid_tests.rs).
+- Video tests live in [`src/emulator/tvc_vid_tests.rs`](../../src/emulator/tvc_vid_tests.rs).
 - The existing public `Vid` facade and snapshot wire format are preserved.
 
 ## Completed

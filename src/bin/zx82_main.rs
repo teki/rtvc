@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use eframe::egui::{self, ColorImage, TextureHandle, TextureOptions, Vec2};
-use rtvc_core::vid::VidModel;
+use rtvc_core::machine::VidModel;
 use rtvc_core::zx82::{FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH, Zx82};
 
 const APP_ICON_PNG: &[u8] = include_bytes!("../../assets/rtvc-app-icon.png");

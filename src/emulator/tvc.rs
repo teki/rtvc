@@ -12,12 +12,13 @@ use crate::instruction_trace::{
 };
 use crate::key::Key;
 use crate::log::{Log, LogCategory, LogEntry, Logger};
+use crate::machine::VidModel;
 use crate::machine_type::ExpansionCard;
 use crate::mmu::{RomBank, TvcMmu};
 use crate::snapshot;
 use crate::sound::SoundTimer;
 use crate::tape::TapeInterface;
-use crate::vid::{Vid, VidModel};
+use crate::tvc_vid::Vid;
 use crate::z80::Z80;
 use crate::z80_bus_cycles::BusCycles;
 

@@ -5,9 +5,9 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
 use crate::host_file::{HostFileStore, MemoryStore};
+use crate::machine::VidModel;
 use crate::machine_type::ExpansionCard;
 use crate::tvc::Tvc;
-use crate::vid::VidModel;
 
 pub const SCREEN_WIDTH: usize = 608;
 pub const SCREEN_HEIGHT: usize = 288;
@@ -287,6 +287,7 @@ impl WebHandle {
             emu.set_vid_model(vid_model);
         }
         emu.set_fast_boot(app_state_file.state.fast_boot);
+        emu.set_warp_loading(app_state_file.state.warp_loading);
         if let Some(enabled) = app_state_file.state.host_file_default {
             emu.set_host_file_default(enabled);
         }

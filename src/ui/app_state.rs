@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use crate::emu::MachineType;
-use crate::vid::VidModel;
+use crate::machine::VidModel;
 
 #[cfg(not(target_arch = "wasm32"))]
 const CONFIG_FILE_NAME: &str = "rtvc.toml";
@@ -13,6 +13,8 @@ pub struct AppState {
     pub machine_type: Option<MachineType>,
     pub vid_model: Option<VidModel>,
     pub fast_boot: bool,
+    /// Run at full host speed while a tape is loading.
+    pub warp_loading: bool,
     pub tape_file_name: Option<String>,
     pub tape_loaded: bool,
     pub disk_file_name: Option<String>,
@@ -118,6 +120,7 @@ impl AppStateFile {
             vid_model_id(state.vid_model)
         ));
         text.push_str(&format!("fast_boot = {}\n", state.fast_boot));
+        text.push_str(&format!("warp_loading = {}\n", state.warp_loading));
         text.push_str(&host_file_lines(state));
         text.push_str("\n[tape]\n");
         if let Some(file_name) = &state.tape_file_name {
@@ -193,6 +196,7 @@ fn write_state_file(path: &std::path::Path, state: &AppState) -> std::io::Result
     )?;
     writeln!(file, "video_model = \"{}\"", vid_model_id(state.vid_model))?;
     writeln!(file, "fast_boot = {}", state.fast_boot)?;
+    writeln!(file, "warp_loading = {}", state.warp_loading)?;
     write!(file, "{}", host_file_lines(state))?;
     writeln!(file)?;
     writeln!(file, "[tape]")?;
@@ -273,6 +277,9 @@ fn parse_state(text: &str) -> AppState {
                 }
                 "fast_boot" => {
                     state.fast_boot = parse_bool(value).unwrap_or(state.fast_boot);
+                }
+                "warp_loading" => {
+                    state.warp_loading = parse_bool(value).unwrap_or(state.warp_loading);
                 }
                 "host_file_dir" => state.host_file_dir = parse_string(value),
                 "host_file_default" => state.host_file_default = parse_bool(value),

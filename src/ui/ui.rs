@@ -17,7 +17,7 @@ use crate::emu::{
     CartId, DiskGeometry, Emu, ExpansionCard, MachineType, ProgEntry, RomVersion, cartridge_stems,
 };
 use crate::machine::System;
-use crate::vid::VidModel;
+use crate::machine::VidModel;
 use crate::workspace::{self, Workspace, WorkspaceMode, WorkspaceTab};
 use eframe::egui::{self, Color32, ColorImage, TextureHandle};
 
@@ -237,6 +237,8 @@ extern "C" {
 
 const TVC_REFRESH_HZ: u32 = 50;
 const TVC_FRAME_DT: f64 = 1.0 / TVC_REFRESH_HZ as f64;
+/// Host time per repaint spent running extra frames while warping.
+const WARP_FRAME_BUDGET: Duration = Duration::from_millis(15);
 
 #[cfg(not(target_arch = "wasm32"))]
 fn egui_key_to_js_code(key: egui::Key) -> Option<u32> {
@@ -729,12 +731,17 @@ impl EmuApp {
     }
 
     fn load_tape_dialog(&mut self, _ctx: egui::Context) {
+        let extensions: &'static [&'static str] = if self.emu.system() == System::Tvc {
+            &["cas", "zip"]
+        } else {
+            &["tzx", "cdt", "tap"]
+        };
         #[cfg(target_arch = "wasm32")]
         {
             let file_tx = self.file_tx.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let file = rfd::AsyncFileDialog::new()
-                    .add_filter("tape image", &["cas", "zip"])
+                    .add_filter("tape image", extensions)
                     .pick_file()
                     .await;
                 if let Some(file) = file {
@@ -748,7 +755,7 @@ impl EmuApp {
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(path) = rfd::FileDialog::new()
-                .add_filter("tape image", &["cas", "zip"])
+                .add_filter("tape image", extensions)
                 .pick_file()
             {
                 match self.emu.play_tape_file_path(&path) {
@@ -1487,7 +1494,11 @@ impl EmuApp {
 
             ui.separator();
             #[cfg(not(target_arch = "wasm32"))]
-            let systems = [(System::Tvc, "TVC"), (System::Zx82, "Zx82 (Spectrum 48K)")];
+            let systems = [
+                (System::Tvc, "TVC"),
+                (System::Zx82, "Zx82 (Spectrum 48K)"),
+                (System::Cpc, "CPC 464"),
+            ];
             #[cfg(target_arch = "wasm32")]
             let systems = [(System::Tvc, "TVC")];
             match choice_row(ui, "System:", self.emu.system(), &systems) {
@@ -1506,6 +1517,15 @@ impl EmuApp {
                         self.file_status = Some(err);
                     } else {
                         self.file_status = Some("Booted Zx82 from roms/48.rom".to_string());
+                    }
+                    ui.close_menu();
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                Some(System::Cpc) => {
+                    if let Err(err) = self.emu.switch_to_cpc() {
+                        self.file_status = Some(err);
+                    } else {
+                        self.file_status = Some("Booted CPC 464 from roms/CPC_*.ROM".to_string());
                     }
                     ui.close_menu();
                 }
@@ -1536,7 +1556,7 @@ impl EmuApp {
     fn draw_tape_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Tape", |ui| {
             if self.emu.system() != System::Tvc {
-                ui.label("Tape controls are not implemented for Zx82.");
+                self.draw_machine_tape_menu(ui);
                 return;
             }
             if ui.button("Open Tape File...").clicked() {
@@ -1652,10 +1672,61 @@ impl EmuApp {
         });
     }
 
+    /// Tape menu for the Zx82 and CPC, which play TZX/CDT/TAP images.
+    fn draw_machine_tape_menu(&mut self, ui: &mut egui::Ui) {
+        if ui.button("Open Tape File...").clicked() {
+            self.load_tape_dialog(ui.ctx().clone());
+            ui.close_menu();
+        }
+        let Some(player) = self.emu.tape_player() else {
+            ui.add_enabled(false, egui::Label::new("No tape inserted"));
+            return;
+        };
+        let (playing, finished) = (player.is_playing(), player.is_finished());
+        ui.separator();
+        for description in &player.tape().descriptions {
+            ui.label(description);
+        }
+        if playing {
+            if ui.button("Stop").clicked() {
+                if let Some(player) = self.emu.tape_player_mut() {
+                    player.stop();
+                }
+                ui.close_menu();
+            }
+        } else if ui
+            .add_enabled(!finished, egui::Button::new("Play"))
+            .clicked()
+        {
+            if let Some(player) = self.emu.tape_player_mut() {
+                player.play();
+            }
+            ui.close_menu();
+        }
+        if ui.button("Rewind").clicked() {
+            let is_cpc = self.emu.system() == System::Cpc;
+            if let Some(player) = self.emu.tape_player_mut() {
+                player.rewind();
+                if is_cpc {
+                    // The CPC's PLAY key stays down; the motor relay gates it.
+                    player.play();
+                }
+            }
+            ui.close_menu();
+        }
+        if ui.button("Eject").clicked() {
+            self.emu.eject_machine_tape();
+            ui.close_menu();
+        }
+    }
+
     fn draw_disk_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Disk", |ui| {
             if self.emu.system() != System::Tvc {
-                ui.label("Disk controls are not implemented for Zx82.");
+                ui.label(format!(
+                    "Disk controls are not implemented for {}.",
+                    self.emu.system_label()
+                ));
                 return;
             }
 
@@ -2016,14 +2087,20 @@ PI                           — π (3.141592654)
                         self.save_app_state();
                     }
                     ui.separator();
-                    let tape_active = self.emu.tvc().is_some_and(|tvc| tvc.bus.tape_play_active());
+                    let machine_tape = self
+                        .emu
+                        .tape_player()
+                        .filter(|player| player.is_playing())
+                        .map(|player| player.progress_percent());
+                    let tape_active = machine_tape.is_some()
+                        || self.emu.tvc().is_some_and(|tvc| tvc.bus.tape_play_active());
                     draw_tape_led(ui, tape_active, self.emu.get_current_tape_level());
                     ui.label(
-                        if let Some(percent) = self
-                            .emu
-                            .tvc()
-                            .and_then(|tvc| tvc.bus.tape_progress_percent())
-                        {
+                        if let Some(percent) = machine_tape.or_else(|| {
+                            self.emu
+                                .tvc()
+                                .and_then(|tvc| tvc.bus.tape_progress_percent())
+                        }) {
                             format!("Tape active ({percent}%)")
                         } else {
                             "Tape idle".to_string()
@@ -2034,6 +2111,19 @@ PI                           — π (3.141592654)
                         "Tape: {}",
                         self.emu.loaded_tape.as_deref().unwrap_or("(none)")
                     ));
+                    let mut warp = self.emu.warp_loading();
+                    if ui
+                        .add_enabled(
+                            self.emu.tape_loading(),
+                            egui::Checkbox::new(&mut warp, "Warp"),
+                        )
+                        .on_hover_text("Run at full speed while the tape is loading")
+                        .on_disabled_hover_text("Available while a tape is loading")
+                        .changed()
+                    {
+                        self.emu.set_warp_loading(warp);
+                        self.save_app_state();
+                    }
                     ui.separator();
                     let disks: Vec<String> = self
                         .emu
@@ -2089,6 +2179,7 @@ PI                           — π (3.141592654)
             machine_type: Some(self.emu.machine_type),
             vid_model: Some(self.emu.vid_model()),
             fast_boot: self.emu.fast_boot(),
+            warp_loading: self.emu.warp_loading(),
             tape_file_name: self.emu.loaded_tape_file_name.clone(),
             tape_loaded: self.emu.loaded_tape_file_name.is_some(),
             disk_file_name: self.emu.loaded_disk_file_name[0].clone(),
@@ -2597,7 +2688,9 @@ impl eframe::App for EmuApp {
                 PendingFile::Tape { name, bytes } => {
                     match self.emu.play_tape_bytes(&name, &bytes) {
                         Ok(()) => {
-                            if let Some(recent) = self.emu.recent_tapes_wasm.first().cloned() {
+                            if self.emu.system() == System::Tvc
+                                && let Some(recent) = self.emu.recent_tapes_wasm.first().cloned()
+                            {
                                 self.persist_wasm_recent("tape", recent, ctx.clone());
                             }
                             self.file_status = Some(format!("Loaded tape: {name}"));
@@ -2779,37 +2872,70 @@ impl eframe::App for EmuApp {
         }
 
         if self.emu.running && self.emu_frame_accumulator >= TVC_FRAME_DT {
-            let hit_breakpoint = self.emu.tick();
-            if !hit_breakpoint && self.emu.frame_complete() {
-                if let Err(error) = self.debugger_ui.capture_history_frame(&self.emu) {
-                    self.file_status = Some(format!("Frame history stopped: {error}"));
+            // Warp runs extra frames within a host-time budget while a tape
+            // loads; their audio is dropped instead of queued.
+            loop {
+                let warping = self.emu.warp_active();
+                let hit_breakpoint = self.run_emulator_frame();
+                if warping {
+                    let _ = self.emu.take_audio_samples();
+                } else {
+                    self.push_audio_samples();
+                }
+                if hit_breakpoint || !self.emu.warp_active() || now.elapsed() >= WARP_FRAME_BUDGET {
+                    break;
                 }
             }
-            #[cfg(all(feature = "native", not(target_arch = "wasm32")))]
-            if let Some(ref dbg) = self.debugger {
-                dbg.record_frame();
-            }
-            if hit_breakpoint {
-                self.emu.running = false;
-                let pc = self.emu.z80_state().pc;
-                self.debugger_ui.record_breakpoint_hit(pc, &self.emu);
-                #[cfg(all(feature = "native", not(target_arch = "wasm32")))]
-                if let Some(ref dbg) = self.debugger {
-                    let _ = dbg
-                        .event_tx
-                        .send(crate::debugger::DebuggerEvent::BreakpointHit { pc });
-                }
-            }
-            self.push_audio_samples();
             self.emu_frame_accumulator %= TVC_FRAME_DT;
-            self.frame_count += 1;
         }
         self.update_screen_texture(ctx);
         #[cfg(not(target_arch = "wasm32"))]
         for error in self.emu.flush_dirty_disk_files() {
             self.file_status = Some(error);
         }
+        self.finish_update(ctx);
+    }
 
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = self.emu.flush_dirty_disk_files();
+        }
+        self.save_app_state();
+        self.save_workspace();
+    }
+}
+
+impl EmuApp {
+    /// Runs one emulator frame and handles a breakpoint; returns whether one
+    /// was hit.
+    fn run_emulator_frame(&mut self) -> bool {
+        let hit_breakpoint = self.emu.tick();
+        if !hit_breakpoint && self.emu.frame_complete() {
+            if let Err(error) = self.debugger_ui.capture_history_frame(&self.emu) {
+                self.file_status = Some(format!("Frame history stopped: {error}"));
+            }
+        }
+        #[cfg(all(feature = "native", not(target_arch = "wasm32")))]
+        if let Some(ref dbg) = self.debugger {
+            dbg.record_frame();
+        }
+        if hit_breakpoint {
+            self.emu.running = false;
+            let pc = self.emu.z80_state().pc;
+            self.debugger_ui.record_breakpoint_hit(pc, &self.emu);
+            #[cfg(all(feature = "native", not(target_arch = "wasm32")))]
+            if let Some(ref dbg) = self.debugger {
+                let _ = dbg
+                    .event_tx
+                    .send(crate::debugger::DebuggerEvent::BreakpointHit { pc });
+            }
+        }
+        self.frame_count += 1;
+        hit_breakpoint
+    }
+
+    fn finish_update(&mut self, ctx: &egui::Context) {
         let elapsed = self.last_frame_time.elapsed();
         if elapsed.as_secs() >= 1 {
             self.fps = self.frame_count;
@@ -2832,17 +2958,6 @@ impl eframe::App for EmuApp {
         }
     }
 
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let _ = self.emu.flush_dirty_disk_files();
-        }
-        self.save_app_state();
-        self.save_workspace();
-    }
-}
-
-impl EmuApp {
     fn push_audio_samples(&mut self) {
         let samples = self.emu.take_audio_samples();
         if let Some(audio) = &mut self.audio {

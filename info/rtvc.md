@@ -37,9 +37,13 @@ and full-web frontends.
 | [src/emulator/z80_bus_cycles.rs](../src/emulator/z80_bus_cycles.rs) | FUSE-derived memory-cycle timing per instruction, for wait states |
 | [src/bus.rs](../src/bus.rs) | CPU bus trait and flat test bus |
 | [src/mmu.rs](../src/mmu.rs) | TVC bank switching and ROM placement |
-| [src/vid.rs](../src/vid.rs) | CRTC state, TVC pixel decoding, renderers |
+| [src/emulator/crtc.rs](../src/emulator/crtc.rs) | shared 6845 counters and registers, with MC6845 (TVC) and HD6845S (CPC type 0) variants |
+| [src/emulator/tvc_vid.rs](../src/emulator/tvc_vid.rs) | TVC video generator, television receiver, renderers |
 | [src/tvc.rs](../src/tvc.rs) | TVC machine bus, timing, interrupts, devices |
 | [src/zx82.rs](../src/zx82.rs) | initial Spectrum 48K memory, ULA, frame timing, and full-frame renderer |
+| [src/emulator/cpc.rs](../src/emulator/cpc.rs) | experimental Amstrad CPC 464: memory, Gate Array registers and interrupts, 8255 PPI, keyboard matrix |
+| [src/emulator/tzx.rs](../src/emulator/tzx.rs) | TZX/CDT and Spectrum TAP parsing and the pulse-level tape player shared by Zx82 and CPC |
+| [src/emulator/cpc_vid.rs](../src/emulator/cpc_vid.rs) | CPC CRTC, Gate Array pixel decoding and palette, simple monitor |
 | [src/key.rs](../src/key.rs) | keyboard matrix and host-key adaptation |
 | [src/sound.rs](../src/sound.rs) | sound divider, timer, DAC, PCM generation |
 | [src/cas.rs](../src/cas.rs) | CAS container encoding and CAS-to-pulse-interval conversion |
@@ -58,7 +62,7 @@ and full-web frontends.
 | [src/bin/rtvc_tap2toml.rs](../src/bin/rtvc_tap2toml.rs) | ZX Spectrum TAP parser that emits structured `rtvc-zx-tap-v1` TOML |
 | [src/fd1793.rs](../src/fd1793.rs) | FD1793 floppy controller with two-drive read/write support |
 | [src/emu.rs](../src/emu.rs) | machine selection, media, run state |
-| [src/machine.rs](../src/machine.rs) | explicit TVC/Zx82 machine boundary and shared debugger operations |
+| [src/machine.rs](../src/machine.rs) | explicit TVC/Zx82/CPC machine boundary, shared `VidModel`, and shared debugger operations |
 | [src/ui.rs](../src/ui.rs) | shared native/full-web egui application |
 | [src/workspace.rs](../src/workspace.rs) | simple/developer layouts |
 | [src/debug_ui.rs](../src/debug_ui.rs) | integrated debugger panes |
@@ -82,6 +86,7 @@ validation independent from machine emulation.
 | Native headless | default `native`, `--headless` CLI | machine loop and TCP debugger without GUI |
 | Integrated Zx82 | default `native` and `wasm-full` | Spectrum 48K state loading through the shared application and debugger |
 | Standalone Zx82 | default `native`, `cargo run --bin zx82` | focused Spectrum core runner |
+| Integrated CPC 464 | default `native` (`--cpc` or Machine > System) | experimental CPC 464 boot to BASIC; not offered on the web |
 | Lightweight web | `wasm,web-vid-simple` | small wasm-bindgen API, JavaScript-owned canvas and audio |
 | Compatibility lightweight web | `wasm,web-vid-realistic` | same API; runtime video selection remains available |
 | Full web | `wasm-full` | complete egui UI, browser files, IndexedDB, AudioWorklet |
@@ -99,8 +104,8 @@ Rust edition 2024 is used, requiring Rust 1.85 or newer.
 
 ## Machine Execution
 
-`Emu` owns an explicit `Machine` enum. The implemented variants are `Tvc` and
-`Zx82`; common scheduling, framebuffer, input, breakpoint, mapped-memory,
+`Emu` owns an explicit `Machine` enum. The implemented variants are `Tvc`,
+`Zx82`, and `Cpc`; common scheduling, framebuffer, input, breakpoint, mapped-memory,
 disassembly, and stepping operations dispatch through this boundary.
 
 The normal scheduler uses a 62,500-cycle host frame budget:
@@ -146,10 +151,83 @@ multiple catch-up frames in one repaint.
 map, offers one interrupt every 69,888 T-states, and draws a 352 x 296
 framebuffer from bitmap and attribute memory. The shared application maps host
 keys onto the eight-by-five Spectrum matrix and exposes Zx82 through the dock
-and TCP debuggers. Both `VidModel` values are retained, but Zx82 currently
-draws a completed frame for either selection. Plain 48K `.z80` versions 1, 2,
+and TCP debuggers. Fast frame draws the whole picture at the frame
+interrupt. Interleaved draws each of the 296 framebuffer rows once the beam
+has passed it (224 T-states per line, first paper pixel at frame clock
+14,336), so border and screen writes land on the line they were made on and
+tape loading stripes show; colour changes within a line are not resolved. Plain 48K `.z80` versions 1, 2,
 and 3 are supported; expanded-machine and peripheral-dependent states are
 rejected.
+
+`Cpc` is an experimental Amstrad CPC 464 without audio, cassette output, disk,
+or expansion ROMs. It loads `roms/CPC_OS_464.ROM` (lower ROM) and
+`roms/CPC_BASIC_1.0.ROM` (upper ROM) over 64 KiB RAM; Gate Array mode/ROM
+writes enable or disable each ROM, and writes always reach RAM. The CPU runs at
+4 MHz with every instruction rounded up to a 4 T-state slot as an
+approximation of Gate Array wait states. Each slot advances the shared CRTC
+in its HD6845S (type 0) variant by one character clock, so CRTC register changes, mode changes (applied at the
+next HSYNC), and palette writes take effect at the beam position. The Gate
+Array raises an interrupt every 52 HSYNCs, resynchronised two HSYNCs after
+VSYNC, and the Z80 acknowledge clears counter bit 5. A simple monitor model
+resets its beam on HSYNC and VSYNC and copies a 768 x 272 window (48
+characters of 16 mode 2 pixels, centred for the firmware's default CRTC
+setup) into the framebuffer on each VSYNC. The PPI drives the AY register
+latch only far enough to return the selected keyboard row from AY register 14;
+port B reports VSYNC, 50 Hz, and distributor id 7. Host keys map positionally
+to the ten-row matrix (Backspace = DEL, Delete/Home = CLR, Alt/End = COPY,
+Ctrl = CONTROL); typed symbols use the CPC legends. `VidModel` is recorded
+but ignored.
+
+On both Zx82 and CPC, a typed symbol (any character other than a letter,
+digit, space, or Return) first releases the host keys currently held, such as
+Shift and `2` for `"`, and then presses the symbol's own keys for one frame.
+Otherwise host Shift would add Caps Shift (Spectrum) or Shift (CPC) to the
+symbol. A host modifier released this way stays up until it is pressed
+again.
+
+### Zx82 and CPC Tapes
+
+[tzx.rs](../src/emulator/tzx.rs) compiles a TZX image (`.tzx`, or `.cdt`,
+which is the same format) or a Spectrum `.tap` into pulse, pause, level, and
+stop segments timed in 3.5 MHz TZX T-states. TAP blocks become standard-speed
+blocks with Spectrum ROM timings and a 1 s pause. Signal blocks 0x10-0x15,
+pause/stop 0x20, loops 0x24/0x25, and stop-if-48K 0x2A are emulated; 0x30
+text is kept for the Tape menu; CSW, generalized data, and the remaining
+info/control blocks are skipped (jumps and call sequences play linearly).
+A `TapePlayer` replays the segments against the machine clock with exact
+integer scaling, toggling the level at each pulse and driving it low for
+pauses.
+
+- Zx82 feeds the level to the ULA EAR bit (port `0xFE` bit 6). An inserted tape
+  is stopped until the CPU reaches ROM `LD-BYTES` (`0x0556`), which presses
+  PLAY; 0x20 pause 0 and 0x2A stop it again. A loader counts as active while
+  the PC is in the ROM loader (`0x053F`-`0x0604`), or while code running from
+  RAM reads at least 20 EAR level changes per frame (a custom loader). ROM
+  code outside the loader is not counted, because a game waiting for a key
+  in a tight `KEY-SCAN` loop sees edges as often as a loader. When a load
+  that last used the ROM loader has been idle for 0.25 s, the tape is
+  stopped, as a user would press STOP, and the next `LD-BYTES` call resumes
+  it at the following block. Custom loads are never auto-stopped.
+- CPC feeds the level to PPI port B bit 7. Inserting a tape presses PLAY, and
+  the PPI port C bit 4 motor relay gates playback, so `RUN"` and custom
+  loaders start and stop it. 0x2A is ignored. A load counts as active once the
+  motor has run for 0.25 s, since games may pulse the relay after loading.
+
+These tapes go through `Emu::insert_machine_tape`. Unlike TVC CAS files they
+are not added to the recent-tape list or restored at startup. Native `--tape`
+mounts them after `--cpc` or `--zx82`, and the Tape menu offers Open, Play,
+Stop, Rewind, and Eject. Tape progress is reported as playing time, not as
+a share of blocks, so long pauses and pilot tones count by their length.
+
+### Warp While Loading
+
+The status bar's **Warp** checkbox, after the tape status, is enabled only
+while `Machine::tape_loading()` is true: a TVC tape that is playing with the
+motor on, or the Zx82/CPC conditions above. While it is checked and a load is
+active, each repaint runs frames back to back for up to 15 ms of host time
+instead of one 50 Hz frame, and drops their audio rather than queuing it.
+Warp ends by itself when the load does. The setting is saved as
+`warp_loading` in `rtvc.toml`.
 
 ## Video Emulation
 

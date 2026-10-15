@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::cas::TapeBitstreamGenerator;
+use crate::cpc::Cpc;
 use crate::disasm::DisassembledInstruction;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host_file::DirStore;
@@ -12,11 +13,12 @@ use crate::host_file::HostFileStore;
 #[cfg(target_arch = "wasm32")]
 use crate::host_file::MemoryStore;
 use crate::instruction_trace::{InstructionTrace, InstructionTraceEntry};
+use crate::machine::VidModel;
 use crate::machine::{DebugRunToIrqResult, FramebufferRef, Machine, System};
 use crate::mmu::RomBank;
 use crate::snapshot::{self, Reader, Writer};
 use crate::tvc::{ExecutionTrace, Tvc};
-use crate::vid::VidModel;
+use crate::tzx::{Tape, TapePlayer};
 use crate::z80::Z80State;
 use crate::zx82::Zx82;
 
@@ -113,6 +115,7 @@ pub struct Emu {
     typed_gap_frames: u32,
     timed_keys: HashMap<u32, u32>,
     tvc_fast_boot: bool,
+    warp_loading: bool,
     host_file_store: Option<Arc<dyn HostFileStore>>,
     host_file_default: bool,
     #[cfg(not(target_arch = "wasm32"))]
@@ -160,6 +163,7 @@ impl Emu {
             typed_gap_frames: 0,
             timed_keys: HashMap::new(),
             tvc_fast_boot: false,
+            warp_loading: false,
             host_file_store: Some(host_file_store),
             host_file_default: true,
             #[cfg(not(target_arch = "wasm32"))]
@@ -253,6 +257,24 @@ impl Emu {
 
     pub fn set_vid_model(&mut self, model: VidModel) {
         self.machine.set_vid_model(model);
+    }
+
+    /// Whether the host should run frames as fast as it can while a tape is
+    /// loading. The setting is kept across machines and tapes.
+    pub fn warp_loading(&self) -> bool {
+        self.warp_loading
+    }
+
+    pub fn set_warp_loading(&mut self, enabled: bool) {
+        self.warp_loading = enabled;
+    }
+
+    pub fn tape_loading(&self) -> bool {
+        self.machine.tape_loading()
+    }
+
+    pub fn warp_active(&self) -> bool {
+        self.warp_loading && self.running && self.tape_loading()
     }
 
     pub fn fast_boot(&self) -> bool {
@@ -437,9 +459,22 @@ impl Emu {
         Ok(())
     }
 
+    pub fn switch_to_cpc(&mut self) -> Result<(), String> {
+        self.clear_typed_text();
+        self.release_timed_keys();
+        let mut cpc = Cpc::new_with_vid_model(self.vid_model());
+        load_cpc_roms(&mut cpc)?;
+        self.activate_machine(Machine::Cpc(cpc));
+        Ok(())
+    }
+
     fn activate_zx82(&mut self, zx82: Zx82) {
+        self.activate_machine(Machine::Zx82(zx82));
+    }
+
+    fn activate_machine(&mut self, machine: Machine) {
         self.tvc_fast_boot = self.fast_boot();
-        self.machine = Machine::Zx82(zx82);
+        self.machine = machine;
         self.roms_loaded = true;
         self.loaded_tape = None;
         self.loaded_disk = Default::default();
@@ -1140,6 +1175,13 @@ impl Emu {
     }
 
     pub fn play_tape_file_path(&mut self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        if self.system() != System::Tvc {
+            let bytes = std::fs::read(path)?;
+            let name = path
+                .file_name()
+                .map_or_else(|| path.to_string_lossy(), |name| name.to_string_lossy());
+            return Ok(self.insert_machine_tape(&name, &bytes)?);
+        }
         let (display_name, buf) = read_cas_data(path)?;
         let generator = TapeBitstreamGenerator::new(&buf, &display_name)?;
         self.tvc_mut()
@@ -1312,6 +1354,30 @@ impl Emu {
         errors
     }
 
+    /// Inserts a TZX, CDT, or TAP image into the Zx82 or CPC. These tapes
+    /// are not added to the TVC's recent-tape list or restored at startup.
+    pub fn insert_machine_tape(&mut self, name: &str, bytes: &[u8]) -> Result<(), String> {
+        let tape = Tape::parse(bytes).map_err(|error| format!("{name}: {error}"))?;
+        if !self.machine.insert_tape(tape) {
+            return Err("TZX/CDT/TAP tapes are not supported on the TVC".to_string());
+        }
+        self.loaded_tape = Some(name.to_string());
+        Ok(())
+    }
+
+    pub fn eject_machine_tape(&mut self) {
+        self.machine.eject_tape();
+        self.loaded_tape = None;
+    }
+
+    pub fn tape_player(&self) -> Option<&TapePlayer> {
+        self.machine.tape_player()
+    }
+
+    pub fn tape_player_mut(&mut self) -> Option<&mut TapePlayer> {
+        self.machine.tape_player_mut()
+    }
+
     pub fn stop_tape(&mut self) {
         if let Some(tvc) = self.tvc_mut() {
             tvc.bus.stop_tape();
@@ -1323,6 +1389,11 @@ impl Emu {
             && tvc.bus.tape_play_active()
         {
             return tvc.bus.current_tape_level();
+        }
+        if let Some(player) = self.tape_player()
+            && player.is_playing()
+        {
+            return if player.level() { 1.0 } else { 0.0 };
         }
         0.5
     }
@@ -1348,6 +1419,7 @@ impl Emu {
         let (out_w, out_h) = match self.system() {
             System::Tvc => (768, 576),
             System::Zx82 => (frame.width * 2, frame.height * 2),
+            System::Cpc => (frame.width, frame.height * 2),
         };
 
         let mut buf = Vec::new();
@@ -1385,6 +1457,9 @@ impl Emu {
         name: &str,
         bytes: &[u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
+        if self.system() != System::Tvc {
+            return Ok(self.insert_machine_tape(name, bytes)?);
+        }
         let (display_name, buf) = unpack_cas_bytes(name, bytes)?;
         let generator = TapeBitstreamGenerator::new(&buf, &display_name)?;
         self.tvc_mut()
@@ -1600,6 +1675,22 @@ fn load_zx82_rom(zx82: &mut Zx82) -> Result<(), String> {
         .map_err(|error| format!("failed to read ZX Spectrum ROM roms/48.rom: {error}"))?;
 
     zx82.load_rom(&rom)
+}
+
+fn load_cpc_roms(cpc: &mut Cpc) -> Result<(), String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = cpc;
+        Err("the CPC 464 is not available in the web build".to_string())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let read = |name: &str| {
+            std::fs::read(data_dir("roms").join(name))
+                .map_err(|error| format!("failed to read CPC ROM roms/{name}: {error}"))
+        };
+        cpc.load_roms(&read("CPC_OS_464.ROM")?, &read("CPC_BASIC_1.0.ROM")?)
+    }
 }
 
 pub fn extract_game_archive_member(

@@ -14,6 +14,7 @@ fn main() -> eframe::Result<()> {
         emu.set_vid_model(vid_model);
     }
     emu.set_fast_boot(app_state_file.state.fast_boot);
+    emu.set_warp_loading(app_state_file.state.warp_loading);
     if let Some(dir) = &app_state_file.state.host_file_dir {
         emu.set_host_file_dir(dir.into());
     }
@@ -28,6 +29,8 @@ fn main() -> eframe::Result<()> {
     let mut tape_to_inject: Option<String> = None;
     let mut snapshot_to_load: Option<String> = None;
     let mut headless = false;
+    let mut boot_cpc = false;
+    let mut boot_zx82 = false;
     let mut port = 8080u16;
 
     let mut i = 1;
@@ -65,6 +68,14 @@ fn main() -> eframe::Result<()> {
                     std::process::exit(1);
                 }
             }
+            "--cpc" => {
+                boot_cpc = true;
+                i += 1;
+            }
+            "--zx82" => {
+                boot_zx82 = true;
+                i += 1;
+            }
             "-H" | "--headless" => {
                 headless = true;
                 i += 1;
@@ -90,8 +101,12 @@ fn main() -> eframe::Result<()> {
                 println!();
                 println!("Options:");
                 println!("  -d, --disk <path>      Mount a disk (first = A:, second = B:)");
-                println!("  -t, --tape <path>      Mount a CAS tape for loading");
+                println!(
+                    "  -t, --tape <path>      Mount a tape: CAS on the TVC, TZX/CDT/TAP with --cpc/--zx82"
+                );
                 println!("  -i, --inject <path>    Inject a CAS tape directly into memory");
+                println!("  --cpc                  Boot the experimental Amstrad CPC 464");
+                println!("  --zx82                 Boot the Zx82 (ZX Spectrum 48K)");
                 println!("  -H, --headless         Enable headless execution mode");
                 println!(
                     "  -p, --port <port>      TCP port for the debugger socket (default: 8080)"
@@ -122,6 +137,15 @@ fn main() -> eframe::Result<()> {
             std::process::exit(1);
         }
         loaded_snapshot = true;
+    }
+
+    if boot_cpc && let Err(err) = emu.switch_to_cpc() {
+        eprintln!("failed to boot CPC 464: {err}");
+        std::process::exit(1);
+    }
+    if boot_zx82 && let Err(err) = emu.switch_to_zx82() {
+        eprintln!("failed to boot Zx82: {err}");
+        std::process::exit(1);
     }
 
     for (drive, disk_path) in disks_to_mount.iter().enumerate() {
@@ -155,7 +179,7 @@ fn main() -> eframe::Result<()> {
         }
     }
 
-    if !loaded_snapshot {
+    if !loaded_snapshot && !boot_cpc && !boot_zx82 {
         if emu.loaded_disk[0].is_none() && app_state_file.state.disk_loaded {
             if let Some(file_name) = &app_state_file.state.disk_file_name {
                 emu.insert_disk_by_file_name(file_name);

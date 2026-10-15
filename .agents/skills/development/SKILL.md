@@ -38,7 +38,7 @@ This skill provides step-by-step instructions and references for compiling, exec
   cargo run --bin rtvc -- path/to/game.z80
   ```
   - Place ROM files (`TVC12_D3.64K`, `TVC12_D4.64K`, `TVC12_D7.64K`) in `roms/` for the TVC to boot.
-  - Use the Machine menu to run/pause, reset, select TVC or Zx82, choose a
+  - Use the Machine menu to run/pause, reset, select TVC, Zx82, or CPC 464, choose a
     TVC preset or override memory, system ROM, a `roms/*.crt` cartridge, and the
     card in each expansion slot (HBF or host files), and select the video model.
   - The host file card serves BASIC `LOAD`/`SAVE` from `files/` (or the folder
@@ -100,8 +100,8 @@ This skill provides step-by-step instructions and references for compiling, exec
   - The standalone runner currently implements fixed 48K memory, ULA port
     decode, frame interrupts, the Spectrum keyboard matrix, and full-frame
     bitmap/attribute rendering.
-  - Both video-model selections remain visible, but Interleaved currently uses
-    the full-frame renderer as a fallback.
+  - Full frame draws the picture at the frame interrupt; Interleaved draws
+    it line by line, so border effects such as tape loading stripes show.
   - Keyboard input follows the Spectrum layout. In BASIC keyword mode, press
     `P` once for `PRINT`. Host Shift maps to Caps Shift; Ctrl or Alt maps to
     Symbol Shift. Backspace maps to Caps Shift+0.
@@ -115,6 +115,36 @@ This skill provides step-by-step instructions and references for compiling, exec
     ```bash
     cargo run --bin zx82 -- --headless --frames 100 --screenshot /tmp/zx82.png
     ```
+
+- **Run the experimental CPC 464 core:**
+  ```bash
+  cargo run --bin rtvc -- --cpc
+  ```
+  - Needs `roms/CPC_OS_464.ROM` and `roms/CPC_BASIC_1.0.ROM`; Machine >
+    System > CPC 464 switches to it from the UI. No audio or disk.
+  - Load a CDT tape: `cargo run --bin rtvc -- --cpc --tape game.cdt`, then
+    type `RUN"`, press Enter and any key. The Spectrum equivalent is
+    `--zx82 --tape game.tap` (TAP or TZX) and `LOAD ""` (`J`, then
+    Symbol Shift+`P` twice); the tape starts when the ROM loader runs.
+  - Check a real CDT at full speed, with PPM screenshots every 500 frames:
+    ```bash
+    CPC_TEST_TAPE=game.cdt CPC_TEST_OUT=/tmp/cpc cargo test --release --lib -- --ignored loads_tape
+    ```
+  - The status bar's Warp checkbox (enabled while a TVC, CPC, or Spectrum
+    tape is loading) runs at full host speed until the load finishes.
+  - Check a real Spectrum tape at full speed, logging tape progress, playing,
+    and loader state every 250 frames:
+    ```bash
+    ZX_TEST_TAPE=game.tap cargo test --release --lib -- --ignored zx_loads_tape --nocapture
+    ```
+  - `cargo test --lib tzx` covers TZX/TAP parsing and player timing;
+    `cargo test --lib rom_ld_bytes` loads a TAP block through the Spectrum
+    ROM loader.
+  - `--cpc --headless --port 8080` exposes it to the TCP debugger, so
+    `key press`/`screenshot` in `scripts/rtvc_debug.py` drive it headlessly.
+  - `cargo test --lib cpc` covers CRTC frame/interrupt timing, keyboard reads
+    through the PPI and AY latch, ROM mapping, and (when the ROMs are present)
+    booting to BASIC and running a typed `POKE`.
 
 - **Check the lightweight WASM library build:**
   ```bash

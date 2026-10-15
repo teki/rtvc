@@ -4,6 +4,24 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+- Experimental Amstrad CPC 464 (Machine > System > CPC 464, or `--cpc`):
+  boots to BASIC 1.0 with Z80, Gate Array, 6845 CRTC, and keyboard. No audio
+  or disk yet. Needs `roms/CPC_OS_464.ROM` and `roms/CPC_BASIC_1.0.ROM`.
+- The CPC 464 and Zx82 load tapes: CDT/TZX on the CPC, TAP/TZX on the
+  Spectrum, through Tape > Open Tape File... or `--tape` with `--cpc` /
+  `--zx82`. Custom turbo loaders work because the signal is played pulse by
+  pulse.
+- Warp checkbox in the status bar: while a TVC, CPC, or Spectrum tape is
+  loading, it runs at full host speed (audio muted) and stops by itself when
+  the load ends.
+- The Spectrum stops the tape when a ROM load finishes, so later loads (such
+  as game scenarios) start at the right block. The Interleaved video model
+  draws the Spectrum screen line by line, showing the loading border stripes.
+- Tape progress counts playing time, so a long silence at the start of a
+  tape no longer sits at 0%.
+- Typing symbols such as `"` or `:` on the Zx82 and CPC no longer picks up the
+  host Shift (which turned `"` into Spectrum extended mode).
+
 ## v0.8.9 - 2026-10-14
 
 - Drag a CAS, DSK, or ZIP onto the emulator window (desktop or web) to boot

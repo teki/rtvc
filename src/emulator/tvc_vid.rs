@@ -1,11 +1,13 @@
 //! TVC video pipeline.
 //!
 //! The interleaved renderer deliberately has three hardware boundaries:
-//! [`CrtcState`] emits timing/address signals, [`TvcVideoGenerator`] resolves
+//! [`Crtc`] emits timing/address signals, [`TvcVideoGenerator`] resolves
 //! those signals and current TVC state into final IGRB video, and
 //! [`TelevisionReceiver`] sees only that final video and its external sync.
 
 #![allow(dead_code)]
+
+use crate::crtc::{Crtc, CrtcTick, CrtcVariant};
 
 const CPU_CLOCKS_PER_CHARACTER: u32 = 2;
 const FRAMEBUFFER_WIDTH: usize = 608;
@@ -34,12 +36,6 @@ const MAX_V_PERIOD: usize = 340;
 // approximation until measured component values are available.
 const EXTERNAL_HSYNC_CHARACTER_CLOCKS: u8 = 8;
 const EXTERNAL_VSYNC_LINES: u8 = 4;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum VidModel {
-    FastFrame,
-    Interleaved,
-}
 
 const fn port_color_to_igrb(value: u8) -> u8 {
     ((value & 0x40) >> 3) | ((value & 0x10) >> 2) | ((value & 0x04) >> 1) | (value & 0x01)
@@ -85,179 +81,6 @@ impl Color {
     fn set(&mut self, value: u8) {
         self.port_value = value;
         self.igrb = port_color_to_igrb(value);
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct CrtcTick {
-    ma: u16,
-    ra: u8,
-    display_enable: bool,
-    raw_hsync: bool,
-    raw_vsync: bool,
-    line_start: bool,
-    cursor: bool,
-}
-
-struct CrtcState {
-    reg_idx: u8,
-    reg: [u8; 18],
-    configured: bool,
-    h_count: u16,
-    row: u16,
-    raster: u16,
-    adjust_line: u16,
-    in_adjust: bool,
-    row_address: u16,
-    hsync_remaining: u8,
-    vsync_lines_remaining: u8,
-}
-
-impl CrtcState {
-    fn new() -> Self {
-        Self {
-            reg_idx: 0,
-            reg: [0; 18],
-            configured: false,
-            h_count: 0,
-            row: 0,
-            raster: 0,
-            adjust_line: 0,
-            in_adjust: false,
-            row_address: 0,
-            hsync_remaining: 0,
-            vsync_lines_remaining: 0,
-        }
-    }
-
-    fn reset_transient(&mut self) {
-        self.h_count = 0;
-        self.row = 0;
-        self.raster = 0;
-        self.adjust_line = 0;
-        self.in_adjust = false;
-        self.row_address = self.display_start();
-        self.hsync_remaining = 0;
-        self.vsync_lines_remaining = 0;
-    }
-
-    fn display_start(&self) -> u16 {
-        (((self.reg[12] as u16 & 0x3f) << 8) | self.reg[13] as u16) & 0x3fff
-    }
-
-    fn cursor_address(&self) -> u16 {
-        (((self.reg[14] as u16 & 0x3f) << 8) | self.reg[15] as u16) & 0x3fff
-    }
-
-    fn cursor_enabled(&self) -> bool {
-        self.reg[10] & 0x60 != 0x20
-    }
-
-    fn horizontal_total(&self) -> u16 {
-        self.reg[0] as u16
-    }
-
-    fn horizontal_displayed(&self) -> u16 {
-        self.reg[1] as u16
-    }
-
-    fn line_character_clocks(&self) -> u16 {
-        self.horizontal_total() + 1
-    }
-
-    fn max_raster(&self) -> u16 {
-        (self.reg[9] & 0x1f) as u16
-    }
-
-    fn horizontal_sync_width(&self) -> u8 {
-        let width = self.reg[3] & 0x0f;
-        if width == 0 { 16 } else { width }
-    }
-
-    fn tick(&mut self) -> CrtcTick {
-        let line_start = self.h_count == 0;
-        if line_start
-            && !self.in_adjust
-            && self.row == (self.reg[7] & 0x7f) as u16
-            && self.raster == 0
-        {
-            self.vsync_lines_remaining = 16;
-        }
-        if self.h_count == self.reg[2] as u16 {
-            self.hsync_remaining = self.horizontal_sync_width();
-        }
-
-        let ma = self.row_address.wrapping_add(self.h_count) & 0x3fff;
-        let display_enable = !self.in_adjust
-            && self.row < (self.reg[6] & 0x7f) as u16
-            && self.h_count < self.horizontal_displayed();
-        let cursor_start = (self.reg[10] & 0x1f) as u16;
-        let cursor_end = (self.reg[11] & 0x1f) as u16;
-        let cursor = self.cursor_enabled()
-            && display_enable
-            && ma == self.cursor_address()
-            && self.raster >= cursor_start
-            && self.raster <= cursor_end;
-
-        let result = CrtcTick {
-            ma,
-            ra: self.raster as u8,
-            display_enable,
-            raw_hsync: self.hsync_remaining != 0,
-            raw_vsync: self.vsync_lines_remaining != 0,
-            line_start,
-            cursor,
-        };
-
-        self.advance();
-        result
-    }
-
-    fn advance(&mut self) {
-        if self.hsync_remaining != 0 {
-            self.hsync_remaining -= 1;
-        }
-        if self.h_count != self.horizontal_total() {
-            self.h_count = self.h_count.wrapping_add(1) & 0x00ff;
-            return;
-        }
-
-        self.h_count = 0;
-        if self.vsync_lines_remaining != 0 {
-            self.vsync_lines_remaining -= 1;
-        }
-
-        if self.in_adjust {
-            self.adjust_line += 1;
-            if self.adjust_line >= (self.reg[5] & 0x1f) as u16 {
-                self.start_frame();
-            }
-            return;
-        }
-
-        if self.raster != self.max_raster() {
-            self.raster = self.raster.wrapping_add(1) & 0x001f;
-        } else {
-            self.raster = 0;
-            if self.row != (self.reg[4] & 0x7f) as u16 {
-                self.row = self.row.wrapping_add(1) & 0x007f;
-                self.row_address =
-                    self.row_address.wrapping_add(self.horizontal_displayed()) & 0x3fff;
-            } else if self.reg[5] & 0x1f != 0 {
-                self.in_adjust = true;
-                self.adjust_line = 0;
-            } else {
-                self.start_frame();
-            }
-        }
-    }
-
-    fn start_frame(&mut self) {
-        self.row = 0;
-        self.raster = 0;
-        self.adjust_line = 0;
-        self.in_adjust = false;
-        self.row_address = self.display_start();
     }
 }
 
@@ -601,7 +424,7 @@ impl TelevisionReceiver {
 }
 
 pub struct Vid {
-    crtc: CrtcState,
+    crtc: Crtc,
     generator: TvcVideoGenerator,
     ring: SignalRing,
     television: TelevisionReceiver,
@@ -613,7 +436,7 @@ pub struct Vid {
 impl Vid {
     pub fn new() -> Self {
         Self {
-            crtc: CrtcState::new(),
+            crtc: Crtc::new(CrtcVariant::Mc6845),
             generator: TvcVideoGenerator::new(),
             ring: SignalRing::new(),
             television: TelevisionReceiver::new(),
@@ -623,10 +446,7 @@ impl Vid {
     }
 
     pub fn reset(&mut self) {
-        self.crtc.reg_idx = 0;
-        self.crtc.reg = [0; 18];
-        self.crtc.configured = false;
-        self.crtc.reset_transient();
+        self.crtc.reset();
         self.generator = TvcVideoGenerator::new();
         self.ring.clear();
         self.television.lose_lock();
@@ -635,41 +455,23 @@ impl Vid {
     }
 
     pub fn set_reg_idx(&mut self, index: u8) {
-        self.crtc.reg_idx = index & 0x1f;
+        self.crtc.select(index);
     }
 
     pub fn get_reg_idx(&self) -> u8 {
-        self.crtc.reg_idx
+        self.crtc.selected()
     }
 
     pub fn raw_reg(&self, index: u8) -> Option<u8> {
-        self.crtc.reg.get(index as usize).copied()
+        self.crtc.registers().get(index as usize).copied()
     }
 
     pub fn set_reg(&mut self, value: u8) {
-        let index = self.crtc.reg_idx as usize;
-        if index < 16 {
-            self.crtc.reg[index] = value;
-            self.crtc.configured = true;
-            // Configuration performed before the first tick must use the new
-            // start address immediately. A live mid-frame R12/R13 write is
-            // instead picked up at the next CRTC frame restart.
-            if matches!(index, 12 | 13)
-                && self.crtc.h_count == 0
-                && self.crtc.row == 0
-                && self.crtc.raster == 0
-            {
-                self.crtc.row_address = self.crtc.display_start();
-            }
-        }
+        self.crtc.write(value);
     }
 
     pub fn get_reg(&self) -> u8 {
-        match self.crtc.reg_idx {
-            12 | 14 | 16 => self.crtc.reg[self.crtc.reg_idx as usize] & 0x3f,
-            13 | 15 | 17 => self.crtc.reg[self.crtc.reg_idx as usize],
-            _ => 0xff,
-        }
+        self.crtc.read()
     }
 
     pub fn write_crtc_port(&mut self, port: u8, value: u8) {
@@ -708,7 +510,7 @@ impl Vid {
     }
 
     pub fn is_initialized(&self) -> bool {
-        self.crtc.configured
+        self.crtc.configured()
             && self.crtc.horizontal_displayed() <= self.crtc.line_character_clocks()
     }
 
@@ -725,8 +527,8 @@ impl Vid {
         let start = self.display_start_address();
         let relative = cursor.wrapping_sub(start) & 0x3fff;
         let hd = self.crtc.horizontal_displayed();
-        let vd = (self.crtc.reg[6] & 0x7f) as u16;
-        let raster = (self.crtc.reg[10] & 0x1f) as u16;
+        let vd = self.crtc.vertical_displayed();
+        let raster = (self.crtc.reg(10) & 0x1f) as u16;
         let max_raster = self.crtc.max_raster();
         let line = (hd != 0 && relative < hd * vd && raster <= max_raster)
             .then(|| relative / hd * (max_raster + 1) + raster);
@@ -735,8 +537,8 @@ impl Vid {
 
     pub fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         writer.u8(self.generator.mode);
-        writer.u8(self.crtc.reg_idx);
-        writer.raw_bytes(&self.crtc.reg);
+        writer.u8(self.crtc.selected());
+        writer.raw_bytes(self.crtc.registers());
         for color in &self.generator.palette {
             writer.u8(color.port_value);
         }
@@ -749,10 +551,8 @@ impl Vid {
     ) -> crate::snapshot::Result<()> {
         self.reset();
         self.generator.mode = reader.u8()? & 3;
-        self.crtc.reg_idx = reader.u8()? & 0x1f;
-        self.crtc.reg.copy_from_slice(reader.raw_bytes(18)?);
-        self.crtc.configured = true;
-        self.crtc.reset_transient();
+        let reg_idx = reader.u8()?;
+        self.crtc.load_registers(reg_idx, reader.raw_bytes(18)?);
         for index in 0..4 {
             let color = reader.u8()?;
             self.set_palette(index, color);
@@ -768,7 +568,7 @@ impl Vid {
         self.run_for = self.run_for.saturating_add(run_for);
         while self.run_for >= CPU_CLOCKS_PER_CHARACTER {
             let tick = self.crtc.tick();
-            let cursor_pulse = tick.cursor && tick.ra == (self.crtc.reg[10] & 0x1f);
+            let cursor_pulse = tick.cursor && tick.ra == (self.crtc.reg(10) & 0x1f);
             let cursor_interrupt = self.cursor_pulse && !cursor_pulse;
             self.cursor_pulse = cursor_pulse;
             let signal = self.generator.emit(tick, vram);
@@ -783,12 +583,8 @@ impl Vid {
 
     #[cfg(test)]
     pub(crate) fn stream_position(&self) -> (i32, u16, u16, u32) {
-        (
-            self.crtc.row as i32,
-            self.crtc.raster,
-            self.crtc.h_count,
-            self.run_for,
-        )
+        let (row, raster, h_count) = self.crtc.position();
+        (row as i32, raster, h_count, self.run_for)
     }
 
     #[cfg(test)]
@@ -820,7 +616,7 @@ impl Vid {
     pub fn draw_frame(&self, vram: &[u8], framebuffer: &mut [u32]) {
         let programmed_width = self.crtc.horizontal_displayed() as usize;
         let active_width = programmed_width.min(FRAMEBUFFER_CHARACTER_CLOCKS);
-        let rows = (self.crtc.reg[6] & 0x7f) as usize;
+        let rows = self.crtc.vertical_displayed() as usize;
         let rasters = self.crtc.max_raster() as usize + 1;
         let active_height = rows.saturating_mul(rasters).min(FRAMEBUFFER_HEIGHT);
         let top = (FRAMEBUFFER_HEIGHT - active_height) / 2;
@@ -859,5 +655,5 @@ impl Default for Vid {
 }
 
 #[cfg(test)]
-#[path = "vid_tests.rs"]
-mod vid_tests;
+#[path = "tvc_vid_tests.rs"]
+mod tvc_vid_tests;

@@ -1,8 +1,8 @@
 use crate::expansion::SlotDevice;
+use crate::machine::VidModel;
 use crate::machine_type::ExpansionCard;
 use crate::snapshot::{self, Reader, SnapshotError, Writer};
 use crate::tvc::Tvc;
-use crate::vid::VidModel;
 
 const SLOT_CHUNKS: [[u8; 4]; 4] = [*b"SLT0", *b"SLT1", *b"SLT2", *b"SLT3"];
 

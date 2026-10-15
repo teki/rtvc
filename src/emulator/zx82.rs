@@ -6,7 +6,8 @@ use crate::bus::CpuBus;
 use crate::instruction_trace::{
     InstructionEffects, InstructionTrace, InstructionTraceEntry, TraceRegisters,
 };
-use crate::vid::VidModel;
+use crate::machine::VidModel;
+use crate::tzx::{Tape, TapePlayer};
 use crate::z80::Z80;
 
 pub const CPU_CLOCK_HZ: u64 = 3_500_000;
@@ -15,6 +16,17 @@ pub const FRAMEBUFFER_WIDTH: usize = 352;
 pub const FRAMEBUFFER_HEIGHT: usize = 296;
 
 const ROM_SIZE: usize = 0x4000;
+/// ROM `LD-BYTES` entry; reaching it presses PLAY on an inserted tape.
+const ROM_LD_BYTES: u16 = 0x0556;
+/// ROM tape loader, from `SA/LD-RET` through `LD-SAMPLE`.
+const ROM_LOADER: std::ops::RangeInclusive<u16> = 0x053F..=0x0604;
+/// EAR reads per frame, from code in RAM, that see a new level. A custom
+/// loader samples every edge (30+ per frame even in a pilot tone). ROM code
+/// is not counted: the ROM loader is recognised by address, and a game
+/// waiting for a key in a tight ROM `KEY-SCAN` loop sees edges just as often.
+const LOADER_EDGES_PER_FRAME: u32 = 20;
+/// Loader inactivity after which a load counts as finished (0.25 s).
+const LOADER_IDLE_CLOCKS: u64 = CPU_CLOCK_HZ / 4;
 const RAM_SIZE: usize = 0xC000;
 const Z80_BASE_HEADER_SIZE: usize = 30;
 const Z80_PAGE_SIZE: usize = 0x4000;
@@ -22,6 +34,14 @@ const ACTIVE_WIDTH: usize = 256;
 const ACTIVE_HEIGHT: usize = 192;
 const LEFT_BORDER: usize = (FRAMEBUFFER_WIDTH - ACTIVE_WIDTH) / 2;
 const TOP_BORDER: usize = (FRAMEBUFFER_HEIGHT - ACTIVE_HEIGHT) / 2;
+const LINE_CLOCKS: u64 = 224;
+/// Frame clock at which the ULA draws the first pixel of the paper area.
+const FIRST_PAPER_PIXEL_CLOCK: u64 = 14_336;
+/// Frame clock at which framebuffer row 0 has been fully drawn by the beam
+/// (the ULA draws two pixels per T-state).
+const FIRST_ROW_DONE_CLOCK: u64 = FIRST_PAPER_PIXEL_CLOCK - (LEFT_BORDER / 2) as u64
+    + (FRAMEBUFFER_WIDTH / 2) as u64
+    - TOP_BORDER as u64 * LINE_CLOCKS;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct MatrixKey {
@@ -35,6 +55,10 @@ pub struct Zx82Bus {
     keyboard: [u8; 8],
     ula_latch: u8,
     ear_input: bool,
+    last_ear_read: bool,
+    ear_edges_read: u32,
+    /// Whether the current instruction runs from RAM (see `ear_edges_read`).
+    executing_ram: bool,
     instruction_effects: Option<InstructionEffects>,
 }
 
@@ -46,6 +70,9 @@ impl Zx82Bus {
             keyboard: [0x1F; 8],
             ula_latch: 0,
             ear_input: false,
+            last_ear_read: false,
+            ear_edges_read: 0,
+            executing_ram: false,
             instruction_effects: None,
         }
     }
@@ -166,6 +193,10 @@ impl CpuBus for Zx82Bus {
 
     fn in8(&mut self, port: u8, high_addr: u8) -> u8 {
         if port & 1 == 0 {
+            if self.executing_ram && self.ear_input != self.last_ear_read {
+                self.last_ear_read = self.ear_input;
+                self.ear_edges_read += 1;
+            }
             self.read_ula(high_addr)
         } else {
             0xFF
@@ -188,6 +219,13 @@ pub struct Zx82 {
     matrix_key_counts: [[u8; 5]; 8],
     pending_key_release: Vec<MatrixKey>,
     instruction_trace: InstructionTrace,
+    tape: Option<TapePlayer>,
+    /// Clock of the last tape-loader activity, and whether it was the ROM
+    /// loader (which may be auto-stopped) or a custom one (which may not).
+    loader_clock: Option<u64>,
+    rom_loader: bool,
+    /// Next framebuffer row the Interleaved model draws this frame.
+    next_raster_row: usize,
 }
 
 impl Zx82 {
@@ -211,6 +249,10 @@ impl Zx82 {
             matrix_key_counts: [[0; 5]; 8],
             pending_key_release: Vec::new(),
             instruction_trace: InstructionTrace::default(),
+            tape: None,
+            loader_clock: None,
+            rom_loader: false,
+            next_raster_row: 0,
         };
         machine.reset();
         machine
@@ -225,6 +267,7 @@ impl Zx82 {
         self.last_frame_interrupt_accepted = false;
         self.release_all_keys();
         self.instruction_trace.clear();
+        self.next_raster_row = 0;
         self.draw_full_frame();
         self.frame_complete = true;
     }
@@ -281,6 +324,7 @@ impl Zx82 {
         self.next_frame_clock = FRAME_CLOCKS;
         self.frame_counter = 0;
         self.last_frame_interrupt_accepted = false;
+        self.next_raster_row = 0;
         self.draw_full_frame();
         self.frame_complete = true;
         self.instruction_trace.clear();
@@ -309,6 +353,51 @@ impl Zx82 {
         state.iff2 = (data[28] != 0) as u8;
         state.im = data[29] & 0x03;
         state.halted = 0;
+    }
+
+    pub fn tape(&self) -> Option<&TapePlayer> {
+        self.tape.as_ref()
+    }
+
+    pub fn tape_mut(&mut self) -> Option<&mut TapePlayer> {
+        self.tape.as_mut()
+    }
+
+    /// Inserts a stopped tape. It starts when the ROM loader runs, or when
+    /// [`TapePlayer::play`] is called.
+    pub fn insert_tape(&mut self, tape: Tape) {
+        self.tape = Some(TapePlayer::new(tape, CPU_CLOCK_HZ, true));
+        self.loader_clock = None;
+    }
+
+    pub fn eject_tape(&mut self) {
+        self.tape = None;
+        self.loader_clock = None;
+        self.bus.set_ear_input(false);
+    }
+
+    /// Whether a playing tape is being read by a loader right now.
+    pub fn tape_loading(&self) -> bool {
+        self.tape.as_ref().is_some_and(TapePlayer::is_playing)
+            && self
+                .loader_clock
+                .is_some_and(|clock| self.clock - clock < LOADER_IDLE_CLOCKS)
+    }
+
+    /// Called once per frame: notices custom loaders by the EAR edges they
+    /// read, and presses STOP once a ROM load has finished, as a user would,
+    /// so later `LD-BYTES` calls resume at the next block.
+    fn update_tape_activity(&mut self) {
+        if std::mem::take(&mut self.bus.ear_edges_read) >= LOADER_EDGES_PER_FRAME {
+            self.loader_clock = Some(self.clock);
+            self.rom_loader = false;
+        }
+        if self.rom_loader
+            && !self.tape_loading()
+            && let Some(tape) = &mut self.tape
+        {
+            tape.stop();
+        }
     }
 
     pub fn vid_model(&self) -> VidModel {
@@ -413,13 +502,31 @@ impl Zx82 {
                 effects: InstructionEffects::default(),
             }
         });
+        if let Some(tape) = &mut self.tape {
+            let pc = self.z80.state.pc;
+            self.bus.executing_ram = pc >= ROM_SIZE as u16;
+            if pc == ROM_LD_BYTES {
+                tape.play();
+            }
+            if ROM_LOADER.contains(&pc) {
+                self.loader_clock = Some(self.clock);
+                self.rom_loader = true;
+            }
+        }
         let cpu_cycles = self.z80.step(&mut self.bus, 0);
         self.clock += cpu_cycles as u64;
+        if self.vid_model == VidModel::Interleaved {
+            self.draw_rows_until(self.clock);
+        }
         let irq_cycles = if self.clock >= self.next_frame_clock {
             self.finish_frame()
         } else {
             0
         };
+        if let Some(tape) = &mut self.tape {
+            tape.advance(cpu_cycles + irq_cycles);
+            self.bus.set_ear_input(tape.level());
+        }
         if let Some(mut entry) = trace_entry {
             entry.elapsed_cycles = cpu_cycles + irq_cycles;
             entry.interrupt_accepted = irq_cycles != 0;
@@ -430,14 +537,20 @@ impl Zx82 {
     }
 
     fn finish_frame(&mut self) -> u32 {
+        self.update_tape_activity();
         let irq_cycles = self.z80.irq(&mut self.bus);
         self.last_frame_interrupt_accepted = irq_cycles != 0;
         self.clock += irq_cycles as u64;
+        if self.vid_model == VidModel::Interleaved {
+            // Every row ends before the frame does; this only completes rows
+            // when the model was switched mid-frame.
+            self.draw_rows_until(self.next_frame_clock);
+            self.next_raster_row = 0;
+        } else {
+            self.draw_full_frame();
+        }
         self.next_frame_clock += FRAME_CLOCKS;
         self.frame_counter += 1;
-        // Interleaved timing remains a selectable model, but initially shares
-        // the complete-frame renderer until raster effects are implemented.
-        self.draw_full_frame();
         self.frame_complete = true;
         irq_cycles
     }
@@ -464,9 +577,16 @@ impl Zx82 {
         }
     }
 
+    /// Presses the keys for a typed character until the end of the frame.
+    /// A symbol's own shift keys replace whatever host keys produced it (for
+    /// example host Shift and `2` for `"`), which would otherwise combine
+    /// with them on the matrix.
     pub fn key_press(&mut self, ch: char) {
         self.release_pending_keys();
         if let Some(binding) = binding_for_char(ch) {
+            if !ch.is_ascii_alphanumeric() && !matches!(ch, ' ' | '\r') {
+                self.release_host_keys();
+            }
             for key in &binding {
                 self.press_matrix_key(*key);
             }
@@ -494,6 +614,15 @@ impl Zx82 {
         }
     }
 
+    fn release_host_keys(&mut self) {
+        let bindings: Vec<_> = self.pressed_bindings.drain().collect();
+        for (_, binding) in bindings {
+            for key in binding {
+                self.release_matrix_key(key);
+            }
+        }
+    }
+
     fn release_pending_keys(&mut self) {
         for key in std::mem::take(&mut self.pending_key_release) {
             self.release_matrix_key(key);
@@ -511,32 +640,47 @@ impl Zx82 {
         }
     }
 
+    /// Draws the whole frame from the current memory and border.
     pub fn draw_full_frame(&mut self) {
-        let border = spectrum_color(self.bus.border_color(), false);
-        self.framebuffer.fill(border);
+        for row in 0..FRAMEBUFFER_HEIGHT {
+            self.draw_row(row);
+        }
+    }
+
+    /// Interleaved model: draws each framebuffer row once the beam has passed
+    /// it, so border and screen writes land on the line they were made on.
+    fn draw_rows_until(&mut self, clock: u64) {
+        let frame_clock = clock.saturating_sub(self.next_frame_clock - FRAME_CLOCKS);
+        while self.next_raster_row < FRAMEBUFFER_HEIGHT
+            && FIRST_ROW_DONE_CLOCK + self.next_raster_row as u64 * LINE_CLOCKS <= frame_clock
+        {
+            self.draw_row(self.next_raster_row);
+            self.next_raster_row += 1;
+        }
+    }
+
+    fn draw_row(&mut self, row: usize) {
+        let output = &mut self.framebuffer[row * FRAMEBUFFER_WIDTH..(row + 1) * FRAMEBUFFER_WIDTH];
+        output.fill(spectrum_color(self.bus.border_color(), false));
+        let Some(y) = row.checked_sub(TOP_BORDER).filter(|&y| y < ACTIVE_HEIGHT) else {
+            return;
+        };
 
         let flash_invert = (self.frame_counter / 16) & 1 != 0;
         let ram = self.bus.ram();
-
-        for y in 0..ACTIVE_HEIGHT {
-            let bitmap_offset = ((y & 0xC0) << 5) | ((y & 0x07) << 8) | ((y & 0x38) << 2);
-            let attribute_row = (y >> 3) * 32;
-            let output_row = (TOP_BORDER + y) * FRAMEBUFFER_WIDTH + LEFT_BORDER;
-
-            for byte_x in 0..32 {
-                let pixels = ram[bitmap_offset + byte_x];
-                let attribute = ram[0x1800 + attribute_row + byte_x];
-                let bright = attribute & 0x40 != 0;
-                let invert = attribute & 0x80 != 0 && flash_invert;
-                let ink = spectrum_color(attribute & 0x07, bright);
-                let paper = spectrum_color((attribute >> 3) & 0x07, bright);
-
-                for bit in 0..8 {
-                    let set = pixels & (0x80 >> bit) != 0;
-                    let use_ink = set ^ invert;
-                    self.framebuffer[output_row + byte_x * 8 + bit] =
-                        if use_ink { ink } else { paper };
-                }
+        let bitmap_offset = ((y & 0xC0) << 5) | ((y & 0x07) << 8) | ((y & 0x38) << 2);
+        let attribute_row = (y >> 3) * 32;
+        let paper_pixels = &mut output[LEFT_BORDER..LEFT_BORDER + ACTIVE_WIDTH];
+        for (byte_x, cell) in paper_pixels.as_chunks_mut::<8>().0.iter_mut().enumerate() {
+            let pixels = ram[bitmap_offset + byte_x];
+            let attribute = ram[0x1800 + attribute_row + byte_x];
+            let bright = attribute & 0x40 != 0;
+            let invert = attribute & 0x80 != 0 && flash_invert;
+            let ink = spectrum_color(attribute & 0x07, bright);
+            let paper = spectrum_color((attribute >> 3) & 0x07, bright);
+            for (bit, dot) in cell.iter_mut().enumerate() {
+                let use_ink = (pixels & (0x80 >> bit) != 0) ^ invert;
+                *dot = if use_ink { ink } else { paper };
             }
         }
     }

@@ -1,15 +1,26 @@
 use crate::bus::CpuBus;
+use crate::cpc::Cpc;
+use crate::cpc_vid::{FRAMEBUFFER_HEIGHT as CPC_HEIGHT, FRAMEBUFFER_WIDTH as CPC_WIDTH};
 use crate::disasm::{DisassembledInstruction, disassemble_block};
 use crate::instruction_trace::InstructionTrace;
 use crate::tvc::{DEBUG_RUN_TO_IRQ_MAX_CYCLES, Tvc};
-use crate::vid::VidModel;
+use crate::tzx::{Tape, TapePlayer};
 use crate::z80::{Z80, Z80State};
 use crate::zx82::{FRAMEBUFFER_HEIGHT as ZX82_HEIGHT, FRAMEBUFFER_WIDTH as ZX82_WIDTH, Zx82};
+
+/// Video timing model selected in the UI. Machines without a raster-accurate
+/// renderer record the choice and ignore it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VidModel {
+    FastFrame,
+    Interleaved,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum System {
     Tvc,
     Zx82,
+    Cpc,
 }
 
 impl System {
@@ -17,6 +28,7 @@ impl System {
         match self {
             Self::Tvc => "TVC",
             Self::Zx82 => "Zx82 (Spectrum 48K)",
+            Self::Cpc => "CPC 464",
         }
     }
 }
@@ -36,6 +48,7 @@ pub struct FramebufferRef<'a> {
 pub enum Machine {
     Tvc(Tvc),
     Zx82(Zx82),
+    Cpc(Cpc),
 }
 
 impl Machine {
@@ -43,34 +56,80 @@ impl Machine {
         match self {
             Self::Tvc(_) => System::Tvc,
             Self::Zx82(_) => System::Zx82,
+            Self::Cpc(_) => System::Cpc,
         }
     }
 
     pub fn tvc(&self) -> Option<&Tvc> {
         match self {
             Self::Tvc(tvc) => Some(tvc),
-            Self::Zx82(_) => None,
+            Self::Zx82(_) | Self::Cpc(_) => None,
         }
     }
 
     pub fn tvc_mut(&mut self) -> Option<&mut Tvc> {
         match self {
             Self::Tvc(tvc) => Some(tvc),
-            Self::Zx82(_) => None,
+            Self::Zx82(_) | Self::Cpc(_) => None,
         }
     }
 
     pub fn zx82(&self) -> Option<&Zx82> {
         match self {
-            Self::Tvc(_) => None,
+            Self::Tvc(_) | Self::Cpc(_) => None,
             Self::Zx82(zx82) => Some(zx82),
         }
     }
 
     pub fn zx82_mut(&mut self) -> Option<&mut Zx82> {
         match self {
-            Self::Tvc(_) => None,
+            Self::Tvc(_) | Self::Cpc(_) => None,
             Self::Zx82(zx82) => Some(zx82),
+        }
+    }
+
+    /// Pulse-level tape of the Zx82 or CPC; the TVC uses its own CAS path.
+    pub fn tape_player(&self) -> Option<&TapePlayer> {
+        match self {
+            Self::Tvc(_) => None,
+            Self::Zx82(zx82) => zx82.tape(),
+            Self::Cpc(cpc) => cpc.bus.tape(),
+        }
+    }
+
+    pub fn tape_player_mut(&mut self) -> Option<&mut TapePlayer> {
+        match self {
+            Self::Tvc(_) => None,
+            Self::Zx82(zx82) => zx82.tape_mut(),
+            Self::Cpc(cpc) => cpc.bus.tape_mut(),
+        }
+    }
+
+    /// Whether a tape is being loaded: a running TVC or CPC tape motor, or a
+    /// Spectrum loader reading the tape.
+    pub fn tape_loading(&self) -> bool {
+        match self {
+            Self::Tvc(tvc) => tvc.bus.tape_play_active() && tvc.bus.tape_motor_on(),
+            Self::Zx82(zx82) => zx82.tape_loading(),
+            Self::Cpc(cpc) => cpc.tape_loading(),
+        }
+    }
+
+    /// Returns false on the TVC, which loads CAS files instead.
+    pub fn insert_tape(&mut self, tape: Tape) -> bool {
+        match self {
+            Self::Tvc(_) => return false,
+            Self::Zx82(zx82) => zx82.insert_tape(tape),
+            Self::Cpc(cpc) => cpc.bus.insert_tape(tape),
+        }
+        true
+    }
+
+    pub fn eject_tape(&mut self) {
+        match self {
+            Self::Tvc(_) => {}
+            Self::Zx82(zx82) => zx82.eject_tape(),
+            Self::Cpc(cpc) => cpc.bus.eject_tape(),
         }
     }
 
@@ -78,6 +137,7 @@ impl Machine {
         match self {
             Self::Tvc(tvc) => tvc.reset(),
             Self::Zx82(zx82) => zx82.reset(),
+            Self::Cpc(cpc) => cpc.reset(),
         }
     }
 
@@ -85,6 +145,7 @@ impl Machine {
         match self {
             Self::Tvc(tvc) => tvc.run_for_a_frame(),
             Self::Zx82(zx82) => zx82.run_for_a_frame(),
+            Self::Cpc(cpc) => cpc.run_for_a_frame(),
         }
     }
 
@@ -92,6 +153,7 @@ impl Machine {
         match self {
             Self::Tvc(tvc) => tvc.debug_step_instruction(),
             Self::Zx82(zx82) => zx82.debug_step_instruction(),
+            Self::Cpc(cpc) => cpc.debug_step_instruction(),
         }
     }
 
@@ -112,6 +174,14 @@ impl Machine {
                     interrupt_accepted,
                 }
             }
+            Self::Cpc(cpc) => {
+                let (elapsed_cycles, interrupt_accepted) =
+                    cpc.debug_run_to_interrupt(DEBUG_RUN_TO_IRQ_MAX_CYCLES);
+                DebugRunToIrqResult {
+                    elapsed_cycles,
+                    interrupt_accepted,
+                }
+            }
         }
     }
 
@@ -119,6 +189,7 @@ impl Machine {
         match self {
             Self::Tvc(tvc) => &tvc.z80.state,
             Self::Zx82(zx82) => &zx82.z80.state,
+            Self::Cpc(cpc) => &cpc.z80.state,
         }
     }
 
@@ -126,6 +197,7 @@ impl Machine {
         match self {
             Self::Tvc(tvc) => &mut tvc.z80,
             Self::Zx82(zx82) => &mut zx82.z80,
+            Self::Cpc(cpc) => &mut cpc.z80,
         }
     }
 
@@ -133,6 +205,7 @@ impl Machine {
         match self {
             Self::Tvc(tvc) => tvc.clock,
             Self::Zx82(zx82) => zx82.clock(),
+            Self::Cpc(cpc) => cpc.clock(),
         }
     }
 
@@ -140,6 +213,7 @@ impl Machine {
         match self {
             Self::Tvc(tvc) => tvc.instruction_trace(),
             Self::Zx82(zx82) => zx82.instruction_trace(),
+            Self::Cpc(cpc) => cpc.instruction_trace(),
         }
     }
 
@@ -147,6 +221,7 @@ impl Machine {
         match self {
             Self::Tvc(tvc) => tvc.instruction_trace_mut(),
             Self::Zx82(zx82) => zx82.instruction_trace_mut(),
+            Self::Cpc(cpc) => cpc.instruction_trace_mut(),
         }
     }
 
@@ -162,6 +237,11 @@ impl Machine {
                 width: ZX82_WIDTH,
                 height: ZX82_HEIGHT,
             },
+            Self::Cpc(cpc) => FramebufferRef {
+                pixels: cpc.framebuffer(),
+                width: CPC_WIDTH,
+                height: CPC_HEIGHT,
+            },
         }
     }
 
@@ -169,6 +249,7 @@ impl Machine {
         match self {
             Self::Tvc(tvc) => tvc.frame_complete,
             Self::Zx82(zx82) => zx82.frame_complete,
+            Self::Cpc(cpc) => cpc.frame_complete,
         }
     }
 
@@ -176,6 +257,7 @@ impl Machine {
         match self {
             Self::Tvc(tvc) => tvc.frame_complete = false,
             Self::Zx82(zx82) => zx82.frame_complete = false,
+            Self::Cpc(cpc) => cpc.frame_complete = false,
         }
     }
 
@@ -183,6 +265,7 @@ impl Machine {
         match self {
             Self::Tvc(tvc) => tvc.vid_model(),
             Self::Zx82(zx82) => zx82.vid_model(),
+            Self::Cpc(cpc) => cpc.vid_model(),
         }
     }
 
@@ -190,6 +273,7 @@ impl Machine {
         match self {
             Self::Tvc(tvc) => tvc.set_vid_model(model),
             Self::Zx82(zx82) => zx82.set_vid_model(model),
+            Self::Cpc(cpc) => cpc.set_vid_model(model),
         }
     }
 
@@ -197,6 +281,7 @@ impl Machine {
         match self {
             Self::Tvc(tvc) => tvc.set_breakpoint(addr),
             Self::Zx82(zx82) => zx82.set_breakpoint(addr),
+            Self::Cpc(cpc) => cpc.set_breakpoint(addr),
         }
     }
 
@@ -204,6 +289,7 @@ impl Machine {
         match self {
             Self::Tvc(tvc) => tvc.clear_breakpoint(addr),
             Self::Zx82(zx82) => zx82.clear_breakpoint(addr),
+            Self::Cpc(cpc) => cpc.clear_breakpoint(addr),
         }
     }
 
@@ -211,6 +297,7 @@ impl Machine {
         match self {
             Self::Tvc(tvc) => tvc.clear_all_breakpoints(),
             Self::Zx82(zx82) => zx82.clear_all_breakpoints(),
+            Self::Cpc(cpc) => cpc.clear_all_breakpoints(),
         }
     }
 
@@ -218,6 +305,7 @@ impl Machine {
         match self {
             Self::Tvc(tvc) => tvc.get_breakpoints(),
             Self::Zx82(zx82) => zx82.get_breakpoints(),
+            Self::Cpc(cpc) => cpc.get_breakpoints(),
         }
     }
 
@@ -228,6 +316,9 @@ impl Machine {
                 .collect(),
             Self::Zx82(zx82) => (0..len)
                 .map(|offset| zx82.bus.r8(addr.wrapping_add(offset as u16)))
+                .collect(),
+            Self::Cpc(cpc) => (0..len)
+                .map(|offset| cpc.bus.r8(addr.wrapping_add(offset as u16)))
                 .collect(),
         }
     }
@@ -246,13 +337,18 @@ impl Machine {
                 zx82.draw_full_frame();
                 zx82.frame_complete = true;
             }
+            Self::Cpc(cpc) => {
+                for (offset, byte) in bytes.iter().copied().enumerate() {
+                    cpc.bus.w8(addr.wrapping_add(offset as u16), byte);
+                }
+            }
         }
     }
 
     pub fn write_raw_bank(&mut self, bank: &str, addr: usize, bytes: &[u8]) -> Option<usize> {
         match self {
             Self::Tvc(tvc) => tvc.bus.mmu.write_raw_bank(bank, addr, bytes),
-            Self::Zx82(_) => None,
+            Self::Zx82(_) | Self::Cpc(_) => None,
         }
     }
 
@@ -260,6 +356,7 @@ impl Machine {
         match self {
             Self::Tvc(tvc) => disassemble_block(&mut tvc.bus, addr, len),
             Self::Zx82(zx82) => disassemble_block(&mut zx82.bus, addr, len),
+            Self::Cpc(cpc) => disassemble_block(&mut cpc.bus, addr, len),
         }
     }
 
@@ -267,6 +364,7 @@ impl Machine {
         match self {
             Self::Tvc(tvc) => tvc.key_down(code),
             Self::Zx82(zx82) => zx82.key_down(code),
+            Self::Cpc(cpc) => cpc.key_down(code),
         }
     }
 
@@ -274,6 +372,7 @@ impl Machine {
         match self {
             Self::Tvc(tvc) => tvc.key_up(code),
             Self::Zx82(zx82) => zx82.key_up(code),
+            Self::Cpc(cpc) => cpc.key_up(code),
         }
     }
 
@@ -281,6 +380,7 @@ impl Machine {
         match self {
             Self::Tvc(tvc) => tvc.key_press(ch),
             Self::Zx82(zx82) => zx82.key_press(ch),
+            Self::Cpc(cpc) => cpc.key_press(ch),
         }
     }
 
@@ -288,20 +388,21 @@ impl Machine {
         match self {
             Self::Tvc(tvc) => tvc.focus_change(has_focus),
             Self::Zx82(zx82) => zx82.focus_change(has_focus),
+            Self::Cpc(cpc) => cpc.focus_change(has_focus),
         }
     }
 
     pub fn sound_sample_rate(&self) -> u32 {
         match self {
             Self::Tvc(tvc) => tvc.sound_sample_rate(),
-            Self::Zx82(_) => 44_100,
+            Self::Zx82(_) | Self::Cpc(_) => 44_100,
         }
     }
 
     pub fn take_audio_samples(&mut self) -> Vec<f32> {
         match self {
             Self::Tvc(tvc) => tvc.take_audio_samples(),
-            Self::Zx82(_) => Vec::new(),
+            Self::Zx82(_) | Self::Cpc(_) => Vec::new(),
         }
     }
 }
