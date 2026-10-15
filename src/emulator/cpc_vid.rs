@@ -5,6 +5,7 @@
 //! in [`crate::cpc`]; this module reports the sync edges they depend on.
 
 use crate::crtc::{Crtc, CrtcTick, CrtcVariant};
+use crate::snapshot::{Reader, Writer};
 
 /// Visible window in mode 2 pixels: 48 characters of 16 pixels.
 pub const FRAMEBUFFER_WIDTH: usize = VISIBLE_CHARS * 16;
@@ -112,6 +113,33 @@ impl CpcVid {
         self.pending_mode = 1;
         self.beam_x = 0;
         self.beam_y = 0;
+    }
+
+    pub fn write_snapshot(&self, writer: &mut Writer) {
+        self.crtc.write_state(writer);
+        writer.u8(self.hsync as u8);
+        writer.u8(self.vsync as u8);
+        writer.raw_bytes(&self.pens);
+        writer.u8(self.mode);
+        writer.u8(self.pending_mode);
+    }
+
+    /// Restores the CRTC and Gate Array video state. The monitor beam starts
+    /// a new picture and locks again on the next VSYNC.
+    pub fn read_snapshot(&mut self, reader: &mut Reader<'_>) -> crate::snapshot::Result<()> {
+        self.crtc.read_state(reader)?;
+        self.hsync = reader.u8()? != 0;
+        self.vsync = reader.u8()? != 0;
+        self.pens.copy_from_slice(reader.raw_bytes(17)?);
+        for pen in &mut self.pens {
+            *pen &= 0x1F;
+        }
+        self.mode = reader.u8()? & 0x03;
+        self.pending_mode = reader.u8()? & 0x03;
+        self.beam_x = 0;
+        self.beam_y = 0;
+        self.frame_ready = false;
+        Ok(())
     }
 
     pub fn crtc(&self) -> &Crtc {

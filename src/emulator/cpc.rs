@@ -13,6 +13,7 @@ use crate::instruction_trace::{
     InstructionEffects, InstructionTrace, InstructionTraceEntry, TraceRegisters,
 };
 use crate::machine::VidModel;
+use crate::snapshot::{self, Reader, SnapshotError, Writer};
 use crate::tzx::{Tape, TapePlayer};
 use crate::z80::Z80;
 
@@ -138,6 +139,36 @@ impl CpcBus {
         } else {
             self.keyboard[row] |= mask;
         }
+    }
+
+    /// Gate Array, PPI, and AY latch state (`GA  ` chunk).
+    fn write_snapshot(&self, writer: &mut Writer) {
+        writer.u8(self.selected_pen);
+        writer.u8(self.lower_rom_enabled as u8);
+        writer.u8(self.upper_rom_enabled as u8);
+        writer.u8(self.interrupt_counter);
+        writer.u8(self.vsync_irq_delay);
+        writer.u8(self.irq_pending as u8);
+        writer.u8(self.ppi_port_a);
+        writer.u8(self.ppi_port_c);
+        writer.u8(self.ppi_control);
+        writer.u8(self.psg_selected);
+        writer.raw_bytes(&self.psg_regs);
+    }
+
+    fn read_snapshot(&mut self, reader: &mut Reader<'_>) -> snapshot::Result<()> {
+        self.selected_pen = reader.u8()? & 0x1F;
+        self.lower_rom_enabled = reader.u8()? != 0;
+        self.upper_rom_enabled = reader.u8()? != 0;
+        self.interrupt_counter = reader.u8()? % 52;
+        self.vsync_irq_delay = reader.u8()?.min(2);
+        self.irq_pending = reader.u8()? != 0;
+        self.ppi_port_a = reader.u8()?;
+        self.ppi_port_c = reader.u8()?;
+        self.ppi_control = reader.u8()?;
+        self.psg_selected = reader.u8()? & 0x0F;
+        self.psg_regs.copy_from_slice(reader.raw_bytes(16)?);
+        Ok(())
     }
 
     pub fn motor_on(&self) -> bool {
@@ -435,6 +466,68 @@ impl Cpc {
 
     pub fn load_roms(&mut self, os: &[u8], basic: &[u8]) -> Result<(), String> {
         self.bus.load_roms(os, basic)
+    }
+
+    /// Saves CPU, RAM, CRTC, Gate Array, PPI, and frame timing in the rtvc
+    /// snapshot container. The ROMs and the tape are not included.
+    pub fn save_snapshot(&self) -> Vec<u8> {
+        let mut cpu = Writer::new();
+        self.z80.state.write_snapshot(&mut cpu);
+        let mut gate_array = Writer::new();
+        self.bus.write_snapshot(&mut gate_array);
+        let mut video = Writer::new();
+        self.bus.vid.write_snapshot(&mut video);
+        let mut timing = Writer::new();
+        timing.u64(self.clock);
+        timing.u64(self.next_frame_clock);
+        timing.u64(self.frame_counter);
+        snapshot::write_file(&[
+            (snapshot::SYSTEM_CHUNK, vec![snapshot::SYSTEM_CPC]),
+            (*b"CPUZ", cpu.into_inner()),
+            (*b"RAM ", self.bus.ram().to_vec()),
+            (*b"GA  ", gate_array.into_inner()),
+            (*b"VID ", video.into_inner()),
+            (*b"TIME", timing.into_inner()),
+        ])
+    }
+
+    pub fn load_snapshot(&mut self, data: &[u8]) -> snapshot::Result<()> {
+        let chunks = snapshot::read_file(data)?;
+        if snapshot::system_tag(&chunks) != Some(snapshot::SYSTEM_CPC) {
+            return Err(SnapshotError::InvalidData("not a CPC snapshot".to_string()));
+        }
+        let ram = snapshot::chunk(&chunks, b"RAM ")?;
+        if ram.len() != RAM_SIZE {
+            return Err(SnapshotError::InvalidData(format!(
+                "CPC RAM must be {RAM_SIZE} bytes, got {}",
+                ram.len()
+            )));
+        }
+        let mut cpu = Reader::new(snapshot::chunk(&chunks, b"CPUZ")?);
+        let mut gate_array = Reader::new(snapshot::chunk(&chunks, b"GA  ")?);
+        let mut video = Reader::new(snapshot::chunk(&chunks, b"VID ")?);
+        let mut timing = Reader::new(snapshot::chunk(&chunks, b"TIME")?);
+
+        self.z80.reset();
+        self.bus.reset();
+        self.z80.state.read_snapshot(&mut cpu)?;
+        self.bus.ram_mut().copy_from_slice(ram);
+        self.bus.read_snapshot(&mut gate_array)?;
+        self.bus.vid.read_snapshot(&mut video)?;
+        self.clock = timing.u64()?;
+        self.next_frame_clock = timing.u64()?;
+        self.frame_counter = timing.u64()?;
+        if self.clock > self.next_frame_clock {
+            return Err(SnapshotError::InvalidData(
+                "CPC frame timing is inconsistent".to_string(),
+            ));
+        }
+        self.last_frame_interrupt_accepted = false;
+        self.motor_on_since = None;
+        self.release_all_keys();
+        self.instruction_trace.clear();
+        self.frame_complete = true;
+        Ok(())
     }
 
     pub fn framebuffer(&self) -> &[u32] {

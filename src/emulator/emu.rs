@@ -571,8 +571,10 @@ impl Emu {
     }
 
     pub fn save_snapshot(&self) -> Vec<u8> {
-        let Some(tvc) = self.machine.tvc() else {
-            return Vec::new();
+        let tvc = match &self.machine {
+            Machine::Tvc(tvc) => tvc,
+            Machine::Zx82(zx82) => return zx82.save_snapshot(),
+            Machine::Cpc(cpc) => return cpc.save_snapshot(),
         };
         let core_snapshot = tvc.save_snapshot();
         let Ok(core_chunks) = snapshot::read_file(&core_snapshot) else {
@@ -626,6 +628,9 @@ impl Emu {
     pub fn load_snapshot(&mut self, data: &[u8]) -> crate::snapshot::Result<()> {
         self.clear_typed_text();
         self.release_timed_keys();
+        if let Some(tag) = snapshot::system_tag(&snapshot::read_file(data)?) {
+            return self.load_machine_snapshot(tag, data);
+        }
         let fast_boot = self.fast_boot();
         let snapshot_state = Self::read_emu_snapshot_state(data)?;
         #[cfg(target_arch = "wasm32")]
@@ -705,6 +710,31 @@ impl Emu {
         Ok(())
     }
 
+    /// Loads a Zx82 or CPC snapshot into a fresh machine. Kept out of
+    /// `load_snapshot` so debug builds do not reserve stack for every
+    /// machine type in one frame.
+    #[inline(never)]
+    fn load_machine_snapshot(&mut self, tag: u8, data: &[u8]) -> crate::snapshot::Result<()> {
+        let invalid = snapshot::SnapshotError::InvalidData;
+        let machine = match tag {
+            snapshot::SYSTEM_ZX82 => {
+                let mut zx82 = Zx82::new_with_vid_model(self.vid_model());
+                load_zx82_rom(&mut zx82).map_err(invalid)?;
+                zx82.load_snapshot(data)?;
+                Machine::Zx82(zx82)
+            }
+            snapshot::SYSTEM_CPC => {
+                let mut cpc = Cpc::new_with_vid_model(self.vid_model());
+                load_cpc_roms(&mut cpc).map_err(invalid)?;
+                cpc.load_snapshot(data)?;
+                Machine::Cpc(cpc)
+            }
+            _ => return Err(invalid(format!("unknown snapshot machine {tag}"))),
+        };
+        self.activate_machine(machine);
+        Ok(())
+    }
+
     fn read_emu_snapshot_state(data: &[u8]) -> crate::snapshot::Result<EmuSnapshotState> {
         let chunks = snapshot::read_file(data)?;
         let mut state = EmuSnapshotState::default();
@@ -735,12 +765,6 @@ impl Emu {
     }
 
     pub fn save_snapshot_file(&self, path: &std::path::Path) -> std::io::Result<()> {
-        if self.system() != System::Tvc {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "project snapshots are not implemented for Zx82; use the original .z80 file",
-            ));
-        }
         let snapshot = self.save_snapshot();
         if is_zip_path(path) {
             std::fs::write(path, zip_snapshot(&snapshot)?)

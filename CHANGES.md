@@ -19,6 +19,9 @@ Release notes start here. Older release history is intentionally not backfilled.
   draws the Spectrum screen line by line, showing the loading border stripes.
 - Tape progress counts playing time, so a long silence at the start of a
   tape no longer sits at 0%.
+- File > Save Snapshot works on the CPC 464 and Zx82 too. Loading the
+  `.rtvcsnap(.zip)` switches to the machine it was saved on. TVC snapshots
+  are unchanged.
 - Typing symbols such as `"` or `:` on the Zx82 and CPC no longer picks up the
   host Shift (which turned `"` into Spectrum extended mode).
 

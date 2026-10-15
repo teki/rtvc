@@ -73,6 +73,10 @@ This skill provides step-by-step instructions and references for compiling, exec
     state, opcode bytes, TVC mapper values, and memory/port writes. The JSON
     protocol uses the corresponding `instruction_trace_*` command names.
   - Use the File menu to write/read `.rtvcsnap.zip` snapshots, load tape/disk files via open file dialog, and save the current framebuffer as a 4:3 PNG (`768x576`).
+  - Snapshots work on the TVC, Zx82, and CPC 464; loading one (menu, drop,
+    positional argument, or TCP `load_snapshot`) switches to the machine it
+    was saved on. `cargo test --lib snapshot_round_trip` checks that restored
+    Zx82 and CPC machines run on identically.
   - Use the Tape and Disk menus to load cassette and floppy media (either from local list or by browsing for any file). Selecting an entry immediately loads it.
   - Gamebase launches use the clean boot snapshot embedded in the app, force the TVC 1.2 VT-DOS machine, attach or inject the selected media, start emulation, and type `RUN` for CAS or `LOAD "*"` for DSK.
   - Dropping a CAS, DSK, or ZIP onto the native or full web window uses the same Gamebase launch path; dropped `.rtvcsnap`, `.rtvcsnap.zip`, and `.z80` files load as states. `cargo test --lib dropped` covers the classification.

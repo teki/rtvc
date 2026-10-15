@@ -719,3 +719,31 @@ fn custom_machine_snapshot_keeps_cart_and_hbf_slot() {
     restored.insert_disk_bytes("slot1.dsk", &disk).unwrap();
     assert_eq!(restored.save_disk_bytes(0).unwrap(), disk);
 }
+
+#[test]
+fn zx82_and_cpc_snapshots_reopen_on_their_machine() {
+    let machine_type = MachineType::standard(false, RomVersion::V1_2, false);
+    let mut source = Emu::new(machine_type);
+    let mut target = Emu::new(machine_type);
+    for switch in [Emu::switch_to_zx82, Emu::switch_to_cpc] {
+        if switch(&mut source).is_err() {
+            continue; // ROMs not present
+        }
+        for _ in 0..20 {
+            source.tick();
+        }
+        source.write_mapped_memory(0x8000, &[0xA5]);
+        let data = source.save_snapshot();
+        target.load_snapshot(&data).unwrap();
+        assert_eq!(target.system(), source.system());
+        assert_eq!(target.z80_state(), source.z80_state());
+        assert_eq!(target.read_mapped_memory(0x8000, 1), vec![0xA5]);
+    }
+
+    // TVC snapshots still carry no system chunk and load as TVC.
+    let tvc = Emu::new(machine_type).save_snapshot();
+    let chunks = crate::snapshot::read_file(&tvc).unwrap();
+    assert_eq!(crate::snapshot::system_tag(&chunks), None);
+    target.load_snapshot(&tvc).unwrap();
+    assert_eq!(target.system(), System::Tvc);
+}

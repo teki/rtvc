@@ -467,3 +467,41 @@ fn zx_loads_tape_from_env() {
         }
     }
 }
+
+#[test]
+fn snapshot_round_trip_continues_identically() {
+    let Ok(rom) = std::fs::read("roms/48.rom") else {
+        return;
+    };
+    let mut original = Zx82::new_with_vid_model(VidModel::Interleaved);
+    original.load_rom(&rom).unwrap();
+    for _ in 0..120 {
+        original.run_for_a_frame();
+    }
+    original.bus.set_border_color(3);
+    let data = original.save_snapshot();
+
+    let mut restored = Zx82::new_with_vid_model(VidModel::Interleaved);
+    restored.load_rom(&rom).unwrap();
+    restored.load_snapshot(&data).unwrap();
+    for _ in 0..50 {
+        original.run_for_a_frame();
+        restored.run_for_a_frame();
+    }
+    assert_eq!(restored.z80.state, original.z80.state);
+    assert_eq!(restored.clock(), original.clock());
+    assert_eq!(restored.bus.ram(), original.bus.ram());
+    assert_eq!(restored.bus.border_color(), 3);
+    assert!(restored.framebuffer == original.framebuffer);
+}
+
+#[test]
+fn snapshot_rejects_other_machines() {
+    let tvc_like = crate::snapshot::write_file(&[(*b"META", vec![0])]);
+    assert!(Zx82::new().load_snapshot(&tvc_like).is_err());
+    let cpc = crate::snapshot::write_file(&[(
+        crate::snapshot::SYSTEM_CHUNK,
+        vec![crate::snapshot::SYSTEM_CPC],
+    )]);
+    assert!(Zx82::new().load_snapshot(&cpc).is_err());
+}

@@ -206,3 +206,36 @@ fn typed_symbol_replaces_the_host_keys_that_produced_it() {
     cpc.run_for_a_frame();
     assert_eq!(cpc.bus.keyboard, [0xFF; KEYBOARD_ROWS]);
 }
+
+#[test]
+fn snapshot_round_trip_continues_identically() {
+    let Some(mut original) = booted_cpc() else {
+        return;
+    };
+    for _ in 0..150 {
+        original.run_for_a_frame();
+    }
+    // Leave mid-frame state behind: a pending mode change and a non-default
+    // pen, with the CRTC somewhere inside the frame.
+    original.bus.out8(0, 0x8C, 0x7F);
+    original.bus.out8(0, 0x10, 0x7F);
+    original.bus.out8(0, 0x4C, 0x7F);
+    original.debug_step_instruction();
+    let data = original.save_snapshot();
+
+    let mut restored = booted_cpc().unwrap();
+    restored.load_snapshot(&data).unwrap();
+    assert_eq!(
+        restored.bus.vid.crtc().position(),
+        original.bus.vid.crtc().position()
+    );
+    for _ in 0..60 {
+        original.run_for_a_frame();
+        restored.run_for_a_frame();
+    }
+    assert_eq!(restored.z80.state, original.z80.state);
+    assert_eq!(restored.clock(), original.clock());
+    assert_eq!(restored.bus.ram(), original.bus.ram());
+    assert_eq!(restored.bus.vid.mode(), original.bus.vid.mode());
+    assert!(restored.framebuffer() == original.framebuffer());
+}

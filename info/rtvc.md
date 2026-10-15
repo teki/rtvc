@@ -528,7 +528,8 @@ type `RUN` for CAS or `LOAD "*"` for DSK.
 Dropping a file onto the native or full web window uses the same launch path.
 A `.cas` is injected and a `.dsk` is attached to drive A:. A ZIP resolves to
 its first `.rtvcsnap` member as a snapshot, otherwise to its first `.cas` or
-`.dsk` member. `.rtvcsnap` and `.z80` files load as states without a reboot.
+`.dsk` member. `.rtvcsnap` and `.z80` files load as states without a reboot;
+an `.rtvcsnap` switches to the TVC, Zx82, or CPC it was saved on.
 Native `.cas`/`.dsk` drops stay file-backed like Disk menu selections; web
 drops are added to the IndexedDB recent lists. Classification lives in
 `classify_dropped_media` in [emu.rs](../src/emulator/emu.rs).
@@ -639,6 +640,28 @@ serialized. The wrapper reconstructs the selected machine from normal ROM
 resources and reattaches accessible disk media by filename.
 
 Version 2 intentionally rejects version 1 snapshots.
+
+Zx82 and CPC snapshots use the same container, version, and file names. A
+`SYS ` chunk whose first byte is the machine tag (`1` Zx82, `2` CPC) selects
+the machine; TVC snapshots omit it, so existing files are unchanged and a
+file without it loads as a TVC. Loading switches to the snapshot's machine
+from any machine, reading the ROMs from `roms/` as on a normal switch.
+
+| Chunk | Zx82 | CPC |
+| --- | --- | --- |
+| `SYS ` | `1` | `2` |
+| `CPUZ` | Z80 state, same layout as the TVC | same |
+| `RAM ` | 48 KiB RAM | 64 KiB RAM |
+| `ULA ` | last ULA output byte (border, MIC, EAR) | |
+| `GA  ` | | selected pen, ROM enables, interrupt counter, VSYNC delay, pending interrupt, PPI ports A/C and control, AY register select and registers |
+| `VID ` | | CRTC registers and counters, sync levels, 17 pens, mode, pending mode |
+| `TIME` | clock, next frame clock, frame counter | same |
+
+The CPC's CRTC counters are stored, so a restored machine continues from the
+same raster position; its monitor beam starts a new picture and locks on the
+next VSYNC. The Zx82 redraws the whole picture from the restored memory. The
+inserted tape, keys, and the frontend video model are not stored; the
+current video model applies.
 
 Native save/load accepts raw `.rtvcsnap` and ZIP-wrapped
 `.rtvcsnap.zip`. The checked-in

@@ -7,6 +7,7 @@ use crate::instruction_trace::{
     InstructionEffects, InstructionTrace, InstructionTraceEntry, TraceRegisters,
 };
 use crate::machine::VidModel;
+use crate::snapshot::{self, Reader, SnapshotError, Writer};
 use crate::tzx::{Tape, TapePlayer};
 use crate::z80::Z80;
 
@@ -353,6 +354,70 @@ impl Zx82 {
         state.iff2 = (data[28] != 0) as u8;
         state.im = data[29] & 0x03;
         state.halted = 0;
+    }
+
+    /// Saves CPU, RAM, ULA latch, and frame timing in the rtvc snapshot
+    /// container. The tape is not included.
+    pub fn save_snapshot(&self) -> Vec<u8> {
+        let mut cpu = Writer::new();
+        self.z80.state.write_snapshot(&mut cpu);
+        let mut ula = Writer::new();
+        ula.u8(self.bus.ula_latch);
+        let mut timing = Writer::new();
+        timing.u64(self.clock);
+        timing.u64(self.next_frame_clock);
+        timing.u64(self.frame_counter);
+        snapshot::write_file(&[
+            (snapshot::SYSTEM_CHUNK, vec![snapshot::SYSTEM_ZX82]),
+            (*b"CPUZ", cpu.into_inner()),
+            (*b"RAM ", self.bus.ram().to_vec()),
+            (*b"ULA ", ula.into_inner()),
+            (*b"TIME", timing.into_inner()),
+        ])
+    }
+
+    pub fn load_snapshot(&mut self, data: &[u8]) -> snapshot::Result<()> {
+        let chunks = snapshot::read_file(data)?;
+        if snapshot::system_tag(&chunks) != Some(snapshot::SYSTEM_ZX82) {
+            return Err(SnapshotError::InvalidData(
+                "not a Zx82 snapshot".to_string(),
+            ));
+        }
+        let ram = snapshot::chunk(&chunks, b"RAM ")?;
+        if ram.len() != RAM_SIZE {
+            return Err(SnapshotError::InvalidData(format!(
+                "Zx82 RAM must be {RAM_SIZE} bytes, got {}",
+                ram.len()
+            )));
+        }
+        let mut cpu = Reader::new(snapshot::chunk(&chunks, b"CPUZ")?);
+        let mut ula = Reader::new(snapshot::chunk(&chunks, b"ULA ")?);
+        let mut timing = Reader::new(snapshot::chunk(&chunks, b"TIME")?);
+
+        self.z80.reset();
+        self.bus.reset();
+        self.z80.state.read_snapshot(&mut cpu)?;
+        self.bus.ram_mut().copy_from_slice(ram);
+        self.bus.ula_latch = ula.u8()?;
+        self.clock = timing.u64()?;
+        self.next_frame_clock = timing.u64()?;
+        self.frame_counter = timing.u64()?;
+        if self.next_frame_clock < FRAME_CLOCKS || self.clock > self.next_frame_clock {
+            return Err(SnapshotError::InvalidData(
+                "Zx82 frame timing is inconsistent".to_string(),
+            ));
+        }
+        self.last_frame_interrupt_accepted = false;
+        self.loader_clock = None;
+        self.release_all_keys();
+        self.instruction_trace.clear();
+        self.draw_full_frame();
+        let frame_clock = self.clock - (self.next_frame_clock - FRAME_CLOCKS);
+        self.next_raster_row = (0..FRAMEBUFFER_HEIGHT)
+            .take_while(|&row| FIRST_ROW_DONE_CLOCK + row as u64 * LINE_CLOCKS <= frame_clock)
+            .count();
+        self.frame_complete = true;
+        Ok(())
     }
 
     pub fn tape(&self) -> Option<&TapePlayer> {

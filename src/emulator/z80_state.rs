@@ -48,6 +48,42 @@ pub struct Z80State {
 }
 
 impl Z80State {
+    /// Writes the `CPUZ` snapshot chunk body: the 8-bit registers, 13 legacy
+    /// words of which only SP (word 10) and PC (word 11) are used, then HALT,
+    /// IM, IFF1, and IFF2.
+    pub fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
+        writer.raw_bytes(&self.r8);
+        for word in 0..13 {
+            writer.u16(match word {
+                10 => self.sp,
+                11 => self.pc,
+                _ => 0,
+            });
+        }
+        writer.u8(self.halted);
+        writer.u8(self.im);
+        writer.u8(self.iff1);
+        writer.u8(self.iff2);
+    }
+
+    pub fn read_snapshot(
+        &mut self,
+        reader: &mut crate::snapshot::Reader<'_>,
+    ) -> crate::snapshot::Result<()> {
+        self.r8.copy_from_slice(reader.raw_bytes(22)?);
+        let mut words = [0u16; 13];
+        for word in &mut words {
+            *word = reader.u16()?;
+        }
+        self.sp = words[10];
+        self.pc = words[11];
+        self.halted = reader.u8()?;
+        self.im = reader.u8()?;
+        self.iff1 = reader.u8()?;
+        self.iff2 = reader.u8()?;
+        Ok(())
+    }
+
     pub fn new() -> Self {
         let mut state = Z80State {
             r8: [0; 22],

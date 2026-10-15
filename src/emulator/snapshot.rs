@@ -5,6 +5,29 @@ use std::fmt;
 pub const MAGIC: &[u8; 8] = b"RTVCSNAP";
 pub const VERSION: u16 = 2;
 
+/// Names the machine a snapshot belongs to. TVC snapshots omit it, so files
+/// without it are TVC snapshots.
+pub const SYSTEM_CHUNK: [u8; 4] = *b"SYS ";
+pub const SYSTEM_ZX82: u8 = 1;
+pub const SYSTEM_CPC: u8 = 2;
+
+/// Returns the [`SYSTEM_CHUNK`] tag, or `None` for a TVC snapshot.
+pub fn system_tag(chunks: &[Chunk<'_>]) -> Option<u8> {
+    chunks
+        .iter()
+        .find(|chunk| chunk.id == SYSTEM_CHUNK)
+        .and_then(|chunk| chunk.data.first().copied())
+}
+
+/// Finds a required chunk.
+pub fn chunk<'a>(chunks: &[Chunk<'a>], id: &'static [u8; 4]) -> Result<&'a [u8]> {
+    chunks
+        .iter()
+        .find(|chunk| chunk.id == *id)
+        .map(|chunk| chunk.data)
+        .ok_or_else(|| SnapshotError::InvalidChunk(std::str::from_utf8(id).unwrap_or("????")))
+}
+
 #[derive(Debug)]
 pub enum SnapshotError {
     InvalidMagic,

@@ -81,6 +81,44 @@ impl Crtc {
         self.reset_transient();
     }
 
+    /// Writes registers and counters, so a restored CRTC continues from the
+    /// same raster position. (The TVC snapshot stores registers only.)
+    pub fn write_state(&self, writer: &mut crate::snapshot::Writer) {
+        writer.u8(self.reg_idx);
+        writer.raw_bytes(&self.reg);
+        writer.u8(self.configured as u8);
+        for value in [
+            self.h_count,
+            self.row,
+            self.raster,
+            self.adjust_line,
+            self.row_address,
+        ] {
+            writer.u16(value);
+        }
+        writer.u8(self.in_adjust as u8);
+        writer.u8(self.hsync_remaining);
+        writer.u8(self.vsync_lines_remaining);
+    }
+
+    pub fn read_state(
+        &mut self,
+        reader: &mut crate::snapshot::Reader<'_>,
+    ) -> crate::snapshot::Result<()> {
+        self.reg_idx = reader.u8()? & 0x1f;
+        self.reg.copy_from_slice(reader.raw_bytes(18)?);
+        self.configured = reader.u8()? != 0;
+        self.h_count = reader.u16()? & 0x00ff;
+        self.row = reader.u16()? & 0x007f;
+        self.raster = reader.u16()? & 0x001f;
+        self.adjust_line = reader.u16()?;
+        self.row_address = reader.u16()? & 0x3fff;
+        self.in_adjust = reader.u8()? != 0;
+        self.hsync_remaining = reader.u8()?;
+        self.vsync_lines_remaining = reader.u8()?;
+        Ok(())
+    }
+
     pub fn reset_transient(&mut self) {
         self.h_count = 0;
         self.row = 0;
