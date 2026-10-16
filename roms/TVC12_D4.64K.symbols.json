@@ -461,6 +461,63 @@
     },
     {
       "bank": "sys",
+      "address": "0xC465",
+      "offset": "0x0465",
+      "name": "IRQ_CARD_ACK_LOOP",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xC46F",
+      "offset": "0x046F",
+      "name": "IRQ_CARD_ACK_NEXT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xC478",
+      "offset": "0x0478",
+      "name": "IRQ_CORE_EXIT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xC47D",
       "offset": "0x047D",
       "name": "INTERNAL_IRQ_DISPATCH",
@@ -480,9 +537,66 @@
     },
     {
       "bank": "sys",
+      "address": "0xC484",
+      "offset": "0x0484",
+      "name": "INTERNAL_IRQ_LOOP",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xC499",
+      "offset": "0x0499",
+      "name": "INTERNAL_IRQ_NEXT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xC4A3",
       "offset": "0x04A3",
       "name": "EXPANSION_IRQ_DISPATCH",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xC4AA",
+      "offset": "0x04AA",
+      "name": "INTERNAL_IRQ_EXIT",
       "alt_names": [],
       "kind": "routine",
       "usage": [],

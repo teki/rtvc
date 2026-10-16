@@ -4,6 +4,12 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+- BASIC 1.2 ROM listings: code hidden in `DB` lines or decoded off its real
+  instruction boundaries is now proper instructions, operands use labels and
+  named U0 variables, and inline `RST` operands, inline strings, and BASIC
+  function records are decoded in comments. The interrupt path is commented
+  instruction by instruction. The debugger gains 45 new BASIC 1.2 symbols.
+
 ## v0.8.10 - 2026-10-15
 
 - Warp: a status-bar checkbox runs the emulator at full speed while a tape is

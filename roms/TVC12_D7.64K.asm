@@ -8,7 +8,6 @@
 ; Instructions use CPU-visible addresses at ORG; the ROM bank is recorded separately.
 ; Physical bank: EXTH offset 0000H
 ; CPU-visible aliases: E000H
-; Data ranges: E000H-EFFFH, F291H-F29BH, F3C6H-F3D7H, F741H-F77AH
 ; Auto labels: branch and call targets are emitted as Lxxxx.
 ; This is a standalone listing; all required technical explanations are embedded here.
 ; Technical descriptions are based on the Kaszanyiczki and Ludanyi TVC ROM references.
@@ -418,6 +417,66 @@
 ; cursor state, 0038H opcode, and interrupt masks before returning. These restoration obligations
 ; are part of the EXTH calling contract.
 
+; =============================================================================
+; SYMBOLS USED BY THIS LISTING
+; =============================================================================
+; U0 RAM cells and system variables referenced below. Names follow the workspace notes
+; above; addresses whose meaning is not documented stay numeric in the code.
+P_SAVE             EQU 0003H              ; saved port-02 page map (written by every page switch)
+USRTAB             EQU 0021H              ; seven USR/EXT subroutine addresses
+IRQ_VECTOR         EQU 0038H              ; Z80 IM 1 interrupt entry (JP in U0)
+IO_ASSIGN_IN       EQU 0B00H              ; input device assignment bytes, one per class
+IO_ASSIGN_OUT      EQU 0B08H              ; output device assignment bytes, one per class
+INT_DES            EQU 0B10H              ; active-low interrupt source mask
+PORT03_MIRROR      EQU 0B11H              ; copy of port 03: card select (7-6), keyboard row (3-0)
+PORT05_MIRROR      EQU 0B12H              ; copy of port 05: motors, sound enables, pitch high nibble
+PORT06_MIRROR      EQU 0B13H              ; copy of port 06: STROBE, volume, colour mode
+SOUND_ACT          EQU 0B14H              ; FFH while a timed tone is playing
+STOP_FLAG          EQU 0B16H              ; FFH after CTRL+ESC (cooperative break)
+PAINT_STACK_MIN    EQU 0B17H              ; lowest stack address PAINT may use
+HI_MEM             EQU 0B19H              ; highest usable RAM address
+U3_STAT            EQU 0B1BH              ; 00H when U3 RAM passed the test, FFH otherwise
+SERIAL_SLOT        EQU 0B1CH              ; assigned serial card slot, FFH = none
+IRQ_STAT           EQU 0B1FH              ; interrupt service enables (cursor, sound, cards)
+WARM_FLAG          EQU 0B21H              ; FFH during a warm reset
+RST30_BRIDGE       EQU 0B23H              ; U0 RST 30H bridge entry
+KB_OLD_PIC         EQU 0B5BH              ; previous keyboard matrix image
+BAUD               EQU 0B69H              ; serial baud index 00H-08H
+SER_FORMAT         EQU 0B6AH              ; serial frame format
+CAS_BUFFER         EQU 0B6BH              ; cassette mode: 00H unbuffered, FFH buffered
+REMRED             EQU 0B6CH              ; cassette motor/head routing
+PROTECT            EQU 0B6DH              ; nonzero: cassette writes inhibited
+CAS_EOF            EQU 0B6EH              ; nonzero after the final cassette byte
+MUDDLE             EQU 0B6FH              ; cassette CRC seed / protection word
+SER_OK             EQU 0B71H              ; 00H while the divider is set up for serial
+CAS_BORDER_SAVE    EQU 0BF0H              ; border saved during cassette I/O
+VERIFY             EQU 0BF1H              ; nonzero: compare tape data with memory
+CAS_IRQ_SAVE       EQU 0BF2H              ; saved first byte of IRQ_VECTOR
+CAS_IN_STATE       EQU 0BF3H              ; open-read state: 00H none, 01H buffered, 03H unbuffered
+CAS_IN_NAME        EQU 0BF4H              ; requested file name (length + 16 chars)
+CAS_TAPE_NAME      EQU 0C05H              ; file name read from tape
+CAS_IN_COUNT       EQU 0D05H              ; bytes read
+CAS_IN_PTR         EQU 0D07H              ; next input byte
+CAS_IN_REMAIN      EQU 0D09H              ; bytes remaining
+CAS_IN_ERROR       EQU 0D0BH              ; input error code
+CAS_IN_PROTECT     EQU 0D0CH              ; input protection byte
+CAS_IN_SECTOR      EQU 0D0DH              ; sector number
+CAS_IN_LAST        EQU 0D0EH              ; sector end marker: FFH final
+CAS_IN_HEADER      EQU 0D0FH              ; FFH header block, 00H data
+CAS_IN_DEST        EQU 0D10H              ; first destination address
+CAS_IN_PHASE       EQU 0D13H              ; FFH opening, 00H continuing
+CAS_OUT_STATE      EQU 0D14H              ; output file state, 00H none
+CAS_OUT_NAME       EQU 0D15H              ; output file name
+CAS_OUT_BUFFER     EQU 0D26H              ; cassette output buffer
+CAS_OUT_COUNT      EQU 0E26H              ; bytes to store
+CAS_OUT_PTR        EQU 0E28H              ; next output address
+CAS_OUT_ERROR      EQU 0E2AH              ; output error code
+CAS_OUT_SOURCE     EQU 0E2CH              ; source start
+CAS_OUT_CHAR       EQU 0E2EH              ; current output character
+CAS_OUT_TYPE       EQU 0E2FH              ; output type: 01H buffered, 03H unbuffered
+CAS_OUT_PROTECT    EQU 0E30H              ; output protection byte
+CAS_OUT_PHASE      EQU 0E32H              ; FFH header, 00H data
+
 ORG E000H, EXTH0, E000H
 
 
@@ -435,262 +494,7 @@ ORG E000H, EXTH0, E000H
 ; offset 1000H, CPU address F000H.
 ; -----------------------------------------------------------------------------
 EXTH_UNUSED_E000_EFFF:
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
-    DB FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH, FFH ; |................|
+    DS 4096, FFH                          ; 4096 bytes of FFH fill
 
 ; Extension ROM initialization; copies tables to RAM, initializes expansion devices, then returns
 ; to the main ROM.
@@ -731,19 +535,17 @@ EXTH_UNUSED_E000_EFFF:
 EXT_INIT:
     LD A,D0H
     OUT (02H),A
-    LD A,(0B21H)
+    LD A,(WARM_FLAG)
     OR A
 
 ; On cold reset, save the U3 RAM-good/bad status in U3-STAT; warm reset preserves the existing
 ; value.
-    JR NZ,F00EH
+    JR NZ,EXT_COPY_CHAR_MATRICES
     EX AF,AF'
-    DB 32H                                                                          ; |2|
 
 ; Copy 32 ten-byte accented/semigraphic character matrices from FB6BH into U0 character RAM at
 ; 0740H.
-    DEC DE
-    DEC BC
+    LD (U3_STAT),A
 
 ; Cold reset copies 32 ten-byte character matrices to U0 0740H, then clears the remaining 64
 ; user-character slots. Warm reset deliberately leaves user matrices intact.
@@ -819,32 +621,31 @@ EXT_COPY_U0_TEMPLATES:
 ; Copy the U0 I/O assignment and dispatch templates from FB0EH into 0B00H-0B48H.
     POP HL
     DEC A
-    JR NZ,F01BH
-    LD HL,FB0EH
-    LD DE,0B00H
+    JR NZ,EXT_COPY_U0_TEMPLATES
+    LD HL,U0_INIT_TEMPLATE
+    LD DE,IO_ASSIGN_IN
     LD C,10H
     LDIR
-    DB 11H, 30H                                                                     ; |.0|
 
 ; The copied RST/interrupt bytes at U0 0030H-003FH are RAM entry stubs; the dispatcher integrity
 ; check later compares the U0 copy with its EXTH reference.
-    NOP
+    LD DE,0030H
     LD C,10H
     LDIR
-    LD DE,0B23H
+    LD DE,RST30_BRIDGE
     LD C,26H
     LDIR
     LD A,FCH
 
 ; Initialize INT-DES, PORT03/PORT05/PORT06 mirrors, the U0 function-call bridge, and the stack
 ; lower limit.
-    LD (0B10H),A
+    LD (INT_DES),A
     LD A,80H
-    LD (0B13H),A
+    LD (PORT06_MIRROR),A
     RLCA
-    LD (0B1FH),A
+    LD (IRQ_STAT),A
     LD HL,0F10H
-    LD (0B17H),HL
+    LD (PAINT_STACK_MIN),HL
     IN A,(5AH)
     LD BC,0403H
     LD HL,0040H
@@ -888,15 +689,15 @@ CARD_SCAN_CONNECTOR:
     CP 03H
     PUSH HL
     EXX
-    JR Z,F079H
+    JR Z,CARD_MOPS_PROBE
     LD HL,FB5CH
     OR A
-    JR Z,F089H
+    JR Z,CARD_COPY_DESCRIPTOR
     LD HL,FB58H
     DEC A
-    JR Z,F089H
+    JR Z,CARD_COPY_DESCRIPTOR
     LD HL,FB62H
-    JR F089H
+    JR CARD_COPY_DESCRIPTOR
 
 ; Known serial, game-cartridge, and disk identifiers are recognized directly; other cards must
 ; begin with MOPS.
@@ -930,16 +731,16 @@ CARD_SCAN_CONNECTOR:
 ; -----------------------------------------------------------------------------
 CARD_MOPS_PROBE:
     LD HL,C000H
-    LD DE,FB54H
+    LD DE,EXPANSION_DEVICE_STRINGS
     LD B,04H
 
 LF081:
     LD A,(DE)
     CP (HL)
-    JR NZ,F092H
+    JR NZ,LF092
     INC DE
     INC HL
-    DJNZ F081H
+    DJNZ LF081
 
 ; Copy each recognized card name into its U0 descriptor buffer; write FFH for an empty or
 ; unidentified connector.
@@ -973,7 +774,7 @@ CARD_COPY_DESCRIPTOR:
     LD B,00H
     POP DE
     LDIR
-    JR F095H
+    JR LF095
 
 LF092:
     POP HL
@@ -986,7 +787,7 @@ LF095:
     RRCA
     LD DE,0030H
     ADD HL,DE
-    DJNZ F058H
+    DJNZ CARD_SCAN_CONNECTOR
     LD B,04H
 
 ; After card discovery, scan for the first RS232 card and store its connector number in the final
@@ -1018,22 +819,22 @@ LF095:
 CARD_ASSIGN_FIRST_SERIAL:
     LD D,A
     AND C
-    JR NZ,F0B0H
+    JR NZ,LF0B0
     LD A,04H
     SUB B
-    LD (0B07H),A
-    LD (0B0FH),A
-    JR F0B7H
+    LD (IO_ASSIGN_IN+7),A
+    LD (IO_ASSIGN_OUT+7),A
+    JR LF0B7
 
 LF0B0:
     LD A,D
     RRCA
     RRCA
-    DJNZ F0A1H
+    DJNZ CARD_ASSIGN_FIRST_SERIAL
     LD A,FFH
 
 LF0B7:
-    LD (0B1CH),A
+    LD (SERIAL_SLOT),A
     LD HL,0047H
     LD DE,0030H
     LD B,04H
@@ -1070,7 +871,7 @@ LF0B7:
 CARD_ASSIGN_UNIT_NUMBERS:
     LD (HL),A
     ADD HL,DE
-    DJNZ F0C3H
+    DJNZ CARD_ASSIGN_UNIT_NUMBERS
     LD E,40H
     LD HL,0070H
     PUSH DE
@@ -1085,10 +886,10 @@ LF0CF:
 LF0D4:
     LD A,(DE)
     CP (HL)
-    JR NZ,F0DFH
+    JR NZ,LF0DF
     INC HL
     INC DE
-    DJNZ F0D4H
+    DJNZ LF0D4
     INC (IY+07H)
 
 LF0DF:
@@ -1097,12 +898,12 @@ LF0DF:
     LD DE,0030H
     ADD HL,DE
     BIT 0,H
-    JR Z,F0F6H
+    JR Z,LF0F6
     PUSH IX
     POP HL
     ADD HL,DE
     BIT 0,H
-    JR NZ,F0FBH
+    JR NZ,CARD_INIT_LOOP
     PUSH HL
     POP IX
     ADD HL,DE
@@ -1110,7 +911,7 @@ LF0DF:
 LF0F6:
     PUSH IX
     POP DE
-    JR F0CFH
+    JR LF0CF
 
 ; Page each non-serial card and call its mandatory initialization vector at card address 0C00BH.
 ; Non-serial initialization reads the card's little-endian target at C00BH after selecting its
@@ -1146,7 +947,7 @@ CARD_INIT_LOOP:
 
 ; Memory paging: U U U E page layout.
     OUT (02H),A
-    CALL FFE8H
+    CALL LFFE8
     LD IX,0040H
     LD B,04H
     IN A,(5AH)
@@ -1184,14 +985,14 @@ CARD_INIT_NEXT_CONNECTOR:
     OUT (03H),A
     LD A,(IX+00H)
     INC A
-    JR Z,F12DH
+    JR Z,LF12D
     LD A,C
     AND 03H
-    JR Z,F12DH
+    JR Z,LF12D
     LD HL,(C00BH)
     PUSH BC
     PUSH IX
-    CALL FFF9H
+    CALL LFFF9
     POP IX
     POP BC
     LD A,F0H
@@ -1207,9 +1008,9 @@ LF12D:
     LD A,C
     RRCA
     RRCA
-    DJNZ F10AH
-    LD HL,C2D3H
-    JP FFF0H
+    DJNZ CARD_INIT_NEXT_CONNECTOR
+    LD HL,C2D3H                           ; SYS ROM routine LC2D3, entered through the FFF0H gateway
+    JP EXT_GATEWAY
 
 ; Reset integrity check; decides between warm reset and cold reset.
 ; Compare U0 RAM function-call and interrupt templates against the reference bytes at FB2EH.
@@ -1243,19 +1044,19 @@ RESET_INTEGRITY_CHECK:
 ; Memory paging: U U V E page layout.
     OUT (02H),A
     LD DE,FB2EH
-    LD HL,0B23H
+    LD HL,RST30_BRIDGE
     LD BC,001EH
 
 LF14B:
     LD A,(DE)
     INC DE
     CPI
-    JR NZ,F15CH
-    JP PE,F14BH
-    LD A,(0B21H)
+    JR NZ,LF15C
+    JP PE,LF14B
+    LD A,(WARM_FLAG)
     OR A
     LD A,FFH
-    JR Z,F15DH
+    JR Z,LF15D
 
 ; A valid U0 copy permits WARM-FLAG=FF on the first reset; an already-set flag forces a cold reset
 ; on the next RESET press.
@@ -1264,7 +1065,7 @@ LF15C:
     XOR A
 
 LF15D:
-    LD (0B21H),A
+    LD (WARM_FLAG),A
     EX AF,AF'
     OUT (02H),A
     JP 023AH
@@ -1296,7 +1097,7 @@ EXPANSION_INPUT_DISPATCH:
     LD L,B
     LD H,00H
     ADD HL,DE
-    JR F171H
+    JR CARD_FUNCTION_CLASS_INDEX
 
 ; Expansion output dispatch.
 ; Card output dispatch obtains the connector from the kernel table's final assignment entry.
@@ -1353,18 +1154,18 @@ EXPANSION_OUTPUT_DISPATCH:
 ; -----------------------------------------------------------------------------
 CARD_FUNCTION_CLASS_INDEX:
     CP 04H
-    JR NC,F1D9H
+    JR NC,LF1D9
     EXX
     LD HL,0040H
     LD DE,0030H
     LD B,A
     RRCA
     RRCA
-    LD (0B11H),A
+    LD (PORT03_MIRROR),A
     OUT (03H),A
     LD A,B
     OR A
-    JR Z,F18BH
+    JR Z,LF18B
 
 ; Descriptor records are selected from 0040H with a 30H stride. The first byte is tested as
 ; FFH-unavailable before C00DH or C00EH is read.
@@ -1393,14 +1194,14 @@ CARD_FUNCTION_CLASS_INDEX:
 ; -----------------------------------------------------------------------------
 CARD_DESCRIPTOR_SELECT:
     ADD HL,DE
-    DJNZ F188H
+    DJNZ CARD_DESCRIPTOR_SELECT
 
 ; Select the card's page-3 memory and its U0 descriptor buffer at 0040H/0070H/00A0H/00D0H.
 
 LF18B:
     LD A,(HL)
     INC A
-    JR Z,F1D8H
+    JR Z,LF1D8
     LD C,(HL)
     INC HL
     LD DE,FB5DH
@@ -1434,11 +1235,11 @@ CARD_DESCRIPTOR_NAME_MATCH:
     LD A,(DE)
     INC DE
     CPI
-    JR NZ,F1A3H
-    JP PE,F194H
+    JR NZ,LF1A3
+    JP PE,CARD_DESCRIPTOR_NAME_MATCH
     EXX
-    LD HL,F291H
-    JR F1A7H
+    LD HL,SERIAL_JUMP_TABLE
+    JR CARD_FUNCTION_ROUTINE_LOOKUP
 
 LF1A3:
     EXX
@@ -1480,7 +1281,7 @@ CARD_FUNCTION_ROUTINE_LOOKUP:
     LD A,(HL)
     DEC A
     CP C
-    JR C,F1E0H
+    JR C,LF1E0
     INC HL
     EX DE,HL
     LD L,C
@@ -1491,13 +1292,13 @@ CARD_FUNCTION_ROUTINE_LOOKUP:
     INC HL
     LD D,(HL)
     EX DE,HL
-    LD A,(0B11H)
+    LD A,(PORT03_MIRROR)
     RLCA
     RLCA
     AND 03H
     LD IX,0048H
     LD DE,0030H
-    JR Z,F1CCH
+    JR Z,LF1CC
     LD B,A
 
 ; -----------------------------------------------------------------------------
@@ -1524,7 +1325,7 @@ CARD_FUNCTION_ROUTINE_LOOKUP:
 ; -----------------------------------------------------------------------------
 CARD_RESTORE_DESCRIPTOR_PAGE:
     ADD IX,DE
-    DJNZ F1C8H
+    DJNZ CARD_RESTORE_DESCRIPTOR_PAGE
 
 ; Restore the SYS mapping before returning from a card call.
 ; The return path restores the saved page and connector/unit context before the external status is
@@ -1534,7 +1335,7 @@ LF1CC:
     EX AF,AF'
     POP DE
     POP BC
-    CALL FFF9H
+    CALL LFFF9
 
 ; Error recovery repairs the affected input/output assignment from the default templates and
 ; returns through C40EH.
@@ -1551,33 +1352,35 @@ LF1CC:
 ; card.
 ; -----------------------------------------------------------------------------
 EXPANSION_ASSIGNMENT_RECOVERY:
-    LD HL,C3FCH
-    JP FFF0H
+    LD HL,C3FCH                           ; SYS ROM routine LC3FC, entered through the FFF0H gateway
+    JP EXT_GATEWAY
 
 LF1D8:
     EXX
 
 LF1D9:
-    LD A,(0B1CH)
+    LD A,(SERIAL_SLOT)
     LD (HL),A
     LD A,FEH
-    DB 11H                                                                          ; |.|
+    DB 11H                                ; = LD DE,FF3EH when run from here, hiding the entry below
 
 LF1E0:
     LD A,FFH
     POP DE
     POP BC
-    JR F1D2H
+    JR EXPANSION_ASSIGNMENT_RECOVERY
 
 ; Expansion-call error recovery; restores default device assignments.
+
+LF1E6:
     RLCA
-    LD HL,0B00H
-    LD DE,FB0EH
-    LD IX,0B07H
-    JR C,F1FDH
-    LD HL,0B08H
+    LD HL,IO_ASSIGN_IN
+    LD DE,U0_INIT_TEMPLATE
+    LD IX,IO_ASSIGN_IN+7
+    JR C,CARD_REPAIR_ASSIGNMENT
+    LD HL,IO_ASSIGN_OUT
     LD DE,FB16H
-    LD IX,0B0FH
+    LD IX,IO_ASSIGN_OUT+7
 
 ; Assignment recovery selects FB0EH for input or FB16H for output, copies the default class
 ; selector, and returns via C40EH/FFF0H.
@@ -1609,7 +1412,7 @@ CARD_REPAIR_ASSIGNMENT:
     RLCA
     AND 07H
     CP 07H
-    JR Z,F218H
+    JR Z,LF218
     LD C,A
     LD B,00H
     ADD HL,BC
@@ -1618,19 +1421,19 @@ CARD_REPAIR_ASSIGNMENT:
     EX DE,HL
     LD A,(HL)
     CP 06H
-    CALL Z,F21EH
+    CALL Z,LF21E
     RLCA
-    JR C,F218H
+    JR C,LF218
     LD A,(DE)
     LD (HL),A
 
 LF218:
-    LD HL,C40EH
-    JP FFF0H
+    LD HL,C40EH                           ; SYS ROM routine LC40E, entered through the FFF0H gateway
+    JP EXT_GATEWAY
 
 LF21E:
     EX AF,AF'
-    LD A,(0B1CH)
+    LD A,(SERIAL_SLOT)
     LD (IX+00H),A
     EX AF,AF'
     RET
@@ -1694,7 +1497,7 @@ EXPANSION_IRQ_DISPATCH:
 ; -----------------------------------------------------------------------------
 CARD_IRQ_SCAN_NEXT:
     RR C
-    JR C,F240H
+    JR C,CARD_IRQ_RESTORE_SELECTION
     PUSH BC
     LD A,04H
 
@@ -1708,7 +1511,7 @@ CARD_IRQ_SCAN_NEXT:
 ; Card interrupt handlers are entered through their mandatory vector at 0C00EH, then UUU-E mapping
 ; is restored.
     LD HL,(C00EH)
-    CALL FFF9H
+    CALL LFFF9
     LD A,F0H
     OUT (02H),A
     POP BC
@@ -1738,11 +1541,11 @@ CARD_IRQ_SCAN_NEXT:
 ;   Writes port 03 and crosses the EXTH/SYS gateway.
 ; -----------------------------------------------------------------------------
 CARD_IRQ_RESTORE_SELECTION:
-    DJNZ F229H
-    LD A,(0B11H)
+    DJNZ CARD_IRQ_SCAN_NEXT
+    LD A,(PORT03_MIRROR)
     OUT (03H),A
     POP HL
-    JP FFF0H
+    JP EXT_GATEWAY
 
 ; Bounded card block output: reject a source address crossing HI-MEM before invoking the character
 ; worker.
@@ -1792,7 +1595,7 @@ CARD_BLOCK_OUTPUT_BOUNDARY:
     PUSH HL
     PUSH DE
     EX DE,HL
-    LD HL,(0B19H)
+    LD HL,(HI_MEM)
     OR A
     SBC HL,DE
     LD A,FAH
@@ -1801,7 +1604,7 @@ CARD_BLOCK_OUTPUT_BOUNDARY:
     RET C
     LD C,(HL)
     EX DE,HL
-    CALL FFF9H
+    CALL LFFF9
     POP BC
     POP DE
     POP HL
@@ -1809,7 +1612,7 @@ CARD_BLOCK_OUTPUT_BOUNDARY:
     RET NZ
     CPI
     RET PO
-    JR F24CH
+    JR CARD_BLOCK_OUTPUT_BOUNDARY
 
 ; Bounded card block input: reject a destination crossing HI-MEM before receiving each byte.
 ; Card block input stores a received byte only after a zero status. A failed character call leaves
@@ -1853,14 +1656,14 @@ CARD_BLOCK_INPUT_BOUNDARY:
     PUSH BC
     PUSH HL
     PUSH DE
-    LD HL,(0B19H)
+    LD HL,(HI_MEM)
     OR A
     SBC HL,DE
     LD A,FAH
     POP DE
     POP HL
     RET C
-    CALL FFF9H
+    CALL LFFF9
     EX AF,AF'
     LD A,C
     POP BC
@@ -1876,7 +1679,7 @@ CARD_BLOCK_INPUT_BOUNDARY:
     CPI
     EX DE,HL
     RET PO
-    JR F26CH
+    JR EXPANSION_BLOCK_INPUT
 
 ; Serial-line routine jump table; first byte is the routine count, followed by routine addresses.
 ; Serial function table: reserved, SER-CHIN/OUT, SER-BKIN/OUT, SER-SET, and CLOSE-compatible NOP.
@@ -1894,7 +1697,7 @@ CARD_BLOCK_INPUT_BOUNDARY:
 ; implementation at F29CH and later.
 ; -----------------------------------------------------------------------------
 SERIAL_JUMP_TABLE:
-    DB 05H                                                                          ; |.|
+    DB 05H                                                                            ; |.|
 
 ; -----------------------------------------------------------------------------
 ; SERIAL COUNTED SERVICE ENTRIES
@@ -1912,7 +1715,7 @@ SERIAL_JUMP_TABLE:
 ;   Read by card/function dispatch; entries target EXTH serial routines.
 ; -----------------------------------------------------------------------------
 SERIAL_SERVICE_ENTRIES:
-    DB 05H, F3H, 39H, F3H, B7H, F3H, A4H, F2H, 57H, F3H                             ; |..9.....W.|
+    DB 05H, F3H, 39H, F3H, B7H, F3H, A4H, F2H, 57H, F3H                               ; |..9.....W.|
 
 ; SERIAL_INIT enters SER-SET with BAUD=04H (1200 bit/s) and FORMAT=EEH.
 
@@ -1936,9 +1739,9 @@ SERIAL_SERVICE_ENTRIES:
 ;   Updates BAUD, FORMAT, port-04/05/06 mirrors, and USART registers.
 ; -----------------------------------------------------------------------------
 SERIAL_INIT:
-    LD (0B69H),A
+    LD (BAUD),A
     LD A,EEH
-    LD (0B6AH),A
+    LD (SER_FORMAT),A
 
 ; Clear sound-volume bits while serial is active; the shared frequency divider becomes the USART
 ; clock source.
@@ -1968,13 +1771,13 @@ SERIAL_INIT:
 SER_SET:
     PUSH BC
     PUSH HL
-    LD A,(0B13H)
+    LD A,(PORT06_MIRROR)
     AND C3H
-    LD (0B13H),A
+    LD (PORT06_MIRROR),A
     OUT (06H),A
-    LD A,(0B69H)
+    LD A,(BAUD)
     CP 09H
-    JR C,F2B9H
+    JR C,SERIAL_DIVISOR_SELECT
     LD A,08H
 
 ; BAUD indexes the PITCH divisor table at F3C6H; unsupported values are clamped to the highest
@@ -2007,7 +1810,7 @@ SERIAL_DIVISOR_SELECT:
     LD L,A
     LD H,00H
     ADD HL,HL
-    LD DE,F3C6H
+    LD DE,SERIAL_DIVISOR_TABLE
     ADD HL,DE
     LD E,(HL)
     INC HL
@@ -2016,14 +1819,14 @@ SERIAL_DIVISOR_SELECT:
     AND 0FH
     OR 10H
     LD D,A
-    LD A,(0B12H)
+    LD A,(PORT05_MIRROR)
     AND C0H
     OR D
-    LD (0B12H),A
+    LD (PORT05_MIRROR),A
     OUT (05H),A
     LD A,E
     OUT (04H),A
-    LD A,(0B6AH)
+    LD A,(SER_FORMAT)
     AND B4H
     OR 4AH
     LD H,A
@@ -2059,7 +1862,7 @@ SERIAL_DIVISOR_SELECT:
 SERIAL_PROGRAM_ALL_USARTS:
     LD L,A
     AND E
-    JR NZ,F2F6H
+    JR NZ,LF2F6
     OUT (C),A
     OUT (C),A
     OUT (C),A
@@ -2073,9 +1876,9 @@ LF2F6:
     LD A,L
     RRCA
     RRCA
-    DJNZ F2E8H
+    DJNZ SERIAL_PROGRAM_ALL_USARTS
     XOR A
-    LD (0B71H),A
+    LD (SER_OK),A
     POP HL
     POP BC
     RET
@@ -2099,15 +1902,15 @@ LF2F6:
 ;   Carry=1 with H=character, C=USART command/status port, A=00; carry=0 on abort.
 ; -----------------------------------------------------------------------------
 SER_PREPARE_PORT:
-    CALL F331H
+    CALL SER_CHECK_STOP
     RET NZ
 
 LF30A:
-    LD A,(0B14H)
+    LD A,(SOUND_ACT)
     OR A
-    JR NZ,F306H
+    JR NZ,SER_PREPARE_PORT
     LD H,C
-    LD A,(0B11H)
+    LD A,(PORT03_MIRROR)
     RRCA
     RRCA
     AND 30H
@@ -2131,7 +1934,7 @@ LF30A:
 ; F5H instead of waiting forever.
 ; -----------------------------------------------------------------------------
 SER_WAIT_READY:
-    CALL F30AH
+    CALL LF30A
     RET NZ
 
 ; Transmit-ready requires status mask 81H. The loop calls the common STOP checker between polls,
@@ -2163,8 +1966,8 @@ SERIAL_TX_READY_LOOP:
     CP 81H
     CCF
     RET C
-    CALL F331H
-    JR Z,F323H
+    CALL SER_CHECK_STOP
+    JR Z,SERIAL_TX_READY_LOOP
     RET
 
 ; Common STOP check: A=00 when clear, F5H when CTRL+ESC has set STOP-FLAG.
@@ -2180,12 +1983,12 @@ SERIAL_TX_READY_LOOP:
 ; both character and block serial operations can terminate consistently.
 ; -----------------------------------------------------------------------------
 SER_CHECK_STOP:
-    LD A,(0B16H)
+    LD A,(STOP_FLAG)
     OR A
     RET Z
     LD A,F5H
     RET
-    JP M,F359H
+    JP M,SER_CHIN
 
 ; SER-CHOUT enables transmission, waits for ready, and writes the character to the selected USART
 ; data port.
@@ -2210,20 +2013,20 @@ SER_CHECK_STOP:
 ;   Writes USART command and data ports; may reconfigure serial timing.
 ; -----------------------------------------------------------------------------
 SER_CHOUT:
-    CALL F31FH
+    CALL SER_WAIT_READY
     RET NC
-    LD A,(0B71H)
+    LD A,(SER_OK)
     OR A
-    CALL NZ,F2A4H
+    CALL NZ,SER_SET
     LD A,05H
     OUT (C),A
 
 LF34B:
-    CALL F331H
+    CALL SER_CHECK_STOP
     RET NZ
     IN A,(C)
     RRCA
-    JR NC,F34BH
+    JR NC,LF34B
     DEC C
     OUT (C),H
     XOR A
@@ -2254,15 +2057,15 @@ LF34B:
 ;   May temporarily disable interrupts and writes USART reset/error-clear commands.
 ; -----------------------------------------------------------------------------
 SER_CHIN:
-    CALL F30AH
+    CALL LF30A
     RET NC
-    LD A,(0B71H)
+    LD A,(SER_OK)
     OR A
-    CALL NZ,F2A4H
+    CALL NZ,SER_SET
     IN A,(C)
     RRCA
     RRCA
-    JR NC,F370H
+    JR NC,SERIAL_RX_WAIT_KEYBOARD_ABORT
     DEC C
     IN A,(C)
     LD C,A
@@ -2296,7 +2099,7 @@ SER_CHIN:
 ; -----------------------------------------------------------------------------
 SERIAL_RX_WAIT_KEYBOARD_ABORT:
     DI
-    LD A,(0B11H)
+    LD A,(PORT03_MIRROR)
     AND F0H
     OR 07H
     OUT (03H),A
@@ -2306,8 +2109,8 @@ SERIAL_RX_WAIT_KEYBOARD_ABORT:
 LF37E:
     IN A,(58H)
     AND 18H
-    JR NZ,F38DH
-    LD HL,0B62H
+    JR NZ,SERIAL_RX_ERROR_MAP
+    LD HL,KB_OLD_PIC+7
     SET 3,(HL)
     LD A,F5H
     EI
@@ -2344,7 +2147,7 @@ SERIAL_RX_ERROR_MAP:
     IN A,(C)
     RRCA
     RRCA
-    JR NC,F37EH
+    JR NC,LF37E
     LD A,05H
     OUT (C),A
     IN A,(C)
@@ -2352,23 +2155,23 @@ SERIAL_RX_ERROR_MAP:
     IN H,(C)
     EI
     AND 38H
-    JR Z,F3B5H
+    JR Z,LF3B5
     LD B,A
     INC C
     LD A,11H
     OUT (C),A
     LD A,F4H
     BIT 3,B
-    JR NZ,F3B5H
+    JR NZ,LF3B5
     LD A,F2H
     BIT 4,B
-    JR NZ,F3B5H
+    JR NZ,LF3B5
     LD A,F3H
 
 LF3B5:
     LD C,H
     RET
-    JP M,F3C0H
+    JP M,SER_BKIN
 
 ; SER-BKOUT delegates to the shared HI-MEM-checked block output helper.
 
@@ -2389,8 +2192,8 @@ LF3B5:
 ;   A=00 or propagated error.
 ; -----------------------------------------------------------------------------
 SER_BKOUT:
-    LD HL,F33CH
-    JP F24BH
+    LD HL,SER_CHOUT
+    JP EXPANSION_BLOCK_OUTPUT
 
 ; SER-BKIN delegates to the shared HI-MEM-checked block input helper.
 
@@ -2410,8 +2213,8 @@ SER_BKOUT:
 ;   A=00 or propagated receive/memory/STOP error.
 ; -----------------------------------------------------------------------------
 SER_BKIN:
-    LD HL,F359H
-    JP F26CH
+    LD HL,SER_CHIN
+    JP EXPANSION_BLOCK_INPUT
 
 ; Serial-line baud-rate divisor table.
 ; BAUD/PITCH table: low/high divisor bytes for the supported serial rates.
@@ -2435,7 +2238,7 @@ SER_BKIN:
 ; -----------------------------------------------------------------------------
 SERIAL_DIVISOR_TABLE:
     DB 88H, 0CH, 75H, 0DH, BAH, 0EH, 5DH, 0FH, AFH, 0FH, D7H, 0FH, ECH, 0FH, F6H, 0FH ; |..u...].........|
-    DB FBH, 0FH                                                                     ; |..|
+    DB FBH, 0FH                                                                       ; |..|
 
 ; Cassette character direction dispatcher; actual buffered routines begin at F593H/F653H.
 ; SYS cassette calls arrive at EXTH direction stubs; the common F3F4H exit loads D4 return address
@@ -2452,8 +2255,8 @@ SERIAL_DIVISOR_TABLE:
 ; returns the result to the D4 forwarding stub.
 ; -----------------------------------------------------------------------------
 EXT_CAS_CHIN_OUT:
-    CALL F593H
-    JR F3F4H
+    CALL LF593
+    JR EXT_DEVICE_RETURN
 
 ; Cassette block direction dispatcher; actual block routines begin at F633H/F6ADH.
 
@@ -2467,15 +2270,23 @@ EXT_CAS_CHIN_OUT:
 ; common F3F4H return path.
 ; -----------------------------------------------------------------------------
 EXT_CAS_BKIN_OUT:
-    CALL F630H
-    JR F3F4H
-    CALL F3FAH
-    JR F3F4H
-    CALL F558H
-    JR F3F4H
-    CALL F605H
-    JR F3F4H
-    CALL F707H
+    CALL LF630
+    JR EXT_DEVICE_RETURN
+
+LF3E2:
+    CALL LF3FA
+    JR EXT_DEVICE_RETURN
+
+LF3E7:
+    CALL CAS_OUTPUT_PARTIAL_FLUSH
+    JR EXT_DEVICE_RETURN
+
+LF3EC:
+    CALL CAS_VERIFY_DATA
+    JR EXT_DEVICE_RETURN
+
+LF3F1:
+    CALL CAS_WORK_INIT
 
 ; Common cassette return: point HL at D4's D9E7H return stub and cross FFF0H.
 
@@ -2489,11 +2300,11 @@ EXT_CAS_BKIN_OUT:
 ; mapping before returning to SYS.
 ; -----------------------------------------------------------------------------
 EXT_DEVICE_RETURN:
-    LD HL,D9E7H
-    JP FFF0H
+    LD HL,D9E7H                           ; SYS ROM routine LD9E7, entered through the FFF0H gateway
+    JP EXT_GATEWAY
 
 LF3FA:
-    JP P,F4CFH
+    JP P,CAS_CREATE_WRITE
 
 ; CAS-OPEN searches normalized names in tape headers, displaying Searching/Found/Reading status.
 ; OPEN retries non-STOP physical read errors while searching. CTRL+ESC clears CRC/open state and
@@ -2521,18 +2332,18 @@ LF3FA:
 ;   Starts the selected cassette motor and fills 0BF3H-0D14H input state.
 ; -----------------------------------------------------------------------------
 CAS_OPEN_READ:
-    CALL F762H
+    CALL LF762
     LD A,EBH
     RET NZ
-    LD HL,0BF3H
+    LD HL,CAS_IN_STATE
     LD BC,0121H
-    CALL F54FH
-    LD HL,0BF4H
-    CALL F526H
-    CALL F73CH
+    CALL ZERO_MEMORY
+    LD HL,CAS_IN_NAME
+    CALL CAS_NORMALIZE_FILENAME
+    CALL LF73C
     LD HL,F74EH
-    CALL F730H
-    CALL F73CH
+    CALL CASSETTE_STATUS_STRINGS
+    CALL LF73C
 
 ; Initialize input-sector pointer, remaining byte count, file type, protection, and next-sector
 ; state.
@@ -2560,37 +2371,37 @@ CAS_OPEN_READ:
 ; -----------------------------------------------------------------------------
 CAS_OPEN_RETRY_STATE:
     LD A,FFH
-    LD (0D13H),A
-    LD HL,0C05H
-    LD (0D10H),HL
+    LD (CAS_IN_PHASE),A
+    LD HL,CAS_TAPE_NAME
+    LD (CAS_IN_DEST),HL
     LD HL,0100H
-    LD (0D09H),HL
+    LD (CAS_IN_REMAIN),HL
     XOR A
-    LD (0D0BH),A
-    LD (0D0CH),A
-    LD (0D0DH),A
-    CALL F77BH
-    JR C,F451H
-    LD A,(0D0BH)
+    LD (CAS_IN_ERROR),A
+    LD (CAS_IN_PROTECT),A
+    LD (CAS_IN_SECTOR),A
+    CALL CAS_READ_PHYSICAL_BLOCK
+    JR C,LF451
+    LD A,(CAS_IN_ERROR)
     CP F5H
-    JR NZ,F41EH
+    JR NZ,CAS_OPEN_RETRY_STATE
 
 LF445:
     LD HL,0000H
-    LD (0B6FH),HL
-    LD HL,0BF3H
+    LD (MUDDLE),HL
+    LD HL,CAS_IN_STATE
     LD (HL),00H
     RET
 
 LF451:
     LD HL,F758H
     EXX
-    LD HL,0C05H
+    LD HL,CAS_TAPE_NAME
     PUSH HL
-    LD DE,0BF4H
+    LD DE,CAS_IN_NAME
     LD A,(DE)
     OR A
-    JR Z,F46AH
+    JR Z,LF46A
     LD B,A
     INC B
 
@@ -2622,10 +2433,10 @@ LF451:
 CAS_OPEN_NAME_COMPARE:
     LD A,(DE)
     SUB (HL)
-    JR NZ,F46EH
+    JR NZ,LF46E
     INC DE
     INC HL
-    DJNZ F462H
+    DJNZ CAS_OPEN_NAME_COMPARE
 
 LF46A:
     LD HL,F744H
@@ -2634,27 +2445,27 @@ LF46A:
 LF46E:
     EXX
     EX AF,AF'
-    CALL F730H
+    CALL CASSETTE_STATUS_STRINGS
     POP HL
     PUSH HL
     LD A,(HL)
     OR A
-    CALL NZ,F730H
-    CALL F73CH
+    CALL NZ,CASSETTE_STATUS_STRINGS
+    CALL LF73C
     EX AF,AF'
     POP HL
-    JR NZ,F41EH
-    LD A,(0D14H)
+    JR NZ,CAS_OPEN_RETRY_STATE
+    LD A,(CAS_OUT_STATE)
     OR A
-    JR Z,F495H
-    LD HL,0D0CH
+    JR Z,CAS_OPEN_MATCH_FINALIZE
+    LD HL,CAS_IN_PROTECT
     LD A,(HL)
     OR A
-    JR Z,F495H
+    JR Z,CAS_OPEN_MATCH_FINALIZE
     XOR A
     LD (HL),A
     LD A,E6H
-    JP F445H
+    JP LF445
 
 ; A matched header copies its normalized name back to the caller's filename buffer and returns its
 ; address in DE.
@@ -2683,16 +2494,16 @@ LF46E:
 ;   Writes 0BF3H, 0B6BH, 0D05H-0D13H and filename buffers.
 ; -----------------------------------------------------------------------------
 CAS_OPEN_MATCH_FINALIZE:
-    LD A,(0BF3H)
+    LD A,(CAS_IN_STATE)
     SUB 11H
-    LD (0B6BH),A
+    LD (CAS_BUFFER),A
     LD A,00H
-    LD (0D13H),A
-    LD HL,0C05H
-    LD DE,0BF4H
+    LD (CAS_IN_PHASE),A
+    LD HL,CAS_TAPE_NAME
+    LD DE,CAS_IN_NAME
     LD A,(HL)
     CP 11H
-    JR C,F4AFH
+    JR C,LF4AF
     LD A,10H
 
 LF4AF:
@@ -2700,18 +2511,18 @@ LF4AF:
     LD C,A
     LD B,00H
     LDIR
-    LD HL,0C05H
+    LD HL,CAS_TAPE_NAME
     LD E,(HL)
     INC E
     LD D,00H
     ADD HL,DE
-    LD (0D07H),HL
-    LD HL,(0D05H)
+    LD (CAS_IN_PTR),HL
+    LD HL,(CAS_IN_COUNT)
     XOR A
     SBC HL,DE
-    LD (0D05H),HL
-    LD DE,0BF4H
-    JP F5B5H
+    LD (CAS_IN_COUNT),HL
+    LD DE,CAS_IN_NAME
+    JP LF5B5
 
 ; CAS-CRTE rejects an existing file, clears output state, and prepares the first 0D26H buffer.
 ; CRTE rejects an existing open file and records buffered type as 01H or unbuffered type as 11H in
@@ -2738,22 +2549,22 @@ LF4AF:
 ;   Starts output-file state and reserves the 0D26H cassette buffer.
 ; -----------------------------------------------------------------------------
 CAS_CREATE_WRITE:
-    CALL F76BH
+    CALL LF76B
     LD A,EBH
     RET NZ
-    LD A,(0D0CH)
+    LD A,(CAS_IN_PROTECT)
     OR A
     LD A,E6H
     RET NZ
-    LD HL,0D14H
+    LD HL,CAS_OUT_STATE
     LD BC,0120H
-    CALL F54FH
-    LD HL,0D15H
-    CALL F526H
-    LD A,(0B6BH)
+    CALL ZERO_MEMORY
+    LD HL,CAS_OUT_NAME
+    CALL CAS_NORMALIZE_FILENAME
+    LD A,(CAS_BUFFER)
     OR A
     LD A,01H
-    JR NZ,F4F5H
+    JR NZ,CAS_CREATE_WRITE_STATE
     LD A,11H
 
 ; -----------------------------------------------------------------------------
@@ -2778,24 +2589,24 @@ CAS_CREATE_WRITE:
 ;   Writes 0D14H-0E32H and initializes the output buffer.
 ; -----------------------------------------------------------------------------
 CAS_CREATE_WRITE_STATE:
-    LD (0D14H),A
-    LD (0E2FH),A
-    LD HL,0B6DH
+    LD (CAS_OUT_STATE),A
+    LD (CAS_OUT_TYPE),A
+    LD HL,PROTECT
     LD A,(HL)
     LD (HL),00H
-    LD (0E30H),A
+    LD (CAS_OUT_PROTECT),A
     LD A,FFH
-    LD (0E32H),A
-    LD HL,0D15H
-    LD DE,0D26H
-    LD (0E2CH),DE
+    LD (CAS_OUT_PHASE),A
+    LD HL,CAS_OUT_NAME
+    LD DE,CAS_OUT_BUFFER
+    LD (CAS_OUT_SOURCE),DE
     LD C,(HL)
     INC C
     LD B,00H
-    LD (0E26H),BC
+    LD (CAS_OUT_COUNT),BC
     LDIR
-    LD (0E28H),DE
-    LD DE,0D15H
+    LD (CAS_OUT_PTR),DE
+    LD DE,CAS_OUT_NAME
     XOR A
     RET
 
@@ -2823,7 +2634,7 @@ CAS_NORMALIZE_FILENAME:
     EX DE,HL
     LD A,(HL)
     CP 11H
-    JR C,F52EH
+    JR C,LF52E
     LD A,10H
 
 LF52E:
@@ -2837,22 +2648,22 @@ LF532:
     INC DE
     LD A,(HL)
     CP 61H
-    JR C,F54BH
+    JR C,LF54B
     CP 7BH
-    JR NC,F541H
+    JR NC,LF541
     AND DFH
-    JR F54BH
+    JR LF54B
 
 LF541:
     CP 90H
-    JR C,F54BH
+    JR C,LF54B
     CP 99H
-    JR NC,F54BH
+    JR NC,LF54B
     SUB 10H
 
 LF54B:
     LD (DE),A
-    DJNZ F532H
+    DJNZ LF532
     RET
 
 ; Zero-memory helper used for cassette work areas; DE is intentionally preserved.
@@ -2881,7 +2692,7 @@ ZERO_MEMORY:
     DEC BC
     LD A,B
     OR C
-    JR NZ,F54FH
+    JR NZ,ZERO_MEMORY
     RET
 
 ; Partial buffered output is flushed by CLOSE or the next block operation; failure preserves the
@@ -2910,43 +2721,43 @@ ZERO_MEMORY:
 ;   Calls physical tape writer and updates output counters.
 ; -----------------------------------------------------------------------------
 CAS_OUTPUT_PARTIAL_FLUSH:
-    JP M,F585H
-    CALL F76BH
-    JR Z,F57CH
-    LD HL,0D26H
-    LD (0E2CH),HL
+    JP M,LF585
+    CALL LF76B
+    JR Z,LF57C
+    LD HL,CAS_OUT_BUFFER
+    LD (CAS_OUT_SOURCE),HL
 
 LF566:
     LD A,FFH
     LD (0E2BH),A
-    LD A,(0E2AH)
+    LD A,(CAS_OUT_ERROR)
     OR A
-    JR NZ,F57CH
-    CALL F972H
-    JR C,F57CH
+    JR NZ,LF57C
+    CALL CAS_WRITE_PHYSICAL_BLOCK
+    JR C,LF57C
     EX AF,AF'
-    CALL F57CH
+    CALL LF57C
     EX AF,AF'
     RET
 
 LF57C:
     XOR A
-    LD (0D14H),A
-    LD (0E2AH),A
-    JR F58CH
+    LD (CAS_OUT_STATE),A
+    LD (CAS_OUT_ERROR),A
+    JR LF58C
 
 LF585:
     XOR A
-    LD (0BF3H),A
-    LD (0D0CH),A
+    LD (CAS_IN_STATE),A
+    LD (CAS_IN_PROTECT),A
 
 LF58C:
     LD HL,0000H
-    LD (0B6FH),HL
+    LD (MUDDLE),HL
     RET
 
 LF593:
-    JP P,F653H
+    JP P,CAS_CHOUT
 
 ; CAS-CHIN consumes buffered bytes and turns only the final FFH sector marker into EOF.
 
@@ -2971,9 +2782,9 @@ LF593:
 ;   Advances 0D07H/0D05H and may invoke CAS_READ_PHYSICAL_BLOCK.
 ; -----------------------------------------------------------------------------
 CAS_CHIN:
-    CALL F762H
+    CALL LF762
     RET Z
-    CALL F772H
+    CALL LF772
     RET NZ
 
 ; CAS_CHIN decrements 0D05H after fetching a byte and copies 0D0EH to EOF only when the count
@@ -3003,41 +2814,41 @@ CAS_CHIN:
 ;   Updates input pointer/count and may call the physical reader.
 ; -----------------------------------------------------------------------------
 CAS_BUFFERED_INPUT_NEXT:
-    LD BC,(0D05H)
+    LD BC,(CAS_IN_COUNT)
     LD A,B
     OR C
-    JR Z,F5C1H
+    JR Z,LF5C1
 
 LF5A6:
-    LD HL,(0D07H)
+    LD HL,(CAS_IN_PTR)
     LD C,(HL)
     INC HL
-    LD (0D07H),HL
-    LD HL,(0D05H)
+    LD (CAS_IN_PTR),HL
+    LD HL,(CAS_IN_COUNT)
     DEC HL
-    LD (0D05H),HL
+    LD (CAS_IN_COUNT),HL
 
 LF5B5:
     LD A,H
     OR L
-    JR NZ,F5BFH
-    LD A,(0D0EH)
-    LD (0B6EH),A
+    JR NZ,LF5BF
+    LD A,(CAS_IN_LAST)
+    LD (CAS_EOF),A
 
 LF5BF:
     XOR A
     RET
 
 LF5C1:
-    LD A,(0BF3H)
+    LD A,(CAS_IN_STATE)
     DEC A
     LD A,E7H
     RET NZ
     LD HL,0100H
-    LD (0D09H),HL
-    LD HL,0C05H
-    LD (0D10H),HL
-    LD (0D07H),HL
+    LD (CAS_IN_REMAIN),HL
+    LD HL,CAS_TAPE_NAME
+    LD (CAS_IN_DEST),HL
+    LD (CAS_IN_PTR),HL
 
 ; When a buffered sector is exhausted, reset its pointer/count and read the next physical sector.
 ; A buffered sector rollover resets 0D07H and 0D10H to the input buffer start before reading the
@@ -3065,32 +2876,32 @@ LF5C1:
 ;   Updates sector number, buffer pointers, EOF, and cassette error.
 ; -----------------------------------------------------------------------------
 CAS_INPUT_LOAD_NEXT_SECTOR:
-    LD A,(0D0EH)
+    LD A,(CAS_IN_LAST)
     OR A
     LD A,ECH
-    CALL Z,F77BH
-    JR NC,F5EEH
-    LD A,(0BF3H)
+    CALL Z,CAS_READ_PHYSICAL_BLOCK
+    JR NC,LF5EE
+    LD A,(CAS_IN_STATE)
     DEC A
-    JR Z,F5A6H
+    JR Z,LF5A6
     XOR A
     SCF
     RET
 
 LF5EB:
-    LD (0D0BH),A
+    LD (CAS_IN_ERROR),A
 
 LF5EE:
-    LD HL,0D0BH
+    LD HL,CAS_IN_ERROR
     LD A,(HL)
     LD (HL),ECH
 
 LF5F4:
-    LD HL,0D0EH
+    LD HL,CAS_IN_LAST
     LD (HL),FFH
     LD HL,0000H
-    LD (0D05H),HL
-    LD HL,0B6EH
+    LD (CAS_IN_COUNT),HL
+    LD HL,CAS_EOF
     LD (HL),FFH
     RET
 
@@ -3116,15 +2927,15 @@ LF5F4:
 ;   Consumes input and uses the cassette sector machinery.
 ; -----------------------------------------------------------------------------
 CAS_VERIFY_DATA:
-    CALL F762H
+    CALL LF762
     RET Z
-    CALL F772H
+    CALL LF772
     RET NZ
     LD A,FFH
-    LD (0BF1H),A
-    LD A,(0BF3H)
+    LD (VERIFY),A
+    LD A,(CAS_IN_STATE)
     DEC A
-    JR NZ,F63FH
+    JR NZ,CAS_BLOCK_INPUT_MODE
 
 ; VERIFY advances DE and BC only on equal bytes. E8H returns at the mismatch with the failing
 ; address and remaining count intact.
@@ -3154,7 +2965,7 @@ CAS_VERIFY_DATA:
 CAS_VERIFY_COMPARE_LOOP:
     PUSH BC
     PUSH DE
-    CALL F59EH
+    CALL CAS_BUFFERED_INPUT_NEXT
     LD L,C
     POP DE
     POP BC
@@ -3163,16 +2974,16 @@ CAS_VERIFY_COMPARE_LOOP:
     LD A,(DE)
     CP L
     LD A,E8H
-    JP NZ,F5EBH
+    JP NZ,LF5EB
     INC DE
     DEC BC
     LD A,B
     OR C
-    JR NZ,F618H
+    JR NZ,CAS_VERIFY_COMPARE_LOOP
     RET
 
 LF630:
-    JP P,F6ADH
+    JP P,CAS_BKOUT
 
 ; CAS-BKIN uses character input for buffered files and physical sector input for unbuffered files.
 
@@ -3194,11 +3005,11 @@ LF630:
 ;   A=00 on success or cassette/memory/STOP error.
 ; -----------------------------------------------------------------------------
 CAS_BKIN:
-    CALL F762H
+    CALL LF762
     RET Z
-    CALL F772H
+    CALL LF772
     RET NZ
-    LD A,(0BF3H)
+    LD A,(CAS_IN_STATE)
     DEC A
 
 ; Buffered BKIN loops through CAS_CHIN; unbuffered BKIN passes DE/BC to the physical reader, where
@@ -3226,12 +3037,12 @@ CAS_BKIN:
 ;   Updates 0D09H-0D10H and may write the destination range.
 ; -----------------------------------------------------------------------------
 CAS_BLOCK_INPUT_MODE:
-    LD HL,F59EH
-    JP Z,F26CH
-    LD (0D10H),DE
-    LD (0D09H),BC
-    CALL F5D7H
-    JP F5F4H
+    LD HL,CAS_BUFFERED_INPUT_NEXT
+    JP Z,EXPANSION_BLOCK_INPUT
+    LD (CAS_IN_DEST),DE
+    LD (CAS_IN_REMAIN),BC
+    CALL CAS_INPUT_LOAD_NEXT_SECTOR
+    JP LF5F4
 
 ; CAS-CHOUT appends one character to the output buffer and flushes a full 256-byte sector.
 
@@ -3257,20 +3068,22 @@ CAS_BLOCK_INPUT_MODE:
 ;   Updates 0E26H/0E28H/0E2AH-0E32H output state.
 ; -----------------------------------------------------------------------------
 CAS_CHOUT:
-    CALL F76BH
+    CALL LF76B
     RET Z
-    LD A,(0E2AH)
+
+LF657:
+    LD A,(CAS_OUT_ERROR)
     OR A
     LD A,ECH
     RET NZ
     LD A,C
-    LD (0E2EH),A
-    LD HL,0E2FH
+    LD (CAS_OUT_CHAR),A
+    LD HL,CAS_OUT_TYPE
     LD A,(HL)
     OR A
-    JR Z,F66DH
+    JR Z,CAS_BUFFERED_OUTPUT_APPEND
     DEC (HL)
-    JP Z,F689H
+    JP Z,CAS_OUTPUT_FULL_SECTOR
 
 ; A full buffered output sector contains exactly 256 bytes. At the boundary the physical writer is
 ; called, then the pending next byte becomes the first byte of a new sector.
@@ -3297,17 +3110,17 @@ CAS_CHOUT:
 ;   Writes 0D26H-0E25H and updates 0E26H-0E32H.
 ; -----------------------------------------------------------------------------
 CAS_BUFFERED_OUTPUT_APPEND:
-    LD DE,(0E26H)
+    LD DE,(CAS_OUT_COUNT)
     LD HL,0100H
     OR A
     SBC HL,DE
-    JP Z,F689H
+    JP Z,CAS_OUTPUT_FULL_SECTOR
     INC DE
-    LD (0E26H),DE
-    LD HL,(0E28H)
+    LD (CAS_OUT_COUNT),DE
+    LD HL,(CAS_OUT_PTR)
     LD (HL),C
     INC HL
-    LD (0E28H),HL
+    LD (CAS_OUT_PTR),HL
     XOR A
     RET
 
@@ -3336,24 +3149,24 @@ CAS_BUFFERED_OUTPUT_APPEND:
 ;   Writes tape and updates sector/source counters.
 ; -----------------------------------------------------------------------------
 CAS_OUTPUT_FULL_SECTOR:
-    LD HL,0D26H
-    LD (0E2CH),HL
-    CALL F972H
-    JR C,F699H
+    LD HL,CAS_OUT_BUFFER
+    LD (CAS_OUT_SOURCE),HL
+    CALL CAS_WRITE_PHYSICAL_BLOCK
+    JR C,LF699
 
 LF694:
-    LD HL,0E2AH
+    LD HL,CAS_OUT_ERROR
     DEC (HL)
     RET
 
 LF699:
     LD HL,0001H
-    LD (0E26H),HL
-    LD A,(0E2EH)
-    LD HL,0D26H
+    LD (CAS_OUT_COUNT),HL
+    LD A,(CAS_OUT_CHAR)
+    LD HL,CAS_OUT_BUFFER
     LD (HL),A
     INC HL
-    LD (0E28H),HL
+    LD (CAS_OUT_PTR),HL
     XOR A
     SCF
     RET
@@ -3380,30 +3193,30 @@ LF699:
 ;   Writes headers/data/CRC through CAS_WRITE_PHYSICAL_BLOCK and updates output state.
 ; -----------------------------------------------------------------------------
 CAS_BKOUT:
-    CALL F76BH
+    CALL LF76B
     RET Z
-    LD A,(0D14H)
+    LD A,(CAS_OUT_STATE)
     DEC A
-    LD HL,F657H
-    JP Z,F24BH
-    LD A,(0E2AH)
+    LD HL,LF657
+    JP Z,EXPANSION_BLOCK_OUTPUT
+    LD A,(CAS_OUT_ERROR)
     OR A
     LD A,ECH
     RET NZ
     PUSH BC
     PUSH DE
-    LD HL,0E2FH
+    LD HL,CAS_OUT_TYPE
     LD A,(HL)
     LD (HL),00H
     OR A
     SCF
-    CALL NZ,F689H
+    CALL NZ,CAS_OUTPUT_FULL_SECTOR
     POP DE
     POP BC
-    JR NC,F694H
-    LD (0E26H),BC
-    LD (0E2CH),DE
-    JP F566H
+    JR NC,LF694
+    LD (CAS_OUT_COUNT),BC
+    LD (CAS_OUT_SOURCE),DE
+    JP LF566
 
 ; Motor control selects b6/b7 of PORT05 for the left/right cassette connector and preserves other
 ; bits.
@@ -3430,7 +3243,7 @@ CAS_BKOUT:
 CAS_MOTOR_CONTROL:
     LD L,40H
     OR A
-    JR Z,F6E4H
+    JR Z,CAS_MOTOR_SELECT_BITS
     ADD HL,HL
 
 ; REMRED can swap the physical read/write side. CAS_MOTOR_CONTROL masks interrupts while
@@ -3459,25 +3272,25 @@ CAS_MOTOR_CONTROL:
 ;   Writes port 05H and 0B12H; briefly masks interrupts.
 ; -----------------------------------------------------------------------------
 CAS_MOTOR_SELECT_BITS:
-    LD A,(0B6CH)
+    LD A,(REMRED)
     AND L
-    JR Z,F6EEH
+    JR Z,LF6EE
     LD A,C0H
     XOR L
     LD L,A
 
 LF6EE:
     DI
-    LD A,(0B12H)
+    LD A,(PORT05_MIRROR)
     OR L
     INC D
     DEC D
-    JR Z,F6F8H
+    JR Z,LF6F8
     XOR L
 
 LF6F8:
     OUT (05H),A
-    LD (0B12H),A
+    LD (PORT05_MIRROR),A
     EI
     RET
 
@@ -3500,9 +3313,9 @@ LF6F8:
 ; -----------------------------------------------------------------------------
 CAS_STOP_MOTORS:
     DI
-    LD A,(0B12H)
+    LD A,(PORT05_MIRROR)
     AND 3FH
-    JR F6F8H
+    JR LF6F8
 
 ; Clear cassette workspace 0BF0H-0E33H, reset CRC/MUDDLE, EOF/protection, and cassette sound
 ; state.
@@ -3525,20 +3338,20 @@ CAS_STOP_MOTORS:
 ; -----------------------------------------------------------------------------
 CAS_WORK_INIT:
     XOR A
-    LD HL,0BF0H
-    LD DE,0BF1H
+    LD HL,CAS_BORDER_SAVE
+    LD DE,VERIFY
     LD BC,0244H
     LD (HL),A
     LDIR
-    LD (0B6DH),A
-    LD (0B6EH),A
+    LD (PROTECT),A
+    LD (CAS_EOF),A
     LD HL,0000H
-    LD (0B6FH),HL
+    LD (MUDDLE),HL
     LD A,80H
-    LD (0B6CH),A
-    LD A,(0B12H)
+    LD (REMRED),A
+    LD A,(PORT05_MIRROR)
     AND 3FH
-    LD (0B12H),A
+    LD (PORT05_MIRROR),A
     OUT (05H),A
     RET
 
@@ -3570,25 +3383,47 @@ LF731:
     PUSH HL
     LD C,(HL)
     RST 30H
-    LD HL,C1E1H
-    DJNZ F731H
+    DB 21H                                ; RST 30H fn 21H: editor 1 -> ED_CHIN_OUT
+    POP HL
+    POP BC
+    DJNZ LF731
     RET
 
 LF73C:
     LD HL,F741H
-    JR F730H
+    JR CASSETTE_STATUS_STRINGS
 
 ; "Reading:" cassette status text.
 ; Embedded status text: Reading:, Searching, and Found:.
-    DB 02H, 0DH, 0AH, 09H, 52H, 65H, 61H, 64H, 69H, 6EH, 67H, 3AH, 20H              ; |....Reading: |
 
 ; "Searching" cassette status text.
-    DB 09H, 53H, 65H, 61H, 72H, 63H, 68H, 69H, 6EH, 67H                             ; |.Searching|
 
 ; "Found:" cassette status text.
-    DB 09H, 46H, 6FH, 75H, 6EH, 64H, 3AH, 20H, 20H, 20H, AFH, 32H, F1H, 0BH, 3AH, F3H ; |.Found:   .2..:.|
-    DB 0BH, 18H, 03H, 3AH, 14H, 0DH, B7H, 3EH, E9H, C9H, 21H, 0BH, 0DH, 7EH, B7H, C8H ; |...:...>..!..~..|
-    DB 36H, ECH, C9H                                                                ; |6..|
+    DB 02H, 0DH, 0AH, 09H, 52H, 65H, 61H, 64H, 69H, 6EH, 67H, 3AH, 20H, 09H, 53H, 65H ; |....Reading: .Se|
+    DB 61H, 72H, 63H, 68H, 69H, 6EH, 67H, 09H, 46H, 6FH, 75H, 6EH, 64H, 3AH, 20H, 20H ; |arching.Found:  |
+    DB 20H                                                                            ; | |
+
+LF762:
+    XOR A
+    LD (VERIFY),A
+    LD A,(CAS_IN_STATE)
+    JR LF76E
+
+LF76B:
+    LD A,(CAS_OUT_STATE)
+
+LF76E:
+    OR A
+    LD A,E9H
+    RET
+
+LF772:
+    LD HL,CAS_IN_ERROR
+    LD A,(HL)
+    OR A
+    RET Z
+    LD (HL),ECH
+    RET
 
 ; Physical reader measures pilot/sync timing, validates the 6AH marker and sector metadata, then
 ; decodes bytes and CRC.
@@ -3620,8 +3455,8 @@ CAS_READ_PHYSICAL_BLOCK:
     LD (0E33H),SP
     XOR A
     LD D,A
-    CALL F6DEH
-    CALL FA7CH
+    CALL CAS_MOTOR_CONTROL
+    CALL CAS_ENABLE_TAPE_INTERRUPT
 
 ; Pilot periods are averaged/scaled into D. Unstable measurements restart calibration instead of
 ; allowing the header parser to drift.
@@ -3650,7 +3485,7 @@ CAS_READ_PHYSICAL_BLOCK:
 ; -----------------------------------------------------------------------------
 CAS_READ_PILOT_CALIBRATION:
     XOR A
-    LD (0BF0H),A
+    LD (CAS_BORDER_SAVE),A
     EXX
     LD HL,0000H
     LD B,00H
@@ -3658,15 +3493,15 @@ CAS_READ_PILOT_CALIBRATION:
     LD A,DCH
     OUT (04H),A
     LD C,00H
-    CALL F93CH
+    CALL CAS_READ_BIT_TRANSITIONS
     LD HL,0000H
     LD B,20H
     LD D,H
 
 LF7A1:
-    CALL F938H
+    CALL CAS_READ_BIT
     ADD HL,DE
-    DJNZ F7A1H
+    DJNZ LF7A1
     ADD HL,HL
     ADD HL,HL
     ADD HL,HL
@@ -3677,30 +3512,32 @@ LF7A1:
     LD HL,0400H
 
 LF7B2:
-    CALL F938H
+    CALL CAS_READ_BIT
     EXX
     ADD A,B
     LD B,A
-    JR NC,F7BBH
+    JR NC,LF7BB
     INC HL
 
 LF7BB:
     EXX
     LD A,E
     SUB D
-    JR NC,F7C2H
+    JR NC,LF7C2
     NEG
 
 LF7C2:
     CP 03H
-    JR NC,F787H
+    JR NC,CAS_READ_PILOT_CALIBRATION
     DEC HL
     LD A,H
     OR L
-    JR NZ,F7B2H
+    JR NZ,LF7B2
     EXX
     ADD HL,HL
     ADD HL,HL
+
+LF7CE:
     ADD HL,HL
     ADD HL,HL
     ADD HL,HL
@@ -3711,10 +3548,10 @@ LF7C2:
     EXX
     PUSH AF
     LD A,88H
-    LD (0BF0H),A
+    LD (CAS_BORDER_SAVE),A
     LD A,E8H
     OUT (04H),A
-    CALL F93CH
+    CALL CAS_READ_BIT_TRANSITIONS
     LD HL,0000H
     PUSH HL
     LD B,H
@@ -3724,10 +3561,10 @@ LF7C2:
 
 LF7EB:
     EX (SP),HL
-    CALL F92BH
+    CALL CAS_READ_HALF_BIT
     ADD HL,DE
     ADD HL,DE
-    DJNZ F7EBH
+    DJNZ LF7EB
     LD A,H
     RL L
     ADC A,B
@@ -3739,18 +3576,18 @@ LF7EB:
     LD H,A
     LD L,D
     POP DE
-    CALL F92BH
+    CALL CAS_READ_HALF_BIT
 
 LF803:
     LD A,L
     LD L,H
     LD H,A
-    CALL F92BH
+    CALL CAS_READ_HALF_BIT
     SUB H
-    JR NC,F813H
+    JR NC,CAS_READ_SYNC_MARKER
     ADD A,02H
-    JR C,F803H
-    JP F787H
+    JR C,LF803
+    JP CAS_READ_PILOT_CALIBRATION
 
 ; Decode marker 6AH, block type, file type, protection, sector number, and sector byte count.
 ; The physical stream is accepted only after CAS_READ_BYTE returns marker 6AH. The next bytes
@@ -3780,52 +3617,52 @@ LF803:
 ; -----------------------------------------------------------------------------
 CAS_READ_SYNC_MARKER:
     CP 04H
-    JR C,F803H
+    JR C,LF803
     LD A,DCH
     OUT (04H),A
-    CALL F92BH
+    CALL CAS_READ_HALF_BIT
     LD IY,0000H
-    LD IX,(0D10H)
-    CALL F919H
+    LD IX,(CAS_IN_DEST)
+    CALL CAS_READ_BYTE
     EXX
-    LD HL,(0B6FH)
-    LD DE,(0D09H)
+    LD HL,(MUDDLE)
+    LD DE,(CAS_IN_REMAIN)
     EXX
-    CALL F919H
+    CALL CAS_READ_BYTE
     CP 6AH
-    JP NZ,F787H
-    CALL F919H
-    LD HL,0D13H
+    JP NZ,CAS_READ_PILOT_CALIBRATION
+    CALL CAS_READ_BYTE
+    LD HL,CAS_IN_PHASE
     CP (HL)
-    JR Z,F84CH
+    JR Z,LF84C
     LD A,(HL)
     CP FFH
-    JP Z,F787H
-    JP F8FDH
+    JP Z,CAS_READ_PILOT_CALIBRATION
+    JP CAS_READ_FAILURE_MAP
 
 LF84C:
-    LD (0D0FH),A
-    CALL F919H
-    LD (0BF3H),A
-    CALL F919H
-    LD (0D0CH),A
-    CALL F919H
+    LD (CAS_IN_HEADER),A
+    CALL CAS_READ_BYTE
+    LD (CAS_IN_STATE),A
+    CALL CAS_READ_BYTE
+    LD (CAS_IN_PROTECT),A
+    CALL CAS_READ_BYTE
     LD B,A
     PUSH BC
-    JR F868H
+    JR LF868
 
 LF862:
     PUSH BC
     EXX
-    LD HL,(0B6FH)
+    LD HL,(MUDDLE)
     EXX
 
 LF868:
-    CALL F919H
-    LD HL,0D0DH
+    CALL CAS_READ_BYTE
+    LD HL,CAS_IN_SECTOR
     CP (HL)
-    JP NZ,F8FDH
-    CALL F919H
+    JP NZ,CAS_READ_FAILURE_MAP
+    CALL CAS_READ_BYTE
     LD B,A
 
 ; For each sector, update CRC while storing or comparing bytes; reject wrong length, sequence, or
@@ -3856,24 +3693,24 @@ LF868:
 ;   Writes input buffers or compares memory; updates 0D05H-0D10H and CRC.
 ; -----------------------------------------------------------------------------
 CAS_READ_SECTOR_LOOP:
-    CALL F919H
+    CALL CAS_READ_BYTE
     EX AF,AF'
     EXX
     LD A,D
     OR E
     DEC DE
     EXX
-    JP Z,F901H
-    LD A,(0BF3H)
+    JP Z,LF901
+    LD A,(CAS_IN_STATE)
     DEC A
-    JR Z,F897H
-    LD A,(0BF1H)
+    JR Z,LF897
+    LD A,(VERIFY)
     OR A
-    JR Z,F897H
+    JR Z,LF897
     EX AF,AF'
     CP (IX+00H)
-    JR Z,F89BH
-    JP F909H
+    JR Z,LF89B
+    JP LF909
 
 LF897:
     EX AF,AF'
@@ -3882,64 +3719,64 @@ LF897:
 LF89B:
     INC IX
     INC IY
-    DJNZ F876H
-    CALL F919H
-    LD (0D0EH),A
+    DJNZ CAS_READ_SECTOR_LOOP
+    CALL CAS_READ_BYTE
+    LD (CAS_IN_LAST),A
     EXX
     PUSH HL
     EXX
-    CALL F919H
+    CALL CAS_READ_BYTE
     CP A
     EX AF,AF'
     POP HL
     LD B,H
-    CALL F919H
+    CALL CAS_READ_BYTE
     LD C,L
     LD H,A
     EX AF,AF'
     LD L,A
     SBC HL,BC
     POP BC
-    JR NZ,F8FDH
-    LD (0D05H),IY
-    LD (0D10H),IX
-    LD HL,0D0DH
+    JR NZ,CAS_READ_FAILURE_MAP
+    LD (CAS_IN_COUNT),IY
+    LD (CAS_IN_DEST),IX
+    LD HL,CAS_IN_SECTOR
     INC (HL)
     EXX
-    LD (0D09H),DE
+    LD (CAS_IN_REMAIN),DE
     EXX
-    DJNZ F862H
-    LD A,(0BF3H)
+    DJNZ LF862
+    LD A,(CAS_IN_STATE)
     DEC A
-    JR Z,F8E3H
-    LD A,(0D13H)
+    JR Z,LF8E3
+    LD A,(CAS_IN_PHASE)
     CP FFH
-    JR Z,F8E3H
+    JR Z,LF8E3
     EXX
     LD A,D
     OR E
-    JR NZ,F901H
+    JR NZ,LF901
 
 LF8E3:
-    JP FABDH
+    JP CAS_RESTORE_INTERRUPTS
 
 LF8E6:
     LD A,F5H
-    LD (0E2AH),A
-    JR F8F2H
+    LD (CAS_OUT_ERROR),A
+    JR LF8F2
 
 LF8ED:
     LD A,F5H
-    LD (0D0BH),A
+    LD (CAS_IN_ERROR),A
 
 LF8F2:
-    LD HL,0B62H
+    LD HL,KB_OLD_PIC+7
     SET 3,(HL)
     LD B,00H
 
 LF8F9:
-    DJNZ F8F9H
-    JR F90EH
+    DJNZ LF8F9
+    JR LF90E
 
 ; Map physical-reader failure to EA/EB/E7/E8/E9-style cassette status and restore interrupt state.
 ; Physical reader errors are normalized before CAS_RESTORE_INTERRUPTS: EAH for structural/length
@@ -3968,23 +3805,23 @@ LF8F9:
 ; -----------------------------------------------------------------------------
 CAS_READ_FAILURE_MAP:
     LD A,EAH
-    JR F90BH
+    JR LF90B
 
 LF901:
-    LD A,(0BF1H)
+    LD A,(VERIFY)
     OR A
     LD A,E7H
-    JR Z,F90BH
+    JR Z,LF90B
 
 LF909:
     LD A,E8H
 
 LF90B:
-    LD (0D0BH),A
+    LD (CAS_IN_ERROR),A
 
 LF90E:
     PUSH AF
-    CALL FABDH
+    CALL CAS_RESTORE_INTERRUPTS
     POP AF
     OR A
     LD SP,(0E33H)
@@ -4036,14 +3873,14 @@ CAS_READ_BYTE:
 ;   Reads timing counter and updates CRC.
 ; -----------------------------------------------------------------------------
 CAS_READ_BYTE_BITS:
-    CALL F938H
+    CALL CAS_READ_BIT
     CP D
     PUSH AF
     SBC A,A
-    CALL FAF7H
+    CALL CAS_CRC_UPDATE
     POP AF
     RR H
-    JR NC,F91BH
+    JR NC,CAS_READ_BYTE_BITS
     LD A,H
     RET
 
@@ -4067,7 +3904,7 @@ CAS_READ_HALF_BIT:
     LD E,00H
     EI
     HALT
-    JR F947H
+    JR LF947
 
 ; Measure a full square-wave period, periodically check CTRL+ESC, acknowledge timing interrupts,
 ; and return E.
@@ -4114,41 +3951,41 @@ CAS_READ_BIT:
 ; -----------------------------------------------------------------------------
 CAS_READ_BIT_TRANSITIONS:
     INC E
-    CALL Z,F969H
+    CALL Z,LF969
     IN A,(59H)
     XOR C
     AND 20H
-    JR Z,F93CH
+    JR Z,CAS_READ_BIT_TRANSITIONS
 
 LF947:
     INC E
-    CALL Z,F969H
+    CALL Z,LF969
     IN A,(59H)
     XOR C
     AND 20H
-    JR NZ,F947H
+    JR NZ,LF947
     IN A,(5BH)
     OUT (07H),A
 
 ; Reset the cassette timing divider and optionally toggle the border to show tape activity.
 
 LF956:
-    LD A,(0BF0H)
+    LD A,(CAS_BORDER_SAVE)
     OR A
-    JR Z,F969H
+    JR Z,LF969
     CP 88H
     LD A,A0H
-    JR Z,F964H
+    JR Z,LF964
     LD A,88H
 
 LF964:
-    LD (0BF0H),A
+    LD (CAS_BORDER_SAVE),A
     OUT (00H),A
 
 LF969:
     IN A,(58H)
     AND 18H
-    JP Z,F8EDH
+    JP Z,LF8ED
     LD A,E
     RET
 
@@ -4180,7 +4017,7 @@ CAS_WRITE_PHYSICAL_BLOCK:
     XOR A
     LD D,A
     DEC A
-    CALL F6DEH
+    CALL CAS_MOTOR_CONTROL
     LD BC,0000H
 
 ; Header pilot length is 40H groups for header blocks and 20H groups for data blocks. Marker 6AH
@@ -4212,40 +4049,40 @@ CAS_WRITE_HEADER_PREAMBLE:
     DEC BC
     LD A,B
     OR C
-    JR NZ,F97FH
-    CALL FA7CH
+    JR NZ,CAS_WRITE_HEADER_PREAMBLE
+    CALL CAS_ENABLE_TAPE_INTERRUPT
     LD A,88H
-    LD (0BF0H),A
+    LD (CAS_BORDER_SAVE),A
     LD BC,0014H
-    LD A,(0E32H)
+    LD A,(CAS_OUT_PHASE)
     OR A
-    JR Z,F999H
-    LD BC,0028H
+    JR Z,LF999
+    LD BC,USRTAB+7
 
 LF999:
-    CALL FA31H
-    CALL FA62H
-    CALL FA62H
-    CALL FA3DH
-    LD HL,(0B6FH)
+    CALL CAS_WRITE_PERIODS
+    CALL LFA62
+    CALL LFA62
+    CALL CAS_WRITE_BYTE
+    LD HL,(MUDDLE)
     EXX
     LD C,6AH
-    CALL FA3DH
-    LD IY,(0E2CH)
-    LD A,(0E32H)
+    CALL CAS_WRITE_BYTE
+    LD IY,(CAS_OUT_SOURCE)
+    LD A,(CAS_OUT_PHASE)
     LD C,A
-    CALL FA3DH
-    LD A,(0D14H)
+    CALL CAS_WRITE_BYTE
+    LD A,(CAS_OUT_STATE)
     LD C,A
-    CALL FA3DH
-    LD A,(0E30H)
+    CALL CAS_WRITE_BYTE
+    LD A,(CAS_OUT_PROTECT)
     LD C,A
-    CALL FA3DH
-    LD HL,(0E26H)
+    CALL CAS_WRITE_BYTE
+    LD HL,(CAS_OUT_COUNT)
     LD C,H
     LD A,L
     OR A
-    JR Z,F9D0H
+    JR Z,CAS_WRITE_SECTOR_LOOP
     INC C
 
 ; Each sector's byte count is encoded as 00H for a full 256-byte sector or the remaining count for
@@ -4276,40 +4113,40 @@ LF999:
 ;   Updates E26H/E2CH/E31H and writes payload/timing.
 ; -----------------------------------------------------------------------------
 CAS_WRITE_SECTOR_LOOP:
-    CALL FA3DH
-    JR F9DAH
+    CALL CAS_WRITE_BYTE
+    JR LF9DA
 
 LF9D5:
     EXX
-    LD HL,(0B6FH)
+    LD HL,(MUDDLE)
     EXX
 
 LF9DA:
     LD A,(0E31H)
     LD C,A
-    CALL FA3DH
+    CALL CAS_WRITE_BYTE
     LD A,H
     OR A
     LD D,L
-    JR Z,F9E8H
+    JR Z,LF9E8
     XOR A
     LD D,A
 
 LF9E8:
     LD C,D
-    CALL FA3DH
+    CALL CAS_WRITE_BYTE
 
 LF9EC:
     LD C,(IY+00H)
     INC IY
     DEC HL
-    CALL FA3DH
+    CALL CAS_WRITE_BYTE
     DEC D
-    JR NZ,F9ECH
+    JR NZ,LF9EC
     LD A,H
     OR L
     LD A,(0E2BH)
-    JR Z,FA00H
+    JR Z,CAS_WRITE_TRAILER
     XOR A
 
 ; Finish tape output with five periods, mark the data block state, and restore the previous
@@ -4335,30 +4172,30 @@ LF9EC:
 ; -----------------------------------------------------------------------------
 CAS_WRITE_TRAILER:
     LD C,A
-    CALL FA3DH
+    CALL CAS_WRITE_BYTE
     EX DE,HL
     EXX
     LD C,L
-    CALL FA3DH
+    CALL CAS_WRITE_BYTE
     LD C,H
-    CALL FA3DH
+    CALL CAS_WRITE_BYTE
     EXX
     EX DE,HL
-    LD (0E26H),HL
-    LD (0E2CH),IY
+    LD (CAS_OUT_COUNT),HL
+    LD (CAS_OUT_SOURCE),IY
     LD A,(0E31H)
     INC A
     LD (0E31H),A
     LD A,H
     OR L
-    JR NZ,F9D5H
+    JR NZ,LF9D5
     LD BC,0501H
-    CALL FA31H
+    CALL CAS_WRITE_PERIODS
     EI
     HALT
     XOR A
-    LD (0E32H),A
-    JP FABDH
+    LD (CAS_OUT_PHASE),A
+    JP CAS_RESTORE_INTERRUPTS
 
 ; Emit B*C waveform transitions for pilot, sync, and trailer timing.
 
@@ -4375,11 +4212,11 @@ CAS_WRITE_TRAILER:
 ;   B and C define the product number of transitions.
 ; -----------------------------------------------------------------------------
 CAS_WRITE_PERIODS:
-    CALL FA5DH
-    CALL FA5DH
-    DJNZ FA31H
+    CALL CAS_SET_TIMING
+    CALL CAS_SET_TIMING
+    DJNZ CAS_WRITE_PERIODS
     DEC C
-    JR NZ,FA31H
+    JR NZ,CAS_WRITE_PERIODS
     RET
 
 ; Serialize one byte as eight timed bit pairs and update the running CRC.
@@ -4428,11 +4265,11 @@ CAS_WRITE_BYTE:
 ; -----------------------------------------------------------------------------
 CAS_WRITE_BYTE_BITS:
     RRC C
-    CALL FA4FH
+    CALL CAS_SET_BIT_TIMING
     BIT 7,C
-    CALL FAF7H
-    CALL FA4FH
-    DJNZ FA3FH
+    CALL CAS_CRC_UPDATE
+    CALL CAS_SET_BIT_TIMING
+    DJNZ CAS_WRITE_BYTE_BITS
     RET
 
 ; PITCH=00DEH represents a one bit; PITCH=00CEH represents a zero bit.
@@ -4471,13 +4308,13 @@ CAS_SET_BIT_TIMING:
 ; -----------------------------------------------------------------------------
 CAS_WRITE_BIT_TIMING:
     BIT 7,C
-    JR Z,FA58H
+    JR Z,LFA58
     LD A,(FAF4H)
-    JR FA65H
+    JR LFA65
 
 LFA58:
     LD A,(FAF5H)
-    JR FA65H
+    JR LFA65
 
 ; Timing primitive uses FAF3H-FAF6H constants: D6H pilot, DEH one, CEH zero, BCH synchronization.
 
@@ -4492,8 +4329,8 @@ LFA58:
 ; the divider, and returns the activity count. CTRL+ESC aborts the transfer.
 ; -----------------------------------------------------------------------------
 CAS_SET_TIMING:
-    LD A,(FAF3H)
-    JR FA65H
+    LD A,(CAS_TIMING_CONSTANTS)
+    JR LFA65
 
 LFA62:
     LD A,(FAF6H)
@@ -4505,7 +4342,7 @@ LFA65:
     EX AF,AF'
     IN A,(58H)
     AND 18H
-    JP Z,F8E6H
+    JP Z,LF8E6
     EI
     HALT
     OUT (50H),A
@@ -4513,7 +4350,7 @@ LFA65:
     OUT (04H),A
     IN A,(5BH)
     OUT (07H),A
-    CALL F956H
+    CALL LF956
     RET
 
 ; Tape timing takes over interrupts: disable cards/cursor/sound, save the old interrupt opcode at
@@ -4544,29 +4381,29 @@ CAS_ENABLE_TAPE_INTERRUPT:
     OUT (5BH),A
     OUT (04H),A
     DEC A
-    LD (0B71H),A
-    LD A,(0B11H)
+    LD (SER_OK),A
+    LD A,(PORT03_MIRROR)
     AND F0H
     OR 07H
     OUT (03H),A
-    LD A,(0B12H)
+    LD A,(PORT05_MIRROR)
     AND EFH
-    LD (0B12H),A
+    LD (PORT05_MIRROR),A
     AND C0H
     OR 2FH
     OUT (05H),A
     XOR A
-    LD (0B14H),A
+    LD (SOUND_ACT),A
     LD A,0AH
     OUT (70H),A
     LD A,23H
     OUT (71H),A
     IN A,(5BH)
     OUT (07H),A
-    LD HL,0038H
+    LD HL,IRQ_VECTOR
     LD A,(HL)
     LD (HL),C9H
-    LD (0BF2H),A
+    LD (CAS_IRQ_SAVE),A
     RET
 
 ; Restore motors, page selection, interrupt enables, cursor service, and the saved interrupt
@@ -4587,15 +4424,15 @@ CAS_ENABLE_TAPE_INTERRUPT:
 ; -----------------------------------------------------------------------------
 CAS_RESTORE_INTERRUPTS:
     DI
-    CALL F6FFH
-    LD A,(0B11H)
+    CALL CAS_STOP_MOTORS
+    LD A,(PORT03_MIRROR)
     OUT (03H),A
-    LD A,(0B12H)
+    LD A,(PORT05_MIRROR)
     OUT (05H),A
-    LD A,(0B1FH)
+    LD A,(IRQ_STAT)
     LD B,A
     BIT 0,B
-    JR Z,FADBH
+    JR Z,CAS_RESTORE_IRQ_SOURCES
     LD A,0AH
     OUT (70H),A
     LD A,03H
@@ -4637,8 +4474,8 @@ CAS_RESTORE_IRQ_SOURCES:
     OUT (59H),A
     RLCA
     OUT (58H),A
-    LD A,(0BF2H)
-    LD (0038H),A
+    LD A,(CAS_IRQ_SAVE)
+    LD (IRQ_VECTOR),A
     XOR A
     SCF
     EI
@@ -4662,8 +4499,7 @@ CAS_RESTORE_IRQ_SOURCES:
 ;   Read-only EXTH data used by tape timing primitives.
 ; -----------------------------------------------------------------------------
 CAS_TIMING_CONSTANTS:
-    SUB DEH
-    ADC A,BCH
+    DB D6H, DEH, CEH, BCH                                                             ; |....|
 
 ; CRC feedback toggles H bit 3 and L bit 4 when the incoming bit and CRC high bit require it.
 ; CRC feedback uses alternate HL: combine the incoming bit with H bit 7, toggle H bit 3/L bit 4
@@ -4689,7 +4525,7 @@ CAS_TIMING_CONSTANTS:
 CAS_CRC_UPDATE:
     EXX
     LD A,80H
-    JR NZ,FAFDH
+    JR NZ,CAS_CRC_FEEDBACK_STEP
     XOR A
 
 ; -----------------------------------------------------------------------------
@@ -4716,7 +4552,7 @@ CAS_CRC_UPDATE:
 CAS_CRC_FEEDBACK_STEP:
     XOR H
     RLA
-    JR NC,FB0AH
+    JR NC,LFB0A
     LD A,H
     XOR 08H
     LD H,A
@@ -4764,30 +4600,9 @@ U0_INIT_TEMPLATE:
 ;   Read-only source for U0 0B00H-0B0FH.
 ; -----------------------------------------------------------------------------
 U0_DEFAULT_ASSIGNMENT_BYTES:
-    RST 38H
-    LD BC,FF02H
-    RST 38H
-    DEC B
-    LD B,FFH
-    NOP
-    RST 38H
-    LD (BC),A
-    RST 38H
-    INC B
-    DEC B
-    LD B,FFH
-    JP 0B23H
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    PUSH AF
-    LD A,70H
-    OUT (02H),A
-    JP C412H
-    EX (SP),HL
-    LD A,(HL)
+    DB FFH, 01H, 02H, FFH, FFH, 05H, 06H, FFH, 00H, FFH, 02H, FFH, 04H, 05H, 06H, FFH ; |................|
+    DB C3H, 23H, 0BH, 00H, 00H, 00H, 00H, 00H, F5H, 3EH, 70H, D3H, 02H, C3H, 12H, C4H ; |.#.......>p.....|
+    DB E3H, 7EH                                                                       ; |.~|
 
 ; The bridge template contains executable RST/interrupt bytes. Its RAM copy is checked at reset,
 ; so a user overwrite changes warm-reset eligibility.
@@ -4808,28 +4623,9 @@ U0_DEFAULT_ASSIGNMENT_BYTES:
 ;   Read-only EXTH source copied into U0 RAM.
 ; -----------------------------------------------------------------------------
 U0_RST_AND_IRQ_TEMPLATE:
-    INC HL
-    EX (SP),HL
-    EX AF,AF'
-    PUSH AF
-    LD A,(0003H)
-    PUSH AF
-    LD A,70H
-    LD (0003H),A
-    OUT (02H),A
-    JP C363H
-    EX AF,AF'
-    POP AF
-    LD (0003H),A
-    OUT (02H),A
-    POP AF
-    EX AF,AF'
-    RET
-    LD (0003H),A
-    OUT (02H),A
-    POP AF
-    EI
-    RET
+    DB 23H, E3H, 08H, F5H, 3AH, 03H, 00H, F5H, 3EH, 70H, 32H, 03H, 00H, D3H, 02H, C3H ; |#...:...>p2.....|
+    DB 63H, C3H, 08H, F1H, 32H, 03H, 00H, D3H, 02H, F1H, 08H, C9H, 32H, 03H, 00H, D3H ; |c...2.......2...|
+    DB 02H, F1H, FBH, C9H                                                             ; |....|
 
 ; "MOPS" cartridge signature text.
 ; Card identification strings: MOPS signature, VGB, RS232, DISK, and CISL.
@@ -4863,380 +4659,72 @@ EXPANSION_DEVICE_STRINGS:
 ;   Read-only EXTH data used during card discovery and display.
 ; -----------------------------------------------------------------------------
 EXPANSION_ID_STRING_TABLE:
-    LD C,L
-    LD C,A
-    LD D,B
-    LD D,E
 
 ; "VGB" device identifier.
-    INC BC
-    LD D,(HL)
-    LD B,A
-    LD B,D
 
 ; "RS232" device identifier.
-    DEC B
-    LD D,D
-    LD D,E
-    LD (3233H),A
 
 ; "DISK" device identifier.
-    INC B
-    LD B,H
-    LD C,C
-    LD D,E
-    LD C,E
 
 ; "CISL" text.
-    LD B,E
-    LD C,C
-    LD D,E
-    LD C,H
-    EX AF,AF'
-    EX AF,AF'
-    LD A,6BH
-    LD H,E
-    LD A,A
-    LD H,E
-    LD H,E
-    NOP
-    NOP
-    EX AF,AF'
-    EX AF,AF'
-    LD A,(HL)
-    LD L,B
-    LD H,B
-    LD A,H
-    LD H,B
-    LD A,(HL)
-    NOP
-    NOP
-    EX AF,AF'
-    EX AF,AF'
-    INC A
-    JR FB9CH
-    JR FB9EH
-    INC A
-    NOP
-    NOP
-    EX AF,AF'
-    EX AF,AF'
-    LD A,6BH
-    LD H,E
-    LD H,E
-    LD H,E
-    LD A,00H
-    NOP
-    INC D
-    NOP
-    LD A,63H
-    LD H,E
-    LD H,E
-    LD H,E
-    LD A,00H
 
-LFB9C:
-    NOP
-    INC D
 
-LFB9E:
-    INC D
-    LD A,63H
-    LD H,E
-    LD H,E
-    LD H,E
-    LD A,00H
-    NOP
-    EX AF,AF'
-    EX AF,AF'
-    LD L,E
-    LD H,E
-    LD H,E
-    LD H,E
-    LD H,E
-    LD A,00H
-    NOP
-    INC D
-    NOP
-    LD H,E
-    LD H,E
-    LD H,E
-    LD H,E
-    LD H,E
-    LD A,00H
-    NOP
-    INC D
-    INC D
-    LD (HL),A
-    LD H,E
-    LD H,E
-    LD H,E
-    LD H,E
-    LD A,00H
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    RRA
-    RRA
-    JR FBE5H
-    JR FBE7H
-    JR FBE9H
-    JR FBEBH
-    RRA
-    RRA
-    NOP
-    NOP
-    NOP
-    NOP
-    JR FBF3H
-    JR FBF5H
-    JR FBF7H
-    JR FBF9H
-    JR FBFBH
-    JR FBFDH
 
-LFBE5:
-    JR FBFFH
 
-LFBE7:
-    RRA
-    RRA
 
-LFBE9:
-    JR FC03H
 
-LFBEB:
-    JR FC05H
-    NOP
-    NOP
-    NOP
-    NOP
-    RST 38H
-    RST 38H
 
-LFBF3:
-    JR FC0DH
 
-LFBF5:
-    JR FC0FH
 
-LFBF7:
-    JR FC11H
 
-LFBF9:
-    JR FC13H
 
-LFBFB:
-    RST 38H
-    RST 38H
 
-LFBFD:
-    JR FC17H
 
-LFBFF:
-    JR FC19H
-    RST 38H
-    RST 20H
 
-LFC03:
-    DB C3H, 99H                                                                     ; |..|
 
-LFC05:
-    SBC A,C
-    ADD A,C
-    SBC A,C
-    SBC A,C
-    RST 38H
-    RST 38H
-    EX AF,AF'
-    EX AF,AF'
 
-LFC0D:
-    EX AF,AF'
-    INC A
 
-LFC0F:
-    LD B,3EH
 
-LFC11:
-    LD H,(HL)
-    DB 3EH                                                                          ; |>|
 
-LFC13:
-    NOP
-    NOP
-    EX AF,AF'
-    EX AF,AF'
 
-LFC17:
-    EX AF,AF'
-    INC A
 
-LFC19:
-    LD H,(HL)
-    LD A,(HL)
-    LD H,B
-    INC A
-    NOP
-    NOP
-    EX AF,AF'
-    EX AF,AF'
-    NOP
-    JR C,FC3CH
-    JR FC3EH
-    INC A
-    NOP
-    NOP
-    EX AF,AF'
-    EX AF,AF'
-    EX AF,AF'
-    INC A
-    LD H,(HL)
-    LD H,(HL)
-    LD H,(HL)
-    INC A
-    NOP
-    NOP
-    NOP
-    INC H
-    NOP
-    INC A
-    LD H,(HL)
-    LD H,(HL)
-    LD H,(HL)
-    INC A
-    NOP
 
-LFC3C:
-    NOP
-    INC H
 
-LFC3E:
-    INC H
-    NOP
-    INC A
-    LD H,(HL)
-    LD H,(HL)
-    LD H,(HL)
-    INC A
-    NOP
-    NOP
-    EX AF,AF'
-    EX AF,AF'
-    EX AF,AF'
-    LD H,(HL)
-    LD H,(HL)
-    LD H,(HL)
-    LD H,(HL)
-    LD A,00H
-    NOP
-    NOP
-    INC H
-    NOP
-    LD H,(HL)
-    LD H,(HL)
-    LD H,(HL)
-    LD H,(HL)
-    LD A,00H
-    NOP
-    INC H
-    INC H
-    NOP
-    LD H,(HL)
-    LD H,(HL)
-    LD H,(HL)
-    LD H,(HL)
-    LD A,00H
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    RET M
-    RET M
-    JR FC85H
-    JR FC87H
-    JR FC89H
-    JR FC8BH
-    RET M
-    RET M
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    RST 38H
-    RST 38H
-    NOP
-    NOP
-    NOP
-    NOP
-    JR FC9DH
 
-LFC85:
-    JR FC9FH
 
-LFC87:
-    RET M
-    RET M
 
-LFC89:
-    JR FCA3H
 
-LFC8B:
-    JR FCA5H
-    JR FCA7H
-    JR FCA9H
-    RST 38H
-    RST 38H
-    NOP
-    NOP
-    NOP
-    NOP
-    RST 38H
-    JP 9F99H
-    SBC A,A
-    SBC A,A
 
-LFC9D:
-    SBC A,C
-    DB C3H                                                                          ; |.|
 
-LFC9F:
-    RST 38H
-    RST 38H
-    RST 38H
-    DB C3H                                                                          ; |.|
 
-LFCA3:
-    SBC A,C
-    SBC A,A
 
-LFCA5:
-    DB C3H, F9H                                                                     ; |..|
 
-LFCA7:
-    SBC A,C
-    DB C3H                                                                          ; |.|
 
-LFCA9:
-    RST 38H
-    RST 38H
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    DB 4DH, 4FH, 50H, 53H, 03H, 56H, 47H, 42H, 05H, 52H, 53H, 32H, 33H, 32H, 04H, 44H ; |MOPS.VGB.RS232.D|
+    DB 49H, 53H, 4BH, 43H, 49H, 53H, 4CH, 08H, 08H, 3EH, 6BH, 63H, 7FH, 63H, 63H, 00H ; |ISKCISL..>kc.cc.|
+    DB 00H, 08H, 08H, 7EH, 68H, 60H, 7CH, 60H, 7EH, 00H, 00H, 08H, 08H, 3CH, 18H, 18H ; |...~h`|`~....<..|
+    DB 18H, 18H, 3CH, 00H, 00H, 08H, 08H, 3EH, 6BH, 63H, 63H, 63H, 3EH, 00H, 00H, 14H ; |..<....>kccc>...|
+    DB 00H, 3EH, 63H, 63H, 63H, 63H, 3EH, 00H, 00H, 14H, 14H, 3EH, 63H, 63H, 63H, 63H ; |.>cccc>....>cccc|
+    DB 3EH, 00H, 00H, 08H, 08H, 6BH, 63H, 63H, 63H, 63H, 3EH, 00H, 00H, 14H, 00H, 63H ; |>....kcccc>....c|
+    DB 63H, 63H, 63H, 63H, 3EH, 00H, 00H, 14H, 14H, 77H, 63H, 63H, 63H, 63H, 3EH, 00H ; |cccc>....wcccc>.|
+    DB 00H, 00H, 00H, 00H, 00H, 1FH, 1FH, 18H, 18H, 18H, 18H, 18H, 18H, 18H, 18H, 1FH ; |................|
+    DB 1FH, 00H, 00H, 00H, 00H, 18H, 18H, 18H, 18H, 18H, 18H, 18H, 18H, 18H, 18H, 18H ; |................|
+    DB 18H, 18H, 18H, 1FH, 1FH, 18H, 18H, 18H, 18H, 00H, 00H, 00H, 00H, FFH, FFH, 18H ; |................|
+    DB 18H, 18H, 18H, 18H, 18H, 18H, 18H, FFH, FFH, 18H, 18H, 18H, 18H, FFH, E7H, C3H ; |................|
+    DB 99H, 99H, 81H, 99H, 99H, FFH, FFH, 08H, 08H, 08H, 3CH, 06H, 3EH, 66H, 3EH, 00H ; |..........<.>f>.|
+    DB 00H, 08H, 08H, 08H, 3CH, 66H, 7EH, 60H, 3CH, 00H, 00H, 08H, 08H, 00H, 38H, 18H ; |....<f~`<.....8.|
+    DB 18H, 18H, 3CH, 00H, 00H, 08H, 08H, 08H, 3CH, 66H, 66H, 66H, 3CH, 00H, 00H, 00H ; |..<.....<fff<...|
+    DB 24H, 00H, 3CH, 66H, 66H, 66H, 3CH, 00H, 00H, 24H, 24H, 00H, 3CH, 66H, 66H, 66H ; |$.<fff<..$$.<fff|
+    DB 3CH, 00H, 00H, 08H, 08H, 08H, 66H, 66H, 66H, 66H, 3EH, 00H, 00H, 00H, 24H, 00H ; |<.....ffff>...$.|
+    DB 66H, 66H, 66H, 66H, 3EH, 00H, 00H, 24H, 24H, 00H, 66H, 66H, 66H, 66H, 3EH, 00H ; |ffff>..$$.ffff>.|
+    DB 00H, 00H, 00H, 00H, 00H, F8H, F8H, 18H, 18H, 18H, 18H, 18H, 18H, 18H, 18H, F8H ; |................|
+    DB F8H, 00H, 00H, 00H, 00H, 00H, 00H, 00H, 00H, FFH, FFH, 00H, 00H, 00H, 00H, 18H ; |................|
+    DB 18H, 18H, 18H, F8H, F8H, 18H, 18H, 18H, 18H, 18H, 18H, 18H, 18H, FFH, FFH, 00H ; |................|
+    DB 00H, 00H, 00H, FFH, C3H, 99H, 9FH, 9FH, 9FH, 99H, C3H, FFH, FFH, FFH, C3H, 99H ; |................|
+    DB 9FH, C3H, F9H, 99H, C3H, FFH, FFH, 00H, 00H, 00H, 00H, 00H, 00H, 00H, 00H, 00H ; |................|
+    DB 00H                                                                            ; |.|
+
+LFCB5:
     EXX
     PUSH BC
     PUSH DE
@@ -5263,7 +4751,7 @@ LFCC9:
     LD HL,FF3FH
     LD BC,000BH
     CPIR
-    JR NZ,FD45H
+    JR NZ,LFD45
     SLA C
     LD HL,FF4AH
     ADD HL,BC
@@ -5277,10 +4765,9 @@ LFCC9:
     OR A
     RET
 
-LFCE9:
     LD A,40H
     JP C,803EH
-    JR NZ,FD47H
+    JR NZ,LFD47
     PUSH AF
     OR C
     LD C,A
@@ -5288,42 +4775,41 @@ LFCE9:
     XOR 03H
     AND C
     LD C,A
-    JR FCC9H
-    JR NZ,FD47H
+    JR LFCC9
+    JR NZ,LFD47
     SET 1,C
-    JR FCC9H
-    JR NZ,FD47H
+    JR LFCC9
+    JR NZ,LFD47
     INC L
-    JR FCC9H
+    JR LFCC9
     INC L
     INC H
     EXX
     LD A,B
     OR C
     EXX
-    JR NZ,FCC9H
+    JR NZ,LFCC9
     DEC H
     LD A,(IY-01H)
     CP 2AH
     LD E,A
-    JR Z,FCC9H
+    JR Z,LFCC9
     LD E,30H
-    JR FCC9H
+    JR LFCC9
 
 LFD1A:
     LD A,04H
-    LD HL,FD5CH
-    JP FFF0H
+    LD HL,FD5CH                           ; SYS ROM routine BASIC_ERROR, entered through the FFF0H gateway
+    JP EXT_GATEWAY
 
-LFD22:
     INC L
     EXX
     LD A,B
     OR C
     EXX
-    JR Z,FCC9H
+    JR Z,LFCC9
     INC H
-    JR FCC9H
+    JR LFCC9
     EXX
     LD A,B
     OR C
@@ -5332,19 +4818,18 @@ LFD22:
     POP BC
     DEC BC
 
-LFD35:
     EXX
     INC D
-    JR FCC9H
+    JR LFCC9
     EXX
     LD A,B
     OR C
-    JR NZ,FD1AH
+    JR NZ,LFD1A
     PUSH IY
     POP BC
     DEC BC
     EXX
-    JR FCC9H
+    JR LFCC9
 
 LFD45:
     POP BC
@@ -5354,7 +4839,7 @@ LFD47:
     EXX
     LD A,B
     OR C
-    JR NZ,FD50H
+    JR NZ,LFD50
     PUSH IY
     POP BC
     DEC BC
@@ -5365,9 +4850,11 @@ LFD50:
     LD (171CH),HL
     LD A,D
     CP 04H
-    JR NC,FD68H
+    JR NC,LFD68
     OR A
-    JP NZ,FD1AH
+
+LFD5C:
+    JP NZ,LFD1A
     LD A,(IY+08H)
     AND 7FH
     SUB 3FH
@@ -5378,15 +4865,15 @@ LFD68:
     PUSH BC
     LD A,(IY+06H)
     OR A
-    JR Z,FD80H
+    JR Z,LFD80
     LD A,(IY+08H)
     AND 80H
-    JR Z,FD80H
+    JR Z,LFD80
     XOR (IY+08H)
     LD (IY+08H),A
     POP BC
     SET 0,C
-    DB 3EH                                                                          ; |>|
+    DB 3EH                                ; = LD A,C1H when run from here, hiding the entry below
 
 LFD80:
     POP BC
@@ -5401,9 +4888,9 @@ LFD80:
     LD H,A
     LD L,A
     OR D
-    JR NZ,FD96H
+    JR NZ,LFD96
     OR B
-    JP M,FD96H
+    JP M,LFD96
     LD L,B
 
 LFD96:
@@ -5414,72 +4901,72 @@ LFD96:
     ADD HL,DE
     LD A,(DE)
     EXX
-    JR Z,FDA2H
-    JR NC,FDBBH
+    JR Z,LFDA2
+    JR NC,LFDBB
 
 LFDA2:
     CP 2CH
-    JR Z,FDA7H
+    JR Z,LFDA7
     SCF
 
 LFDA7:
     INC D
     DEC D
-    JR NZ,FDB6H
+    JR NZ,LFDB6
     INC L
     DEC L
-    JP M,FDB8H
-    JR Z,FDB8H
-    JR NC,FD96H
+    JP M,LFDB8
+    JR Z,LFDB8
+    JR NC,LFD96
     DEC L
     OR A
 
 LFDB6:
-    JR NC,FD96H
+    JR NC,LFD96
 
 LFDB8:
     INC H
-    JR FD96H
+    JR LFD96
 
 LFDBB:
     BIT 1,C
-    JR Z,FDC0H
+    JR Z,LFDC0
     DEC H
 
 LFDC0:
     BIT 0,C
-    JR NZ,FDC9H
+    JR NZ,LFDC9
     LD A,C
     AND FCH
-    JR Z,FDCAH
+    JR Z,LFDCA
 
 LFDC9:
     DEC H
 
 LFDCA:
     BIT 7,H
-    JP NZ,FD1AH
+    JP NZ,LFD1A
     LD A,L
     DEC A
-    JP P,FD1AH
+    JP P,LFD1A
     INC D
     DEC D
-    JR NZ,FDECH
+    JR NZ,LFDEC
     XOR A
     BIT 7,B
-    JR NZ,FDDEH
+    JR NZ,LFDDE
     LD A,B
 
 LFDDE:
     LD L,A
     OR A
-    JR NZ,FDF0H
+    JR NZ,LFDF0
     INC H
     DEC H
-    JR Z,FDF0H
+    JR Z,LFDF0
     SET 2,C
     LD L,01H
-    JR FDF0H
+    JR LFDF0
 
 LFDEC:
     LD L,H
@@ -5490,72 +4977,72 @@ LFDEC:
 LFDF0:
     INC D
     DEC D
-    JR NZ,FDFAH
+    JR NZ,LFDFA
     INC E
     DEC E
-    JR NZ,FDFAH
+    JR NZ,LFDFA
     LD E,20H
 
 LFDFA:
-    CALL NZ,FF62H
+    CALL NZ,LFF62
     INC H
 
 LFDFE:
     DEC H
-    JR Z,FE14H
+    JR Z,LFE14
     INC D
     DEC D
-    JR NZ,FE14H
+    JR NZ,LFE14
     BIT 2,C
-    JR Z,FE0EH
+    JR Z,LFE0E
     LD A,H
     DEC A
-    CALL Z,FF60H
+    CALL Z,LFF60
 
 LFE0E:
     LD A,E
-    CALL FF8DH
-    JR FDFEH
+    CALL LFF8D
+    JR LFDFE
 
 LFE14:
     LD A,E
     CP 20H
-    CALL Z,FF62H
+    CALL Z,LFF62
     EXX
     LD E,C
     LD D,B
     EXX
     INC B
     DEC B
-    JR Z,FE25H
-    JP P,FE29H
+    JR Z,LFE25
+    JP P,LFE29
 
 LFE25:
     LD A,L
     DEC A
-    JR Z,FE3FH
+    JR Z,LFE3F
 
 LFE29:
     INC L
 
 LFE2A:
     DEC L
-    JR Z,FE3FH
+    JR Z,LFE3F
     EXX
 
 LFE2E:
     DEC DE
     LD A,(DE)
     CP 2CH
-    JR Z,FE2EH
+    JR Z,LFE2E
     EXX
-    JR FE2AH
+    JR LFE2A
 
 LFE37:
-    CALL FF96H
+    CALL LFF96
     LD B,04H
     LD C,B
-    JR FE72H
+    JR LFE72
 
 LFE3F:
     PUSH DE
@@ -5570,9 +5057,9 @@ LFE3F:
     LD HL,(171CH)
     DEC H
     ADD A,H
-    JP M,FE37H
+    JP M,LFE37
     CP H
-    JR NC,FE5AH
+    JR NC,LFE5A
     LD A,H
     LD C,04H
 
@@ -5586,15 +5073,15 @@ LFE5E:
     LD A,B
     CP 10H
     LD A,00H
-    CALL C,FF87H
+    CALL C,LFF87
     OR A
-    JR NZ,FE72H
+    JR NZ,LFE72
     LD A,B
     DEC A
     CP C
-    JR NC,FE5EH
+    JR NC,LFE5E
     LD L,00H
-    DB D2H                                                                          ; |.|
+    DB D2H                                ; = JP NC,0C48H when run from here, hiding the entry below
 
 LFE72:
     LD C,B
@@ -5608,73 +5095,73 @@ LFE76:
     SBC HL,BC
     ADD HL,BC
     EX DE,HL
-    JR Z,FE96H
+    JR Z,LFE96
     LD A,(DE)
     INC DE
     EXX
     CP 2CH
-    JR Z,FE91H
+    JR Z,LFE91
     LD A,B
     CP 10H
     LD A,00H
-    CALL C,FF87H
+    CALL C,LFF87
     ADD A,30H
     INC B
 
 LFE91:
-    CALL FF8DH
-    JR FE76H
+    CALL LFF8D
+    JR LFE76
 
 LFE96:
     LD A,(BC)
     CP 2EH
-    JR NZ,FEE0H
+    JR NZ,LFEE0
 
 LFE9B:
-    CALL FF8DH
+    CALL LFF8D
     INC BC
     LD A,(BC)
     CP 2CH
-    JR Z,FE9BH
+    JR Z,LFE9B
     EXX
     LD A,D
     OR A
-    JR NZ,FEB5H
+    JR NZ,LFEB5
     LD A,(171DH)
     CPL
     CP E
-    JR NC,FEB5H
+    JR NC,LFEB5
     XOR A
     INC E
-    JP M,FEDBH
+    JP M,LFEDB
 
 LFEB5:
     EXX
     LD A,(BC)
     CP 2AH
-    JR Z,FEC6H
+    JR Z,LFEC6
     CP 25H
-    JR Z,FEC6H
+    JR Z,LFEC6
     CP 23H
-    JR NZ,FEE0H
+    JR NZ,LFEE0
     EXX
-    JR FED2H
+    JR LFED2
 
 LFEC6:
     EXX
     LD A,B
     SUB C
-    JR C,FED2H
+    JR C,LFED2
     OR L
-    JR Z,FEDAH
+    JR Z,LFEDA
     LD A,F0H
-    JR FEDAH
+    JR LFEDA
 
 LFED2:
     LD A,B
     CP 10H
     LD A,00H
-    CALL C,FF87H
+    CALL C,LFF87
 
 LFEDA:
     INC B
@@ -5682,7 +5169,7 @@ LFEDA:
 LFEDB:
     EXX
     ADD A,30H
-    JR FE9BH
+    JR LFE9B
 
 LFEE0:
     LD A,(BC)
@@ -5691,37 +5178,37 @@ LFEE0:
     POP BC
     POP DE
     LD B,C
-    JR NZ,FF30H
+    JR NZ,LFF30
     LD A,(IY+06H)
     OR A
-    JR NZ,FEF0H
+    JR NZ,LFEF0
     LD B,A
 
 LFEF0:
     LD A,45H
-    CALL FF8DH
+    CALL LFF8D
     BIT 7,B
     LD A,2BH
-    JR Z,FF01H
+    JR Z,LFF01
     LD A,B
     NEG
     LD B,A
     LD A,2DH
 
 LFF01:
-    CALL FF8DH
+    CALL LFF8D
 
 LFF04:
     DEC D
     LD A,D
     CP 04H
-    JR C,FF14H
+    JR C,LFF14
     LD A,30H
-    CALL FF8DH
+    CALL LFF8D
     EXX
     INC BC
     EXX
-    JR FF04H
+    JR LFF04
 
 LFF14:
     LD A,B
@@ -5730,15 +5217,15 @@ LFF14:
 LFF18:
     SUB B
     INC C
-    JR NC,FF18H
+    JR NC,LFF18
     ADD A,B
     LD B,A
     LD A,C
     ADD A,30H
-    CALL FF8DH
+    CALL LFF8D
     LD A,B
     ADD A,30H
-    CALL FF8DH
+    CALL LFF8D
     EXX
     INC BC
     INC BC
@@ -5753,8 +5240,8 @@ LFF30:
     POP DE
     POP BC
     EXX
-    LD HL,E67AH
-    JP FFF0H
+    LD HL,E67AH                           ; SYS ROM routine LE67A, entered through the FFF0H gateway
+    JP EXT_GATEWAY
     DEC HL
     DEC L
     INC H
@@ -5765,14 +5252,10 @@ LFF30:
     INC L
     LD E,(HL)
     LD L,39H
-    DB FDH, 2CH                                                                     ; |.,|
-    DB FDH, C9H                                                                     ; |..|
+    DB FDH, 2CH, FDH, C9H                                                             ; |.,..|
     CALL M,FD22H
     DEC B
-    DB FDH, 05H                                                                     ; |..|
-    DB FDH, 00H                                                                     ; |..|
-    DB FDH, 00H                                                                     ; |..|
-    DB FDH, FAH, FCH, ECH                                                           ; |....|
+    DB FDH, 05H, FDH, 00H, FDH, 00H, FDH, FAH, FCH, ECH                               ; |..........|
     CALL M,FCE9H
 
 LFF60:
@@ -5781,53 +5264,55 @@ LFF60:
 LFF62:
     BIT 1,C
     LD A,24H
-    CALL NZ,FF8DH
+    CALL NZ,LFF8D
     BIT 0,C
     LD A,2DH
-    JR NZ,FF8DH
+    JR NZ,LFF8D
     LD A,C
     AND F8H
     ADD A,A
     LD A,20H
-    JR C,FF8DH
+    JR C,LFF8D
     RET P
     LD A,2BH
-    JR FF8DH
+    JR LFF8D
 
 LFF7C:
     DEC A
     RET M
     PUSH AF
     LD A,20H
-    CALL FF8DH
+    CALL LFF8D
     POP AF
-    JR FF7CH
+    JR LFF7C
 
 LFF87:
     PUSH HL
-    LD HL,F7CEH
-    JR FF91H
+    LD HL,F7CEH                           ; SYS ROM routine LF7CE, entered through the FFF0H gateway
+    JR LFF91
 
 LFF8D:
     PUSH HL
-    LD HL,FEB3H
+    LD HL,FEB3H                           ; SYS ROM routine LFEB3, entered through the FFF0H gateway
 
 LFF91:
-    CALL FFF0H
+    CALL EXT_GATEWAY
     POP HL
     RET
 
 LFF96:
-    LD HL,FA14H
-    JP FFF0H
+    LD HL,FA14H                           ; SYS ROM routine LFA14, entered through the FFF0H gateway
+    JP EXT_GATEWAY
+
+LFF9C:
     LD HL,(172EH)
     LD A,(HL)
     LD DE,0000H
     CP 3CH
-    JR Z,FFADH
+    JR Z,LFFAD
     INC E
     CP 3EH
-    JR NZ,FFB2H
+    JR NZ,LFFB2
     INC E
 
 LFFAD:
@@ -5838,19 +5323,19 @@ LFFAD:
 LFFB2:
     LD A,(HL)
     CP 23H
-    JR Z,FFADH
+    JR Z,LFFAD
     CP 25H
-    JR Z,FFADH
+    JR Z,LFFAD
     CP 2AH
-    JR Z,FFADH
+    JR Z,LFFAD
     LD A,(IY+01H)
     SUB D
     NEG
-    JP M,FD1AH
+    JP M,LFD1A
     DEC E
-    JP M,FFD2H
+    JP M,LFFD2
     LD C,A
-    JR NZ,FFD1H
+    JR NZ,LFFD1
     SRL C
 
 LFFD1:
@@ -5859,13 +5344,13 @@ LFFD1:
 LFFD2:
     PUSH AF
     LD A,C
-    CALL P,FF7CH
+    CALL P,LFF7C
     POP AF
-    LD HL,E64FH
-    JP FFF0H
+    LD HL,E64FH                           ; SYS ROM routine LE64F, entered through the FFF0H gateway
+    JP EXT_GATEWAY
 
 ; "(c)1985ISL" text.
-    JR Z,0023H
+    JR Z,USRTAB+2
     ADD HL,HL
     LD SP,3839H
     DEC (HL)
@@ -5875,7 +5360,7 @@ LFFD2:
 
 LFFE8:
     LD A,04H
-    JP F29CH
+    JP SERIAL_INIT
     NOP
     NOP
     NOP
@@ -5932,7 +5417,7 @@ EXT_GATEWAY:
 EXT_PAGE_CALL_GATEWAY:
     PUSH AF
     LD A,70H
-    LD (0003H),A
+    LD (P_SAVE),A
     OUT (02H),A
     POP AF
 
@@ -5944,7 +5429,6 @@ LFFF9:
     LD A,E
     AND 1FH
     DEC DE
-    DB FEH                                                                          ; |.|
+    DB FEH                                                                            ; |.|
 
-LFFFF:
     INC B

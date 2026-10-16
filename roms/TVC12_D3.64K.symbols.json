@@ -558,6 +558,25 @@
     },
     {
       "bank": "sys",
+      "address": "0xEAE2",
+      "offset": "0x2AE2",
+      "name": "FN_REC_ABS",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xEAE9",
       "offset": "0x2AE9",
       "name": "BASIC_ABS",
@@ -582,6 +601,63 @@
         "ROM"
       ],
       "confidence": "high"
+    },
+    {
+      "bank": "sys",
+      "address": "0xEB80",
+      "offset": "0x2B80",
+      "name": "FN_REC_CHR_STR",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xEB88",
+      "offset": "0x2B88",
+      "name": "BASIC_CHR_STR",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xEB9D",
+      "offset": "0x2B9D",
+      "name": "FN_REC_COS",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
     },
     {
       "bank": "sys",
@@ -612,6 +688,101 @@
     },
     {
       "bank": "sys",
+      "address": "0xEBAE",
+      "offset": "0x2BAE",
+      "name": "FN_REC_EXP",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xEBB5",
+      "offset": "0x2BB5",
+      "name": "BASIC_EXP",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xEC44",
+      "offset": "0x2C44",
+      "name": "FN_REC_FREE",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xEC4C",
+      "offset": "0x2C4C",
+      "name": "BASIC_FREE",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xEC6B",
+      "offset": "0x2C6B",
+      "name": "FN_REC_IN",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xEC71",
       "offset": "0x2C71",
       "name": "BASIC_IN",
@@ -635,6 +806,177 @@
         "ROM"
       ],
       "confidence": "high"
+    },
+    {
+      "bank": "sys",
+      "address": "0xECA5",
+      "offset": "0x2CA5",
+      "name": "FN_REC_INT",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xECAC",
+      "offset": "0x2CAC",
+      "name": "BASIC_INT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xECE5",
+      "offset": "0x2CE5",
+      "name": "FN_REC_IO",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xECEB",
+      "offset": "0x2CEB",
+      "name": "BASIC_IO",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xED00",
+      "offset": "0x2D00",
+      "name": "FN_REC_LEN",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xED07",
+      "offset": "0x2D07",
+      "name": "BASIC_LEN",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xED17",
+      "offset": "0x2D17",
+      "name": "FN_REC_LOG",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xED1E",
+      "offset": "0x2D1E",
+      "name": "BASIC_LOG",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xEDBE",
+      "offset": "0x2DBE",
+      "name": "FN_REC_PEEK",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
     },
     {
       "bank": "sys",
@@ -665,6 +1007,139 @@
     },
     {
       "bank": "sys",
+      "address": "0xEDDD",
+      "offset": "0x2DDD",
+      "name": "FN_REC_PI",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xEDE3",
+      "offset": "0x2DE3",
+      "name": "BASIC_PI",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xEDE7",
+      "offset": "0x2DE7",
+      "name": "FN_REC_RND",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xEDEE",
+      "offset": "0x2DEE",
+      "name": "BASIC_RND",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xEE34",
+      "offset": "0x2E34",
+      "name": "FN_REC_SGN",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xEE3B",
+      "offset": "0x2E3B",
+      "name": "BASIC_SGN",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xEE54",
+      "offset": "0x2E54",
+      "name": "FN_REC_SIN",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xEE5B",
       "offset": "0x2E5B",
       "name": "BASIC_SIN",
@@ -689,6 +1164,25 @@
         "ROM"
       ],
       "confidence": "high"
+    },
+    {
+      "bank": "sys",
+      "address": "0xEEC0",
+      "offset": "0x2EC0",
+      "name": "FN_REC_SQR",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
     },
     {
       "bank": "sys",
@@ -719,6 +1213,139 @@
     },
     {
       "bank": "sys",
+      "address": "0xEF8C",
+      "offset": "0x2F8C",
+      "name": "FN_REC_STR_STR",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xEF94",
+      "offset": "0x2F94",
+      "name": "BASIC_STR_STR",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xEFA0",
+      "offset": "0x2FA0",
+      "name": "FN_REC_STRING_STR",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xEFAB",
+      "offset": "0x2FAB",
+      "name": "BASIC_STRING_STR",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xEFF1",
+      "offset": "0x2FF1",
+      "name": "FN_REC_TAN",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xEFF8",
+      "offset": "0x2FF8",
+      "name": "BASIC_TAN",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF00C",
+      "offset": "0x300C",
+      "name": "FN_REC_USR",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xF013",
       "offset": "0x3013",
       "name": "BASIC_USR",
@@ -743,6 +1370,120 @@
         "ROM"
       ],
       "confidence": "high"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF036",
+      "offset": "0x3036",
+      "name": "FN_REC_VAL",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF03D",
+      "offset": "0x303D",
+      "name": "BASIC_VAL",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF069",
+      "offset": "0x3069",
+      "name": "FN_REC_VARPTR",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF073",
+      "offset": "0x3073",
+      "name": "BASIC_VARPTR",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF094",
+      "offset": "0x3094",
+      "name": "FN_REC_VERNUM",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF09E",
+      "offset": "0x309E",
+      "name": "BASIC_VERNUM",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
     },
     {
       "bank": "sys",

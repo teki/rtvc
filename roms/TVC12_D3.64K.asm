@@ -8,7 +8,6 @@
 ; Instructions use CPU-visible addresses at ORG; the ROM bank is recorded separately.
 ; Physical bank: SYS offset 2000H
 ; CPU-visible aliases: E000H, 2000H
-; Data ranges: E6BDH-E6C6H, E7E4H-E811H, E87BH-E895H, FB5BH-FD73H, FD74H-FF46H, FF47H-FF4EH, FFB1H-FFE9H, FFEDH-FFFFH
 ; Auto labels: branch and call targets are emitted as Lxxxx.
 ; This is a standalone listing; all required technical explanations are embedded here.
 ; Technical descriptions are based on the Kaszanyiczki and Ludanyi TVC ROM references.
@@ -361,17 +360,71 @@
 ; listing prose. Keep byte-level labels in the address-local annotation fragments and use this
 ; sectioned file for the cross-routine contracts that remain useful outside one disassembly page.
 
+; =============================================================================
+; SYMBOLS USED BY THIS LISTING
+; =============================================================================
+; U0 RAM cells and system variables referenced below. Names follow the workspace notes
+; above; addresses whose meaning is not documented stay numeric in the code.
+P_SAVE             EQU 0003H              ; saved port-02 page map (written by every page switch)
+RST18_OP_JP        EQU 0015H              ; JP opcode patched by the RST 18H dispatcher
+RST30_A_ENTRY      EQU 001BH              ; RAM stub: RST 30H with the function code taken from A
+RST30_A_FN         EQU 001FH              ; function byte patched into the RST30_A_ENTRY stub
+USRTAB             EQU 0021H              ; seven USR/EXT subroutine addresses
+PORT06_MIRROR      EQU 0B13H              ; copy of port 06: STROBE, volume, colour mode
+TONE_REPLACE       EQU 0B15H              ; FFH: a new tone replaces the current one
+STOP_FLAG          EQU 0B16H              ; FFH after CTRL+ESC (cooperative break)
+PAINT_STACK_MIN    EQU 0B17H              ; lowest stack address PAINT may use
+TIME               EQU 0B1DH              ; software clock incremented by the interrupt
+INK                EQU 0B4DH              ; logical ink colour
+PAPER              EQU 0B4EH              ; logical paper colour
+BORDER             EQU 0B4FH              ; border colour (I.G.R.B in bits 7,5,3,1)
+CAS_BUFFER         EQU 0B6BH              ; cassette mode: 00H unbuffered, FFH buffered
+CAS_OUT_NAME       EQU 0D15H              ; output file name
+VALUE_TYPE         EQU 1701H              ; pending value type: 01H string, 03H number
+COND_FLAG          EQU 1702H              ; conditional-execution flag
+RST18_ARG          EQU 1704H              ; A as passed to the current RST 18H operation
+FUNC_CLASS         EQU 1705H              ; function class
+AUTORUN            EQU 1707H              ; FFH: autorun pending
+SYMBOL_TYPE        EQU 1708H              ; symbol type
+RND_STATE          EQU 1709H              ; RND generator state
+CUR_LINE           EQU 170CH              ; current program line pointer
+NEXT_LINE          EQU 170EH              ; next program line pointer
+NEXT_STMT          EQU 1710H              ; next statement pointer
+DATA_LINE          EQU 1712H              ; DATA line pointer
+DATA_PTR           EQU 1714H              ; DATA byte pointer
+INPUT_PTR          EQU 1716H              ; INPUT data pointer
+RST18_NEXT         EQU 1718H              ; next RST 18H bytecode byte
+BASIC_SP           EQU 171AH              ; BASIC stack pointer snapshot
+VLOMEM             EQU 1720H              ; low-memory/base boundary
+TEXT_START         EQU 1722H              ; start of the BASIC program
+SYMBOL_END         EQU 1724H              ; end of the chained symbol area
+SYMBOL_TOP         EQU 1726H              ; next free symbol byte
+SOUND_PITCH        EQU 172AH              ; current sound PITCH
+INPUT_BUFFER       EQU 1831H              ; INPUT buffer
+FP_X               EQU 19C0H              ; floating-point work register X
+FP_Y               EQU 19C7H              ; floating-point work register Y
+CAS_HEADER         EQU 19DFH              ; cassette header workspace
+BASIC_RAM_START    EQU 19EFH              ; first byte after the ROM workspace
+
+; SYS ROM routines and tables defined in TVC12_D4.64K.asm; both halves of the SYS bank are
+; visible together whenever SYS is mapped.
+NUMBERED_FP_CONSTANTS          EQU C111H
+BASIC_REM_ENTRY                EQU DBBBH
+BASIC_FREE_SPACE               EQU DCC9H
+BASIC_WORKSPACE_INIT           EQU DCFCH
+BASIC_PRINT_LINE               EQU DD2DH
+BASIC_KEYWORD_TABLE            EQU DE6DH
+
 ORG E000H, SYS0, 2000H
 
-    OR C
-    DB DBH                                                                          ; |.|
+    DB B1H, DBH                           ; operand bytes of the instruction at DFFFH, which starts in the previous ROM chip
 
 ; DEF routine.
     AND 81H
     CP 01H
-    JP NZ,FD5AH
+    JP NZ,LFD5A
     BIT 2,(IX+00H)
-    JR Z,E02EH
+    JR Z,LE02E
     EXX
     PUSH HL
     PUSH DE
@@ -379,11 +432,11 @@ ORG E000H, SYS0, 2000H
     POP HL
     DEC HL
     BIT 7,(HL)
-    JR Z,E04EH
+    JR Z,LE04E
     RES 7,(HL)
     SET 2,(HL)
     INC HL
-    LD DE,(170CH)
+    LD DE,(CUR_LINE)
     LD (HL),E
     INC HL
     LD (HL),D
@@ -393,7 +446,7 @@ ORG E000H, SYS0, 2000H
     INC HL
     LD (HL),D
     INC HL
-    LD (1726H),HL
+    LD (SYMBOL_TOP),HL
 
 LE02E:
     EXX
@@ -401,7 +454,7 @@ LE02E:
 
 LE031:
     DEC C
-    DB 3EH                                                                          ; |>|
+    DB 3EH                                ; = LD A,0CH when run from here, hiding the entry below
 
 LE033:
     INC C
@@ -409,171 +462,170 @@ LE033:
 LE034:
     LD A,(HL)
     CP FEH
-    JP NC,E04BH
+    JP NC,LE04B
     INC HL
     CP 96H
-    JR Z,E033H
+    JR Z,LE033
     CP 95H
-    JR Z,E031H
+    JR Z,LE031
     CP FDH
-    JR NZ,E034H
+    JR NZ,LE034
     INC C
     DEC C
-    JR NZ,E034H
+    JR NZ,LE034
 
 LE04B:
     JP DB81H
 
 LE04E:
     RST 08H
-    RRCA
+    DB 0FH                                ; error code 0FH: Variable declared twice
 
 LE050:
-    CALL FC43H
+    CALL LFC43
 
 ; DIM routine.
     OR A
-    JP M,FD5AH
+    JP M,LFD5A
     BIT 0,A
-    JP Z,FD5AH
+    JP Z,LFD5A
     EXX
     LD A,C
     AND 88H
-    JR Z,E04EH
+    JR Z,LE04E
     AND 08H
-    CALL NZ,F40BH
+    CALL NZ,SYMBOL_CREATE_VALUE
     DEC DE
     LD A,(DE)
     XOR 81H
-    LD (1701H),A
+    LD (VALUE_TYPE),A
     LD (DE),A
     INC DE
     LD A,FFH
     LD (DE),A
     PUSH DE
     INC DE
-    LD (1726H),DE
+    LD (SYMBOL_TOP),DE
     EXX
-    CALL FC43H
+    CALL LFC43
     BIT 1,(IX+01H)
-    JR NZ,E0A3H
+    JR NZ,LE0A3
     CP A8H
-    JR NZ,E0A3H
-    CALL FB16H
+    JR NZ,LE0A3
+    CALL STACK_NUMBER_TO_BYTE
     INC A
-    JR Z,E0E4H
+    JR Z,LE0E4
     DEC A
     LD C,A
     POP HL
-    LD (1726H),HL
+    LD (SYMBOL_TOP),HL
     DEC HL
     RES 0,(HL)
-    CALL F3C1H
+    CALL LF3C1
 
 LE099:
     EXX
     LD A,B
     EXX
     CP A4H
-    JR Z,E050H
+    JR Z,LE050
     JP DBB4H
 
 LE0A3:
     LD A,96H
-    CALL FD54H
+    CALL LFD54
     SCF
 
 LE0A9:
-    CALL NC,FC43H
-    CALL FAC4H
-    JP M,FB14H
+    CALL NC,LFC43
+    CALL LFAC4
+    JP M,LFB14
     INC HL
     EX DE,HL
-    LD HL,(1726H)
+    LD HL,(SYMBOL_TOP)
     LD (HL),E
     INC HL
     LD (HL),D
     INC HL
-    LD (1726H),HL
+    LD (SYMBOL_TOP),HL
     EX DE,HL
-    CALL FA2BH
+    CALL INTEGER_TO_STACK
     POP HL
     INC (HL)
     PUSH HL
-    CALL NZ,F512H
+    CALL NZ,FP_MUL
     EXX
     LD A,B
     EXX
     CP A4H
-    JR Z,E0A9H
+    JR Z,LE0A9
     LD A,95H
-    CALL FD54H
+    CALL LFD54
     POP HL
     INC (HL)
     BIT 1,(IX+01H)
-    JR NZ,E0E9H
+    JR NZ,LE0E9
     CP A8H
     LD A,12H
-    CALL Z,FB16H
+    CALL Z,STACK_NUMBER_TO_BYTE
     INC A
 
 LE0E4:
-    JP Z,FB14H
+    JP Z,LFB14
     DEC A
     LD C,A
 
 LE0E9:
     PUSH BC
     RST 18H
-    INC C
-    ADD A,L
-    LD H,CDH
-    SUB E
-    OR F2H
-    OR C
-    CALL M,C3CDH
-    DB FAH, C1H                                                                     ; |..|
+    DB 0CH, 85H, 26H                      ; RST 18H: op0C, CONST 38
+    CALL FP_COMPARE
+    JP P,LFCB1
+    CALL STACK_NUMBER_TO_INTEGER
+    POP BC
 
 LE0F8:
     PUSH HL
-    CALL F3BBH
+    CALL INIT_STRING_OR_ARRAY_SYMBOL
     POP HL
     DEC HL
     LD A,L
     OR H
-    JR NZ,E0F8H
-    JR E099H
+    JR NZ,LE0F8
+    JR LE099
 
 ; ELSE routine.
     BIT 0,(IX+02H)
-    JP Z,FD5AH
-    JP DBBBH
+    JP Z,LFD5A
+    JP BASIC_REM_ENTRY
 
 ; END routine.
+
+LE10E:
     LD HL,0000H
-    LD (170EH),HL
+    LD (NEXT_LINE),HL
     JP DADAH
 
 ; EXT routine.
-    CALL FB1BH
+    CALL LFB1B
     CP 07H
-    JP NC,FB14H
+    JP NC,LFB14
     ADD A,A
     PUSH AF
     EXX
     LD A,B
     EXX
     CP A4H
-    JR NZ,E13EH
-    CALL FABAH
+    JR NZ,LE13E
+    CALL LFABA
     EX DE,HL
     CP A4H
-    JR NZ,E13EH
-    CALL FABAH
+    JR NZ,LE13E
+    CALL LFABA
     CP A4H
-    JR NZ,E13EH
+    JR NZ,LE13E
     PUSH HL
-    CALL FABAH
+    CALL LFABA
     LD C,L
     LD B,H
     POP HL
@@ -583,7 +635,7 @@ LE13E:
     PUSH DE
     LD E,H
     LD D,00H
-    LD HL,0021H
+    LD HL,USRTAB
     ADD HL,DE
     LD E,(HL)
     INC HL
@@ -591,12 +643,12 @@ LE13E:
     LD A,D
     OR E
     JP Z,DBB1H
-    LD (0016H),DE
+    LD (RST18_OP_JP+1),DE
     POP DE
     LD HL,DBB1H
     EX (SP),HL
     EX DE,HL
-    JP 0015H
+    JP RST18_OP_JP
 
 ; FOR routine.
 
@@ -605,39 +657,39 @@ LE13E:
 ; Effects: Pushes a FOR frame on the BASIC stack.
 BASIC_FOR:
     CP 03H
-    JR Z,E167H
+    JR Z,LE167
     AND 82H
-    JP NZ,FD5AH
+    JP NZ,LFD5A
     RST 08H
-    DB 0EH                                                                          ; |.|
+    DB 0EH                                ; error code 0EH: Type mismatch
 
 LE167:
-    CALL F42EH
+    CALL STACK_TO_NUMERIC_REGS
     LD A,9AH
-    CALL FD54H
-    CALL FC8EH
+    CALL LFD54
+    CALL LFC8E
     PUSH HL
-    CALL F0A7H
+    CALL EVAL_NUMERIC_EXPRESSION
     POP HL
     PUSH HL
-    CALL FB28H
+    CALL LFB28
     LD A,B4H
-    CALL FD54H
-    CALL F0A7H
+    CALL LFD54
+    CALL EVAL_NUMERIC_EXPRESSION
     LD DE,FFEEH
     ADD IY,DE
     CP B8H
-    JR Z,E195H
+    JR Z,LE195
     EX AF,AF'
     LD HL,0001H
-    CALL FA2BH
+    CALL INTEGER_TO_STACK
     EX AF,AF'
     SCF
 
 LE195:
-    CALL NC,F0A4H
+    CALL NC,LF0A4
     CP FDH
-    JP C,FD5AH
+    JP C,LFD5A
     PUSH IY
     POP HL
     POP DE
@@ -645,7 +697,7 @@ LE195:
     LD (HL),D
     DEC HL
     LD (HL),E
-    LD DE,(170CH)
+    LD DE,(CUR_LINE)
     DEC HL
     LD (HL),D
     DEC HL
@@ -673,8 +725,8 @@ LE1C2:
     DEC HL
     LD A,(HL)
     CP ECH
-    JR NZ,E1C2H
-    JP FFA4H
+    JR NZ,LE1C2
+    JP LFFA4
 
 ; INPUT routine.
 
@@ -690,15 +742,15 @@ BASIC_INPUT:
     SCF
 
 LE1D6:
-    CALL NC,FC43H
+    CALL NC,LFC43
     CP BAH
-    JR NZ,E1FCH
+    JR NZ,LE1FC
 
 ; INPUT PROMPT routine.
-    CALL FC43H
-    CALL F294H
+    CALL LFC43
+    CALL EVAL_STRING_EXPRESSION
     PUSH IY
-    CALL FA21H
+    CALL DISCARD_STRING
     POP HL
     INC HL
     EXX
@@ -710,35 +762,35 @@ LE1ED:
     OR A
     EX AF,AF'
     CP A4H
-    JR Z,E1D6H
+    JR Z,LE1D6
     CP FDH
-    JR Z,E204H
-    JR NC,E207H
+    JR Z,LE204
+    JR NC,LE207
 
 LE1FA:
     RST 08H
-    DB 01H                                                                          ; |.|
+    DB 01H                                ; error code 01H: Not understood
 
 LE1FC:
-    CALL FBFBH
-    JR Z,E1EDH
+    CALL LFBFB
+    JR Z,LE1ED
     EX AF,AF'
-    JR NC,E1FAH
+    JR NC,LE1FA
 
 LE204:
-    CALL NC,FC43H
+    CALL NC,LFC43
 
 LE207:
-    LD A,(1705H)
+    LD A,(FUNC_CLASS)
     CP 20H
-    CALL Z,FE7FH
+    CALL Z,PRINT_LENGTH_TEXT
     RST 30H
-    INC H
-    CALL FF4FH
-    JR NZ,E1BEH
+    DB 24H                                ; RST 30H fn 24H: editor 4 -> CU_FIX
+    CALL BASIC_LINE_INPUT
+    JR NZ,LE1BE
     INC HL
-    LD (1716H),HL
-    DB F6H                                                                          ; |.|
+    LD (INPUT_PTR),HL
+    DB F6H                                ; = OR 37H when run from here, hiding the entry below
 
 ; READ routine.
     SCF
@@ -749,36 +801,36 @@ LE207:
     SCF
 
 LE221:
-    CALL NC,FC43H
+    CALL NC,LFC43
     CP FDH
     JP NC,DBB4H
     AND 81H
     CP 01H
-    JP NZ,FD5AH
+    JP NZ,LFD5A
     EX AF,AF'
-    JR NC,E27CH
-    LD HL,(1714H)
+    JR NC,LE27C
+    LD HL,(DATA_PTR)
     LD A,L
     OR H
-    JR Z,E268H
+    JR Z,LE268
 
 LE23A:
     LD A,(HL)
     INC HL
     CP 20H
-    JR Z,E23AH
+    JR Z,LE23A
     DEC HL
     CP 21H
-    JR Z,E25EH
+    JR Z,LE25E
     CP FDH
-    JR C,E27CH
+    JR C,LE27C
 
 LE249:
     EXX
     PUSH HL
     PUSH DE
     PUSH BC
-    CALL FCC5H
+    CALL LFCC5
     EXX
     POP BC
     POP DE
@@ -788,22 +840,22 @@ LE249:
 
 LE256:
     CP FBH
-    JR Z,E23AH
+    JR Z,LE23A
     CP FEH
-    JR C,E249H
+    JR C,LE249
 
 LE25E:
-    LD HL,(1712H)
+    LD HL,(DATA_LINE)
     LD E,(HL)
     LD D,00H
     ADD HL,DE
-    LD (1712H),HL
+    LD (DATA_LINE),HL
 
 LE268:
-    LD HL,(1712H)
+    LD HL,(DATA_LINE)
     LD A,(HL)
     OR A
-    JR Z,E27AH
+    JR Z,LE27A
     INC HL
     INC HL
     INC HL
@@ -812,77 +864,76 @@ LE272:
     LD A,(HL)
     INC HL
     CP 20H
-    JR Z,E272H
-    JR E256H
+    JR Z,LE272
+    JR LE256
 
 LE27A:
     RST 08H
-    RLCA
+    DB 07H                                ; error code 07H: No DATA
 
 LE27C:
     EX AF,AF'
     PUSH HL
     EXX
     PUSH BC
-    CALL F42FH
+    CALL STACK_OPERAND_WALK
     POP BC
     BIT 1,C
     EX (SP),HL
-    JR NZ,E294H
-    CALL F8A1H
+    JR NZ,LE294
+    CALL STRING_TO_STACK
     EX (SP),HL
-    CALL FB41H
-    JR E2B0H
+    CALL LFB41
+    JR LE2B0
 
 LE292:
     RST 08H
-    INC C
+    DB 0CH                                ; error code 0CH: Cannot READ
 
 LE294:
-    CALL FC8EH
-    CALL F914H
+    CALL LFC8E
+    CALL ASCII_TO_FP
     EX AF,AF'
-    JR NC,E2A6H
+    JR NC,LE2A6
     EX AF,AF'
-    JR NC,E292H
+    JR NC,LE292
     RLA
-    JP C,F912H
-    JR E2ACH
+    JP C,LF912
+    JR LE2AC
 
 LE2A6:
     EX AF,AF'
     PUSH HL
-    CALL EC7FH
+    CALL LEC7F
     POP HL
 
 LE2AC:
     EX (SP),HL
-    CALL FB28H
+    CALL LFB28
 
 LE2B0:
     POP HL
     EX AF,AF'
-    JR NC,E2CEH
+    JR NC,LE2CE
     EX AF,AF'
 
 LE2B5:
     LD A,(HL)
     INC HL
     CP 20H
-    JR Z,E2B5H
+    JR Z,LE2B5
     CP 2CH
-    JR Z,E2C9H
+    JR Z,LE2C9
     DEC HL
     CP 21H
-    JR Z,E2C9H
+    JR Z,LE2C9
     BIT 7,(HL)
-    JP Z,E292H
+    JP Z,LE292
 
 LE2C9:
-    LD (1714H),HL
+    LD (DATA_PTR),HL
 
-LE2CC:
-    JR E2DCH
+    JR LE2DC
 
 LE2CE:
     EX AF,AF'
@@ -891,13 +942,13 @@ LE2CF:
     LD A,(HL)
     INC HL
     CP 2CH
-    JR Z,E2D9H
+    JR Z,LE2D9
     INC A
-    JR NZ,E2CFH
+    JR NZ,LE2CF
     DEC HL
 
 LE2D9:
-    LD (1716H),HL
+    LD (INPUT_PTR),HL
 
 LE2DC:
     EXX
@@ -906,10 +957,10 @@ LE2DC:
     CP FDH
     JP NC,DBB4H
     CP A4H
-    JP Z,E221H
+    JP Z,LE221
     RST 08H
-    LD BC,3F02H
-    DB 20H                                                                          ; | |
+    DB 01H                                ; error code 01H: Not understood
+    DB 02H, 3FH, 20H                                                                  ; |.? |
 
 ; IF routine.
 
@@ -918,21 +969,21 @@ LE2DC:
 ; Effects: Changes interpreter control flow.
 BASIC_IF:
     SET 0,(IX+02H)
-    CALL F0A7H
+    CALL EVAL_NUMERIC_EXPRESSION
     LD A,(IY+06H)
     OR A
     EX AF,AF'
-    CALL FA1BH
+    CALL DISCARD_NUMBER
     EXX
     PUSH HL
     EXX
     POP HL
     LD A,B5H
-    CALL FD54H
+    CALL LFD54
     EX AF,AF'
-    JR Z,E31CH
+    JR Z,LE31C
     EX AF,AF'
-    JR E314H
+    JR LE314
 
 LE30C:
     INC HL
@@ -940,80 +991,80 @@ LE30C:
     EXX
     POP HL
     EXX
-    CALL FC43H
+    CALL LFC43
 
 LE314:
     CP 02H
-    JP Z,E3B2H
+    JP Z,BASIC_GOTO
     JP DB81H
 
 LE31C:
-    LD IY,(171AH)
+    LD IY,(BASIC_SP)
 
 LE320:
-    CALL FCC5H
+    CALL LFCC5
     CP F4H
-    JR Z,E30CH
+    JR Z,LE30C
     CP FEH
-    JP NC,DBBBH
+    JP NC,BASIC_REM_ENTRY
     PUSH HL
     EXX
     POP HL
     EXX
-    JR E320H
+    JR LE320
 
 ; ON routine.
     SET 0,(IX+02H)
-    CALL FB1BH
+    CALL LFB1B
     LD B,A
     EXX
     LD A,B
     EXX
     CP EFH
-    JR Z,E3AFH
+    JR Z,LE3AF
     CP F0H
-    JR NZ,E369H
-    CALL E357H
-    CALL FBDEH
-    LD IY,(171AH)
+    JR NZ,LE369
+    CALL LE357
+    CALL LFBDE
+    LD IY,(BASIC_SP)
     PUSH HL
-    CALL FCD1H
+    CALL LFCD1
     EX DE,HL
     POP HL
-    JR E38EH
+    JR LE38E
 
 LE357:
-    CALL FC43H
+    CALL LFC43
     DEC B
     RET Z
     EXX
     PUSH HL
     EXX
     POP HL
-    CALL FC43H
-    JR NC,E36BH
+    CALL LFC43
+    JR NC,LE36B
     CP A4H
-    JR Z,E357H
+    JR Z,LE357
 
 LE369:
     RST 08H
-    DB 01H                                                                          ; |.|
+    DB 01H                                ; error code 01H: Not understood
 
 LE36B:
     POP DE
-    LD IY,(171AH)
+    LD IY,(BASIC_SP)
 
 LE370:
     EXX
-    CALL FCC5H
+    CALL LFCC5
     CP F4H
-    JR Z,E30CH
+    JR Z,LE30C
     CP FEH
-    JP NC,FB14H
+    JP NC,LFB14
     PUSH HL
     EXX
     POP HL
-    JR E370H
+    JR LE370
 
 ; GOSUB routine.
 
@@ -1021,9 +1072,9 @@ LE370:
 ; Entry: Target line from tokenized statement
 ; Effects: Pushes a return frame and branches to a BASIC line.
 BASIC_GOSUB:
-    CALL FBDEH
-    CALL FC43H
-    JR C,E369H
+    CALL LFBDE
+    CALL LFC43
+    JR C,LE369
     EXX
     PUSH HL
     EXX
@@ -1031,13 +1082,13 @@ BASIC_GOSUB:
 
 LE38E:
     PUSH HL
-    CALL FC8EH
+    CALL LFC8E
     PUSH IY
     POP HL
     DEC HL
-    LD A,(1702H)
+    LD A,(COND_FLAG)
     LD (HL),A
-    LD BC,(170CH)
+    LD BC,(CUR_LINE)
     DEC HL
     LD (HL),B
     DEC HL
@@ -1051,10 +1102,10 @@ LE38E:
     PUSH HL
     POP IY
     POP HL
-    JR E3B9H
+    JR LE3B9
 
 LE3AF:
-    CALL E357H
+    CALL LE357
 
 ; GOTO routine.
 
@@ -1062,14 +1113,16 @@ LE3AF:
 ; Entry: Target line from tokenized statement
 ; Effects: Branches to a BASIC line.
 BASIC_GOTO:
-    CALL FBDEH
-    LD IY,(171AH)
+    CALL LFBDE
+    LD IY,(BASIC_SP)
 
 LE3B9:
     JP DE29H
+
+LE3BC:
     DEC HL
     EXX
-    CALL FC43H
+    CALL LFC43
 
 ; LET routine.
 
@@ -1079,37 +1132,37 @@ LE3B9:
 BASIC_LET:
     AND FDH
     CP 01H
-    JP NZ,FD5AH
+    JP NZ,LFD5A
     EXX
     BIT 2,C
-    JP NZ,FD5AH
+    JP NZ,LFD5A
     BIT 3,C
-    CALL NZ,F40BH
+    CALL NZ,SYMBOL_CREATE_VALUE
     LD (IX+01H),C
     EXX
-    CALL F42EH
+    CALL STACK_TO_NUMERIC_REGS
     EXX
     LD A,B
     EXX
     PUSH HL
-    CALL E3E8H
+    CALL LE3E8
     POP HL
-    CALL FB3BH
+    CALL LFB3B
     JP DBB1H
 
 LE3E8:
     SUB 96H
-    JR NZ,E44AH
+    JR NZ,LE44A
     BIT 1,C
-    JP NZ,FD5AH
+    JP NZ,LFD5A
     INC HL
     PUSH HL
     LD C,(HL)
     LD B,A
-    CALL FD27H
+    CALL LFD27
     LD A,D
     CP E
-    JR NC,E3FEH
+    JR NC,LE3FE
     LD A,E
     DEC A
 
@@ -1122,8 +1175,8 @@ LE3FE:
     PUSH HL
     PUSH DE
     PUSH BC
-    JR C,E417H
-    JR Z,E417H
+    JR C,LE417
+    JR Z,LE417
     ADD HL,BC
     LD C,A
     PUSH IY
@@ -1135,7 +1188,7 @@ LE3FE:
     POP IY
 
 LE417:
-    CALL E44AH
+    CALL LE44A
     POP BC
     POP DE
     POP HL
@@ -1144,17 +1197,17 @@ LE417:
     POP DE
     INC DE
     CP 02H
-    JR C,E432H
+    JR C,LE432
     DEC A
     CP C
-    JR NC,E42BH
+    JR NC,LE42B
     LD C,A
 
 LE42B:
     ADD HL,BC
     INC C
     DEC C
-    JR Z,E432H
+    JR Z,LE432
     LDDR
 
 LE432:
@@ -1164,9 +1217,9 @@ LE432:
     SBC HL,DE
     INC H
     DEC H
-    JP NZ,F912H
+    JP NZ,LF912
     INC L
-    JP Z,F912H
+    JP Z,LF912
     DEC L
     EX DE,HL
     LD (HL),E
@@ -1178,37 +1231,37 @@ LE432:
 
 LE44A:
     LD A,9AH
-    CALL FD54H
-    JP F28DH
+    CALL LFD54
+    JP NUMERIC_STRING_GATE
 
 ; LOMEM routine.
-    CALL FAC4H
-    LD DE,(1720H)
+    CALL LFAC4
+    LD DE,(VLOMEM)
     OR A
     SBC HL,DE
     ADD HL,DE
-    JP C,FB14H
-    LD DE,(1722H)
+    JP C,LFB14
+    LD DE,(TEXT_START)
     SBC HL,DE
     JP Z,DBB4H
     PUSH HL
-    CALL C,FC86H
+    CALL C,LFC86
     LD C,L
     LD B,H
     EX DE,HL
-    JR C,E485H
+    JR C,LE485
     POP DE
     PUSH DE
     PUSH HL
     INC D
-    JP Z,FB14H
-    CALL FC99H
+    JP Z,LFB14
+    CALL LFC99
     POP HL
     PUSH HL
-    CALL DCC9H
+    CALL BASIC_FREE_SPACE
     POP HL
     ADD HL,BC
-    JR E48DH
+    JR LE48D
 
 LE485:
     OR A
@@ -1218,13 +1271,13 @@ LE485:
     POP HL
 
 LE48D:
-    LD (1722H),HL
+    LD (TEXT_START),HL
     POP BC
     BIT 2,(IX+00H)
-    JR Z,E4A3H
-    LD HL,(170CH)
+    JR Z,LE4A3
+    LD HL,(CUR_LINE)
     ADD HL,BC
-    LD (170CH),HL
+    LD (CUR_LINE),HL
     PUSH BC
     EXX
     POP DE
@@ -1232,12 +1285,12 @@ LE48D:
     EXX
 
 LE4A3:
-    CALL DCFCH
+    CALL BASIC_WORKSPACE_INIT
     JP DBB1H
 
 LE4A9:
     RST 08H
-    EX AF,AF'
+    DB 08H                                ; error code 08H: No FOR
 
 LE4AB:
     EXX
@@ -1245,7 +1298,7 @@ LE4AB:
     EXX
     CP A4H
     JP NZ,DBB4H
-    CALL FC43H
+    CALL LFC43
 
 ; NEXT routine.
 
@@ -1254,39 +1307,39 @@ LE4AB:
 ; Effects: Updates or removes a FOR loop frame.
 BASIC_NEXT:
     SET 2,(IX+00H)
-    JR NC,E4E3H
+    JR NC,LE4E3
     CP 03H
-    JR Z,E4C7H
+    JR Z,LE4C7
     AND 82H
-    JP NZ,FD5AH
+    JP NZ,LFD5A
     RST 08H
-    DB 0EH                                                                          ; |.|
+    DB 0EH                                ; error code 0EH: Type mismatch
 
 LE4C7:
-    CALL F42EH
+    CALL STACK_TO_NUMERIC_REGS
     EX DE,HL
-    DB 21H                                                                          ; |!|
+    DB 21H                                ; = LD HL,09FDH when run from here, hiding the entry below
 
 LE4CC:
     ADD IY,BC
     LD A,2BH
-    CALL FCE7H
-    JR C,E4A9H
+    CALL LFCE7
+    JR C,LE4A9
     LD C,05H
     ADD HL,BC
     LD C,2BH
     LD A,(HL)
     CP E
-    JR NZ,E4CCH
+    JR NZ,LE4CC
     INC HL
     LD A,(HL)
     CP D
-    JR NZ,E4CCH
+    JR NZ,LE4CC
 
 LE4E3:
     LD A,2BH
-    CALL FCE7H
-    JR C,E4A9H
+    CALL LFCE7
+    JR C,LE4A9
     INC HL
     LD E,(HL)
     INC HL
@@ -1304,9 +1357,9 @@ LE4E3:
     PUSH DE
     INC HL
     EX DE,HL
-    LD DE,0022H
+    LD DE,USRTAB+1
     ADD IY,DE
-    CALL FA63H
+    CALL LFA63
     DEC DE
     LD HL,FFF7H
     ADD HL,DE
@@ -1317,29 +1370,29 @@ LE4E3:
     POP IY
     BIT 7,(IY+08H)
     PUSH AF
-    CALL F493H
+    CALL FP_ADD
     POP AF
     POP HL
     PUSH AF
     PUSH IY
-    CALL FB28H
+    CALL LFB28
     POP IY
-    CALL F693H
+    CALL FP_COMPARE
     POP BC
     POP DE
     POP HL
     LD A,C
     RLA
-    JR NC,E533H
-    JR Z,E536H
-    JP P,E4ABH
+    JR NC,LE533
+    JR Z,LE536
+    JP P,LE4AB
     XOR A
 
 LE533:
-    JP M,E4ABH
+    JP M,LE4AB
 
 LE536:
-    LD (170CH),DE
+    LD (CUR_LINE),DE
     LD DE,FFD5H
     ADD IY,DE
     JP DB81H
@@ -1350,11 +1403,11 @@ LE536:
 ; Entry: Port and byte expressions
 ; Effects: Writes a hardware I/O port.
 BASIC_OUT:
-    CALL FB1BH
+    CALL LFB1B
     LD C,A
     LD A,A4H
-    CALL FD54H
-    CALL FB1BH
+    CALL LFD54
+    CALL LFB1B
     OUT (C),A
     JP DBB1H
 
@@ -1364,13 +1417,13 @@ BASIC_OUT:
 ; Entry: Address and byte expressions
 ; Effects: Writes memory, including video-memory address translation.
 BASIC_POKE:
-    CALL FCFFH
+    CALL LFCFF
     LD A,A4H
-    CALL FD54H
-    CALL FB1BH
+    CALL LFD54
+    CALL LFB1B
     LD C,A
-    CALL FFE7H
-    JR C,E567H
+    CALL LFFE7
+    JR C,LE567
     DI
     OUT (02H),A
 
@@ -1383,7 +1436,7 @@ LE567:
 
 ; LPRINT routine.
     LD C,40H
-    DB 11H                                                                          ; |.|
+    DB 11H                                ; = LD DE,200EH when run from here, hiding the entry below
 
 ; BASIC_PRINT - Implements BASIC PRINT and OUTPUT.
 ; Entry: Tokenized print list and formatting
@@ -1397,15 +1450,15 @@ BASIC_PRINT:
     SCF
 
 LE57C:
-    CALL NC,FC43H
+    CALL NC,LFC43
     CP AFH
-    JR NZ,E5A6H
-    CALL FC43H
-    CALL F294H
-    LD HL,1831H
+    JR NZ,LE5A6
+    CALL LFC43
+    CALL EVAL_STRING_EXPRESSION
+    LD HL,INPUT_BUFFER
     LD (HL),7FH
     PUSH HL
-    CALL FB41H
+    CALL LFB41
     POP HL
     INC HL
     LD E,(HL)
@@ -1418,49 +1471,49 @@ LE57C:
     EX AF,AF'
     SET 0,A
     EX AF,AF'
-    JR E5BAH
+    JR LE5BA
 
 LE5A6:
     CP B0H
-    JR NZ,E5CCH
-    CALL FB16H
+    JR NZ,LE5CC
+    CALL STACK_NUMBER_TO_BYTE
     LD C,A
     LD A,A4H
-    CALL FD54H
-    CALL FB1BH
+    CALL LFD54
+    CALL LFB1B
     LD B,A
-    CALL E68BH
+    CALL LE68B
 
 LE5BA:
     EXX
     LD A,B
     EXX
+
+LE5BD:
     EX AF,AF'
     OR A
     EX AF,AF'
-    DB FEH                                                                          ; |.|
 
-LE5C1:
-    AND H
-    JR Z,E57CH
+    CP A4H
+    JR Z,LE57C
     CP FDH
-    JR Z,E5D6H
-    JR NC,E5D9H
+    JR Z,LE5D6
+    JR NC,LE5D9
 
 LE5CA:
     RST 08H
-    DB 01H                                                                          ; |.|
+    DB 01H                                ; error code 01H: Not understood
 
 LE5CC:
-    CALL FC00H
-    JR Z,E5BDH
+    CALL LFC00
+    JR Z,LE5BD
     EX AF,AF'
-    JR C,E5CAH
+    JR C,LE5CA
     EX AF,AF'
     SCF
 
 LE5D6:
-    CALL NC,FC43H
+    CALL NC,LFC43
 
 LE5D9:
     EX AF,AF'
@@ -1471,55 +1524,55 @@ LE5DC:
     EX AF,AF'
     BIT 0,A
     PUSH AF
-    CALL NZ,E69CH
+    CALL NZ,LE69C
     POP AF
     EX AF,AF'
     EXX
     LD A,B
     EXX
     CP A4H
-    JR NZ,E5F2H
+    JR NZ,LE5F2
     LD A,09H
-    CALL FE9AH
-    DB C2H                                                                          ; |.|
+    CALL LFE9A
+    DB C2H                                ; = JP NZ,A0FEH when run from here, hiding the entry below
 
 LE5F2:
     CP A0H
-    JR NZ,E5FEH
-    CALL FC43H
+    JR NZ,LE5FE
+    CALL LFC43
     EX AF,AF'
     OR A
-    JP E67FH
+    JP LE67F
 
 LE5FE:
     CP B6H
-    JR NZ,E617H
+    JR NZ,LE617
     LD A,96H
-    CALL FD51H
-    CALL FB1BH
+    CALL LFD51
+    CALL LFB1B
     LD B,A
     LD A,95H
-    CALL FD54H
+    CALL LFD54
     LD C,00H
-    CALL E68BH
-    JR E67DH
+    CALL LE68B
+    JR LE67D
 
 LE617:
     CP FDH
-    JR NC,E683H
+    JR NC,LE683
     EX AF,AF'
     BIT 0,A
     PUSH AF
-    JR Z,E638H
+    JR Z,LE638
     EX AF,AF'
     LD HL,(172EH)
     LD DE,(1730H)
     OR A
     SBC HL,DE
-    JR C,E639H
-    LD HL,1833H
+    JR C,LE639
+    LD HL,INPUT_BUFFER+2
     LD (172EH),HL
-    CALL E69CH
+    CALL LE69C
     EX AF,AF'
 
 LE638:
@@ -1530,43 +1583,47 @@ LE639:
     LD A,B
     EXX
     CP 02H
-    JR NC,E665H
-    CALL F294H
+    JR NC,LE665
+    CALL EVAL_STRING_EXPRESSION
     RLA
-    JR NC,E669H
+    JR NC,LE669
     POP AF
-    LD HL,FF9CH
-    JP NZ,FFF0H
+    LD HL,FF9CH                           ; EXT ROM routine LFF9C, entered through the FFF0H gateway
+    JP NZ,CALL_EXTENSION_HL
     OR FFH
+
+LE64F:
     PUSH IY
     POP HL
     INC HL
     PUSH AF
-    CALL FE7FH
-    CALL FA21H
+    CALL PRINT_LENGTH_TEXT
+    CALL DISCARD_STRING
 
 LE65A:
     POP AF
     DEC A
-    JP M,E67DH
+    JP M,LE67D
     PUSH AF
-    CALL FEC7H
-    JR E65AH
+    CALL LFEC7
+    JR LE65A
 
 LE665:
-    CALL F0A7H
+    CALL EVAL_NUMERIC_EXPRESSION
     RLA
 
 LE669:
-    JP NC,FD5AH
+    JP NC,LFD5A
     POP AF
-    LD HL,FCB5H
-    JP NZ,FFF0H
+    LD HL,FCB5H                           ; EXT ROM routine LFCB5, entered through the FFF0H gateway
+    JP NZ,CALL_EXTENSION_HL
     PUSH IY
     POP HL
     INC HL
-    CALL FEBAH
-    CALL FA1BH
+    CALL LFEBA
+
+LE67A:
+    CALL DISCARD_NUMBER
 
 LE67D:
     EX AF,AF'
@@ -1574,24 +1631,24 @@ LE67D:
 
 LE67F:
     EX AF,AF'
-    JP E5DCH
+    JP LE5DC
 
 LE683:
     EX AF,AF'
-    CALL C,FE93H
+    CALL C,LFE93
     EX AF,AF'
     JP DBB4H
 
 LE68B:
-    LD A,(1705H)
+    LD A,(FUNC_CLASS)
     CP 20H
-    JR Z,E695H
+    JR Z,LE695
     CP 00H
     RET NZ
 
 LE695:
     OR 03H
-    CALL 001BH
+    CALL RST30_A_ENTRY
     RST 10H
     RET
 
@@ -1611,26 +1668,26 @@ LE6A3:
     CPIR
     POP HL
     RET Z
-    CALL FE9AH
+    CALL LFE9A
     INC HL
     LD (172EH),HL
-    JR E6A3H
+    JR LE6A3
 
 ; Special format-control characters used by PRINT USING.
-    DB 3CH, 3EH, 23H, 2AH, 25H, 2BH, 2DH, 24H, 5EH, 2EH                             ; |<>#*%+-$^.|
+    DB 3CH, 3EH, 23H, 2AH, 25H, 2BH, 2DH, 24H, 5EH, 2EH                               ; |<>#*%+-$^.|
 
 ; RANDOMIZE routine.
     LD A,R
-    LD (1709H),A
-    LD HL,(0B1DH)
-    LD (170AH),HL
-    CALL E6D8H
+    LD (RND_STATE),A
+    LD HL,(TIME)
+    LD (RND_STATE+1),HL
+    CALL LE6D8
     JP DBB1H
 
 LE6D8:
     LD B,10H
-    LD A,(1709H)
-    LD HL,(170AH)
+    LD A,(RND_STATE)
+    LD HL,(RND_STATE+1)
 
 LE6E0:
     LD C,A
@@ -1643,27 +1700,27 @@ LE6E0:
     ADC HL,HL
     LD A,C
     ADC A,A
-    DJNZ E6E0H
-    LD (170AH),HL
-    LD (1709H),A
+    DJNZ LE6E0
+    LD (RND_STATE+1),HL
+    LD (RND_STATE),A
     RET
 
 ; RESTORE routine.
-    LD HL,(1722H)
+    LD HL,(TEXT_START)
     CP 02H
-    JR NZ,E701H
-    CALL FBDEH
-    CALL FC43H
+    JR NZ,LE701
+    CALL LFBDE
+    CALL LFC43
 
 LE701:
-    LD (1712H),HL
+    LD (DATA_LINE),HL
     LD HL,0000H
-    LD (1714H),HL
+    LD (DATA_PTR),HL
     JP DBB4H
 
 LE70D:
     RST 08H
-    ADD HL,BC
+    DB 09H                                ; error code 09H: No GOSUB
 
 ; RETURN routine.
 
@@ -1672,8 +1729,8 @@ LE70D:
 ; Effects: Restores BASIC execution position.
 BASIC_RETURN:
     LD A,06H
-    CALL FCE7H
-    JR C,E70DH
+    CALL LFCE7
+    JR C,LE70D
     SET 2,(IX+00H)
     INC HL
     LD E,(HL)
@@ -1683,10 +1740,10 @@ BASIC_RETURN:
     LD C,(HL)
     INC HL
     LD B,(HL)
-    LD (170CH),BC
+    LD (CUR_LINE),BC
     INC HL
     LD A,(HL)
-    LD (1702H),A
+    LD (COND_FLAG),A
     INC HL
     PUSH HL
     POP IY
@@ -1699,30 +1756,30 @@ BASIC_RETURN:
 ; Entry: Tokenized graphics parameters
 ; Effects: Calls graphics OS routines.
 BASIC_GRAPHICS:
-    CALL FB1BH
+    CALL LFB1B
     LD C,00H
     CP 02H
-    JR Z,E747H
+    JR Z,LE747
     INC C
     CP 04H
-    JR Z,E747H
+    JR Z,LE747
     INC C
     CP 10H
-    JP NZ,FB14H
+    JP NZ,LFB14
 
 LE747:
     RST 30H
-    INC B
+    DB 04H                                ; RST 30H fn 04H: video 4 -> VID_MODE
     RST 10H
     JP DBB1H
 
 LE74D:
     RST 30H
-    EX AF,AF'
+    DB 08H                                ; RST 30H fn 08H: video 8 -> B_ON
 
 LE74F:
-    CALL FC43H
-    JR NC,E78DH
+    CALL LFC43
+    JR NC,LE78D
 
 ; PLOT routine.
 
@@ -1730,51 +1787,52 @@ LE74F:
 ; Entry: Tokenized coordinates and optional PAINT modifier
 ; Effects: Updates graphics position and video memory.
 BASIC_PLOT:
-    JR NC,E782H
+    JR NC,LE782
     CP BEH
-    JR NZ,E75FH
+    JR NZ,LE75F
 
 ; PLOT PAINT routine.
     RST 30H
-    LD A,(BC)
+    DB 0AH                                ; RST 30H fn 0AH: video 10 -> PAINT
     RST 10H
-    JR E77AH
+    JR LE77A
 
 LE75F:
     CP A0H
-    JR Z,E74DH
+    JR Z,LE74D
     CP A4H
-    JR Z,E784H
-    CALL FAC4H
+    JR Z,LE784
+    CALL LFAC4
     LD C,L
     LD B,H
     LD A,A4H
-    CALL FD54H
-    CALL FAC4H
+    CALL LFD54
+    CALL LFAC4
     EX DE,HL
     PUSH AF
     RST 30H
-    LD B,D7H
+    DB 06H                                ; RST 30H fn 06H: video 6 -> B_ABS
+    RST 10H
     POP AF
 
 LE77A:
     CP A0H
-    JR Z,E74DH
+    JR Z,LE74D
     CP A4H
-    JR Z,E784H
+    JR Z,LE784
 
 LE782:
     RST 30H
-    EX AF,AF'
+    DB 08H                                ; RST 30H fn 08H: video 8 -> B_ON
 
 LE784:
     RST 30H
-    ADD HL,BC
+    DB 09H                                ; RST 30H fn 09H: video 9 -> B_OFF
     EXX
     LD A,B
     EXX
     CP FDH
-    JR C,E74FH
+    JR C,LE74F
 
 LE78D:
     JP DBB4H
@@ -1784,49 +1842,49 @@ LE78D:
 ; Effects: Updates video, editor, or keyboard settings.
 BASIC_SET:
     LD HL,E7E4H
-    CALL FD12H
-    JR C,E7DAH
-    CALL FB1BH
+    CALL LFD12
+    JR C,LE7DA
+    CALL LFB1B
 
 LE79B:
     LD E,00H
 
 LE79D:
-    LD (001FH),A
+    LD (RST30_A_FN),A
     LD HL,1941H
     PUSH HL
     LD B,7FH
 
 LE7A6:
     DEC E
-    JP P,E7B4H
+    JP P,LE7B4
     EXX
     LD A,B
     EXX
     CP A4H
-    JR NZ,E7CDH
-    CALL FC43H
+    JR NZ,LE7CD
+    CALL LFC43
 
 LE7B4:
     CP 02H
-    JR NC,E7C5H
-    CALL F294H
+    JR NC,LE7C5
+    CALL EVAL_STRING_EXPRESSION
     LD HL,193FH
     LD (HL),7FH
-    CALL FB41H
-    JR E7D2H
+    CALL LFB41
+    JR LE7D2
 
 LE7C5:
-    CALL FB1BH
+    CALL LFB1B
     LD (HL),A
     INC HL
-    DJNZ E7A6H
+    DJNZ LE7A6
     INC B
 
 LE7CD:
     LD (HL),00H
     INC HL
-    DJNZ E7CDH
+    DJNZ LE7CD
 
 LE7D2:
     POP DE
@@ -1839,32 +1897,26 @@ LE7D2:
 LE7DA:
     CP A0H
     JP NZ,DBB4H
-    CALL FC43H
-    JR E790H
+    CALL LFC43
+    JR BASIC_SET
 
 ; SET subcommand dispatch table; token plus relative routine selector.
-    DB C3H, 11H, B7H, 12H, C4H, 13H, BCH, 14H, C7H, 15H, B9H, 16H, C8H, 24H, BDH, 2DH ; |.............$.-|
-    DB AEH, 34H, 00H                                                                ; |.4.|
 
 ; SET MODE routine.
-    DB 1EH, 00H, 21H                                                                ; |..!|
 
 ; SET STYLE routine.
-    DB 1EH, 01H, 21H                                                                ; |..!|
 
 ; SET INK routine.
-    DB 1EH, 02H, 21H                                                                ; |..!|
 
 ; SET PAPER routine.
-    DB 1EH, 03H, 21H                                                                ; |..!|
 
 ; SET DELAY routine.
-    DB 1EH, 1AH, 21H                                                                ; |..!|
 
 ; SET RATE routine.
-    DB 1EH, 1CH, 16H, 00H, 21H, 4BH, 0BH, 19H, CDH, 1BH, FBH, 77H                   ; |....!K.....w|
+    DB C3H, 11H, B7H, 12H, C4H, 13H, BCH, 14H, C7H, 15H, B9H, 16H, C8H, 24H, BDH, 2DH ; |.............$.-|
+    DB AEH, 34H, 00H, 1EH, 00H, 21H, 1EH, 01H, 21H, 1EH, 02H, 21H, 1EH, 03H, 21H, 1EH ; |.4...!..!..!..!.|
+    DB 1AH, 21H, 1EH, 1CH, 16H, 00H, 21H, 4BH, 0BH, 19H, CDH, 1BH, FBH, 77H           ; |.!....!K.....w|
 
-LE812:
     EXX
     LD A,B
     EXX
@@ -1873,22 +1925,22 @@ LE812:
 ; SET CHARACTER routine.
     POP HL
     POP HL
-    CALL FB1BH
+    CALL LFB1B
     LD C,A
     LD A,0BH
-    JP E79BH
+    JP LE79B
 
 ; SET PALETTE routine.
     POP HL
     POP HL
     LD A,0CH
     LD E,01H
-    JP E79DH
+    JP LE79D
 
 ; SET BORDER routine.
-    CALL FB1BH
+    CALL LFB1B
     ADD A,A
-    LD (0B4FH),A
+    LD (BORDER),A
     JR E812H
 
 ; SOUND routine.
@@ -1897,47 +1949,47 @@ LE812:
 ; Entry: Tokenized pitch, volume, duration, and related parameters
 ; Effects: Programs sound through the OS sound routine.
 BASIC_SOUND:
-    LD HL,0D15H
-    LD (172AH),HL
+    LD HL,CAS_OUT_NAME
+    LD (SOUND_PITCH),HL
     LD HL,3207H
-    LD (002CH),HL
-    LD HL,0B15H
+    LD (USRTAB+11),HL
+    LD HL,TONE_REPLACE
     LD (HL),FFH
     SCF
 
 LE845:
-    CALL NC,FC43H
+    CALL NC,LFC43
     CP A0H
-    JR Z,E86FH
+    JR Z,LE86F
     LD HL,E87BH
-    CALL FD12H
+    CALL LFD12
     CP A4H
-    JR Z,E845H
+    JR Z,LE845
     PUSH AF
-    LD DE,(172AH)
-    LD BC,(002CH)
+    LD DE,(SOUND_PITCH)
+    LD BC,(USRTAB+11)
     RST 30H
-    INC SP
+    DB 33H                                ; RST 30H fn 33H: sound 3 -> TONE_SET
     XOR A
-    LD (0B15H),A
+    LD (TONE_REPLACE),A
     POP AF
     CP FDH
-    JR NC,E878H
+    JR NC,LE878
     CP A0H
-    JP NZ,FD5AH
+    JP NZ,LFD5A
 
 LE86F:
     XOR A
-    LD (0B15H),A
-    CALL FC43H
-    JR C,E845H
+    LD (TONE_REPLACE),A
+    CALL LFC43
+    JR C,LE845
 
 LE878:
     JP DBB4H
 
 ; SOUND subcommand dispatch table; same format as SET table.
     DB BBH, 05H, C6H, 0CH, B3H, 0BH, 00H, CDH, C4H, FAH, 22H, 2AH, 17H, F0H, CFH, 04H ; |.........."*....|
-    DB F6H, 37H, 11H, 2CH, 00H, 38H, 01H, 13H, CDH, 1BH, FBH                        ; |.7.,.8.....|
+    DB F6H, 37H, 11H, 2CH, 00H, 38H, 01H, 13H, CDH, 1BH, FBH                          ; |.7.,.8.....|
     LD (DE),A
     EXX
     LD A,B
@@ -1946,36 +1998,36 @@ LE878:
 
 ; BASIC CLOSE routine.
     LD C,50H
-    CALL FBEEH
+    CALL LFBEE
     CP E1H
-    JR Z,E8AFH
+    JR Z,LE8AF
     SET 7,C
     CP FDH
-    JR NC,E8B2H
+    JR NC,LE8B2
     CP ECH
-    JP NZ,FD5AH
+    JP NZ,LFD5A
 
 LE8AF:
-    CALL FC43H
+    CALL LFC43
 
 LE8B2:
     LD A,C
     AND 7FH
     CP 50H
-    JR Z,E8BDH
+    JR Z,LE8BD
     CP 60H
-    JR NZ,E8C7H
+    JR NZ,LE8C7
 
 LE8BD:
     LD A,C
     OR 04H
-    CALL 001BH
+    CALL RST30_A_ENTRY
     RST 10H
     JP DBB1H
 
 LE8C7:
     RST 08H
-    RST 38H
+    DB FFH                                ; error code FFH
 
 ; OPEN BASIC routine.
 
@@ -1984,13 +2036,13 @@ LE8C7:
 ; Effects: Opens a file through the selected OS device.
 BASIC_OPEN:
     LD C,50H
-    CALL FBEEH
+    CALL LFBEE
     EX AF,AF'
     LD A,C
     CP 50H
-    JR Z,E8D8H
+    JR Z,LE8D8
     CP 60H
-    JR NZ,E8C7H
+    JR NZ,LE8C7
 
 LE8D8:
     OR 03H
@@ -1998,53 +2050,53 @@ LE8D8:
     EX AF,AF'
     LD DE,19CEH
     CP E1H
-    JR Z,E8F2H
+    JR Z,LE8F2
     SET 7,C
     CP 02H
-    JR C,E8F9H
+    JR C,LE8F9
     CP FDH
-    JR NC,E905H
+    JR NC,LE905
     CP ECH
-    JP NZ,FD5AH
+    JP NZ,LFD5A
 
 LE8F2:
-    CALL FC43H
+    CALL LFC43
     CP 02H
-    JR NC,E905H
+    JR NC,LE905
 
 LE8F9:
     PUSH BC
-    CALL F294H
+    CALL EVAL_STRING_EXPRESSION
     PUSH IY
-    CALL FA21H
+    CALL DISCARD_STRING
     POP DE
     INC DE
     POP BC
 
 LE905:
     LD A,C
-    LD (0B6BH),A
-    CALL 001BH
+    LD (CAS_BUFFER),A
+    CALL RST30_A_ENTRY
     RST 10H
     JP DBB1H
 
 ; GET routine.
     LD C,10H
-    CALL FBEEH
+    CALL LFBEE
     EX AF,AF'
     LD A,C
     OR 81H
-    CALL 001BH
+    CALL RST30_A_ENTRY
     PUSH IY
     POP HL
     CP ECH
-    JR Z,E929H
+    JR Z,LE929
     OR A
     RST 10H
     DEC HL
     LD (HL),C
     INC A
-    DB 0EH                                                                          ; |.|
+    DB 0EH                                ; = LD C,AFH when run from here, hiding the entry below
 
 LE929:
     XOR A
@@ -2058,17 +2110,17 @@ LE929:
     PUSH HL
     POP IY
     CP 01H
-    JR NZ,E93FH
+    JR NZ,LE93F
     EXX
     BIT 2,C
 
 LE93F:
-    JP NZ,FD5AH
+    JP NZ,LFD5A
     BIT 3,C
-    CALL NZ,F40BH
+    CALL NZ,SYMBOL_CREATE_VALUE
     EXX
-    CALL F42EH
-    CALL FB41H
+    CALL STACK_TO_NUMERIC_REGS
+    CALL LFB41
     JP DBB1H
 
 ; LOAD routine.
@@ -2077,26 +2129,26 @@ LE93F:
 ; Entry: Tokenized filename and options
 ; Effects: Loads a BASIC program or data through an OS device.
 BASIC_LOAD:
-    CALL EA35H
+    CALL LEA35
     CALL DE10H
     PUSH HL
-    LD DE,(19E1H)
+    LD DE,(CAS_HEADER+2)
     PUSH DE
-    CALL FC99H
+    CALL LFC99
     POP BC
     POP DE
     PUSH DE
-    LD A,(1705H)
+    LD A,(FUNC_CLASS)
     OR 82H
-    CALL 001BH
+    CALL RST30_A_ENTRY
     PUSH AF
     CALL NZ,DE10H
     POP AF
     RST 10H
-    CALL DCFCH
-    CALL EA5AH
+    CALL BASIC_WORKSPACE_INIT
+    CALL LEA5A
     POP HL
-    LD A,(19E3H)
+    LD A,(CAS_HEADER+4)
     OR A
     JP Z,DADAH
     JP DE23H
@@ -2108,33 +2160,33 @@ BASIC_LOAD:
 ; Effects: Saves a BASIC program or data through an OS device.
 BASIC_SAVE:
     XOR A
-    CALL E9FBH
-    LD DE,19EFH
+    CALL LE9FB
+    LD DE,BASIC_RAM_START
     LD B,10H
     XOR A
 
 LE98C:
     DEC DE
     LD (DE),A
-    DJNZ E98CH
+    DJNZ LE98C
     PUSH DE
     INC A
-    LD (19E0H),A
-    LD A,(1707H)
-    LD (19E3H),A
+    LD (CAS_HEADER+1),A
+    LD A,(AUTORUN)
+    LD (CAS_HEADER+4),A
     CALL DD41H
     INC HL
-    LD DE,(1722H)
+    LD DE,(TEXT_START)
     XOR A
-    LD (1707H),A
+    LD (AUTORUN),A
     SBC HL,DE
-    LD (19E1H),HL
+    LD (CAS_HEADER+2),HL
     EX (SP),HL
     PUSH DE
     LD B,10H
-    LD A,(1705H)
+    LD A,(FUNC_CLASS)
     OR 01H
-    LD (001FH),A
+    LD (RST30_A_FN),A
 
 LE9B8:
     LD C,(HL)
@@ -2143,31 +2195,31 @@ LE9B8:
     CALL 001EH
     RST 10H
     POP BC
-    DJNZ E9B8H
+    DJNZ LE9B8
     POP DE
     POP BC
-    LD A,(1705H)
+    LD A,(FUNC_CLASS)
     OR 02H
-    CALL 001BH
+    CALL RST30_A_ENTRY
     RST 10H
-    CALL EA5AH
+    CALL LEA5A
     JP DBB1H
 
 ; VERIFY routine.
-    CALL EA35H
+    CALL LEA35
     CALL DD41H
     INC HL
-    LD DE,(1722H)
+    LD DE,(TEXT_START)
     OR A
     SBC HL,DE
-    LD BC,(19E1H)
+    LD BC,(CAS_HEADER+2)
     SBC HL,BC
-    JP NZ,EA58H
-    LD A,(1705H)
+    JP NZ,LEA58
+    LD A,(FUNC_CLASS)
     OR 85H
-    CALL 001BH
+    CALL RST30_A_ENTRY
     RST 10H
-    CALL EA5AH
+    CALL LEA5A
     JP DBB1H
 
 LE9F9:
@@ -2177,43 +2229,43 @@ LE9FB:
     SET 3,(IX+00H)
     PUSH AF
     LD C,50H
-    CALL FBEEH
+    CALL LFBEE
     EX AF,AF'
     LD A,C
     CP 50H
-    JR Z,EA10H
+    JR Z,LEA10
     CP 60H
-    JP NZ,E8C7H
+    JP NZ,LE8C7
 
 LEA10:
     POP BC
     OR B
-    LD (1705H),A
+    LD (FUNC_CLASS),A
     OR 03H
-    LD (001FH),A
+    LD (RST30_A_FN),A
     EX AF,AF'
     LD DE,19CEH
     CP 02H
-    JR NC,EA2CH
-    CALL F294H
+    JR NC,LEA2C
+    CALL EVAL_STRING_EXPRESSION
     PUSH IY
-    CALL FA21H
+    CALL DISCARD_STRING
     POP DE
     INC DE
 
 LEA2C:
     XOR A
-    LD (0B6BH),A
+    LD (CAS_BUFFER),A
     CALL 001EH
     RST 10H
     RET
 
 LEA35:
-    CALL E9F9H
-    LD A,(1705H)
+    CALL LE9F9
+    LD A,(FUNC_CLASS)
     OR 81H
-    LD (001FH),A
-    LD HL,19DFH
+    LD (RST30_A_FN),A
+    LD HL,CAS_HEADER
     PUSH HL
     LD B,10H
 
@@ -2224,10 +2276,10 @@ LEA46:
     LD (HL),C
     INC HL
     POP BC
-    DJNZ EA46H
+    DJNZ LEA46
     POP HL
     OR (HL)
-    JR NZ,EA58H
+    JR NZ,LEA58
     INC HL
     INC A
     SUB (HL)
@@ -2235,12 +2287,12 @@ LEA46:
 
 LEA58:
     RST 08H
-    DB 10H                                                                          ; |.|
+    DB 10H                                ; error code 10H: Bad file
 
 LEA5A:
-    LD A,(1705H)
+    LD A,(FUNC_CLASS)
     OR 04H
-    CALL 001BH
+    CALL RST30_A_ENTRY
     RST 10H
     RES 3,(IX+00H)
     RET
@@ -2252,23 +2304,23 @@ LEA5A:
 ; Effects: Consumes source tokens and grows the BASIC stack.
 EVAL_NUMERIC_ARGUMENT:
     LD A,96H
-    CALL FD54H
-    CALL F0A7H
+    CALL LFD54
+    CALL EVAL_NUMERIC_EXPRESSION
 
 LEA70:
     LD A,95H
-    JP FD54H
+    JP LFD54
 
 LEA75:
     LD A,96H
-    CALL FD54H
-    CALL F294H
+    CALL LFD54
+    CALL EVAL_STRING_EXPRESSION
     LD A,95H
-    JP FD54H
-    LD HL,(1718H)
+    JP LFD54
+    LD HL,(RST18_NEXT)
     LD A,(HL)
     INC HL
-    LD (1718H),HL
+    LD (RST18_NEXT),HL
     LD L,A
     XOR A
     LD H,A
@@ -2278,21 +2330,20 @@ LEA75:
     ADD HL,HL
     POP DE
     SBC HL,DE
-    DB 11H                                                                          ; |.|
 
-LEA95:
-    LD DE,19C1H
-    JR EAA2H
+    LD DE,NUMBERED_FP_CONSTANTS
+    ADD HL,DE
+    JR LEAA2
 
 LEA9A:
-    LD HL,19C7H
-    JR EAA2H
+    LD HL,FP_Y
+    JR LEAA2
 
 LEA9F:
-    LD HL,19C0H
+    LD HL,FP_X
 
 LEAA2:
-    CALL FC8EH
+    CALL LFC8E
     LD DE,0006H
     ADD HL,DE
     PUSH IY
@@ -2311,24 +2362,24 @@ LEAA2:
     RET
 
 LEABE:
-    LD DE,19C7H
-    JR EAC6H
+    LD DE,FP_Y
+    JR LEAC6
 
 LEAC3:
-    LD DE,19C0H
+    LD DE,FP_X
 
 LEAC6:
-    CALL EAD5H
+    CALL LEAD5
     PUSH HL
     POP IY
     RET
 
 LEACD:
-    LD DE,19C7H
-    JR EAD5H
+    LD DE,FP_Y
+    JR LEAD5
 
 LEAD2:
-    LD DE,19C0H
+    LD DE,FP_X
 
 LEAD5:
     PUSH IY
@@ -2339,112 +2390,76 @@ LEAD5:
     INC HL
     LDI
     RET
-    NOP
-    NOP
-    INC BC
-    LD B,C
-    LD B,D
-    LD D,E
-    LD A,(BC)
+
+FN_REC_ABS:
+    DW 0000H                              ; link to previous function record
+    DB 3, "ABS", 0AH                      ; name, then type (numeric result)
 
 ; BASIC_ABS - Implements the BASIC ABS function.
 ; Entry: Argument on BASIC stack
 ; Exit: Absolute value on BASIC stack
 BASIC_ABS:
-    CALL EA68H
+    CALL EVAL_NUMERIC_ARGUMENT
     RES 7,(IY+08H)
     RET
 
 LEAF1:
-    CALL FC43H
-    CALL EA68H
+    CALL LFC43
+    CALL EVAL_NUMERIC_ARGUMENT
     LD BC,0000H
     LD A,(IY+08H)
     AND 80H
     LD C,A
     PUSH BC
-    CALL NZ,F726H
+    CALL NZ,FP_NEGATE
     RST 18H
-    EX AF,AF'
-    ADD A,L
-    LD BC,93CDH
-    OR FAH
-    LD A,(DE)
-    EX DE,HL
-    JR Z,EB1AH
+    DB 08H, 85H, 01H                      ; RST 18H: op08, CONST 1
+    CALL FP_COMPARE
+    JP M,LEB1A
+    JR Z,LEB1A
     POP BC
     LD B,02H
     PUSH BC
     RST 18H
-    DEC B
-    LD BC,0106H
-    ADC A,D
+    DB 05H, 01H, 06H, 01H, 8AH            ; RST 18H: CONST 1, op06, FP_DIV, op0A
 
 LEB1A:
     RST 18H
-    LD B,85H
-    LD (BC),A
-    CALL F693H
-    JP M,EB3CH
-    JR Z,EB3CH
+    DB 06H, 85H, 02H                      ; RST 18H: op06, CONST 2
+    CALL FP_COMPARE
+    JP M,LEB3C
+    JR Z,LEB3C
     POP BC
     INC B
     PUSH BC
     RST 18H
-    DEC B
-    INC B
-    LD B,02H
-    DEC B
-    NOP
-    INC BC
-    DEC B
-    NOP
-    INC BC
-    LD B,00H
-    DEC B
-    INC BC
-    LD B,00H
-    DB 01H, 8AH                                                                     ; |..|
+; RST 18H: CONST 4, op06, FP_MUL, CONST 0, FP_SUB, CONST 0, FP_SUB, op06, FP_ADD, CONST 3, op06, FP_ADD, FP_DIV, op0A
+    DB 05H, 04H, 06H, 02H, 05H, 00H, 03H, 05H, 00H, 03H, 06H, 00H, 05H, 03H, 06H, 00H ; |................|
+    DB 01H, 8AH                                                                       ; |..|
 
 LEB3C:
     RST 18H
-    LD B,0CH
-    INC C
-    INC C
-    LD (BC),A
-    EX AF,AF'
-    DEC B
-    LD B,02H
-    DEC B
-    DEC B
-    NOP
-    LD B,02H
-    LD B,05H
-    EX AF,AF'
-    NOP
-    LD B,02H
-    DEC B
-    RLCA
-    NOP
-    LD BC,8002H
+; RST 18H: op06, op0C, op0C, op0C, FP_MUL, op08, CONST 6, FP_MUL, CONST 5, FP_ADD, op06, FP_MUL, op06, CONST 8, FP_ADD, op06, FP_MUL, CONST 7, FP_ADD, FP_DIV, FP_MUL, FP_ADD
+    DB 06H, 0CH, 0CH, 0CH, 02H, 08H, 05H, 06H, 02H, 05H, 05H, 00H, 06H, 02H, 06H, 05H ; |................|
+    DB 08H, 00H, 06H, 02H, 05H, 07H, 00H, 01H, 02H, 80H                               ; |..........|
     POP BC
     LD A,B
     CP 02H
-    CALL NC,F726H
+    CALL NC,FP_NEGATE
     PUSH BC
     LD HL,C214H
     DEC B
-    JR Z,EB71H
+    JR Z,LEB71
     LD HL,C206H
     DEC B
-    JR Z,EB71H
+    JR Z,LEB71
     LD HL,C20DH
     DEC B
-    JR NZ,EB77H
+    JR NZ,LEB77
 
 LEB71:
-    CALL EAA2H
-    CALL F493H
+    CALL LEAA2
+    CALL FP_ADD
 
 LEB77:
     POP BC
@@ -2452,14 +2467,14 @@ LEB77:
     XOR (IY+08H)
     LD (IY+08H),A
     RET
-    JP PO,04EAH
-    LD B,E
-    LD C,B
-    LD D,D
-    INC H
-    EX AF,AF'
-    CALL EA68H
-    CALL FB1AH
+
+FN_REC_CHR_STR:
+    DW FN_REC_ABS                         ; link to previous function record
+    DB 4, "CHR$", 08H                     ; name, then type (string result)
+
+BASIC_CHR_STR:
+    CALL EVAL_NUMERIC_ARGUMENT
+    CALL LFB1A
     PUSH IY
     POP HL
     DEC HL
@@ -2471,150 +2486,98 @@ LEB77:
     PUSH HL
     POP IY
     RET
-    ADD A,B
-    EX DE,HL
-    INC BC
-    LD B,E
-    LD C,A
-    LD D,E
-    LD A,(BC)
+
+FN_REC_COS:
+    DW FN_REC_CHR_STR                     ; link to previous function record
+    DB 3, "COS", 0AH                      ; name, then type (numeric result)
 
 ; BASIC_COS - Implements the BASIC COS function.
 ; Entry: Argument on BASIC stack
 ; Exit: Cosine on BASIC stack
 BASIC_COS:
-    CALL EA68H
+    CALL EVAL_NUMERIC_ARGUMENT
     RST 18H
-    DEC B
-    INC HL
-    ADD A,B
-    JP EE5EH
-    SBC A,L
-    EX DE,HL
-    INC BC
-    LD B,L
-    LD E,B
-    LD D,B
-    LD A,(BC)
-    CALL EA68H
+    DB 05H, 23H, 80H                      ; RST 18H: CONST 35, FP_ADD
+    JP LEE5E
+
+FN_REC_EXP:
+    DW FN_REC_COS                         ; link to previous function record
+    DB 3, "EXP", 0AH                      ; name, then type (numeric result)
+
+BASIC_EXP:
+    CALL EVAL_NUMERIC_ARGUMENT
 
 LEBB8:
     RST 18H
-    INC C
-    DEC B
-    ADD HL,BC
-    ADD A,D
-    CALL ECAFH
+    DB 0CH, 05H, 09H, 82H                 ; RST 18H: op0C, CONST 9, FP_MUL
+    CALL LECAF
     LD A,(IY+08H)
     LD C,A
     AND 7FH
     CP 43H
-    JR C,EBD4H
+    JR C,LEBD4
     OR C
-    JP P,F912H
+    JP P,LF912
 
 LEBCE:
-    CALL FA1BH
-    JP F9F9H
+    CALL DISCARD_NUMBER
+    JP FP_CLEAR_NUMERIC
 
 LEBD4:
-    CALL FA92H
-    CALL FAC3H
+    CALL LFA92
+    CALL STACK_NUMBER_TO_INTEGER
     LD E,L
     LD D,H
     LD BC,007EH
     OR A
     ADC HL,BC
-    JP M,EBCEH
+    JP M,LEBCE
     SLA C
     SBC HL,BC
-    JP NC,F912H
+    JP NC,LF912
     PUSH DE
     RST 18H
-    ADD HL,BC
-    DEC B
-    LD A,(BC)
-    LD (BC),A
-    INC BC
-    RLCA
-    DEC B
-    DEC BC
-    LD (BC),A
-    INC BC
-    INC C
-    INC C
-    LD (BC),A
-    EX AF,AF'
-    DEC B
-    DJNZ EBFFH
 
-LEBFF:
-    LD B,02H
-    DEC B
-    RRCA
-    NOP
-    DEC BC
-    DEC B
-    LD C,06H
-    LD (BC),A
-    DEC B
-    DEC C
-    NOP
-    LD B,02H
-    DEC B
-    INC C
-    NOP
-    LD (BC),A
-    EX AF,AF'
-    RLCA
-    LD B,03H
-    LD BC,0005H
-    NOP
-    INC C
-    NOP
-    ADC A,D
+; RST 18H: op09, CONST 10, FP_MUL, FP_SUB, op07, CONST 11, FP_MUL, FP_SUB, op0C, op0C, FP_MUL, op08, CONST 16, FP_ADD, op06, FP_MUL, CONST 15, FP_ADD, op0B, CONST 14, op06, FP_MUL, CONST 13, FP_ADD, op06, FP_MUL, CONST 12, FP_ADD, FP_MUL, op08, op07, op06, FP_SUB, FP_DIV, CONST 0, FP_ADD, op0C, FP_ADD, op0A
+    DB 09H, 05H, 0AH, 02H, 03H, 07H, 05H, 0BH, 02H, 03H, 0CH, 0CH, 02H, 08H, 05H, 10H ; |................|
+    DB 00H, 06H, 02H, 05H, 0FH, 00H, 0BH, 05H, 0EH, 06H, 02H, 05H, 0DH, 00H, 06H, 02H ; |................|
+    DB 05H, 0CH, 00H, 02H, 08H, 07H, 06H, 03H, 01H, 05H, 00H, 00H, 0CH, 00H, 8AH      ; |...............|
     POP DE
     BIT 0,E
-    JR Z,EC37H
+    JR Z,LEC37
     PUSH DE
     RST 18H
-    LD B,05H
-    JR NZ,EC2AH
 
-LEC28:
-    ADC A,D
+    DB 06H, 05H, 20H, 02H, 8AH            ; RST 18H: op06, CONST 32, FP_MUL, op0A
     POP DE
 
-LEC2A:
     INC D
     DEC D
     INC DE
-    JR Z,EC37H
-    JP M,EC37H
-    LD HL,19C6H
+    JR Z,LEC37
+    JP M,LEC37
+    LD HL,FP_X+6
     INC (HL)
     DEC DE
 
 LEC37:
-    LD HL,19C6H
+    LD HL,FP_X+6
     XOR A
     OR E
     RRA
     ADD A,(HL)
     AND 7FH
     LD (HL),A
-    JP EA9FH
-    XOR (HL)
-    EX DE,HL
-    INC B
-    LD B,(HL)
-    LD D,D
-    LD B,L
-    LD B,L
-    LD A,(BC)
+    JP LEA9F
+
+FN_REC_FREE:
+    DW FN_REC_EXP                         ; link to previous function record
+    DB 4, "FREE", 0AH                     ; name, then type (numeric result)
+
+BASIC_FREE:
     PUSH IY
     POP HL
-    LD DE,(1726H)
+    LD DE,(SYMBOL_TOP)
     OR A
     SBC HL,DE
     LD DE,0100H
@@ -2622,50 +2585,49 @@ LEC37:
     LD DE,7FFFH
     SBC HL,DE
     PUSH DE
-    CALL FA2BH
+    CALL INTEGER_TO_STACK
     POP HL
-    CALL FA2BH
-    JP F493H
-    LD B,H
-    CALL PE,4902H
-    LD C,(HL)
-    LD A,(BC)
+    CALL INTEGER_TO_STACK
+    JP FP_ADD
+
+FN_REC_IN:
+    DW FN_REC_FREE                        ; link to previous function record
+    DB 2, "IN", 0AH                       ; name, then type (numeric result)
 
 ; BASIC_IN - Implements the BASIC IN function.
 ; Entry: Port expression on BASIC stack
 ; Exit: Port byte on BASIC stack
 ; Effects: Reads a hardware I/O port.
 BASIC_IN:
-    CALL EA68H
-    CALL FB1AH
+    CALL EVAL_NUMERIC_ARGUMENT
+    CALL LFB1A
     LD C,A
     IN L,(C)
     LD H,00H
-    JP FA2BH
+    JP INTEGER_TO_STACK
 
 LEC7F:
     RET NC
     RLA
     RET NC
-    CALL FA1BH
+    CALL DISCARD_NUMBER
     RST 18H
-    ADD A,L
-    DAA
+    DB 85H, 27H                           ; RST 18H: CONST 39
     RET
 
 LEC89:
-    CALL FC43H
+    CALL LFC43
     RST 30H
-    SUB E
+    DB 93H                                ; RST 30H fn 93H: keyboard 3, output side -> KB_STATUS
     RST 10H
     PUSH IY
     POP HL
     DEC HL
     LD A,C
     OR A
-    JR Z,EC9DH
+    JR Z,LEC9D
     RST 30H
-    SUB C
+    DB 91H                                ; RST 30H fn 91H: keyboard 1, output side -> KB_CHIN
     RST 10H
     LD (HL),C
     DEC HL
@@ -2678,49 +2640,52 @@ LEC9D:
     PUSH HL
     POP IY
     RET
-    LD L,E
-    CALL PE,4903H
-    LD C,(HL)
-    LD D,H
-    LD A,(BC)
-    CALL EA68H
+
+FN_REC_INT:
+    DW FN_REC_IN                          ; link to previous function record
+    DB 3, "INT", 0AH                      ; name, then type (numeric result)
+
+BASIC_INT:
+    CALL EVAL_NUMERIC_ARGUMENT
 
 LECAF:
     LD A,(IY+08H)
     AND 7FH
     SUB 40H
-    JR C,ECD8H
+    JR C,LECD8
     INC A
     PUSH AF
-    CALL F707H
-    CALL F9DFH
+    CALL LF707
+    CALL FP_TEST_ZERO
     POP AF
     ADD A,03H
     LD B,A
 
 LECC4:
     LD A,00H
-    CALL C,F7E3H
+    CALL C,FP_SET_BCD_NIBBLE
     INC B
     LD A,B
     CP 10H
-    JR C,ECC4H
-    CALL F707H
-    CALL F9DFH
-    JP F734H
+    JR C,LECC4
+    CALL LF707
+    CALL FP_TEST_ZERO
+    JP FP_NORMALIZE
 
 LECD8:
     LD A,(IY+08H)
     OR A
-    JP P,F9F9H
-    CALL FA08H
-    JP F726H
-    AND L
-    CALL PE,4902H
-    LD C,A
-    LD A,(BC)
-    CALL EA68H
-    CALL FB1AH
+    JP P,FP_CLEAR_NUMERIC
+    CALL LFA08
+    JP FP_NEGATE
+
+FN_REC_IO:
+    DW FN_REC_INT                         ; link to previous function record
+    DB 2, "IO", 0AH                       ; name, then type (numeric result)
+
+BASIC_IO:
+    CALL EVAL_NUMERIC_ARGUMENT
+    CALL LFB1A
     LD L,A
     LD H,00H
     LD DE,1941H
@@ -2730,17 +2695,17 @@ LECD8:
     INC HL
     LD D,(HL)
     EX DE,HL
-    JP FA2BH
-    PUSH HL
-    CALL PE,4C03H
-    LD B,L
-    LD C,(HL)
-    LD A,(BC)
-    CALL EA75H
+    JP INTEGER_TO_STACK
 
-LED0A:
+FN_REC_LEN:
+    DW FN_REC_IO                          ; link to previous function record
+    DB 3, "LEN", 0AH                      ; name, then type (numeric result)
+
+BASIC_LEN:
+    CALL LEA75
+
     PUSH IY
-    CALL FA21H
+    CALL DISCARD_STRING
     POP HL
 
 LED10:
@@ -2749,37 +2714,36 @@ LED10:
 
 LED12:
     LD H,00H
-    JP FA2BH
-    NOP
-    DB EDH,03H
-    LD C,H
-    LD C,A
-    LD B,A
-    LD A,(BC)
-    CALL EA68H
+    JP INTEGER_TO_STACK
+
+FN_REC_LOG:
+    DW FN_REC_LEN                         ; link to previous function record
+    DB 3, "LOG", 0AH                      ; name, then type (numeric result)
+
+BASIC_LOG:
+    CALL EVAL_NUMERIC_ARGUMENT
 
 LED21:
-    CALL EAC3H
-    LD HL,19C5H
+    CALL LEAC3
+    LD HL,FP_X+5
     XOR A
     LD D,A
     OR (HL)
-    JP Z,FB14H
+    JP Z,LFB14
     INC HL
     LD E,(HL)
     INC E
     DEC E
-    JP M,FB14H
+    JP M,LFB14
     LD (HL),3FH
     PUSH DE
     PUSH HL
     RST 18H
-    LD B,85H
-    JR NZ,ED0AH
-    SUB E
-    OR E1H
-    JR Z,ED45H
-    JP P,ED49H
+    DB 06H, 85H, 20H                      ; RST 18H: op06, CONST 32
+    CALL FP_COMPARE
+    POP HL
+    JR Z,LED45
+    JP P,LED49
 
 LED45:
     POP DE
@@ -2789,96 +2753,58 @@ LED45:
 
 LED49:
     RST 18H
-    LD B,05H
-    NOP
-    INC BC
-    DEC B
-    NOP
-    INC BC
-    LD B,05H
-    LD BC,0100H
-    EX AF,AF'
-    INC C
-    INC C
-    LD (BC),A
-    EX AF,AF'
-    DEC B
-    INC D
-    LD (BC),A
-    DEC B
-    INC DE
-    NOP
-    LD B,02H
-    DEC B
-    LD (DE),A
-    NOP
-    LD B,02H
-    LD B,05H
-    RLA
-    NOP
-    LD B,02H
-    DEC B
-    LD D,00H
-    LD B,02H
-    DEC B
-    DEC D
-    NOP
-    LD BC,1805H
-    NOP
-    ADD A,D
+; RST 18H: op06, CONST 0, FP_SUB, CONST 0, FP_SUB, op06, CONST 1, FP_ADD, FP_DIV, op08, op0C, op0C, FP_MUL, op08, CONST 20, FP_MUL, CONST 19, FP_ADD, op06, FP_MUL, CONST 18, FP_ADD, op06, FP_MUL, op06, CONST 23, FP_ADD, op06, FP_MUL, CONST 22, FP_ADD, op06, FP_MUL, CONST 21, FP_ADD, FP_DIV, CONST 24, FP_ADD, FP_MUL
+    DB 06H, 05H, 00H, 03H, 05H, 00H, 03H, 06H, 05H, 01H, 00H, 01H, 08H, 0CH, 0CH, 02H ; |................|
+    DB 08H, 05H, 14H, 02H, 05H, 13H, 00H, 06H, 02H, 05H, 12H, 00H, 06H, 02H, 06H, 05H ; |................|
+    DB 17H, 00H, 06H, 02H, 05H, 16H, 00H, 06H, 02H, 05H, 15H, 00H, 01H, 05H, 18H, 00H ; |................|
+    DB 82H                                                                            ; |.|
     POP HL
     LD DE,003FH
     OR A
     SBC HL,DE
-    CALL FA2BH
+    CALL INTEGER_TO_STACK
     RST 18H
-    NOP
-    DEC B
-    LD DE,C982H
+    DB 00H, 05H, 11H, 82H                 ; RST 18H: FP_ADD, CONST 17, FP_MUL
+    RET
 
 LED8B:
-    CALL FAA6H
-    CALL EAD2H
-    CALL F5FBH
-    CALL ECAFH
+    CALL LFAA6
+    CALL LEAD2
+    CALL FP_DIV
+    CALL LECAF
     RST 18H
-    LD (BC),A
-    INC BC
-    ADC A,H
+    DB 02H, 03H, 8CH                      ; RST 18H: FP_MUL, FP_SUB, op0C
     RES 7,(IY+08H)
-    CALL EA9FH
-    CALL F693H
+    CALL LEA9F
+    CALL FP_COMPARE
     RET M
-    JP F9F9H
+    JP FP_CLEAR_NUMERIC
 
 LEDA9:
-    CALL FC43H
-    CALL EA75H
+    CALL LFC43
+    CALL LEA75
     PUSH IY
-    CALL FA21H
+    CALL DISCARD_STRING
     POP HL
     INC HL
     LD A,(HL)
     OR A
-    JP Z,FB14H
-    JP ED10H
-    RLA
-    DB EDH,04H
-    LD D,B
-    LD B,L
-    LD B,L
-    LD C,E
-    LD A,(BC)
+    JP Z,LFB14
+    JP LED10
+
+FN_REC_PEEK:
+    DW FN_REC_LOG                         ; link to previous function record
+    DB 4, "PEEK", 0AH                     ; name, then type (numeric result)
 
 ; BASIC_PEEK - Implements the BASIC PEEK function.
 ; Entry: Address expression on BASIC stack
 ; Exit: Byte value on BASIC stack
 ; Effects: Reads memory, including video-memory address translation.
 BASIC_PEEK:
-    CALL EA68H
-    CALL FD02H
-    CALL FFE7H
-    JR C,EDD4H
+    CALL EVAL_NUMERIC_ARGUMENT
+    CALL LFD02
+    CALL LFFE7
+    JR C,LEDD4
     DI
 
 ; Memory paging: U U V S page layout.
@@ -2889,48 +2815,45 @@ LEDD4:
     LD A,70H
     OUT (02H),A
     EI
-    JP ED12H
-    CP (HL)
-    DB EDH,02H
-    LD D,B
-    LD C,C
-    LD A,(BC)
+    JP LED12
+
+FN_REC_PI:
+    DW FN_REC_PEEK                        ; link to previous function record
+    DB 2, "PI", 0AH                       ; name, then type (numeric result)
+
+BASIC_PI:
     RST 18H
-    ADD A,L
-    LD (DDC9H),HL
-    DB EDH,03H
-    LD D,D
-    LD C,(HL)
-    LD B,H
-    LD A,(BC)
+    DB 85H, 22H                           ; RST 18H: CONST 34
+    RET
+
+FN_REC_RND:
+    DW FN_REC_PI                          ; link to previous function record
+    DB 3, "RND", 0AH                      ; name, then type (numeric result)
+
+BASIC_RND:
     CP 96H
-    JR Z,EE02H
-    CALL E6D8H
-    CALL FA2BH
+    JR Z,LEE02
+    CALL LE6D8
+    CALL INTEGER_TO_STACK
     RST 18H
-    DEC B
-    LD H,00H
-    DEC B
-    LD H,0CH
-    NOP
-    ADD A,C
+    DB 05H, 26H, 00H, 05H, 26H, 0CH, 00H, 81H ; RST 18H: CONST 38, FP_ADD, CONST 38, op0C, FP_ADD, FP_DIV
     RET
 
 LEE02:
-    CALL EA68H
-    CALL FAC3H
+    CALL EVAL_NUMERIC_ARGUMENT
+    CALL STACK_NUMBER_TO_INTEGER
     BIT 7,H
-    JP NZ,FB14H
+    JP NZ,LFB14
     LD A,H
     OR L
-    JP Z,FB14H
+    JP Z,LFB14
     PUSH HL
     XOR A
 
 LEE14:
     INC A
     ADD HL,HL
-    JR NC,EE14H
+    JR NC,LEE14
     DEC A
     POP HL
     DEC HL
@@ -2938,238 +2861,188 @@ LEE14:
 LEE1B:
     PUSH HL
     PUSH AF
-    CALL E6D8H
+    CALL LE6D8
     POP AF
     LD B,A
 
 LEE22:
     SRL H
     RR L
-    DJNZ EE22H
+    DJNZ LEE22
     EX DE,HL
     POP HL
     OR A
     SBC HL,DE
     ADD HL,DE
-    JR C,EE1BH
+    JR C,LEE1B
     EX DE,HL
-    JP FA2BH
-    RST 20H
-    DB EDH,03H
-    LD D,E
-    LD B,A
-    LD C,(HL)
-    LD A,(BC)
-    CALL EA68H
+    JP INTEGER_TO_STACK
+
+FN_REC_SGN:
+    DW FN_REC_RND                         ; link to previous function record
+    DB 3, "SGN", 0AH                      ; name, then type (numeric result)
+
+BASIC_SGN:
+    CALL EVAL_NUMERIC_ARGUMENT
     LD A,(IY+06H)
     OR A
     RET Z
     LD A,(IY+08H)
     PUSH AF
-    CALL FA08H
+    CALL LFA08
     POP AF
     AND 80H
     OR (IY+08H)
     LD (IY+08H),A
     RET
-    INC (HL)
-    XOR 03H
-    LD D,E
-    LD C,C
-    LD C,(HL)
-    LD A,(BC)
+
+FN_REC_SIN:
+    DW FN_REC_SGN                         ; link to previous function record
+    DB 3, "SIN", 0AH                      ; name, then type (numeric result)
 
 ; BASIC_SIN - Implements the BASIC SIN function.
 ; Entry: Argument on BASIC stack
 ; Exit: Sine on BASIC stack
 BASIC_SIN:
-    CALL EA68H
+    CALL EVAL_NUMERIC_ARGUMENT
 
 LEE5E:
     RST 18H
-    DEC B
-    LD (2205H),HL
-    ADD A,B
-    CALL ED8BH
+    DB 05H, 22H, 05H, 22H, 80H            ; RST 18H: CONST 34, CONST 34, FP_ADD
+    CALL LED8B
     LD A,(IY+08H)
     OR A
     RRA
     PUSH AF
     RST 18H
-    ADC A,D
+    DB 8AH                                ; RST 18H: op0A
 
 LEE6F:
     RST 18H
-    LD B,85H
-    INC HL
+    DB 06H, 85H, 23H                      ; RST 18H: op06, CONST 35
     POP AF
     PUSH AF
-    CALL M,F726H
-    CALL F693H
+    CALL M,FP_NEGATE
+    CALL FP_COMPARE
     POP BC
     PUSH BC
-    JR Z,EE9AH
+    JR Z,LEE9A
     XOR B
-    JP M,EE93H
+    JP M,LEE93
     RST 18H
-    LD B,85H
-    LD (EEF1H),HL
-    LD B,B
+    DB 06H, 85H, 22H                      ; RST 18H: op06, CONST 34
+    POP AF
+    XOR 40H
     PUSH AF
-    CALL P,F726H
+    CALL P,FP_NEGATE
     RST 18H
-    NOP
-    ADC A,D
-    JR EE6FH
+    DB 00H, 8AH                           ; RST 18H: FP_ADD, op0A
+    JR LEE6F
 
 LEE93:
     POP AF
     XOR 80H
     PUSH AF
-    JP M,EE6FH
+    JP M,LEE6F
 
 LEE9A:
     RST 18H
-    LD B,0CH
-    INC C
-    INC C
-    LD (BC),A
-    EX AF,AF'
-    DEC B
-    DEC E
-    LD (BC),A
-    DEC B
-    INC E
-    NOP
-    LD B,02H
-    DEC B
-    DEC DE
-    NOP
-    LD B,02H
-    DEC B
-    LD A,(DE)
-    NOP
-    LD B,02H
-    DEC B
-    ADD HL,DE
-    NOP
-    LD B,02H
-    LD (BC),A
-    ADD A,B
+; RST 18H: op06, op0C, op0C, op0C, FP_MUL, op08, CONST 29, FP_MUL, CONST 28, FP_ADD, op06, FP_MUL, CONST 27, FP_ADD, op06, FP_MUL, CONST 26, FP_ADD, op06, FP_MUL, CONST 25, FP_ADD, op06, FP_MUL, FP_MUL, FP_ADD
+    DB 06H, 0CH, 0CH, 0CH, 02H, 08H, 05H, 1DH, 02H, 05H, 1CH, 00H, 06H, 02H, 05H, 1BH ; |................|
+    DB 00H, 06H, 02H, 05H, 1AH, 00H, 06H, 02H, 05H, 19H, 00H, 06H, 02H, 02H, 80H      ; |...............|
     POP AF
     ADD A,A
     RET P
-    JP F726H
-    LD D,H
-    XOR 03H
-    LD D,E
-    LD D,C
-    LD D,D
-    LD A,(BC)
+    JP FP_NEGATE
+
+FN_REC_SQR:
+    DW FN_REC_SIN                         ; link to previous function record
+    DB 3, "SQR", 0AH                      ; name, then type (numeric result)
 
 ; BASIC_SQR - Implements the BASIC SQR function.
 ; Entry: Argument on BASIC stack
 ; Exit: Square root on BASIC stack
 BASIC_SQR:
-    CALL EA68H
+    CALL EVAL_NUMERIC_ARGUMENT
     BIT 7,(IY+08H)
-    JP NZ,FB14H
+    JP NZ,LFB14
     LD A,(IY+06H)
     OR A
     RET Z
-    CALL EAC3H
-    LD HL,19C6H
+    CALL LEAC3
+    LD HL,FP_X+6
     LD A,(HL)
     SUB 3FH
     PUSH AF
     LD (HL),3FH
     RST 18H
-    LD B,05H
-    RRA
-    LD (BC),A
-    DEC B
-    LD E,00H
-    ADC A,E
+    DB 06H, 05H, 1FH, 02H, 05H, 1EH, 00H, 8BH ; RST 18H: op06, CONST 31, FP_MUL, CONST 30, FP_ADD, op0B
     LD B,04H
 
 LEEED:
     PUSH BC
     RST 18H
-    RLCA
-    LD B,07H
-    LD BC,0307H
-    DEC B
-    NOP
-    LD (BC),A
-    NOP
-    ADC A,E
+    DB 07H, 06H, 07H, 01H, 07H, 03H, 05H, 00H, 02H, 00H, 8BH ; RST 18H: op07, op06, op07, FP_DIV, op07, FP_SUB, CONST 0, FP_MUL, FP_ADD, op0B
     POP BC
-    DJNZ EEEDH
+    DJNZ LEEED
     POP AF
     BIT 0,A
-    JR Z,EF0BH
+    JR Z,LEF0B
     PUSH AF
     RST 18H
-    RLCA
-    DEC B
-    JR NZ,EF0AH
-    ADC A,E
+    DB 07H, 05H, 20H, 02H, 8BH            ; RST 18H: op07, CONST 32, FP_MUL, op0B
     POP AF
 
-LEF0A:
     INC A
 
 LEF0B:
     SRL A
-    LD HL,19CDH
+    LD HL,FP_Y+6
     ADD A,(HL)
     AND 7FH
     LD (HL),A
-    JP EA9AH
+    JP LEA9A
 
 LEF17:
     LD A,(IY+06H)
     OR A
-    JR NZ,EF23H
-    CALL FA1BH
-    JP FA08H
+    JR NZ,LEF23
+    CALL DISCARD_NUMBER
+    JP LFA08
 
 LEF23:
     LD A,(IY+0FH)
     OR A
-    JP Z,FA1BH
+    JP Z,DISCARD_NUMBER
     LD A,(IY+08H)
     AND 7FH
     CP 43H
-    JR NC,EF7DH
-    CALL FA92H
-    CALL FAC3H
+    JR NC,LEF7D
+    CALL LFA92
+    CALL STACK_NUMBER_TO_INTEGER
     PUSH HL
-    CALL FA92H
-    CALL F767H
+    CALL LFA92
+    CALL FP_ROUND_BCD
     POP HL
     PUSH HL
-    CALL FA2BH
-    CALL F693H
+    CALL INTEGER_TO_STACK
+    CALL FP_COMPARE
     POP HL
-    JR NZ,EF7DH
+    JR NZ,LEF7D
     BIT 7,H
     PUSH AF
-    CALL NZ,FC86H
+    CALL NZ,LFC86
     PUSH HL
     RST 18H
-    LD A,(BC)
-    LD A,(BC)
-    ADD A,L
-    DB 01H                                                                          ; |.|
+    DB 0AH, 0AH, 85H, 01H                 ; RST 18H: op0A, op0A, CONST 1
 
 LEF57:
     POP HL
     PUSH HL
     BIT 0,L
-    JR Z,EF63H
-    CALL EA9FH
-    CALL F512H
+    JR Z,LEF63
+    CALL LEA9F
+    CALL FP_MUL
 
 LEF63:
     POP HL
@@ -3177,66 +3050,56 @@ LEF63:
     RR L
     LD A,H
     OR L
-    JR Z,EF74H
+    JR Z,LEF74
     PUSH HL
     RST 18H
-    LD B,06H
-    LD (BC),A
-    ADC A,D
-    JR EF57H
+    DB 06H, 06H, 02H, 8AH                 ; RST 18H: op06, op06, FP_MUL, op0A
+    JR LEF57
 
 LEF74:
     POP AF
     RET Z
     RST 18H
-    DEC BC
-    DEC B
-    LD BC,8107H
+    DB 0BH, 05H, 01H, 07H, 81H            ; RST 18H: op0B, CONST 1, op07, FP_DIV
     RET
 
 LEF7D:
-    CALL EABEH
-    CALL ED21H
-    CALL EA9AH
-    CALL F512H
-    JP EBB8H
-    RET NZ
-    XOR 04H
-    LD D,E
-    LD D,H
-    LD D,D
-    INC H
-    EX AF,AF'
-    CALL EA68H
-    CALL F80EH
-    CALL FA1BH
-    JP FA7DH
-    ADC A,H
-    RST 28H
-    RLCA
-    LD D,E
-    LD D,H
-    LD D,D
-    LD C,C
-    LD C,(HL)
-    LD B,A
-    INC H
-    EX AF,AF'
+    CALL LEABE
+    CALL LED21
+    CALL LEA9A
+    CALL FP_MUL
+    JP LEBB8
+
+FN_REC_STR_STR:
+    DW FN_REC_SQR                         ; link to previous function record
+    DB 4, "STR$", 08H                     ; name, then type (string result)
+
+BASIC_STR_STR:
+    CALL EVAL_NUMERIC_ARGUMENT
+    CALL FP_TO_ASCII
+    CALL DISCARD_NUMBER
+    JP LFA7D
+
+FN_REC_STRING_STR:
+    DW FN_REC_STR_STR                     ; link to previous function record
+    DB 7, "STRING$", 08H                  ; name, then type (string result)
+
+BASIC_STRING_STR:
     LD A,96H
-    CALL FD54H
-    CALL FB1BH
+    CALL LFD54
+    CALL LFB1B
     PUSH AF
     LD A,A4H
-    CALL FD54H
+    CALL LFD54
     CP 02H
-    JR NC,EFD0H
-    CALL F294H
+    JR NC,LEFD0
+    CALL EVAL_STRING_EXPRESSION
     LD A,(IY+01H)
     OR A
-    JR Z,EFCDH
+    JR Z,LEFCD
     LD A,(IY+02H)
-    CALL FA21H
-    DB 01H                                                                          ; |.|
+    CALL DISCARD_STRING
+    DB 01H                                ; = LD BC,F5C1H when run from here, hiding the entry below
 
 LEFCD:
     POP BC
@@ -3244,24 +3107,24 @@ LEFCD:
     SCF
 
 LEFD0:
-    CALL NC,FB1BH
+    CALL NC,LFB1B
     PUSH AF
-    CALL EA70H
+    CALL LEA70
     POP DE
     PUSH IY
     POP HL
     DEC HL
     POP AF
     INC A
-    JP Z,F912H
+    JP Z,LF912
     DEC A
-    JR Z,EFE9H
+    JR Z,LEFE9
     LD B,A
 
 LEFE5:
     LD (HL),D
     DEC HL
-    DJNZ EFE5H
+    DJNZ LEFE5
 
 LEFE9:
     LD (HL),A
@@ -3270,30 +3133,23 @@ LEFE9:
     PUSH HL
     POP IY
     RET
-    AND B
-    RST 28H
-    INC BC
-    LD D,H
-    LD B,C
-    LD C,(HL)
-    LD A,(BC)
-    CALL EA68H
-    CALL EACDH
-    CALL EE5EH
+
+FN_REC_TAN:
+    DW FN_REC_STRING_STR                  ; link to previous function record
+    DB 3, "TAN", 0AH                      ; name, then type (numeric result)
+
+BASIC_TAN:
+    CALL EVAL_NUMERIC_ARGUMENT
+    CALL LEACD
+    CALL LEE5E
     RST 18H
-    RLCA
-    DEC B
-    INC HL
-    ADD A,B
-    CALL EE5EH
-    JP F5FBH
-    POP AF
-    RST 28H
-    INC BC
-    LD D,L
-    LD D,E
-    LD D,D
-    LD A,(BC)
+    DB 07H, 05H, 23H, 80H                 ; RST 18H: op07, CONST 35, FP_ADD
+    CALL LEE5E
+    JP FP_DIV
+
+FN_REC_USR:
+    DW FN_REC_TAN                         ; link to previous function record
+    DB 3, "USR", 0AH                      ; name, then type (numeric result)
 
 ; USR converts the BASIC argument to integer form, calls user machine code, then converts HL back
 ; to a BASIC number.
@@ -3323,31 +3179,30 @@ LEFE9:
 ; -----------------------------------------------------------------------------
 BASIC_USR:
     LD A,96H
-    CALL FD54H
-    CALL F0A7H
+    CALL LFD54
+    CALL EVAL_NUMERIC_EXPRESSION
     CP 95H
-    JR Z,F029H
+    JR Z,LF029
     LD A,A4H
-    CALL FD54H
-    CALL FAC4H
+    CALL LFD54
+    CALL LFAC4
     LD A,95H
 
 LF029:
-    CALL FD54H
-    LD DE,FA2BH
+    CALL LFD54
+    LD DE,INTEGER_TO_STACK
     PUSH DE
     PUSH HL
-    CALL FD02H
+    CALL LFD02
     EX (SP),HL
     RET
-    INC C
-    RET P
-    INC BC
-    LD D,(HL)
-    LD B,C
-    LD C,H
-    LD A,(BC)
-    CALL EA75H
+
+FN_REC_VAL:
+    DW FN_REC_USR                         ; link to previous function record
+    DB 3, "VAL", 0AH                      ; name, then type (numeric result)
+
+BASIC_VAL:
+    CALL LEA75
     PUSH IY
     POP HL
     INC HL
@@ -3361,8 +3216,8 @@ LF029:
     EX (SP),HL
     PUSH AF
     INC HL
-    CALL F914H
-    CALL EC7FH
+    CALL ASCII_TO_FP
+    CALL LEC7F
     POP AF
     POP HL
     LD (HL),A
@@ -3378,45 +3233,40 @@ LF029:
     PUSH DE
     POP IY
     RET
-    LD (HL),F0H
-    LD B,56H
-    LD B,C
-    LD D,D
-    LD D,B
-    LD D,H
-    LD D,D
-    LD A,(BC)
+
+FN_REC_VARPTR:
+    DW FN_REC_VAL                         ; link to previous function record
+    DB 6, "VARPTR", 0AH                   ; name, then type (numeric result)
+
+BASIC_VARPTR:
     LD A,96H
-    CALL FD54H
+    CALL LFD54
     AND FDH
     CP 01H
 
 LF07C:
-    JP NZ,FB14H
+    JP NZ,LFB14
     EXX
     LD A,C
     AND 7FH
-    LD (1708H),A
+    LD (SYMBOL_TYPE),A
     AND 0CH
-    JR NZ,F07CH
+    JR NZ,LF07C
     EXX
-    CALL F42EH
-    CALL FA2BH
-    JP EA70H
-    LD L,C
-    RET P
-    LD B,56H
-    LD B,L
-    LD D,D
-    LD C,(HL)
-    LD D,L
-    LD C,L
-    LD A,(BC)
+    CALL STACK_TO_NUMERIC_REGS
+    CALL INTEGER_TO_STACK
+    JP LEA70
+
+FN_REC_VERNUM:
+    DW FN_REC_VARPTR                      ; link to previous function record
+    DB 6, "VERNUM", 0AH                   ; name, then type (numeric result)
+
+BASIC_VERNUM:
     LD HL,000CH
-    JP FA2BH
+    JP INTEGER_TO_STACK
 
 LF0A4:
-    CALL FC43H
+    CALL LFC43
 
 ; Numeric expression precedence is implemented as nested layers: relations, +/-, */,
 ; exponentiation, functions, parentheses, and variables.
@@ -3452,7 +3302,7 @@ EVAL_NUMERIC_EXPRESSION:
     EXX
     LD A,B
     EXX
-    CALL F0D7H
+    CALL EXPR_AND_LAYER
 
 ; The OR/XOR stage is a left-fold over already evaluated AND terms: fetch the operator, evaluate
 ; one right term, combine the integer pairs, and repeat. It is not a precedence-free scan of the
@@ -3473,24 +3323,24 @@ EXPR_OR_XOR_LOOP:
     LD A,B
     EXX
     CP BFH
-    JR Z,F0B8H
+    JR Z,LF0B8
     CP B2H
     RET NZ
     SCF
 
 LF0B8:
     PUSH AF
-    CALL FC43H
-    CALL F0D7H
-    CALL FABFH
+    CALL LFC43
+    CALL EXPR_AND_LAYER
+    CALL LFABF
     POP AF
-    JR C,F0CCH
+    JR C,LF0CC
     LD A,L
     OR E
     LD L,A
     LD A,H
     OR D
-    JR F0D1H
+    JR LF0D1
 
 LF0CC:
     LD A,L
@@ -3501,8 +3351,8 @@ LF0CC:
 
 LF0D1:
     LD H,A
-    CALL FA2BH
-    JR F0ADH
+    CALL INTEGER_TO_STACK
+    JR EXPR_OR_XOR_LOOP
 
 ; AND is evaluated below OR/XOR but above NOT. The loop leaves the source pointer at the first
 ; token that belongs to the relation or statement layer, allowing the enclosing parser to continue
@@ -3518,7 +3368,7 @@ LF0D1:
 ; tokens and combine the two stack integers without disturbing the source continuation state.
 ; -----------------------------------------------------------------------------
 EXPR_AND_LAYER:
-    CALL F0F4H
+    CALL EXPR_NOT_LAYER
 
 LF0DA:
     EXX
@@ -3526,17 +3376,17 @@ LF0DA:
     EXX
     CP C9H
     RET NZ
-    CALL FC43H
-    CALL F0F4H
-    CALL FABFH
+    CALL LFC43
+    CALL EXPR_NOT_LAYER
+    CALL LFABF
     LD A,L
     AND E
     LD L,A
     LD A,H
     AND D
     LD H,A
-    CALL FA2BH
-    JR F0DAH
+    CALL INTEGER_TO_STACK
+    JR LF0DA
 
 ; NOT works on the integer conversion of the numeric stack value. The complemented pair is
 ; converted back to the BASIC numeric form; this is why NOT is a numeric/bitwise operator rather
@@ -3554,17 +3404,17 @@ LF0DA:
 ; -----------------------------------------------------------------------------
 EXPR_NOT_LAYER:
     CP C2H
-    JR NZ,F10AH
-    CALL FC43H
-    CALL F0F4H
-    CALL FAC3H
+    JR NZ,EXPR_RELATION_LAYER
+    CALL LFC43
+    CALL EXPR_NOT_LAYER
+    CALL STACK_NUMBER_TO_INTEGER
     LD A,L
     CPL
     LD L,A
     LD A,H
     CPL
     LD H,A
-    JP FA2BH
+    JP INTEGER_TO_STACK
 
 ; Relation parsing deliberately has separate numeric and string branches. Both branches return
 ; flags that the common relation decoder can turn into a BASIC numeric truth value.
@@ -3582,17 +3432,17 @@ EXPR_NOT_LAYER:
 ; -----------------------------------------------------------------------------
 EXPR_RELATION_LAYER:
     CP 02H
-    JR C,F123H
-    CALL F155H
+    JR C,EXPR_STRING_RELATION
+    CALL EVAL_ADD_SUB
     CP 99H
     RET C
     CP 9FH
     RET NC
     PUSH AF
-    CALL FC43H
-    CALL F155H
-    CALL F693H
-    JR F13AH
+    CALL LFC43
+    CALL EVAL_ADD_SUB
+    CALL FP_COMPARE
+    JR LF13A
 
 ; For a string relation, the right expression is evaluated as a descriptor before comparison. The
 ; string data remains length-tracked, so embedded zero bytes do not terminate the comparison.
@@ -3607,21 +3457,21 @@ EXPR_RELATION_LAYER:
 ; The result is converted to the same numeric truth convention used by numeric relations.
 ; -----------------------------------------------------------------------------
 EXPR_STRING_RELATION:
-    CALL F294H
+    CALL EVAL_STRING_EXPRESSION
     CP 99H
-    JP C,F35DH
+    JP C,LF35D
     CP 9FH
-    JP NC,F35DH
+    JP NC,LF35D
     PUSH AF
-    CALL FC43H
-    CALL F294H
-    CALL F6D7H
+    CALL LFC43
+    CALL EVAL_STRING_EXPRESSION
+    CALL STRING_COMPARE
 
 LF13A:
     POP HL
     LD A,H
-    CALL F142H
-    JP FA2BH
+    CALL RELATION_RESULT_DECODE
+    JP INTEGER_TO_STACK
 
 ; The rotate/branch decoder maps the relation token and CY/S/Z flags to the true/false numeric
 ; result, then reclaims both operands through the BASIC-stack integer path.
@@ -3638,18 +3488,18 @@ LF13A:
 RELATION_RESULT_DECODE:
     LD HL,FFFFH
     RRCA
-    JR NC,F149H
+    JR NC,LF149
     RET M
 
 LF149:
     RRCA
-    JR NC,F14DH
+    JR NC,LF14D
     RET Z
 
 LF14D:
     RRCA
-    JR NC,F153H
-    JR Z,F153H
+    JR NC,LF153
+    JR Z,LF153
     RET P
 
 LF153:
@@ -3679,18 +3529,18 @@ LF153:
 ;   AF, BC, DE, HL, IY.
 ; -----------------------------------------------------------------------------
 EVAL_ADD_SUB:
-    CALL F16CH
-    CALL NZ,F181H
+    CALL EXPR_ADD_SUB_OPERATOR
+    CALL NZ,EVAL_MUL_DIV
     INC E
-    CALL NZ,F726H
+    CALL NZ,FP_NEGATE
 
 LF15F:
-    CALL F16CH
+    CALL EXPR_ADD_SUB_OPERATOR
     RET NZ
     INC E
-    CALL Z,F493H
-    CALL NZ,F48EH
-    JR F15FH
+    CALL Z,FP_ADD
+    CALL NZ,FP_SUB
+    JR LF15F
 
 ; The additive loop remembers whether the operator was plus or minus while evaluating the next
 ; multiplicative term. Minus is implemented by negating that term and entering the same FP_ADD
@@ -3712,14 +3562,14 @@ EXPR_ADD_SUB_OPERATOR:
     EXX
     LD E,FFH
     CP 98H
-    JR Z,F179H
+    JR Z,LF179
     CP A2H
     RET NZ
     INC E
 
 LF179:
-    CALL FC43H
-    CALL F181H
+    CALL LFC43
+    CALL EVAL_MUL_DIV
     XOR A
     RET
 
@@ -3747,28 +3597,28 @@ LF179:
 ;   AF, BC, DE, HL, IY.
 ; -----------------------------------------------------------------------------
 EVAL_MUL_DIV:
-    CALL F1A2H
+    CALL EXPR_POWER_LAYER
 
 LF184:
     EXX
     LD A,B
     EXX
     CP A8H
-    JR Z,F18EH
+    JR Z,LF18E
     CP A1H
     RET NZ
 
 LF18E:
     LD D,A
-    CALL FC43H
-    CALL F1A2H
+    CALL LFC43
+    CALL EXPR_POWER_LAYER
     PUSH DE
     LD A,D
     CP A8H
-    CALL Z,F512H
-    CALL NZ,F5FBH
+    CALL Z,FP_MUL
+    CALL NZ,FP_DIV
     POP DE
-    JR F184H
+    JR LF184
 
 ; Exponentiation is nested inside the multiplicative layer. Its right operand is a primary term,
 ; giving the parser a distinct power stage instead of treating ^ like * or /.
@@ -3785,7 +3635,7 @@ LF18E:
 ; -----------------------------------------------------------------------------
 EXPR_POWER_LAYER:
     PUSH DE
-    CALL F1BBH
+    CALL EVAL_PRIMARY
 
 LF1A6:
     POP DE
@@ -3795,14 +3645,14 @@ LF1A6:
     CP 9FH
     RET NZ
     PUSH DE
-    CALL FC43H
-    CALL F1BBH
-    CALL EF17H
-    JR F1A6H
+    CALL LFC43
+    CALL EVAL_PRIMARY
+    CALL LEF17
+    JR LF1A6
 
 LF1B9:
     RST 08H
-    INC BC
+    DB 03H                                ; error code 03H: Argument missing
 
 ; -----------------------------------------------------------------------------
 ; PRIMARY EXPRESSION TERMS
@@ -3829,22 +3679,22 @@ LF1B9:
 ; -----------------------------------------------------------------------------
 EVAL_PRIMARY:
     PUSH AF
-    CALL FC8EH
+    CALL LFC8E
     POP AF
     CP C0H
-    JP Z,EDA9H
+    JP Z,LEDA9
     CP B1H
-    JP Z,EAF1H
+    JP Z,LEAF1
     CP 02H
-    JP C,F35DH
-    JP Z,FC43H
+    JP C,LF35D
+    JP Z,LFC43
     CP FDH
-    JR NC,F1B9H
+    JR NC,LF1B9
     CP 96H
-    JR NZ,F1E2H
-    CALL F0A4H
+    JR NZ,PRIMARY_SYMBOL_DISPATCH
+    CALL LF0A4
     CP 95H
-    JP Z,FC43H
+    JP Z,LFC43
 
 ; A primary token is either converted as a literal, resolved through the symbol chain, or
 ; dispatched to a built-in/user function. Terminators are rejected here so a missing expression
@@ -3862,12 +3712,12 @@ EVAL_PRIMARY:
 ; -----------------------------------------------------------------------------
 PRIMARY_SYMBOL_DISPATCH:
     CP 03H
-    JP NZ,FD5AH
-    CALL F42EH
+    JP NZ,LFD5A
+    CALL STACK_TO_NUMERIC_REGS
     BIT 3,C
     JP NZ,DBADH
     BIT 2,C
-    JP Z,FA63H
+    JP Z,LFA63
 
 ; Array and DEF references temporarily reuse global BASIC pointers. The saved current-line, CHAIN,
 ; TOP, and type values are the protection against nested function evaluation corrupting the
@@ -3892,15 +3742,15 @@ ARRAY_OR_DEF_SYMBOL:
     SBC A,A
     PUSH AF
     LD A,C
-    JR Z,F216H
+    JR Z,DEF_ARGUMENT_FRAME
     EX AF,AF'
-    CALL FC43H
+    CALL LFC43
     OR A
-    JP M,FD5AH
+    JP M,LFD5A
     LD (IX+01H),A
-    CALL F28DH
+    CALL NUMERIC_STRING_GATE
     LD A,95H
-    CALL FD54H
+    CALL LFD54
     EX AF,AF'
 
 ; A DEF call records the caller's BASIC execution context before it evaluates formal arguments and
@@ -3920,14 +3770,14 @@ ARRAY_OR_DEF_SYMBOL:
 DEF_ARGUMENT_FRAME:
     EX AF,AF'
     POP AF
-    LD HL,(1726H)
+    LD HL,(SYMBOL_TOP)
     EX (SP),HL
     PUSH HL
-    LD HL,(1724H)
+    LD HL,(SYMBOL_END)
     EX (SP),HL
     EXX
     PUSH HL
-    LD HL,(170CH)
+    LD HL,(CUR_LINE)
     PUSH HL
     PUSH BC
     EXX
@@ -3935,39 +3785,39 @@ DEF_ARGUMENT_FRAME:
     INC HL
     LD D,(HL)
     INC HL
-    LD (170CH),DE
+    LD (CUR_LINE),DE
     LD E,(HL)
     INC HL
     LD D,(HL)
     EX DE,HL
     EXX
     LD C,A
-    CALL FC43H
+    CALL LFC43
     SUB 96H
     SUB 01H
     SBC A,A
     XOR C
-    JP NZ,FD5AH
+    JP NZ,LFD5A
     XOR C
-    JR Z,F26DH
-    CALL FC43H
+    JR Z,RESTORE_DEF_CONTEXT
+    CALL LFC43
     AND 81H
     CP 01H
-    JP NZ,FD5AH
+    JP NZ,LFD5A
     EXX
     BIT 7,C
-    CALL Z,F40BH
+    CALL Z,SYMBOL_CREATE_VALUE
     LD A,C
     XOR (IX+01H)
     AND 02H
-    JP NZ,F35DH
+    JP NZ,LF35D
     PUSH DE
     EXX
     POP HL
-    CALL FB3BH
-    CALL FC43H
+    CALL LFB3B
+    CALL LFC43
     LD A,95H
-    CALL FD54H
+    CALL LFD54
 
 ; Restoring the saved context is part of the function ABI: leaving the temporary DEF symbol or
 ; changed TOP visible would make later variable lookup depend on call history.
@@ -3984,21 +3834,21 @@ DEF_ARGUMENT_FRAME:
 ; -----------------------------------------------------------------------------
 RESTORE_DEF_CONTEXT:
     LD A,9AH
-    CALL FD54H
+    CALL LFD54
     EX AF,AF'
     LD (IX+01H),A
-    CALL F28DH
+    CALL NUMERIC_STRING_GATE
     POP BC
     POP HL
-    LD (170CH),HL
+    LD (CUR_LINE),HL
     POP HL
     EXX
     POP HL
-    LD (1724H),HL
+    LD (SYMBOL_END),HL
     POP HL
-    LD (1726H),HL
+    LD (SYMBOL_TOP),HL
     POP AF
-    LD (1701H),A
+    LD (VALUE_TYPE),A
     RET
 
 ; -----------------------------------------------------------------------------
@@ -4013,7 +3863,7 @@ RESTORE_DEF_CONTEXT:
 ; -----------------------------------------------------------------------------
 NUMERIC_STRING_GATE:
     BIT 1,(IX+01H)
-    JP NZ,F0A7H
+    JP NZ,EVAL_NUMERIC_EXPRESSION
 
 ; -----------------------------------------------------------------------------
 ; STRING EXPRESSION EVALUATOR
@@ -4041,7 +3891,7 @@ EVAL_STRING_EXPRESSION:
     EXX
     LD A,B
     EXX
-    CALL F2E0H
+    CALL STRING_TERM_LAYER
 
 ; String concatenation is an in-place stack compaction operation. Length is checked before bytes
 ; are moved; the new descriptor is committed only after the combined payload fits.
@@ -4062,8 +3912,8 @@ STRING_CONCAT_LOOP:
     EXX
     CP 97H
     RET NZ
-    CALL FC43H
-    CALL F2E0H
+    CALL LFC43
+    CALL STRING_TERM_LAYER
     PUSH IY
     POP HL
     INC HL
@@ -4077,22 +3927,22 @@ STRING_CONCAT_LOOP:
     POP IY
     INC HL
     LD C,(HL)
-    CALL FC8EH
+    CALL LFC8E
     PUSH HL
     ADD HL,BC
     LD A,C
     OR A
     LD A,(DE)
-    JR Z,F2C2H
+    JR Z,LF2C2
     LDDR
 
 LF2C2:
     POP HL
     ADD A,(HL)
     LD (DE),A
-    JP C,F912H
+    JP C,LF912
     CP FFH
-    JP Z,F912H
+    JP Z,LF912
     LD C,(HL)
     LD E,L
     LD D,H
@@ -4107,7 +3957,7 @@ LF2C2:
     LD (HL),01H
     PUSH HL
     POP IY
-    JR F29AH
+    JR STRING_CONCAT_LOOP
 
 ; The string term layer keeps descriptor length separate from source-token length. This
 ; distinction is essential when a string contains encoded characters or an embedded byte that
@@ -4124,7 +3974,7 @@ LF2C2:
 ; tokens.
 ; -----------------------------------------------------------------------------
 STRING_TERM_LAYER:
-    CALL F32DH
+    CALL STRING_PRIMARY_DISPATCH
 
 LF2E3:
     EXX
@@ -4132,7 +3982,7 @@ LF2E3:
     EXX
     CP 96H
     RET NZ
-    CALL FD27H
+    CALL LFD27
     PUSH IY
     POP HL
     INC HL
@@ -4140,7 +3990,7 @@ LF2E3:
     LD C,A
     LD B,00H
     CP D
-    JR C,F2F8H
+    JR C,STRING_COPY_TRUNCATE
     LD A,D
 
 ; -----------------------------------------------------------------------------
@@ -4156,13 +4006,13 @@ LF2E3:
 STRING_COPY_TRUNCATE:
     LD D,A
     OR A
-    JR Z,F309H
+    JR Z,LF309
     LD A,C
     CP E
-    JR C,F309H
+    JR C,LF309
     INC E
     DEC E
-    JR NZ,F305H
+    JR NZ,LF305
     INC E
 
 ; When a string result is shortened, the copy path selects the permitted count first and then
@@ -4172,12 +4022,12 @@ STRING_COPY_TRUNCATE:
 LF305:
     LD A,D
     SUB E
-    JR NC,F30DH
+    JR NC,LF30D
 
 LF309:
     ADD HL,BC
     XOR A
-    JR F318H
+    JR LF318
 
 LF30D:
     INC A
@@ -4197,8 +4047,8 @@ LF318:
     LD (HL),01H
     PUSH HL
     POP IY
-    JR F2E3H
-    CALL FAC4H
+    JR LF2E3
+    CALL LFAC4
     LD D,00H
     INC H
     RET Z
@@ -4223,21 +4073,21 @@ LF318:
 ; before string storage is allocated.
 ; -----------------------------------------------------------------------------
 STRING_PRIMARY_DISPATCH:
-    CALL FC8EH
+    CALL LFC8E
     EXX
     PUSH BC
     EXX
     POP BC
     LD A,B
     CP 01H
-    JP C,FC43H
-    JR Z,F347H
+    JP C,LFC43
+    JR Z,STRING_SYMBOL_DISPATCH
     CP 04H
-    JR C,F35DH
+    JR C,LF35D
     CP FDH
-    JP C,FD5AH
+    JP C,LFD5A
     RST 08H
-    INC BC
+    DB 03H                                ; error code 03H: Argument missing
 
 ; -----------------------------------------------------------------------------
 ; STRING SYMBOL DISPATCH
@@ -4251,17 +4101,17 @@ STRING_PRIMARY_DISPATCH:
 STRING_SYMBOL_DISPATCH:
     LD A,C
     CP C5H
-    JP Z,EC89H
-    CALL F42EH
+    JP Z,LEC89
+    CALL STACK_TO_NUMERIC_REGS
     BIT 3,C
     JP NZ,DBADH
     BIT 2,C
-    JP NZ,F1F4H
-    JP FA7CH
+    JP NZ,ARRAY_OR_DEF_SYMBOL
+    JP LFA7C
 
 LF35D:
     RST 08H
-    DB 0EH                                                                          ; |.|
+    DB 0EH                                ; error code 0EH: Type mismatch
 
 ; -----------------------------------------------------------------------------
 ; CREATE SYMBOL TABLE ENTRY
@@ -4287,10 +4137,10 @@ LF35D:
 ;   AF, BC, DE, HL, IY.
 ; -----------------------------------------------------------------------------
 SYMBOL_CREATE:
-    CALL FC8EH
-    LD DE,(1724H)
-    LD HL,(1726H)
-    LD (1724H),HL
+    CALL LFC8E
+    LD DE,(SYMBOL_END)
+    LD HL,(SYMBOL_TOP)
+    LD (SYMBOL_END),HL
     LD (HL),E
     INC HL
     LD (HL),D
@@ -4316,23 +4166,23 @@ SYMBOL_CREATE:
 SYMBOL_NAME_COPY:
     LD A,(DE)
     CP FDH
-    JR NC,F3A3H
+    JR NC,LF3A3
     CP 20H
-    JR C,F39CH
+    JR C,LF39C
     CP 24H
-    JR Z,F39DH
+    JR Z,LF39D
     CP 2EH
-    JR Z,F39CH
+    JR Z,LF39C
     CP 30H
-    JR C,F3A3H
+    JR C,LF3A3
     CP 3AH
-    JR C,F39CH
+    JR C,LF39C
     CP 3FH
-    JR C,F3A3H
+    JR C,LF3A3
     CP 60H
-    JR C,F39CH
+    JR C,LF39C
     CP A9H
-    JR C,F3A3H
+    JR C,LF3A3
 
 LF39C:
     SCF
@@ -4342,12 +4192,12 @@ LF39D:
     INC C
     INC HL
     LD (HL),A
-    JR C,F377H
+    JR C,SYMBOL_NAME_COPY
 
 LF3A3:
     LD A,(HL)
     INC HL
-    LD (1726H),HL
+    LD (SYMBOL_TOP),HL
     EX (SP),HL
     LD (HL),C
     POP HL
@@ -4363,16 +4213,16 @@ LF3A3:
 ; Clearing is deliberate: an undefined scalar reads as numeric zero rather than stale RAM.
 ; -----------------------------------------------------------------------------
 INIT_NUMERIC_SYMBOL:
-    CALL FC8EH
-    LD HL,(1726H)
+    CALL LFC8E
+    LD HL,(SYMBOL_TOP)
     LD B,06H
     XOR A
 
 LF3B5:
     LD (HL),A
     INC HL
-    DJNZ F3B5H
-    JR F3CEH
+    DJNZ LF3B5
+    JR LF3CE
 
 ; -----------------------------------------------------------------------------
 ; INITIALIZE STRING/ARRAY DATA
@@ -4386,11 +4236,11 @@ LF3B5:
 ; -----------------------------------------------------------------------------
 INIT_STRING_OR_ARRAY_SYMBOL:
     BIT 1,(IX+01H)
-    JR NZ,F3ACH
+    JR NZ,INIT_NUMERIC_SYMBOL
 
 LF3C1:
-    CALL FC8EH
-    LD HL,(1726H)
+    CALL LFC8E
+    LD HL,(SYMBOL_TOP)
     LD (HL),C
     INC HL
     LD B,00H
@@ -4399,7 +4249,7 @@ LF3C1:
     INC HL
 
 LF3CE:
-    LD (1726H),HL
+    LD (SYMBOL_TOP),HL
     RET
 
 ; -----------------------------------------------------------------------------
@@ -4427,8 +4277,8 @@ LF3CE:
 ; -----------------------------------------------------------------------------
 SYMBOL_LOOKUP:
     LD (1728H),HL
-    LD HL,1725H
-    DB 3EH                                                                          ; |>|
+    LD HL,SYMBOL_END+1
+    DB 3EH                                ; = LD A,E1H when run from here, hiding the entry below
 
 ; Symbol lookup follows little-endian links from CHAIN toward older entries. A zero link is the
 ; defined end condition; it is not an instruction address or a valid empty symbol.
@@ -4476,19 +4326,19 @@ SYMBOL_NAME_COMPARE:
     INC DE
     INC HL
     CP (HL)
-    JR NZ,F3D9H
-    DJNZ F3E8H
+    JR NZ,SYMBOL_CHAIN_NEXT
+    DJNZ SYMBOL_NAME_COMPARE
     CP 24H
-    JR Z,F404H
+    JR Z,SYMBOL_MATCH_RETURN
     LD A,(DE)
     CP 20H
-    JR Z,F404H
+    JR Z,SYMBOL_MATCH_RETURN
     CP FDH
-    JR NC,F404H
+    JR NC,SYMBOL_MATCH_RETURN
     CP A9H
-    JR NC,F3D9H
+    JR NC,SYMBOL_CHAIN_NEXT
     RLA
-    JR NC,F3D9H
+    JR NC,SYMBOL_CHAIN_NEXT
 
 ; A matched entry has its construction marker cleared before the type byte is returned. Callers
 ; therefore see a stable scalar/array/string/function classification, not the temporary marker
@@ -4509,7 +4359,7 @@ SYMBOL_MATCH_RETURN:
     INC HL
     RES 7,(HL)
     SCF
-    JR F428H
+    JR LF428
 
 ; Symbol creation writes the descriptor and initializes its data area before publishing the link.
 ; This ordering is what lets an out-of-memory or duplicate-declaration error leave the live chain
@@ -4526,23 +4376,23 @@ SYMBOL_MATCH_RETURN:
 ; are coherent.
 ; -----------------------------------------------------------------------------
 SYMBOL_CREATE_VALUE:
-    CALL F35FH
+    CALL SYMBOL_CREATE
     SUB 24H
-    JR Z,F414H
+    JR Z,LF414
     LD A,02H
 
 LF414:
     LD (HL),A
     PUSH HL
     INC HL
-    LD (1726H),HL
-    JR NZ,F422H
+    LD (SYMBOL_TOP),HL
+    JR NZ,LF422
     LD C,12H
-    CALL F3C1H
+    CALL LF3C1
     XOR A
 
 LF422:
-    CALL NZ,F3ACH
+    CALL NZ,INIT_NUMERIC_SYMBOL
     POP HL
     SET 7,(HL)
 
@@ -4554,7 +4404,7 @@ LF428:
 
 LF42C:
     RST 08H
-    DEC B
+    DB 05H                                ; error code 05H: Bad subscript
 
 ; BASIC numeric stack elements are nine bytes: identifier, overflow byte, exponent/sign byte, and
 ; seven packed BCD mantissa bytes.
@@ -4603,9 +4453,9 @@ STACK_OPERAND_WALK:
     EXX
     POP HL
     LD C,A
-    JP Z,FC43H
+    JP Z,LFC43
     LD A,96H
-    CALL FD51H
+    CALL LFD51
     XOR A
     LD E,A
     LD D,A
@@ -4633,8 +4483,8 @@ STACK_ELEMENT_SCAN:
     PUSH HL
     PUSH AF
     LD A,A4H
-    CALL NZ,FD54H
-    CALL FAC4H
+    CALL NZ,LFD54
+    CALL LFAC4
     EX DE,HL
     LD C,(HL)
     INC HL
@@ -4643,7 +4493,7 @@ STACK_ELEMENT_SCAN:
     EX DE,HL
     OR A
     SBC HL,BC
-    JR NC,F42CH
+    JR NC,LF42C
     ADD HL,BC
     POP AF
     PUSH AF
@@ -4651,7 +4501,7 @@ STACK_ELEMENT_SCAN:
 
 LF45E:
     DEC A
-    JR Z,F46FH
+    JR Z,LF46F
     EX DE,HL
     LD C,(HL)
     INC HL
@@ -4659,10 +4509,10 @@ LF45E:
     INC HL
     PUSH HL
     PUSH AF
-    CALL FCB3H
+    CALL LFCB3
     POP AF
     POP DE
-    JR F45EH
+    JR LF45E
 
 LF46F:
     POP DE
@@ -4670,21 +4520,21 @@ LF46F:
     POP BC
     ADD HL,BC
     DEC A
-    JR NZ,F445H
+    JR NZ,STACK_ELEMENT_SCAN
     LD A,95H
-    CALL FD54H
+    CALL LFD54
     EX DE,HL
     POP BC
     BIT 1,C
     LD BC,0006H
-    JR NZ,F487H
+    JR NZ,LF487
     LD C,(HL)
     INC BC
     INC BC
 
 LF487:
     PUSH HL
-    CALL FCB3H
+    CALL LFCB3
     POP DE
     ADD HL,DE
     RET
@@ -4713,7 +4563,7 @@ LF487:
 ; -----------------------------------------------------------------------------
 FP_SUB:
     PUSH AF
-    CALL F726H
+    CALL FP_NEGATE
     POP AF
 
 ; -----------------------------------------------------------------------------
@@ -4754,11 +4604,11 @@ FP_ADD:
     LD A,(IY+11H)
     AND 7FH
     SUB C
-    JP P,F4BFH
+    JP P,FP_ALIGN_OR_SUBTRACT
     EX (SP),IY
     PUSH AF
     NEG
-    CALL F790H
+    CALL FP_DECIMAL_SHIFT
     POP BC
     EX (SP),IY
     LD A,(IY+11H)
@@ -4781,22 +4631,22 @@ FP_ADD:
 ; before the shared normalizer runs.
 ; -----------------------------------------------------------------------------
 FP_ALIGN_OR_SUBTRACT:
-    CALL NZ,F790H
+    CALL NZ,FP_DECIMAL_SHIFT
     LD A,(IY+08H)
     XOR (IY+11H)
     RLCA
-    CALL NC,F4F4H
+    CALL NC,FP_BCD_ADD_MANTISSA
     EX (SP),IY
-    JR NC,F4EEH
-    CALL F71CH
+    JR NC,LF4EE
+    CALL LF71C
     EX (SP),IY
-    CALL F71CH
-    CALL F4F4H
+    CALL LF71C
+    CALL FP_BCD_ADD_MANTISSA
     EX (SP),IY
     LD A,(IY+07H)
     OR A
-    JR Z,F4EEH
-    CALL F70CH
+    JR Z,LF4EE
+    CALL LF70C
     LD A,80H
     XOR (IY+08H)
     LD (IY+08H),A
@@ -4805,7 +4655,7 @@ LF4EE:
     POP AF
 
 LF4EF:
-    CALL F734H
+    CALL FP_NORMALIZE
     POP AF
     RET
 
@@ -4836,14 +4686,14 @@ LF4FE:
     ADC A,(HL)
     DAA
     LD (HL),A
-    DJNZ F4FEH
+    DJNZ LF4FE
     POP AF
     RET
 
 LF508:
     LD DE,0009H
     ADD IY,DE
-    CALL F9F9H
+    CALL FP_CLEAR_NUMERIC
     POP AF
     RET
 
@@ -4877,10 +4727,10 @@ FP_MUL:
     PUSH AF
     LD A,(IY+0FH)
     OR A
-    JR Z,F508H
+    JR Z,LF508
     LD A,(IY+06H)
     OR A
-    JR Z,F508H
+    JR Z,LF508
     LD A,(IY+11H)
     LD L,(IY+08H)
     XOR L
@@ -4892,10 +4742,10 @@ FP_MUL:
     AND 7FH
     ADD A,L
     SUB 40H
-    JR C,F508H
-    JP M,F912H
+    JR C,LF508
+    JP M,LF912
     INC A
-    JP M,F912H
+    JP M,LF912
     DEC A
     LD L,A
     PUSH HL
@@ -4910,13 +4760,13 @@ FP_MUL:
     LD D,H
     LD BC,0010H
     ADD HL,BC
-    CALL F5E8H
+    CALL LF5E8
     PUSH DE
     LD (HL),A
     DEC HL
     LD (HL),A
     DEC HL
-    CALL F5E8H
+    CALL LF5E8
     LD HL,000AH
     ADD HL,DE
     LD C,L
@@ -4956,7 +4806,7 @@ FP_MUL_DIGIT_PRODUCT:
     PUSH AF
     EX AF,AF'
     ADD A,A
-    JR Z,F5B0H
+    JR Z,FP_MUL_PACK_RESULT
     LD D,A
     ADD A,A
     ADD A,A
@@ -4968,15 +4818,15 @@ FP_MUL_DIGIT_PRODUCT:
     EX AF,AF'
 
 LF583:
-    JP P,F58EH
+    JP P,FP_MUL_TABLE_LOOKUP
     INC E
     DEC E
-    JR Z,F5B0H
+    JR Z,FP_MUL_PACK_RESULT
 
 LF58A:
     EX AF,AF'
     XOR A
-    JR F59BH
+    JR LF59B
 
 ; The product inner loop uses a ROM lookup for a selected BCD digit. Zero digits bypass
 ; accumulation, which is both an optimization and a useful clue when distinguishing the table data
@@ -4993,7 +4843,7 @@ LF58A:
 ; -----------------------------------------------------------------------------
 FP_MUL_TABLE_LOOKUP:
     CP 0CH
-    JR NC,F58AH
+    JR NC,LF58A
     EX AF,AF'
     EXX
     LD A,(BC)
@@ -5021,7 +4871,7 @@ LF59B:
     LD E,A
     EX AF,AF'
     DEC A
-    DJNZ F583H
+    DJNZ LF583
 
 ; The product is packed only after all digit rows have been accumulated. Sign/exponent restoration
 ; occurs after packing, followed by the same FP_NORMALIZE path used by addition and division.
@@ -5045,13 +4895,13 @@ FP_MUL_PACK_RESULT:
     POP BC
     DEC BC
     INC DE
-    JR NZ,F56CH
+    JR NZ,FP_MUL_DIGIT_PRODUCT
     POP HL
     LD BC,000FH
     ADD HL,BC
     LD E,L
     LD D,H
-    CALL F5DAH
+    CALL LF5DA
     PUSH HL
     POP IY
     POP HL
@@ -5066,7 +4916,7 @@ LF5D3:
     POP DE
     POP HL
     EXX
-    JP F4EFH
+    JP LF4EF
 
 LF5DA:
     LD B,07H
@@ -5079,7 +4929,7 @@ LF5DC:
     DEC DE
     RLD
     DEC HL
-    DJNZ F5DCH
+    DJNZ LF5DC
     RET
 
 LF5E8:
@@ -5095,13 +4945,13 @@ LF5EA:
     LD (DE),A
     DEC DE
     DEC HL
-    DJNZ F5EAH
+    DJNZ LF5EA
     XOR A
     RET
 
 LF5F9:
     RST 08H
-    DEC BC
+    DB 0BH                                ; error code 0BH: Cannot divide by 0
 
 ; Division generates up to twelve quotient digits by repeated shifted subtraction; zero divisor
 ; raises error 0BH.
@@ -5134,10 +4984,10 @@ FP_DIV:
     PUSH AF
     LD A,(IY+06H)
     OR A
-    JR Z,F5F9H
+    JR Z,LF5F9
     LD A,(IY+0FH)
     OR A
-    JP Z,FA1AH
+    JP Z,LFA1A
     EXX
     PUSH HL
     PUSH DE
@@ -5151,7 +5001,7 @@ FP_DIV:
     LD (171CH),HL
     PUSH HL
     EX (SP),IY
-    CALL F9F1H
+    CALL LF9F1
     LD B,04H
 
 ; Division prepares a shifted decimal remainder rather than using the CPU divide instruction. The
@@ -5209,18 +5059,18 @@ LF63B:
     DAA
     INC HL
     LD (HL),A
-    DJNZ F63BH
+    DJNZ LF63B
     AND F0H
-    JR NZ,F65DH
+    JR NZ,FP_DIV_FINALIZE
     EXX
-    CALL F7D2H
+    CALL FP_GET_BCD_NIBBLE
     INC A
-    CALL F7E3H
+    CALL FP_SET_BCD_NIBBLE
     LD HL,(171CH)
     EXX
     LD BC,0007H
     LDDR
-    JR F638H
+    JR FP_DIV_BCD_SUBTRACT
 
 ; Division finalization combines the generated quotient, exponent difference, and sign XOR only
 ; after the remainder loop ends. This ordering explains why a zero dividend has a short path while
@@ -5238,13 +5088,13 @@ LF63B:
 ; -----------------------------------------------------------------------------
 FP_DIV_FINALIZE:
     EX (SP),IY
-    CALL F784H
+    CALL FP_SHIFT_RIGHT_BCD
     EX (SP),IY
     EXX
     INC B
     LD A,B
     CP 10H
-    JR C,F626H
+    JR C,FP_DIV_SHIFTED_REMAINDER
     EXX
     LD HL,(171CH)
     DEC HL
@@ -5267,9 +5117,9 @@ FP_DIV_FINALIZE:
     XOR C
 
 LF68B:
-    JP P,F5D3H
-    CALL F9F9H
-    JR F68BH
+    JP P,LF5D3
+    CALL FP_CLEAR_NUMERIC
+    JR LF68B
 
 ; Numeric comparison returns CY/S/Z like subtraction: less-than sets CY and S, equality sets Z.
 
@@ -5318,7 +5168,7 @@ FP_COMPARE:
     SUB C
     RET NZ
     ADD A,C
-    JR Z,F6B1H
+    JR Z,FP_COMPARE_MAGNITUDE
     EX DE,HL
 
 ; Numeric comparison ignores the sign bit while comparing exponents and mantissas. Sign ordering
@@ -5378,7 +5228,7 @@ FP_COMPARE_BCD_DIGITS:
     RET NZ
     DEC DE
     DEC HL
-    DJNZ F6BEH
+    DJNZ FP_COMPARE_BCD_DIGITS
     RET
 
 ; -----------------------------------------------------------------------------
@@ -5417,7 +5267,7 @@ STRING_COMPARE:
     PUSH HL
     LD A,(HL)
     CP C
-    JR C,F6E8H
+    JR C,STRING_COMPARE_LENGTH
     LD A,C
 
 ; String comparison stores the shorter length as the common-prefix bound but retains both original
@@ -5460,8 +5310,8 @@ STRING_COMPARE_BYTES:
     LD A,(DE)
     INC DE
     CPI
-    JP PO,F6FBH
-    JR Z,F6F2H
+    JP PO,LF6FB
+    JR Z,STRING_COMPARE_BYTES
 
 LF6FB:
     DEC HL
@@ -5492,14 +5342,14 @@ LF713:
     DAA
     LD (HL),A
     DEC E
-    JR NZ,F713H
+    JR NZ,LF713
     RET
 
 LF71C:
     BIT 7,(IY+08H)
     RET Z
-    CALL F70CH
-    JR F72BH
+    CALL LF70C
+    JR LF72B
 
 ; Arithmetic routine 4: negates the sign of the 9-byte number on the BASIC Stack.
 
@@ -5558,17 +5408,17 @@ LF72B:
 ;   AF, BC, DE, HL.
 ; -----------------------------------------------------------------------------
 FP_NORMALIZE:
-    CALL F9DFH
+    CALL FP_TEST_ZERO
     RET Z
     LD A,(IY+07H)
     OR A
-    JR Z,F751H
+    JR Z,FP_SHIFT_LEFT_NORMALIZE
     LD A,01H
-    CALL F790H
+    CALL FP_DECIMAL_SHIFT
     LD A,(IY+08H)
     AND 7FH
     CP 7EH
-    JP Z,F912H
+    JP Z,LF912
     INC (IY+08H)
     RET
 
@@ -5590,12 +5440,12 @@ FP_SHIFT_LEFT_NORMALIZE:
     LD A,(IY+06H)
     AND F0H
     RET NZ
-    CALL F784H
+    CALL FP_SHIFT_RIGHT_BCD
     LD A,(IY+08H)
     DEC (IY+08H)
     AND 7FH
-    JR NZ,F751H
-    JP F9F9H
+    JR NZ,FP_SHIFT_LEFT_NORMALIZE
+    JP FP_CLEAR_NUMERIC
 
 ; Rounding increments packed BCD digits with decimal carry. A carry out of the retained mantissa
 ; can change the exponent, so rounding is an arithmetic state transition rather than a
@@ -5619,7 +5469,7 @@ FP_ROUND_BCD:
     LD A,(HL)
     CP 50H
     LD (HL),00H
-    JR C,F782H
+    JR C,LF782
     LD B,06H
 
 LF775:
@@ -5628,11 +5478,11 @@ LF775:
     ADD A,01H
     DAA
     LD (HL),A
-    JR NC,F77FH
-    DJNZ F775H
+    JR NC,LF77F
+    DJNZ LF775
 
 LF77F:
-    CALL F734H
+    CALL FP_NORMALIZE
 
 LF782:
     POP HL
@@ -5659,7 +5509,7 @@ FP_SHIFT_RIGHT_BCD:
 LF78A:
     INC HL
     RLD
-    DJNZ F78AH
+    DJNZ LF78A
     RET
 
 ; Decimal shifts are shared by exponent alignment, parsing, and formatting. Large requested shifts
@@ -5677,7 +5527,7 @@ LF78A:
 ; -----------------------------------------------------------------------------
 FP_DECIMAL_SHIFT:
     CP 0EH
-    JR NC,F7C4H
+    JR NC,LF7C4
     LD BC,00FFH
     PUSH IY
     POP HL
@@ -5689,8 +5539,8 @@ LF79D:
     INC HL
     SUB 02H
     INC C
-    JR NC,F79DH
-    JR Z,F7B7H
+    JR NC,LF79D
+    JR Z,LF7B7
     INC DE
     PUSH AF
     LD A,07H
@@ -5705,7 +5555,7 @@ LF7B1:
     LD (HL),B
     INC HL
     DEC A
-    JR NZ,F7B1H
+    JR NZ,LF7B1
     POP AF
 
 LF7B7:
@@ -5719,15 +5569,17 @@ LF7B7:
 LF7BE:
     RRD
     DEC HL
-    DJNZ F7BEH
+    DJNZ LF7BE
     RET
 
 LF7C4:
     LD C,(IY+08H)
-    CALL F9F9H
+    CALL FP_CLEAR_NUMERIC
     LD (IY+08H),C
     RET
-    LD HL,FEB6H
+
+LF7CE:
+    LD HL,LFEB6
     PUSH HL
 
 ; -----------------------------------------------------------------------------
@@ -5742,8 +5594,8 @@ LF7C4:
 FP_GET_BCD_NIBBLE:
     PUSH HL
     PUSH BC
-    CALL F7FDH
-    JR C,F7DEH
+    CALL LF7FD
+    JR C,LF7DE
     LD A,(HL)
     RLCA
     RLCA
@@ -5768,9 +5620,9 @@ LF7DE:
 FP_SET_BCD_NIBBLE:
     PUSH HL
     PUSH BC
-    CALL F7FDH
+    CALL LF7FD
     LD B,F0H
-    JR C,F7F7H
+    JR C,LF7F7
     SLA C
     SLA C
     SLA C
@@ -5831,12 +5683,12 @@ FP_TO_ASCII:
     OR A
     LD HL,1931H
     LD (HL),30H
-    JR Z,F897H
+    JR Z,LF897
     BIT 7,(IY+08H)
-    JR Z,F825H
+    JR Z,FORMAT_FIXED_OR_EXPONENT
     LD (HL),2DH
     INC HL
-    CALL F726H
+    CALL FP_NEGATE
 
 ; The number formatter decides fixed versus E notation from exponent and significant-digit
 ; placement before writing digits. It therefore knows the final shape and length while emitting
@@ -5853,15 +5705,15 @@ FP_TO_ASCII:
 ; digit emission so the output length byte remains correct.
 ; -----------------------------------------------------------------------------
 FORMAT_FIXED_OR_EXPONENT:
-    CALL F767H
+    CALL FP_ROUND_BCD
     LD B,0EH
 
 LF82A:
     DEC B
     LD A,B
     CP 04H
-    CALL NC,F7D2H
-    JR Z,F82AH
+    CALL NC,FP_GET_BCD_NIBBLE
+    JR Z,LF82A
     LD C,B
     LD B,04H
     LD E,(IY+08H)
@@ -5870,23 +5722,23 @@ LF82A:
     LD D,A
     LD A,E
     CP 4AH
-    JR NC,F858H
+    JR NC,LF858
     CP 40H
-    JR NC,F850H
+    JR NC,LF850
     SUB C
-    JR C,F859H
+    JR C,LF859
     CP 32H
-    JR C,F859H
+    JR C,LF859
     LD B,D
-    JR F85BH
+    JR LF85B
 
 LF850:
     LD A,C
     CP D
-    JR NC,F85BH
+    JR NC,LF85B
     LD C,D
     OR A
-    JR F85CH
+    JR LF85C
 
 LF858:
     SCF
@@ -5903,7 +5755,7 @@ LF85C:
 
 LF85E:
     CP D
-    JR NZ,F864H
+    JR NZ,FORMAT_DIGIT_LOOP
     LD (HL),2EH
     INC HL
 
@@ -5926,22 +5778,22 @@ FORMAT_DIGIT_LOOP:
     LD A,B
     SUB 04H
     LD A,00H
-    CALL P,F7D2H
+    CALL P,FP_GET_BCD_NIBBLE
     ADD A,30H
     LD (HL),A
     INC HL
     INC B
     LD A,B
     CP C
-    JR NZ,F85EH
+    JR NZ,LF85E
     POP AF
-    JR NC,F898H
+    JR NC,LF898
     LD (HL),45H
     INC HL
     LD (HL),2BH
     LD A,E
     SUB 40H
-    JR NC,F886H
+    JR NC,FORMAT_EXPONENT_DIGITS
     LD (HL),2DH
     NEG
 
@@ -5966,7 +5818,7 @@ LF889:
     INC B
     LD C,A
     SUB 0AH
-    JR NC,F889H
+    JR NC,LF889
     LD A,B
     ADD A,30H
     LD (HL),A
@@ -6018,9 +5870,9 @@ LF8A7:
     LD A,(HL)
     INC HL
     CP 20H
-    JR Z,F8A7H
+    JR Z,LF8A7
     CP 22H
-    JR NZ,F8B4H
+    JR NZ,LF8B4
     INC C
 
 LF8B2:
@@ -6031,23 +5883,23 @@ LF8B4:
     INC E
     INC C
     DEC C
-    JR Z,F8C7H
+    JR Z,LF8C7
     CP FFH
-    JR Z,F8D3H
+    JR Z,LF8D3
     CP 22H
-    JR NZ,F8B2H
+    JR NZ,LF8B2
     CP (HL)
     INC HL
-    JR Z,F8B2H
-    JR F8D3H
+    JR Z,LF8B2
+    JR LF8D3
 
 LF8C7:
     CP 2CH
-    JR Z,F8D3H
+    JR Z,LF8D3
     CP 21H
-    JR Z,F8D3H
+    JR Z,LF8D3
     CP FDH
-    JR C,F8B2H
+    JR C,LF8B2
 
 LF8D3:
     DEC HL
@@ -6056,30 +5908,30 @@ LF8D3:
     LD B,E
     PUSH IY
     POP DE
-    CALL FC8EH
+    CALL LFC8E
     INC B
 
 LF8DE:
     DEC B
     DEC DE
-    JR Z,F8F8H
+    JR Z,LF8F8
     DEC HL
     LD A,(HL)
     CP 22H
-    JR NZ,F8EEH
+    JR NZ,LF8EE
     INC C
     DEC C
-    JR Z,F8EEH
+    JR Z,LF8EE
     DEC HL
     LD A,(HL)
 
 LF8EE:
     LD (DE),A
     CP 20H
-    JR NC,F8DEH
+    JR NC,LF8DE
     OR 80H
     LD (DE),A
-    JR F8DEH
+    JR LF8DE
 
 LF8F8:
     EX DE,HL
@@ -6093,17 +5945,19 @@ LF8F8:
     POP BC
     POP DE
     RET
+
+LF905:
     LD A,(HL)
     CP 22H
-    JR Z,F8A1H
-    CALL F914H
-    JP NC,FD5AH
+    JR Z,STRING_TO_STACK
+    CALL ASCII_TO_FP
+    JP NC,LFD5A
     RLA
     RET NC
 
 LF912:
     RST 08H
-    DEC C
+    DB 0DH                                ; error code 0DH: Overflow
 
 ; ASCII parsing accepts sign, decimal point, and optional signed E exponent; insignificant
 ; underflow becomes zero.
@@ -6136,7 +5990,7 @@ LF912:
 ASCII_TO_FP:
     PUSH BC
     PUSH DE
-    CALL F9F4H
+    CALL FP_ALLOCATE_NUMERIC
     PUSH HL
     PUSH IY
     POP HL
@@ -6164,11 +6018,11 @@ ASCII_SCAN_SIGN_DIGITS:
     LD A,(HL)
     INC HL
     CP 20H
-    JR Z,F926H
+    JR Z,ASCII_SCAN_SIGN_DIGITS
     CP 2BH
-    JR Z,F936H
+    JR Z,LF936
     CP 2DH
-    JR NZ,F938H
+    JR NZ,LF938
     SET 1,D
 
 LF936:
@@ -6177,21 +6031,21 @@ LF936:
 
 LF938:
     CP 2EH
-    JR Z,F969H
+    JR Z,LF969
     SUB 3AH
-    JR NC,F971H
+    JR NC,LF971
     ADD A,0AH
-    JR NC,F971H
+    JR NC,LF971
     LD C,A
     SET 7,D
     LD A,D
     RRCA
-    JR NZ,F954H
+    JR NZ,ASCII_DECIMAL_STATE
     BIT 2,D
-    JR NZ,F956H
-    JR NC,F936H
+    JR NZ,LF956
+    JR NC,LF936
     DEC E
-    JR F936H
+    JR LF936
 
 ; The decimal point changes the provisional exponent rather than moving already packed digits. A
 ; second point or a nonnumeric terminator exits through the parser's validation state.
@@ -6210,36 +6064,36 @@ ASCII_DECIMAL_STATE:
     SET 2,D
 
 LF956:
-    JR C,F959H
+    JR C,LF959
     INC E
 
 LF959:
     LD A,B
     DEC A
-    JR Z,F936H
+    JR Z,LF936
     LD B,A
     EX (SP),HL
     RRCA
-    JR C,F963H
+    JR C,LF963
     DEC HL
 
 LF963:
     LD A,C
     RLD
     EX (SP),HL
-    JR F936H
+    JR LF936
 
 LF969:
     SET 7,D
     BIT 0,D
     SET 0,D
-    JR Z,F936H
+    JR Z,LF936
 
 LF971:
     EX (SP),HL
     DEC B
     BIT 0,B
-    JR Z,F97AH
+    JR Z,ASCII_SCAN_EXPONENT
     XOR A
     RLD
 
@@ -6261,21 +6115,21 @@ ASCII_SCAN_EXPONENT:
     POP HL
     DEC HL
     LD A,(HL)
-    CALL FBC8H
+    CALL LFBC8
     CP 45H
     LD A,E
-    JR NZ,F9C5H
+    JR NZ,ASCII_FP_FINALIZE
     SET 7,D
     INC HL
     LD A,(HL)
     CP 98H
-    JR Z,F99BH
+    JR Z,LF99B
     CP 2BH
-    JR Z,F99BH
+    JR Z,LF99B
     CP A2H
-    JR Z,F999H
+    JR Z,LF999
     CP 2DH
-    JR NZ,F99CH
+    JR NZ,LF99C
 
 LF999:
     SET 5,D
@@ -6291,9 +6145,9 @@ LF99F:
     INC HL
     LD A,(HL)
     SUB 3AH
-    JR NC,F9B7H
+    JR NC,LF9B7
     ADD A,0AH
-    JR NC,F9B7H
+    JR NC,LF9B7
     LD C,A
     LD A,B
     ADD A,A
@@ -6303,19 +6157,19 @@ LF99F:
     ADD A,B
     ADD A,C
     LD B,A
-    JP P,F99FH
+    JP P,LF99F
     SET 6,D
 
 LF9B7:
     LD A,B
     BIT 5,D
-    JR Z,F9BEH
+    JR Z,LF9BE
     NEG
 
 LF9BE:
     ADD A,E
     CP 7FH
-    JR C,F9C5H
+    JR C,ASCII_FP_FINALIZE
     SET 6,D
 
 ; Parsed values are finalized by writing the biased exponent/sign byte, applying the leading
@@ -6336,8 +6190,8 @@ ASCII_FP_FINALIZE:
     PUSH DE
     LD (IY+08H),A
     BIT 1,D
-    CALL NZ,F726H
-    CALL F9DFH
+    CALL NZ,FP_NEGATE
+    CALL FP_TEST_ZERO
     POP DE
     LD A,D
     RRA
@@ -6345,7 +6199,7 @@ ASCII_FP_FINALIZE:
     AND 20H
     LD A,D
     RLA
-    CALL NZ,F9F9H
+    CALL NZ,FP_CLEAR_NUMERIC
     POP DE
     POP BC
     RET
@@ -6373,8 +6227,8 @@ FP_TEST_ZERO:
 LF9E6:
     INC HL
     OR (HL)
-    JR NZ,F9EFH
-    DJNZ F9E6H
+    JR NZ,LF9EF
+    DJNZ LF9E6
     LD (IY+08H),A
 
 LF9EF:
@@ -6382,7 +6236,7 @@ LF9EF:
     RET
 
 LF9F1:
-    CALL FC8EH
+    CALL LFC8E
 
 ; Numeric allocation advances IY by exactly nine bytes. Every caller must initialize the
 ; identifier and all numeric fields before another routine treats the new stack element as valid.
@@ -6423,19 +6277,21 @@ FP_CLEAR_NUMERIC:
 LFA01:
     INC HL
     LD (HL),A
-    DJNZ FA01H
+    DJNZ LFA01
     POP HL
     SCF
     RET
 
 LFA08:
-    CALL F9F9H
+    CALL FP_CLEAR_NUMERIC
     LD (IY+08H),40H
     LD (IY+06H),10H
     RET
-    LD HL,FEB6H
+
+LFA14:
+    LD HL,LFEB6
     PUSH HL
-    JR F9F9H
+    JR FP_CLEAR_NUMERIC
 
 LFA1A:
     POP AF
@@ -6519,24 +6375,24 @@ DISCARD_STRING:
 ;   AF, BC, DE, HL, IY.
 ; -----------------------------------------------------------------------------
 INTEGER_TO_STACK:
-    CALL F9F1H
+    CALL LF9F1
     INC IY
     LD (171CH),IY
     DEC IY
     PUSH HL
-    CALL FC83H
+    CALL LFC83
     SCF
 
 LFA3B:
     ADC HL,HL
-    JR NC,FA3BH
+    JR NC,LFA3B
     LD C,01H
-    JR FA52H
+    JR LFA52
 
 LFA43:
     INC B
     INC C
-    DB 3EH                                                                          ; |>|
+    DB 3EH                                ; = LD A,41H when run from here, hiding the entry below
 
 LFA46:
     LD B,C
@@ -6547,21 +6403,21 @@ LFA47:
     ADC A,A
     DAA
     LD (DE),A
-    DJNZ FA47H
-    JR C,FA43H
+    DJNZ LFA47
+    JR C,LFA43
     ADC HL,HL
 
 LFA52:
     LD DE,(171CH)
-    JR NZ,FA46H
+    JR NZ,LFA46
     POP AF
     AND 80H
     OR 49H
     LD (IY+08H),A
-    JP F734H
+    JP FP_NORMALIZE
 
 LFA63:
-    CALL FC8EH
+    CALL LFC8E
     LD BC,0005H
     ADD HL,BC
     PUSH IY
@@ -6576,7 +6432,7 @@ LFA63:
     LD (DE),A
     LD A,09H
     DEC DE
-    JR FA8DH
+    JR LFA8D
 
 LFA7C:
     INC HL
@@ -6584,7 +6440,7 @@ LFA7C:
 LFA7D:
     LD C,(HL)
     LD B,00H
-    CALL FC8EH
+    CALL LFC8E
     ADD HL,BC
     INC BC
     PUSH IY
@@ -6600,7 +6456,7 @@ LFA8D:
     RET
 
 LFA92:
-    CALL FC8EH
+    CALL LFC8E
     PUSH IY
     POP DE
     DEC DE
@@ -6615,7 +6471,7 @@ LFA92:
     RET
 
 LFAA6:
-    CALL FC8EH
+    CALL LFC8E
     PUSH IY
     POP HL
     DEC HL
@@ -6630,11 +6486,11 @@ LFAA6:
     RET
 
 LFABA:
-    CALL FC43H
-    JR FAC4H
+    CALL LFC43
+    JR LFAC4
 
 LFABF:
-    CALL FAC3H
+    CALL STACK_NUMBER_TO_INTEGER
     EX DE,HL
 
 ; -----------------------------------------------------------------------------
@@ -6661,7 +6517,7 @@ LFABF:
 ;   AF, BC, DE, HL, IY.
 ; -----------------------------------------------------------------------------
 STACK_NUMBER_TO_INTEGER:
-    DB F6H                                                                          ; |.|
+    DB F6H                                ; = OR 37H when run from here, hiding the entry below
 
 LFAC4:
     SCF
@@ -6669,15 +6525,15 @@ LFAC4:
 LFAC5:
     PUSH BC
     PUSH DE
-    CALL C,F0A7H
+    CALL C,EVAL_NUMERIC_EXPRESSION
     LD A,(IY+08H)
     PUSH AF
     AND 7FH
     SBC HL,HL
     CP 45H
-    JR NC,FB14H
+    JR NC,LFB14
     SUB 40H
-    JR C,FB06H
+    JR C,LFB06
     ADD A,05H
     LD C,A
     LD B,04H
@@ -6685,31 +6541,31 @@ LFAC5:
 LFADF:
     LD A,H
     AND E0H
-    JR NZ,FB14H
+    JR NZ,LFB14
     ADD HL,HL
     LD E,L
     LD D,H
     ADD HL,HL
     ADD HL,HL
     ADD HL,DE
-    JR C,FB14H
-    CALL F7D2H
+    JR C,LFB14
+    CALL FP_GET_BCD_NIBBLE
     LD E,A
     LD D,00H
     ADD HL,DE
-    JR C,FB14H
+    JR C,LFB14
     INC B
     LD A,C
     CP B
-    JR NZ,FADFH
+    JR NZ,LFADF
     POP AF
     PUSH AF
     OR A
-    CALL M,FC86H
+    CALL M,LFC86
     POP AF
     XOR H
-    JP M,FB14H
-    DB 3EH                                                                          ; |>|
+    JP M,LFB14
+    DB 3EH                                ; = LD A,F1H when run from here, hiding the entry below
 
 LFB06:
     POP AF
@@ -6726,7 +6582,7 @@ LFB06:
 
 LFB14:
     RST 08H
-    INC B
+    DB 04H                                ; error code 04H: Bad argument
 
 ; -----------------------------------------------------------------------------
 ; CONVERT STACK NUMBER TO BYTE
@@ -6751,19 +6607,19 @@ LFB14:
 ;   AF, BC, DE, HL, IY.
 ; -----------------------------------------------------------------------------
 STACK_NUMBER_TO_BYTE:
-    CALL FC43H
-    DB 3EH                                                                          ; |>|
+    CALL LFC43
+    DB 3EH                                ; = LD A,F6H when run from here, hiding the entry below
 
 LFB1A:
-    DB F6H                                                                          ; |.|
+    DB F6H                                ; = OR 37H when run from here, hiding the entry below
 
 LFB1B:
     SCF
     PUSH HL
-    CALL FAC5H
+    CALL LFAC5
     INC H
     DEC H
-    JP NZ,FB14H
+    JP NZ,LFB14
     LD A,L
     POP HL
     RET
@@ -6771,7 +6627,7 @@ LFB1B:
 ; Arithmetic routine 13: moves from BASIC Stack to the address in HL; 9 bytes freed from Stack.
 
 LFB28:
-    CALL F767H
+    CALL FP_ROUND_BCD
     EX DE,HL
     PUSH IY
     POP HL
@@ -6781,11 +6637,11 @@ LFB28:
     LDIR
     INC HL
     LDI
-    JR FB57H
+    JR LFB57
 
 LFB3B:
     BIT 1,(IX+01H)
-    JR NZ,FB28H
+    JR NZ,LFB28
 
 LFB41:
     LD C,(HL)
@@ -6795,12 +6651,12 @@ LFB41:
     INC DE
     LD A,(DE)
     INC C
-    JR NZ,FB4CH
+    JR NZ,LFB4C
     DEC C
 
 LFB4C:
     CP C
-    JP NC,F912H
+    JP NC,LF912
     LD C,A
     LD B,00H
     INC BC
@@ -6814,11 +6670,11 @@ LFB57:
 
 ; Bytes copied into RAM at initialization (addresses 0008H-002FH): error handlers, RST 18H entry,
 ; and function call dispatcher.
-    DB E1H, 7EH, B7H, E5H, 00H, 00H, 00H, 00H, C8H, E1H, C3H, 5CH, FDH, C3H, 00H, 00H ; |.~.........\....|
 
 ; Character matrix table for character codes 128-160, ten bytes per character.
+    DB E1H, 7EH, B7H, E5H, 00H, 00H, 00H, 00H, C8H, E1H, C3H, 5CH, FDH, C3H, 00H, 00H ; |.~.........\....|
     DB C3H, 82H, FBH, 32H, 1FH, 00H, F7H, 00H, C9H, 00H, 00H, 00H, 00H, 00H, 00H, 00H ; |...2............|
-    DB 00H, 00H, 00H, 00H, 00H, 00H, 00H                                            ; |.......|
+    DB 00H, 00H, 00H, 00H, 00H, 00H, 00H                                              ; |.......|
 
 ; RST 18 operation bytes are threaded through the jump table and advance the next-byte pointer at
 ; 1718H-1719H.
@@ -6858,36 +6714,384 @@ LFB57:
 ;   stubs.
 ; -----------------------------------------------------------------------------
 RST18_DISPATCH:
-    DB 22H, 1EH, 17H, 32H, 04H, 17H, 2AH, 18H, 17H, E3H, 7EH, 23H, 22H, 18H, 17H, 87H ; |"..2..*...~#"...|
-    DB F5H, C6H, C7H, 6FH, 26H, C0H, 7EH, 23H, 66H, 6FH, 22H, 16H, 00H, 2AH, 1EH, 17H ; |...o&.~#fo"..*..|
-    DB 3AH, 04H, 17H, CDH, 15H, 00H, 32H, 04H, 17H, 22H, 1EH, 17H, 2AH, 18H, 17H, F1H ; |:.....2.."..*...|
-    DB 30H, D8H, E3H, 22H, 18H, 17H, 2AH, 1EH, 17H, 3AH, 04H, 17H, C9H, 1AH, 04H, 05H ; |0.."..*..:......|
-    DB C0H, FEH, FFH, C8H, E6H, 7FH, FEH, 20H, 38H, 09H, FEH, 61H, D8H, FEH, 7BH, D0H ; |....... 8..a..{.|
-    DB E6H, DFH, C9H, FEH, 10H, D8H, FEH, 19H, D0H, E6H, EFH, C9H, FEH, 02H, C2H, 5AH ; |...............Z|
-    DB FDH, CDH, C3H, FAH, CDH, 44H, DDH, D0H, CFH, 02H, 0EH, 20H, CDH, FDH, FBH, C0H ; |.....D..... ....|
-    DB FEH, FDH, 28H, 4DH, FEH, FEH, D0H, CFH, 01H, 0EH, 20H, DDH, 71H, 05H, D9H, 78H ; |..(M...... .q..x|
-    DB D9H, FEH, A7H, C0H, CDH, 16H, FBH, E6H, 07H, 87H, 87H, 87H, 87H, 32H, 05H, 17H ; |.............2..|
-    DB 4FH, AFH, D9H, 78H, D9H, C9H, DDH, 36H, 05H, 20H, 3AH, 4EH, 0BH, 4FH, 3AH, 4DH ; |O..x...6. :N.O:M|
-    DB 0BH, B9H, C0H, 3CH, 32H, 4DH, 0BH, 3AH, 13H, 0BH, CBH, 4FH, C8H, 79H, 2FH, 32H ; |...<2M.:...O.y/2|
-    DB 4DH, 0BH, C9H, DDH, CBH, 00H, 5EH, C8H, DDH, CBH, 00H, 9EH, F7H, 54H, F7H, D4H ; |M.....^......T..|
-    DB C9H, D9H, 7EH, 47H, FEH, FEH, 30H, 30H, 23H, FEH, C5H, 28H, 2FH, FEH, 80H, 30H ; |..~G..00#..(/..0|
-    DB 27H, FEH, 20H, 28H, EDH, 2BH, 06H, 00H, FEH, 22H, 37H, 28H, 17H, CBH, C8H, FEH ; |'. (.+..."7(....|
-    DB 41H, 38H, 11H, FEH, 5BH, 3FH, 38H, 0CH, CDH, D2H, F3H, D4H, 0BH, F4H, 79H, E6H ; |A8..[?8.......y.|
-    DB 02H, F6H, 01H, 47H, DCH, 05H, F9H, 78H, D9H, FEH, FDH, C9H, 4FH, 06H, 01H, 18H ; |...G...x....O...|
-    DB F6H, CBH, 7CH, C8H, 2BH, 7DH, 2FH, 6FH, 7CH, 2FH, 67H, C9H, E5H, D5H, 11H, 00H ; |..|.+}/o|/g.....|
-    DB 01H, CDH, 99H, FCH, D1H, E1H, C9H, 2AH, 26H, 17H, 19H, 38H, 12H, EBH, FDH, E5H ; |.......*&..8....|
-    DB E1H, EDH, 52H, 38H, 0AH, EDH, 62H, 39H, EDH, 5BH, 17H, 0BH, EDH, 52H, D0H, CFH ; |..R8..b9.[...R..|
-    DB 06H, AFH, 6FH, 67H, 3EH, 10H, 3DH, F8H, EDH, 6AH, CBH, 21H, CBH, 10H, 30H, F6H ; |..og>.=..j.!..0.|
-    DB 19H, 18H, F3H, CDH, D1H, FCH, D0H, FEH, CAH, D0H, CDH, D5H, FCH, 18H, F7H, D9H ; |................|
-    DB E5H, D9H, E1H, 7EH, FEH, FEH, D0H, 23H, FEH, FDH, 20H, F7H, 7EH, 23H, FEH, 20H ; |...~...#.. .~#. |
-    DB 28H, FAH, 2BH, 37H, C9H, 06H, 00H, FDH, E5H, E1H, 4EH, B9H, C8H, 0CH, 0DH, 37H ; |(.+7......N....7|
-    DB C8H, 0DH, 20H, 02H, 23H, 4EH, 0CH, 09H, E5H, FDH, E1H, 18H, EDH, CDH, A7H, F0H ; |.. .#N..........|
-    DB 21H, 00H, 80H, E5H, CDH, 2BH, FAH, CDH, 93H, F4H, CDH, C3H, FAH, D1H, 19H, C9H ; |!....+..........|
-    DB 4FH, 7EH, B7H, 79H, C8H, 96H, 23H, 5EH, 23H, 20H, F6H, 57H, 19H, CDH, 43H, FCH ; |O~.y..#^# .W..C.|
-    DB CDH, ADH, DBH, 37H, C9H, CDH, 43H, FCH, 1EH, 01H, 28H, 08H, CDH, 45H, FDH, 5AH ; |...7..C...(..E.Z|
-    DB FEH, FDH, 20H, 0AH, CDH, 43H, FCH, 16H, FFH, FEH, 95H, C4H, 45H, FDH, 3EH, 95H ; |.. ..C......E.>.|
-    DB C3H, 54H, FDH, CDH, C4H, FAH, 16H, 00H, 24H, C8H, 15H, 25H, C0H, 55H, C9H, CDH ; |.T......$..%.U..|
-    DB 43H, FCH, D9H, B8H, D9H, CAH, 43H, FCH, 3EH, 01H                             ; |C.....C.>.|
+    LD (171EH),HL
+    LD (RST18_ARG),A
+    LD HL,(RST18_NEXT)
+    EX (SP),HL
+
+LFB8C:
+    LD A,(HL)
+    INC HL
+    LD (RST18_NEXT),HL
+    ADD A,A
+    PUSH AF
+    ADD A,C7H
+    LD L,A
+    LD H,C0H
+    LD A,(HL)
+    INC HL
+    LD H,(HL)
+    LD L,A
+    LD (RST18_OP_JP+1),HL
+    LD HL,(171EH)
+    LD A,(RST18_ARG)
+    CALL RST18_OP_JP
+    LD (RST18_ARG),A
+    LD (171EH),HL
+    LD HL,(RST18_NEXT)
+    POP AF
+    JR NC,LFB8C
+    EX (SP),HL
+    LD (RST18_NEXT),HL
+    LD HL,(171EH)
+    LD A,(RST18_ARG)
+    RET
+
+LFBBF:
+    LD A,(DE)
+    INC B
+    DEC B
+    RET NZ
+    CP FFH
+    RET Z
+    AND 7FH
+
+LFBC8:
+    CP 20H
+    JR C,LFBD5
+    CP 61H
+    RET C
+    CP 7BH
+    RET NC
+    AND DFH
+    RET
+
+LFBD5:
+    CP 10H
+    RET C
+    CP 19H
+    RET NC
+    AND EFH
+    RET
+
+LFBDE:
+    CP 02H
+    JP NZ,LFD5A
+    CALL STACK_NUMBER_TO_INTEGER
+    CALL DD44H
+    RET NC
+    RST 08H
+    DB 02H                                ; error code 02H: Line missing
+
+LFBEC:
+    LD C,20H
+
+LFBEE:
+    CALL LFBFD
+    RET NZ
+    CP FDH
+    JR Z,LFC43
+    CP FEH
+    RET NC
+    RST 08H
+    DB 01H                                ; error code 01H: Not understood
+
+LFBFB:
+    LD C,20H
+
+LFBFD:
+    LD (IX+05H),C
+
+LFC00:
+    EXX
+    LD A,B
+    EXX
+    CP A7H
+    RET NZ
+    CALL STACK_NUMBER_TO_BYTE
+    AND 07H
+    ADD A,A
+    ADD A,A
+    ADD A,A
+    ADD A,A
+    LD (FUNC_CLASS),A
+    LD C,A
+    XOR A
+    EXX
+    LD A,B
+    EXX
+    RET
+
+LFC18:
+    LD (IX+05H),20H
+    LD A,(PAPER)
+    LD C,A
+    LD A,(INK)
+    CP C
+    RET NZ
+    INC A
+    LD (INK),A
+    LD A,(PORT06_MIRROR)
+    BIT 1,A
+    RET Z
+    LD A,C
+    CPL
+    LD (INK),A
+    RET
+
+LFC35:
+    BIT 3,(IX+00H)
+    RET Z
+    RES 3,(IX+00H)
+
+LFC3E:
+    RST 30H
+    DB 54H                                ; RST 30H fn 54H: cassette 4 -> CAS_CLOSE
+    RST 30H
+    DB D4H                                ; RST 30H fn D4H: cassette 4, output side -> CAS_CLOSE
+    RET
+
+LFC43:
+    EXX
+
+LFC44:
+    LD A,(HL)
+    LD B,A
+    CP FEH
+    JR NC,LFC7A
+    INC HL
+    CP C5H
+    JR Z,LFC7E
+    CP 80H
+    JR NC,LFC7A
+    CP 20H
+    JR Z,LFC44
+    DEC HL
+    LD B,00H
+    CP 22H
+    SCF
+    JR Z,LFC76
+    SET 1,B
+    CP 41H
+    JR C,LFC76
+    CP 5BH
+    CCF
+    JR C,LFC76
+    CALL SYMBOL_LOOKUP
+    CALL NC,SYMBOL_CREATE_VALUE
+    LD A,C
+    AND 02H
+    OR 01H
+    LD B,A
+
+LFC76:
+    CALL C,LF905
+
+LFC79:
+    LD A,B
+
+LFC7A:
+    EXX
+    CP FDH
+    RET
+
+LFC7E:
+    LD C,A
+    LD B,01H
+    JR LFC79
+
+LFC83:
+    BIT 7,H
+    RET Z
+
+LFC86:
+    DEC HL
+    LD A,L
+    CPL
+    LD L,A
+    LD A,H
+    CPL
+    LD H,A
+    RET
+
+LFC8E:
+    PUSH HL
+    PUSH DE
+    LD DE,0100H
+    CALL LFC99
+    POP DE
+    POP HL
+    RET
+
+LFC99:
+    LD HL,(SYMBOL_TOP)
+    ADD HL,DE
+    JR C,LFCB1
+    EX DE,HL
+    PUSH IY
+    POP HL
+    SBC HL,DE
+    JR C,LFCB1
+    SBC HL,HL
+    ADD HL,SP
+    LD DE,(PAINT_STACK_MIN)
+    SBC HL,DE
+    RET NC
+
+LFCB1:
+    RST 08H
+    DB 06H                                ; error code 06H: No memory
+
+LFCB3:
+    XOR A
+    LD L,A
+
+LFCB5:
+    LD H,A
+    LD A,10H
+
+LFCB8:
+    DEC A
+    RET M
+    ADC HL,HL
+    SLA C
+    RL B
+    JR NC,LFCB8
+    ADD HL,DE
+    JR LFCB8
+
+LFCC5:
+    CALL LFCD1
+
+LFCC8:
+    RET NC
+    CP CAH
+    RET NC
+    CALL LFCD5
+    JR LFCC8
+
+LFCD1:
+    EXX
+    PUSH HL
+    EXX
+    POP HL
+
+LFCD5:
+    LD A,(HL)
+    CP FEH
+    RET NC
+    INC HL
+    CP FDH
+    JR NZ,LFCD5
+
+LFCDE:
+    LD A,(HL)
+    INC HL
+    CP 20H
+    JR Z,LFCDE
+    DEC HL
+    SCF
+    RET
+
+LFCE7:
+    LD B,00H
+    PUSH IY
+    POP HL
+
+LFCEC:
+    LD C,(HL)
+    CP C
+    RET Z
+    INC C
+    DEC C
+    SCF
+    RET Z
+    DEC C
+    JR NZ,LFCF8
+    INC HL
+    LD C,(HL)
+
+LFCF8:
+    INC C
+    ADD HL,BC
+    PUSH HL
+    POP IY
+    JR LFCEC
+
+LFCFF:
+    CALL EVAL_NUMERIC_EXPRESSION
+
+LFD02:
+    LD HL,8000H
+    PUSH HL
+    CALL INTEGER_TO_STACK
+    CALL FP_ADD
+    CALL STACK_NUMBER_TO_INTEGER
+    POP DE
+    ADD HL,DE
+    RET
+
+LFD12:
+    LD C,A
+
+LFD13:
+    LD A,(HL)
+    OR A
+    LD A,C
+    RET Z
+    SUB (HL)
+    INC HL
+    LD E,(HL)
+    INC HL
+    JR NZ,LFD13
+    LD D,A
+    ADD HL,DE
+    CALL LFC43
+    CALL DBADH
+    SCF
+    RET
+
+LFD27:
+    CALL LFC43
+    LD E,01H
+    JR Z,LFD36
+    CALL LFD45
+    LD E,D
+    CP FDH
+    JR NZ,LFD40
+
+LFD36:
+    CALL LFC43
+    LD D,FFH
+    CP 95H
+    CALL NZ,LFD45
+
+LFD40:
+    LD A,95H
+    JP LFD54
+
+LFD45:
+    CALL LFAC4
+    LD D,00H
+    INC H
+    RET Z
+    DEC D
+    DEC H
+    RET NZ
+    LD D,L
+    RET
+
+LFD51:
+    CALL LFC43
+
+LFD54:
+    EXX
+    CP B
+    EXX
+    JP Z,LFC43
+
+LFD5A:
+    LD A,01H
 
 ; BASIC_ERROR receives the numeric error code in A, unwinds interpreter state, prints a matching
 ; message, and returns to the command loop.
@@ -6916,26 +7120,68 @@ RST18_DISPATCH:
 ;   AF, BC, DE, HL, IY and transient interpreter state.
 ; -----------------------------------------------------------------------------
 BASIC_ERROR:
-    DB FDH, 2AH, 1AH, 17H, FEH, F5H, CAH, A3H                                       ; |.*......|
+    LD IY,(BASIC_SP)
+    CP F5H
 
 ; Error dispatch preserves enough current-line and command context to distinguish an immediate
 ; error from a program error. It unwinds transient stack state before emitting the message so
 ; stale expression values do not become live after recovery.
-    DB FFH, F5H, FEH, 06H, CCH, FCH, DCH, CDH, 35H, FCH, CDH, 18H, FCH, CDH, 79H, FEH ; |........5.....y.|
+    JP Z,LFFA3
+    PUSH AF
+    CP 06H
+    CALL Z,BASIC_WORKSPACE_INIT
+    CALL LFC35
+    CALL LFC18
+    CALL PRINT_INLINE_TEXT
 
 ; " " text prefix for BASIC error messages.
-    DB 06H, 0DH, 0AH, 2AH, 2AH, 2AH, 20H, F1H, CBH, 7FH, 20H, 18H, 21H, C6H, FDH, 01H ; |...*** ... .!...|
-    DB FFH, FFH, 03H, 09H, 4EH, 23H, 0CH, 0DH, 28H, 04H, B9H, 4EH, 20H, F4H, 23H, CDH ; |....N#..(..N .#.|
-    DB DDH, FEH, 18H, 18H, 6FH, CDH, 79H, FEH                                       ; |....o.y.|
+    DB 06H, 0DH, 0AH, "*** "              ; inline text, 6 bytes
+    POP AF
+    BIT 7,A
+    JR NZ,LFD98
+    LD HL,FDC6H
+    LD BC,FFFFH
+
+LFD86:
+    INC BC
+    ADD HL,BC
+    LD C,(HL)
+    INC HL
+    INC C
+    DEC C
+    JR Z,LFD92
+    CP C
+    LD C,(HL)
+    JR NZ,LFD86
+
+LFD92:
+    INC HL
+    CALL LFEDD
+    JR LFDB0
+
+LFD98:
+    LD L,A
+    CALL PRINT_INLINE_TEXT
 
 ; "System error" text.
-    DB 0DH, 53H, 79H, 73H, 74H, 65H, 6DH, 20H, 65H, 72H, 72H, 6FH, 72H, 20H, AFH, 67H ; |.System error .g|
-    DB 47H, CDH, 1BH, FFH, CDH, 79H, FEH, 04H, 2EH, 0BH, 0DH, 0AH, DDH, CBH, 00H, CEH ; |G....y..........|
-    DB 2AH, 0CH, 17H, AFH, CDH, 2DH, DDH, C3H, 0EH, E1H                             ; |*....-....|
+    DB 0DH, "System error "               ; inline text, 13 bytes
+    XOR A
+    LD H,A
+    LD B,A
+    CALL LFF1B
+
+LFDB0:
+    CALL PRINT_INLINE_TEXT
+    DB 04H, ".", 0BH, 0DH, 0AH            ; inline text, 4 bytes
+    SET 1,(IX+00H)
+    LD HL,(CUR_LINE)
+    XOR A
+    CALL BASIC_PRINT_LINE
+    JP LE10E
 
 ; BASIC error message table; entries contain code, length, text, and FFH terminator.
     DB 01H, 0FH, 4EH, 6FH, 74H, 20H, 75H, 6EH, 64H, 65H, 72H, 73H, 74H, 6FH, 6FH, 64H ; |..Not understood|
-    DB FFH, 02H, 06H, 4CH, 69H, 6EH                                                 ; |...Lin|
+    DB FFH, 02H, 06H, 4CH, 69H, 6EH                                                   ; |...Lin|
 
 ; Error-message records are code/length/text entries terminated by FFH; TVC token codes may appear
 ; inside the text.
@@ -6964,21 +7210,20 @@ BASIC_ERROR:
 ;   None.
 ; -----------------------------------------------------------------------------
 BASIC_ERROR_MESSAGES:
-    DB 65H, 93H, FFH, 03H                                                           ; |e...|
 
 ; The message table is compact code/length/text data, not a null-terminated string array. Shared
 ; token-coded fragments are expanded by the print helper, which is why raw ROM bytes may not read
 ; as ordinary ASCII.
-    DB 04H, 41H, 92H, 93H, FFH, 04H, 04H, 91H, 61H, 92H, FFH, 05H, 0BH, 91H, 73H, 75H ; |.A......a.....su|
-    DB 62H, 73H, 63H, 72H, 69H, 70H, 74H, FFH, 06H, 08H, 90H, 6DH, 65H, 6DH, 6FH, 72H ; |bscript....memor|
-    DB 79H, FFH, 07H, 03H, 90H, FBH, FFH, 08H, 03H, 90H, F2H, FFH, 09H, 03H, 90H, F0H ; |y...............|
-    DB FFH, 0AH, 03H, 8FH, F8H, FFH, 0BH, 0DH, 8FH, 64H, 69H, 76H, 69H, 64H, 65H, 20H ; |.........divide |
-    DB 62H, 79H, 20H, 30H, FFH, 0CH, 03H, 8FH, DBH, FFH, 0DH, 09H, 4FH, 76H, 65H, 72H ; |by 0........Over|
-    DB 66H, 6CH, 6FH, 77H, FFH, 0EH, 0EH, 54H, 79H, 70H, 65H, 20H, 6DH, 69H, 73H, 6DH ; |flow...Type mism|
-    DB 61H, 74H, 63H, 68H, FFH, 0FH, 18H, 56H, 61H, 72H, 69H, 61H, 62H, 6CH, 65H, 20H ; |atch...Variable |
-    DB 64H, 65H, 63H, 6CH, 61H, 72H, 65H, 64H, 20H, 74H, 77H, 69H, 63H, 65H, FFH, 10H ; |declared twice..|
-    DB 06H, 91H, 66H, 69H, 6CH, 65H, FFH, 00H, 0FH, 42H, 41H, 53H, 49H, 43H, 20H, 63H ; |..file...BASIC c|
-    DB 6FH, 72H, 72H, 75H, 70H, 74H, 65H, 64H, FFH                                  ; |orrupted.|
+    DB 65H, 93H, FFH, 03H, 04H, 41H, 92H, 93H, FFH, 04H, 04H, 91H, 61H, 92H, FFH, 05H ; |e....A......a...|
+    DB 0BH, 91H, 73H, 75H, 62H, 73H, 63H, 72H, 69H, 70H, 74H, FFH, 06H, 08H, 90H, 6DH ; |..subscript....m|
+    DB 65H, 6DH, 6FH, 72H, 79H, FFH, 07H, 03H, 90H, FBH, FFH, 08H, 03H, 90H, F2H, FFH ; |emory...........|
+    DB 09H, 03H, 90H, F0H, FFH, 0AH, 03H, 8FH, F8H, FFH, 0BH, 0DH, 8FH, 64H, 69H, 76H ; |.............div|
+    DB 69H, 64H, 65H, 20H, 62H, 79H, 20H, 30H, FFH, 0CH, 03H, 8FH, DBH, FFH, 0DH, 09H ; |ide by 0........|
+    DB 4FH, 76H, 65H, 72H, 66H, 6CH, 6FH, 77H, FFH, 0EH, 0EH, 54H, 79H, 70H, 65H, 20H ; |Overflow...Type |
+    DB 6DH, 69H, 73H, 6DH, 61H, 74H, 63H, 68H, FFH, 0FH, 18H, 56H, 61H, 72H, 69H, 61H ; |mismatch...Varia|
+    DB 62H, 6CH, 65H, 20H, 64H, 65H, 63H, 6CH, 61H, 72H, 65H, 64H, 20H, 74H, 77H, 69H ; |ble declared twi|
+    DB 63H, 65H, FFH, 10H, 06H, 91H, 66H, 69H, 6CH, 65H, FFH, 00H, 0FH, 42H, 41H, 53H ; |ce....file...BAS|
+    DB 49H, 43H, 20H, 63H, 6FH, 72H, 72H, 75H, 70H, 74H, 65H, 64H, FFH                ; |IC corrupted.|
 
 ; Inline strings begin at the return address with a length byte; the helper skips the embedded
 ; bytes before returning.
@@ -7006,7 +7251,10 @@ BASIC_ERROR_MESSAGES:
 ;   AF, BC, DE, HL.
 ; -----------------------------------------------------------------------------
 PRINT_INLINE_TEXT:
-    DB E3H, CDH, 7FH, FEH, E3H, C9H                                                 ; |......|
+    EX (SP),HL
+    CALL PRINT_LENGTH_TEXT
+    EX (SP),HL
+    RET
 
 ; -----------------------------------------------------------------------------
 ; PRINT LENGTH-PREFIXED TEXT
@@ -7032,9 +7280,44 @@ PRINT_INLINE_TEXT:
 ;   AF, BC, DE, HL, alternate registers.
 ; -----------------------------------------------------------------------------
 PRINT_LENGTH_TEXT:
-    DB 7EH, 23H, B7H, C8H, C5H, 47H, 7EH, 23H, CDH, 9AH, FEH, 10H, F9H, C1H, C9H, 3EH ; |~#...G~#.......>|
-    DB 0BH, CCH, 9AH, FEH, 3EH, 0DH, CDH, 9AH, FEH, 3EH, 0AH, F5H, C5H, D5H, 4FH, CDH ; |....>....>....O.|
-    DB A6H, FEH, D7H, D1H, C1H, F1H, C9H, 11H, 7FH, 00H                             ; |..........|
+    LD A,(HL)
+    INC HL
+    OR A
+    RET Z
+    PUSH BC
+    LD B,A
+
+LFE85:
+    LD A,(HL)
+    INC HL
+    CALL LFE9A
+    DJNZ LFE85
+    POP BC
+    RET
+
+LFE8E:
+    LD A,0BH
+    CALL Z,LFE9A
+
+LFE93:
+    LD A,0DH
+    CALL LFE9A
+    LD A,0AH
+
+LFE9A:
+    PUSH AF
+    PUSH BC
+    PUSH DE
+    LD C,A
+    CALL LFEA6
+    RST 10H
+    POP DE
+    POP BC
+    POP AF
+    RET
+
+LFEA6:
+    LD DE,007FH
 
 ; -----------------------------------------------------------------------------
 ; PRINT FORMAT DISPATCH
@@ -7059,18 +7342,105 @@ PRINT_LENGTH_TEXT:
 ;   AF, BC, DE, HL.
 ; -----------------------------------------------------------------------------
 PRINT_NUMBER_OR_SPECIAL:
-    DB 3AH, 05H, 17H, F6H, 01H, B2H, A3H                                            ; |:......|
+    LD A,(FUNC_CLASS)
+    OR 01H
+    OR D
+    AND E
 
 ; PRINT's continuation chooses numeric, string, separator, and special-token paths while
 ; preserving the USING cursor between values. A trailing separator changes whether the common
 ; line-ending path runs.
-    DB C3H, 1BH, 00H, CDH, 9AH, FEH, E1H, C3H, F0H, FFH, FDH, CBH, 08H, 7EH, CCH, C7H ; |.............~..|
-    DB FEH, CDH, 0EH, F8H, CDH, 7FH, FEH, 3EH, 20H, 18H, CFH, 87H, FEH, 40H, 1FH, CDH ; |.......> ....@..|
-    DB 9AH, FEH, FEH, 22H, 20H, 09H, B9H, 28H, 02H, 41H, 0EH, 78H, 0EH, AFH, 4FH, 7EH ; |..." ..(.A.x..O~|
-    DB 23H, 3CH, C8H, 3DH, F2H, CBH, FEH, E5H, 0CH, 0DH, F5H, FEH, FBH, 28H, 04H, FEH ; |#<.=.........(..|
-    DB FCH, 38H, 02H, 0EH, FFH, FEH, FDH, 20H, 03H, F1H, 0CH, F5H, F1H, 20H, 12H, 2FH ; |.8..... ..... ./|
-    DB 21H, 6DH, DEH, CBH, 7EH, 23H, 28H, FBH, 3DH, 20H, F8H, 7EH, 23H, CBH, 7FH, CBH ; |!m..~#(.= .~#...|
-    DB BFH, CDH, 9AH, FEH, 28H, F5H, E1H, 18H, C6H                                  ; |....(....|
+    JP RST30_A_ENTRY
+
+LFEB3:
+    CALL LFE9A
+
+LFEB6:
+    POP HL
+    JP CALL_EXTENSION_HL
+
+LFEBA:
+    BIT 7,(IY+08H)
+    CALL Z,LFEC7
+
+LFEC1:
+    CALL FP_TO_ASCII
+    CALL PRINT_LENGTH_TEXT
+
+LFEC7:
+    LD A,20H
+    JR LFE9A
+
+LFECB:
+    ADD A,A
+    CP 40H
+    RRA
+    CALL LFE9A
+    CP 22H
+    JR NZ,LFEDF
+    CP C
+    JR Z,LFEDB
+    LD B,C
+    DB 0EH                                ; = LD C,78H when run from here, hiding the entry below
+
+LFEDB:
+    LD A,B
+    DB 0EH                                ; = LD C,AFH when run from here, hiding the entry below
+
+LFEDD:
+    XOR A
+    LD C,A
+
+LFEDF:
+    LD A,(HL)
+    INC HL
+    INC A
+    RET Z
+    DEC A
+    JP P,LFECB
+    PUSH HL
+    INC C
+    DEC C
+    PUSH AF
+    CP FBH
+    JR Z,LFEF3
+    CP FCH
+    JR C,LFEF5
+
+LFEF3:
+    LD C,FFH
+
+LFEF5:
+    CP FDH
+    JR NZ,LFEFC
+    POP AF
+    INC C
+    PUSH AF
+
+LFEFC:
+    POP AF
+    JR NZ,LFF11
+    CPL
+    LD HL,BASIC_KEYWORD_TABLE
+
+LFF03:
+    BIT 7,(HL)
+    INC HL
+    JR Z,LFF03
+    DEC A
+    JR NZ,LFF03
+
+LFF0B:
+    LD A,(HL)
+    INC HL
+    BIT 7,A
+    RES 7,A
+
+LFF11:
+    CALL LFE9A
+    JR Z,LFF0B
+    POP HL
+    JR LFEDF
 
 ; Decimal place constants 1000, 100, 10, and 1 support compact integer output.
 
@@ -7097,19 +7467,55 @@ PRINT_NUMBER_OR_SPECIAL:
 ;   AF, BC, DE, HL.
 ; -----------------------------------------------------------------------------
 PRINT_INTEGER_HL:
-    DB 06H, FFH, 9FH, E6H, 20H, 4FH                                                 ; |.... O|
+    LD B,FFH
+
+LFF1B:
+    SBC A,A
+    AND 20H
+    LD C,A
 
 ; Integer output uses decimal place constants and suppresses leading zeroes before emitting
 ; digits. This helper is also used for line numbers, so its sign/width behavior affects
 ; diagnostics as well as PRINT.
-    DB E5H, 21H, 47H, FFH, 5EH, 23H, 56H, 23H, E3H, AFH, EDH, 52H, 3CH, 30H, FBH, 19H ; |.!G.^#V#...R<0..|
-    DB 3DH, 28H, 07H, 0EH, 30H, 81H, CDH, 9AH, FEH, 79H, A9H, C4H, 9AH, FEH, E3H, 1DH ; |=(..0....y......|
+    PUSH HL
+    LD HL,FF47H
+
+LFF23:
+    LD E,(HL)
+    INC HL
+    LD D,(HL)
+    INC HL
+    EX (SP),HL
+    XOR A
+
+LFF29:
+    SBC HL,DE
+    INC A
+    JR NC,LFF29
+    ADD HL,DE
+    DEC A
+    JR Z,LFF39
+    LD C,30H
+    ADD A,C
+    CALL LFE9A
+    LD A,C
+
+LFF39:
+    XOR C
+    CALL NZ,LFE9A
+    EX (SP),HL
+    DEC E
 
 ; PRINT special-character dispatch table.
-    DB 20H, E2H, E1H, 79H, A0H, 20H, 81H, C9H                                       ; | ..y. ..|
+    JR NZ,LFF23
+    POP HL
+    LD A,C
+    AND B
+    JR NZ,LFEC7
+    RET
 
 ; Binary constants 1000, 100, 10, and 1 for decimal conversion.
-    DB E8H, 03H, 64H, 00H, 0AH, 00H, 01H, 00H                                       ; |..d.....|
+    DB E8H, 03H, 64H, 00H, 0AH, 00H, 01H, 00H                                         ; |..d.....|
 
 ; The edited BASIC line is accumulated at 1831H, translated to input/token codes, and terminated
 ; with FFH.
@@ -7139,22 +7545,21 @@ PRINT_INTEGER_HL:
 ;   AF, BC, DE, HL.
 ; -----------------------------------------------------------------------------
 BASIC_LINE_INPUT:
-    LD HL,1831H
+    LD HL,INPUT_BUFFER
     PUSH HL
     LD B,00H
 
 LFF55:
     PUSH BC
     LD DE,80FFH
-    DB CDH                                                                          ; |.|
 
 ; Line input stores editor results in the 1831H buffer, translates accepted character codes,
 ; bounds the count, and appends FFH. CTRL+ESC and editor end/error status must terminate the
 ; acquisition before tokenization.
-    XOR C
-    CP D1H
+    CALL PRINT_NUMBER_OR_SPECIAL
+    POP DE
     LD B,D
-    JR Z,FF72H
+    JR Z,LFF72
 
 LFF60:
     POP HL
@@ -7164,38 +7569,38 @@ LFF60:
     LD (HL),FFH
     DEC HL
     CP F5H
-    JR Z,FF9BH
+    JR Z,LFF9B
     CP ECH
-    JR Z,FF9BH
+    JR Z,LFF9B
     OR A
     RST 10H
 
 LFF72:
-    LD A,(0B16H)
+    LD A,(STOP_FLAG)
     OR A
     LD A,F5H
-    JR NZ,FF60H
+    JR NZ,LFF60
     LD A,C
     CP 0DH
-    JR Z,FF92H
+    JR Z,LFF92
     CP 20H
-    JR C,FF55H
+    JR C,LFF55
     SUB 80H
-    JR C,FF8CH
+    JR C,LFF8C
     CP 20H
-    JR NC,FF8CH
+    JR NC,LFF8C
     LD C,A
 
 LFF8C:
     LD A,B
     CP FBH
-    JR NC,FF55H
+    JR NC,LFF55
     INC B
 
 LFF92:
     INC HL
     LD (HL),C
-    JR NZ,FF55H
+    JR NZ,LFF55
     LD (HL),FFH
     XOR A
     POP HL
@@ -7203,6 +7608,8 @@ LFF92:
 
 LFF9B:
     OR A
+
+LFF9C:
     RET
 
 ; STOP-FLAG at 0B16H is polled by long-running routines; CTRL+ESC clears it and enters STOP
@@ -7232,12 +7639,14 @@ LFF9B:
 ;   AF, BC, DE, HL, interpreter temporaries.
 ; -----------------------------------------------------------------------------
 CHECK_STOP_FLAG:
-    LD A,(0B16H)
+    LD A,(STOP_FLAG)
     OR A
     RET Z
     EXX
 
 ; STOP routine.
+
+LFFA3:
     EXX
 
 ; STOP polling is intentionally cheap: a zero byte returns immediately. When set, it is cleared
@@ -7246,21 +7655,43 @@ CHECK_STOP_FLAG:
 
 LFFA4:
     XOR A
-    LD (0B16H),A
-    CALL FC35H
-    CALL FC18H
-    CALL FE79H
+    LD (STOP_FLAG),A
+    CALL LFC35
+    CALL LFC18
+    CALL PRINT_INLINE_TEXT
 
 ; "STOP" message text.
-    DB 06H, 0DH, 0AH, 53H, 54H, 4FH, 50H, DDH, CBH, 00H, 56H, 28H, 22H, 22H, 10H, 17H ; |...STOP...V(""..|
-    DB 2AH, 0CH, 17H, 22H, 0EH, 17H, CDH, 79H, FEH                                  ; |*.."...y.|
+    DB 06H, 0DH, 0AH, "STOP"              ; inline text, 6 bytes
+    BIT 2,(IX+00H)
+    JR Z,LFFE0
+    LD (NEXT_STMT),HL
+    LD HL,(CUR_LINE)
+    LD (NEXT_LINE),HL
+    CALL PRINT_INLINE_TEXT
 
 ; " at line " message text.
-    DB 09H, 20H, 61H, 74H, 20H, 6CH, 69H, 6EH, 65H, 20H, 2AH, 0CH, 17H, 23H, 5EH, 23H ; |. at line *..#^#|
-    DB 56H, EBH, B7H, CDH, 19H, FFH, AFH, CDH, 8EH, FEH, C3H, DAH, DAH, 7CH, FEH, C0H ; |V............|..|
+    DB 09H, " at line "                   ; inline text, 9 bytes
+    LD HL,(CUR_LINE)
+    INC HL
+    LD E,(HL)
+    INC HL
+    LD D,(HL)
+    EX DE,HL
+    OR A
+    CALL PRINT_INTEGER_HL
+
+LFFE0:
+    XOR A
+    CALL LFE8E
+    JP DADAH
+
+LFFE7:
+    LD A,H
+    CP C0H
     RET C
     RES 6,H
-    DB 3EH, 50H, C9H                                                                ; |>P.|
+    LD A,50H
+    RET
 
 ; Extension gateway mapping: EXTH occupies page 3 and SYS is restored in page 0 before JP (HL).
 ; The extension bridge changes the page map before JP (HL): EXTH is selected in the high extension
@@ -7291,4 +7722,10 @@ LFFA4:
 ;   Memory mapping and normal return assumptions; AF is restored before the jump.
 ; -----------------------------------------------------------------------------
 CALL_EXTENSION_HL:
-    DB F5H, 3EH, F0H, 32H, 03H, 00H, D3H, 02H, F1H, E9H, 79H, FEH, 0DH, 28H, 13H, FEH ; |.>.2......y..(..|
+    PUSH AF
+    LD A,F0H
+    LD (P_SAVE),A
+    OUT (02H),A
+    POP AF
+    JP (HL)
+    DB 79H, FEH, 0DH, 28H, 13H, FEH                                                   ; |y..(..|

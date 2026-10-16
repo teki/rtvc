@@ -172,9 +172,10 @@ fn labels_from_listing(
             "{asm}: ORG origin {origin:04X} disagrees with assembler origin {toml_origin:04X}"
         ));
     }
+    let constants = equ_names(&source);
     let mut labels = Vec::new();
     for (name, address) in symbols {
-        if is_auto_label(&name) {
+        if is_auto_label(&name) || constants.contains(&name) {
             continue;
         }
         let Some(local) = address.checked_sub(origin) else {
@@ -286,6 +287,23 @@ fn parse_toml_symbols(toml: &str, asm: &str) -> Result<(u16, Vec<(String, u16)>)
         Some(origin) => Ok((origin, symbols)),
         None => Err(format!("{asm}: assembler output has no origin")),
     }
+}
+
+/// Uppercased names defined by `NAME EQU expr` or `NAME: EQU expr`. They name
+/// RAM cells or routines in another listing, not addresses in this image.
+fn equ_names(source: &str) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    for line in source.lines() {
+        let code = line.split(';').next().unwrap_or("");
+        let mut words = code.split_whitespace();
+        let (Some(name), Some(directive)) = (words.next(), words.next()) else {
+            continue;
+        };
+        if directive.eq_ignore_ascii_case("EQU") {
+            names.insert(name.trim_end_matches(':').to_ascii_uppercase());
+        }
+    }
+    names
 }
 
 /// Mechanical branch/call targets (`LC348`, `LF000`, …) are not landmarks.

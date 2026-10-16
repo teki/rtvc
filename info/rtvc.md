@@ -849,7 +849,9 @@ file per ROM image:
 [TVC12_D7.64K.symbols.json](../roms/TVC12_D7.64K.symbols.json).
 `cargo xtask rom-symbols` generates them from the standalone listings in
 [roms/](../roms/); do not hand-edit addresses. Label addresses come from the
-real assembler, and curated prose is merged by `(bank, offset)`.
+real assembler, and curated prose is merged by `(bank, offset)`. Names that a
+listing defines with `EQU` (U0 RAM cells, routines in the other SYS half) are
+not ROM landmarks and are skipped.
 
 A CPU address alone is not a stable ROM identity because SYS and EXTH can
 occupy overlapping CPU ranges. Entries are keyed by physical bank and image

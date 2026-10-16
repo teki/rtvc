@@ -8,7 +8,6 @@
 ; Instructions use CPU-visible addresses at ORG; the ROM bank is recorded separately.
 ; Physical bank: SYS offset 0000H
 ; CPU-visible aliases: C000H, 0000H
-; Data ranges: C003H-C228H, C334H-C337H, C4ACH-C4B6H, C545H-C572H, C5B4H-C973H, C974H-C98EH, C9EAH-C9F1H, CB7FH-CBDCH, CF98H-D012H, D170H-D190H, D7BFH-D905H, D92AH-D9C7H, DA84H-DB05H, DBF6H-DC20H
 ; Auto labels: branch and call targets are emitted as Lxxxx.
 ; This is a standalone listing; all required technical explanations are embedded here.
 ; Technical descriptions are based on the Kaszanyiczki and Ludanyi TVC ROM references.
@@ -352,6 +351,110 @@
 ; physical bank/offset is authoritative for annotations; CPU addresses and book names are
 ; explanatory views.
 
+; =============================================================================
+; SYMBOLS USED BY THIS LISTING
+; =============================================================================
+; U0 RAM cells and system variables referenced below. Names follow the workspace notes
+; above; addresses whose meaning is not documented stay numeric in the code.
+P_SAVE             EQU 0003H              ; saved port-02 page map (written by every page switch)
+USRTAB             EQU 0021H              ; seven USR/EXT subroutine addresses
+IO_ASSIGN_IN       EQU 0B00H              ; input device assignment bytes, one per class
+IO_ASSIGN_OUT      EQU 0B08H              ; output device assignment bytes, one per class
+INT_DES            EQU 0B10H              ; active-low interrupt source mask
+PORT03_MIRROR      EQU 0B11H              ; copy of port 03: card select (7-6), keyboard row (3-0)
+PORT05_MIRROR      EQU 0B12H              ; copy of port 05: motors, sound enables, pitch high nibble
+PORT06_MIRROR      EQU 0B13H              ; copy of port 06: STROBE, volume, colour mode
+SOUND_ACT          EQU 0B14H              ; FFH while a timed tone is playing
+TONE_REPLACE       EQU 0B15H              ; FFH: a new tone replaces the current one
+STOP_FLAG          EQU 0B16H              ; FFH after CTRL+ESC (cooperative break)
+PAINT_STACK_MIN    EQU 0B17H              ; lowest stack address PAINT may use
+HI_MEM             EQU 0B19H              ; highest usable RAM address
+TIME               EQU 0B1DH              ; software clock incremented by the interrupt
+IRQ_STAT           EQU 0B1FH              ; interrupt service enables (cursor, sound, cards)
+INT_FLAG           EQU 0B20H              ; FFH while the interrupt routine owns shared state
+WARM_FLAG          EQU 0B21H              ; FFH during a warm reset
+COLD_FLAG          EQU 0B22H              ; cold-reset request, consumed by initialization
+RST30_BRIDGE_RET   EQU 0B37H              ; U0 RST 30H bridge return (restores page and AF)
+IRQ_BRIDGE_TAIL    EQU 0B41H              ; U0 interrupt return tail (page, AF, EI, RET)
+L_MODE             EQU 0B4BH              ; pixel combine mode: 0 put, 1 OR, 2 AND, 3 XOR
+L_STYLE            EQU 0B4CH              ; line style index
+INK                EQU 0B4DH              ; logical ink colour
+PAPER              EQU 0B4EH              ; logical paper colour
+BORDER             EQU 0B4FH              ; border colour (I.G.R.B in bits 7,5,3,1)
+V_FLAG             EQU 0B50H              ; character overwrite mode
+KB_PICTURE         EQU 0B51H              ; current keyboard matrix image
+KB_OLD_PIC         EQU 0B5BH              ; previous keyboard matrix image
+DELAY_KEY          EQU 0B65H              ; key repeat delay, 20 ms units
+LOCK_KEY           EQU 0B66H              ; modifier lock state
+RATE_KEY           EQU 0B67H              ; key repeat period, 20 ms units
+HOLD_KEY           EQU 0B68H              ; FFH: CTRL+P hold disabled
+SER_OK             EQU 0B71H              ; 00H while the divider is set up for serial
+COLOR_MODE         EQU 0B73H              ; current mode: 00H 2, 01H 4, 02H 16 colours
+B_STAT             EQU 0B74H              ; pen state: FFH down, 00H up
+FILL_BYTE          EQU 0B75H              ; video byte used by area operations
+VID_ADDR           EQU 0B76H              ; current video RAM address
+X_LOGICAL          EQU 0B78H              ; logical beam X
+Y_LOGICAL          EQU 0B7AH              ; logical beam Y
+X_PHYSICAL         EQU 0B7CH              ; physical beam X
+Y_PHYSICAL         EQU 0B7EH              ; physical beam Y
+LINE_PATTERN       EQU 0B83H              ; rotating line-style bit pattern
+LINE_STEP_1        EQU 0B84H              ; line stepper entry used when the error term is negative
+LINE_STEP_2        EQU 0B86H              ; line stepper entry used when the error term is positive
+PAINT_SP_SAVE      EQU 0B88H              ; SP saved on PAINT entry
+KEY_PENDING        EQU 0BE5H              ; FFH: a translated key waits in KEY_CODE
+KEY_LOCK_ACT       EQU 0BE7H              ; lock-key activity
+KEY_MODIFIER       EQU 0BE8H              ; current modifier 00/02/04/08H
+KEY_CODE           EQU 0BE9H              ; translated key code
+KEY_DELAY_CNT      EQU 0BEAH              ; repeat delay counter
+KEY_RATE_CNT       EQU 0BEBH              ; repeat rate counter
+KEY_DIFF_ADDR      EQU 0BECH              ; matrix address of the changed key
+KEY_DIFF_MASK      EQU 0BEEH              ; single changed matrix bit
+TONE_DURATION      EQU 0BEFH              ; remaining timed-tone duration
+CAS_OUT_NAME       EQU 0D15H              ; output file name
+CU_BLINK           EQU 0E48H              ; cursor blink counter
+CU_Y               EQU 0E49H              ; cursor row
+CU_X               EQU 0E4AH              ; cursor column
+ED_LINE_PTR        EQU 0E4BH              ; pointer into the ASCII line buffer
+CU_STATE           EQU 0E4DH              ; cursor/line position state
+CU_SAVED_POS       EQU 0E4EH              ; saved cursor position
+ED_ROW_DESC        EQU 0E50H              ; editor row descriptors
+ED_MODE_VECTOR     EQU 0E68H              ; mode-dependent jump/dispatch value
+ED_ROW_LEN         EQU 0E6BH              ; characters per row: 40, 20 or 10
+ED_CHAR_WIDTH      EQU 0E6CH              ; bytes per character cell: 1, 2 or 4
+CU_SAVE_AREA       EQU 0E6DH              ; saved glyph/attributes under the cursor
+CU_INK_LINE        EQU 0E95H              ; ink line used when restoring the cursor cell
+CU_PAPER_LINE      EQU 0E96H              ; paper line used when restoring the cursor cell
+STACK_TOP          EQU 16ACH              ; initial Z80 stack pointer (stack grows down)
+BASIC_FLAGS        EQU 1700H              ; TRACE, suppress-OK, running, file-open bits
+FUNC_CLASS         EQU 1705H              ; function class
+DEVICE_NUM         EQU 1706H              ; selected device number
+RND_STATE          EQU 1709H              ; RND generator state
+CUR_LINE           EQU 170CH              ; current program line pointer
+NEXT_LINE          EQU 170EH              ; next program line pointer
+NEXT_STMT          EQU 1710H              ; next statement pointer
+DATA_LINE          EQU 1712H              ; DATA line pointer
+DATA_PTR           EQU 1714H              ; DATA byte pointer
+BASIC_SP           EQU 171AH              ; BASIC stack pointer snapshot
+VLOMEM             EQU 1720H              ; low-memory/base boundary
+TEXT_START         EQU 1722H              ; start of the BASIC program
+SYMBOL_END         EQU 1724H              ; end of the chained symbol area
+SYMBOL_TOP         EQU 1726H              ; next free symbol byte
+CMD_BUFFER         EQU 1732H              ; command line buffer
+INPUT_BUFFER       EQU 1831H              ; INPUT buffer
+
+; SYS ROM routines and tables defined in TVC12_D3.64K.asm; both halves of the SYS bank are
+; visible together whenever SYS is mapped.
+BASIC_FREE                     EQU EC4CH
+FN_REC_VERNUM                  EQU F094H
+ASCII_TO_FP                    EQU F914H
+DISCARD_NUMBER                 EQU FA1BH
+STACK_NUMBER_TO_INTEGER        EQU FAC3H
+PRINT_INLINE_TEXT              EQU FE79H
+PRINT_INTEGER_HL               EQU FF19H
+BASIC_LINE_INPUT               EQU FF4FH
+CHECK_STOP_FLAG                EQU FF9DH
+CALL_EXTENSION_HL              EQU FFF0H
+
 ORG C000H, SYS0, 0000H
 
 
@@ -396,7 +499,7 @@ BCD_MULTIPLICATION_TABLE:
     DB 32H, 36H, 00H, 05H, 10H, 15H, 20H, 25H, 30H, 35H, 40H, 45H, 00H, 06H, 12H, 18H ; |26.... %05@E....|
     DB 24H, 30H, 36H, 42H, 48H, 54H, 00H, 07H, 14H, 21H, 28H, 35H, 42H, 49H, 56H, 63H ; |$06BHT...!(5BIVc|
     DB 00H, 08H, 16H, 24H, 32H, 40H, 48H, 56H, 64H, 72H, 00H, 09H, 18H, 27H, 36H, 45H ; |...$2@HVdr...'6E|
-    DB 54H, 63H, 72H, 81H                                                           ; |Tcr.|
+    DB 54H, 63H, 72H, 81H                                                             ; |Tcr.|
 
 ; -----------------------------------------------------------------------------
 ; BASIC STATEMENT DISPATCH TABLE
@@ -436,7 +539,7 @@ BASIC_STATEMENT_JUMP_TABLE:
 ; -----------------------------------------------------------------------------
 RST18_JUMP_TABLE:
     DB 93H, F4H, FBH, F5H, 12H, F5H, 8EH, F4H, 26H, F7H, 82H, EAH, 9FH, EAH, 9AH, EAH ; |........&.......|
-    DB D2H, EAH, CDH, EAH, C3H, EAH, BEH, EAH, 92H, FAH, 28H, FBH, 68H, EAH         ; |..........(.h.|
+    DB D2H, EAH, CDH, EAH, C3H, EAH, BEH, EAH, 92H, FAH, 28H, FBH, 68H, EAH           ; |..........(.h.|
 
 ; -----------------------------------------------------------------------------
 ; INTELLIGENT SOFTWARE COPYRIGHT
@@ -449,7 +552,7 @@ RST18_JUMP_TABLE:
 INTELLIGENT_SOFTWARE_COPYRIGHT:
     DB 43H, 6FH, 70H, 79H, 72H, 69H, 67H, 68H, 74H, 20H, 28H, 63H, 29H, 20H, 31H, 39H ; |Copyright (c) 19|
     DB 38H, 34H, 20H, 20H, 49H, 6EH, 74H, 65H, 6CH, 6CH, 69H, 67H, 65H, 6EH, 74H, 20H ; |84  Intelligent |
-    DB 53H, 6FH, 66H, 74H, 77H, 61H, 72H, 65H, 20H, 4CH, 74H, 64H                   ; |Software Ltd|
+    DB 53H, 6FH, 66H, 74H, 77H, 61H, 72H, 65H, 20H, 4CH, 74H, 64H                     ; |Software Ltd|
 
 ; -----------------------------------------------------------------------------
 ; NUMBERED FLOATING-POINT CONSTANTS
@@ -482,7 +585,7 @@ NUMBERED_FP_CONSTANTS:
     DB 17H, 60H, 76H, 27H, 62H, 31H, 3FH, 31H, 51H, 79H, 57H, 29H, 57H, 41H, 59H, 53H ; |.`v'b1?1QyW)WAYS|
     DB 26H, 59H, 41H, 31H, 40H, 79H, 26H, 63H, 79H, 70H, 15H, 40H, 20H, 51H, 75H, 19H ; |&YA1@y&cyp.@ Qu.|
     DB 47H, 10H, 40H, 98H, 55H, 77H, 98H, 35H, 52H, 3FH, 00H, 00H, 00H, 80H, 76H, 32H ; |G.@.Uw.5R?....v2|
-    DB 44H, 00H, 99H, 99H, 99H, 99H, 99H, 7EH                                       ; |D......~|
+    DB 44H, 00H, 99H, 99H, 99H, 99H, 99H, 7EH                                         ; |D......~|
 
 ; -----------------------------------------------------------------------------
 ; SYSTEM INITIALIZATION
@@ -531,14 +634,13 @@ BASIC_COLD_START:
 LC233:
     LD A,C0H
     OUT (02H),A
-    JP F13DH
+    JP F13DH                              ; EXT ROM F13DH RESET_INTEGRITY_CHECK (page 3 now maps EXT)
     LD A,40H
 
 ; Memory paging: S U V S page layout.
     OUT (02H),A
     JP C241H
 
-LC241:
     LD A,50H
 
 ; Memory paging: U U V S page layout.
@@ -546,14 +648,12 @@ LC241:
     XOR A
     LD BC,0460H
 
-LC249:
     OUT (C),A
     INC C
     DJNZ C249H
-    LD HL,C545H
+    LD HL,CRTC_RESET_VALUES
     LD B,10H
 
-LC253:
     LD A,B
     DEC A
     OUT (70H),A
@@ -565,44 +665,40 @@ LC253:
 
 ; Send one STROBE pulse.
     OUT (06H),A
-    LD A,(0B22H)
+    LD A,(COLD_FLAG)
     INC A
     JR NZ,C26BH
-    LD (0B21H),A
-    DB 3EH                                                                          ; |>|
+    LD (WARM_FLAG),A
+    DB 3EH                                                                            ; |>|
 
-LC26B:
     EX AF,AF'
     INC A
     JR Z,C2BBH
     LD SP,BFFFH
     LD HL,0000H
-    CALL C33EH
+    CALL MEMORY_TEST
     JR Z,C27FH
 
-LC27A:
     DEC A
     OUT (00H),A
     JR C27AH
 
-LC27F:
-    LD SP,16ACH
+    LD SP,STACK_TOP
     LD HL,8000H
-    CALL C33EH
+    CALL MEMORY_TEST
     JR Z,C28EH
     LD A,88H
     OUT (C),A
 
-LC28E:
     LD A,70H
 
 ; Memory paging: U U U S page layout.
     OUT (02H),A
     LD HL,4000H
-    CALL C33EH
-    CALL Z,C33EH
+    CALL MEMORY_TEST
+    CALL Z,MEMORY_TEST
     DEC HL
-    LD (0B19H),HL
+    LD (HI_MEM),HL
     LD A,40H
     OUT (02H),A
     LD SP,BFFFH
@@ -617,15 +713,12 @@ LC2A9:
     JR Z,C2B8H
     DEC A
 
-LC2B8:
     EX AF,AF'
-    JR C2C2H
+    JR WARM_RESET
 
-LC2BB:
     LD H,A
     LD L,A
 
-LC2BD:
     DEC HL
     LD A,H
     OR L
@@ -662,10 +755,12 @@ WARM_RESET:
 LC2C9:
     LD A,C0H
     OUT (02H),A
-    LD SP,16ACH
-    JP F000H
+    LD SP,STACK_TOP
+    JP F000H                              ; EXT ROM F000H EXT_INIT (page 3 now maps EXT)
+
+LC2D3:
     XOR A
-    LD (0B11H),A
+    LD (PORT03_MIRROR),A
     OUT (03H),A
 
 ; Clear cursor/sound interrupt.
@@ -675,11 +770,11 @@ LC2C9:
     OUT (5AH),A
     OUT (5BH),A
     OUT (00H),A
-    LD (0B4FH),A
+    LD (BORDER),A
     LD A,80H
     OUT (06H),A
-    LD (0B13H),A
-    LD HL,C555H
+    LD (PORT06_MIRROR),A
+    LD HL,STARTUP_DEVICE_INIT_TABLE
     LD BC,0470H
 
 LC2F5:
@@ -690,14 +785,14 @@ LC2F5:
     INC HL
     PUSH HL
     EX DE,HL
-    CALL C321H
+    CALL JUMP_HL
     POP HL
     POP BC
     LD A,C
 
 ; Memory paging: U U U S page layout.
     OUT (02H),A
-    DJNZ C2F5H
+    DJNZ LC2F5
 
 ; -----------------------------------------------------------------------------
 ; SIDE-CARTRIDGE AUTOSTART
@@ -735,10 +830,10 @@ LC30D:
 LC319:
     LD A,(DE)
     CP (HL)
-    JR NZ,C322H
+    JR NZ,LC322
     INC DE
     INC HL
-    DJNZ C319H
+    DJNZ LC319
 
 ; JUMP_HL - Transfers control to the address in HL.
 ; Entry: HL = target address
@@ -750,16 +845,16 @@ JUMP_HL:
 LC322:
     LD A,60H
     OUT (02H),A
-    JP C329H
+    JP LC329
 
 LC329:
     LD A,70H
 
 ; Memory paging: U U U S page layout.
     OUT (02H),A
-    LD (0003H),A
+    LD (P_SAVE),A
     EI
-    JP D9EFH
+    JP BASIC_INIT
 
 ; -----------------------------------------------------------------------------
 ; MOPS CARTRIDGE SIGNATURE
@@ -771,13 +866,13 @@ LC329:
 ; signature. The spelling is MOPS, matching the stored bytes 4DH, 4FH, 50H, 53H.
 ; -----------------------------------------------------------------------------
 MOPS_SIGNATURE:
-    DB 4DH, 4FH, 50H, 53H                                                           ; |MOPS|
+    DB 4DH, 4FH, 50H, 53H                                                             ; |MOPS|
 ; Page-0 entry to the RAM page test below: called with HL preset while SYS is in page 0
 ; (M=80H), so the call reaches C338H through its 0338H alias.
 MEMORY_TEST_PAGE0:
     PUSH HL
     CALL LC348@SYS0
-    JR C342H
+    JR LC342
 
 ; -----------------------------------------------------------------------------
 ; 16 KIB RAM PAGE TEST
@@ -808,14 +903,14 @@ MEMORY_TEST_PAGE0:
 ; -----------------------------------------------------------------------------
 MEMORY_TEST:
     PUSH HL
-    CALL C348H
+    CALL LC348
 
 LC342:
     POP DE
     RET NZ
     EX DE,HL
     LD A,AAH
-    DB 01H                                                                          ; |.|
+    DB 01H                                ; = LD BC,553EH when run from here, hiding the entry below
 
 LC348:
     LD A,55H
@@ -838,7 +933,7 @@ LC358:
     RET NZ
     INC HL
     RET PO
-    JR C358H
+    JR LC358
 
 ; -----------------------------------------------------------------------------
 ; RST 30H OPERATING-SYSTEM DISPATCHER
@@ -884,7 +979,7 @@ RST30_DISPATCH:
     PUSH HL
     EXX
     EX AF,AF'
-    CALL C37EH
+    CALL LC37E
 
 ; -----------------------------------------------------------------------------
 ; RST 30H COMMON RETURN
@@ -910,7 +1005,7 @@ RST30_RETURN:
     POP IY
     POP IX
     POP HL
-    JP 0B37H
+    JP RST30_BRIDGE_RET
 
 LC37E:
     PUSH AF
@@ -919,18 +1014,18 @@ LC37E:
     LD C,A
     OR A
     EX AF,AF'
-    LD HL,0B01H
+    LD HL,IO_ASSIGN_IN+1
     LD A,(HL)
     CP 02H
-    JR NZ,C38DH
+    JR NZ,LC38D
     DEC (HL)
 
 LC38D:
-    LD DE,0B00H
+    LD DE,IO_ASSIGN_IN
     LD A,C
     RLCA
-    JR C,C397H
-    LD DE,0B08H
+    JR C,LC397
+    LD DE,IO_ASSIGN_OUT
 
 LC397:
     AND E0H
@@ -943,52 +1038,52 @@ LC397:
     LD C,A
     LD A,B
     CP 07H
-    JR Z,C3D8H
+    JR Z,LC3D8
     LD L,B
     XOR A
     LD H,A
     ADD HL,DE
     DEC A
     CP (HL)
-    JR NZ,C3B3H
+    JR NZ,LC3B3
     LD A,C
     CP 03H
-    JR NC,C3D0H
+    JR NC,LC3D0
 
 LC3B3:
     LD A,(HL)
     RES 7,A
     CP 07H
-    JR C,C3C0H
+    JR C,LC3C0
     LD A,FEH
 
 LC3BC:
     POP DE
     POP BC
-    JR C3FCH
+    JR LC3FC
 
 LC3C0:
     BIT 7,(HL)
-    JR Z,C3CAH
-    LD HL,F166H
+    JR Z,LC3CA
+    LD HL,F166H                           ; EXT ROM routine EXPANSION_INPUT_DISPATCH, entered through the FFF0H gateway
 
 LC3C7:
-    JP FFF0H
+    JP CALL_EXTENSION_HL
 
 LC3CA:
     LD A,C
     CP 03H
-    JR NC,C3D0H
+    JR NC,LC3D0
     LD B,(HL)
 
 LC3D0:
     LD A,B
     CP 06H
-    LD HL,F16CH
-    JR Z,C3C7H
+    LD HL,F16CH                           ; EXT ROM routine EXPANSION_OUTPUT_DISPATCH, entered through the FFF0H gateway
+    JR Z,LC3C7
 
 LC3D8:
-    LD DE,C55DH
+    LD DE,DEVICE_JUMP_TABLE_POINTERS
     LD L,B
     LD H,00H
     ADD HL,HL
@@ -1001,7 +1096,7 @@ LC3D8:
     DEC A
     CP C
     LD A,FFH
-    JR C,C3BCH
+    JR C,LC3BC
     INC HL
     EX DE,HL
     LD L,C
@@ -1015,21 +1110,23 @@ LC3D8:
     EX AF,AF'
     POP DE
     POP BC
-    CALL C321H
+    CALL JUMP_HL
 
 LC3FC:
     OR A
     POP HL
     RET Z
     PUSH AF
-    LD A,(0B20H)
+    LD A,(INT_FLAG)
     INC A
-    JR Z,C410H
+    JR Z,LC410
     PUSH BC
     PUSH DE
     LD A,H
-    LD HL,F1E6H
-    JR C3C7H
+    LD HL,F1E6H                           ; EXT ROM routine LF1E6, entered through the FFF0H gateway
+    JR LC3C7
+
+LC40E:
     POP DE
     POP BC
 
@@ -1037,67 +1134,50 @@ LC410:
     POP AF
     RET
 
-; RST 38H interrupt entry; interrupt mode 1 dispatches here.
-; RST 38H enters here after the RAM stub has selected the standard U0-U1-U2-SYS mapping.
-; P-SAVE is saved before any register or paging work so the interrupted program can resume
-; transparently.
-
 ; -----------------------------------------------------------------------------
 ; RST 38H INTERRUPT ENTRY
 ; -----------------------------------------------------------------------------
 ;
-; Preserves the complete Z80 register context around the system interrupt service routine.
+; The Z80 runs in interrupt mode 1, so every interrupt executes the U0 RAM stub at
+; 0038H, which the extension ROM copies from its template at reset:
 ;
-; Interrupt mode 1 arrives here through the RAM stub at 0038H after that stub has established the
-; standard U0-U1-U2-SYS mapping. The first byte saves P-SAVE, the paging value that must be
-; restored when the interrupt is complete.
+;   0038H  PUSH AF          ; save the interrupted AF
+;          LD A,70H         ; U0 U1 U2 SYS
+;          OUT (02H),A      ; map SYS into page 3 (P_SAVE is not touched)
+;          JP C412H         ; continue here
 ;
-; The handler pushes AF, the main register pairs, IX and IY, then exchanges to the alternate AF
-; and register set and saves those as well. C437H can therefore use the CPU freely, including the
-; alternate registers, without changing the interrupted program's observable state.
+; Because the stub leaves P_SAVE alone, P_SAVE still describes the interrupted
+; program's page map when this routine reads it. The handler saves that value and
+; every register, including IX, IY and the alternate set, so IRQ_CORE and the
+; device routines it calls may use any register.
 ;
-; After the core handler returns, the exact reverse sequence restores both register sets. Control
-; then jumps to the RAM epilogue at 0B41H, which restores the caller's mapping and re-enables
-; interrupts before returning through the machine's interrupt-return path.
+; The U0 tail at 0B41H (IRQ_BRIDGE_TAIL) finishes the job:
 ;
-; Entry:
-;   Entered by the RAM RST 38H stub with the interrupt request still being serviced.
+;   0B41H  LD (P_SAVE),A    ; A = saved P_SAVE
+;          OUT (02H),A      ; restore the interrupted page map
+;          POP AF           ; the AF pushed by the stub
+;          EI
+;          RET
 ;
-; Exit:
-;   Returns to 0B41H with the interrupted register context restored.
-;
-; Effects:
-;   Temporarily uses the stack, I/O ports, system variables, and all Z80 register sets.
-;
-; Destroys:
-;   No caller registers; all main and alternate registers are saved and restored.
-;
-; Note:
-;   The physical ROM routine is normally visible at C412H; the CPU reaches it after the RAM stub
-;   has selected the standard SYS mapping.
+; Entry:   from the 0038H stub, interrupts disabled, SYS in page 3.
+; Exit:    to IRQ_BRIDGE_TAIL with every register restored.
 ; -----------------------------------------------------------------------------
 IRQ_HANDLER:
-    LD A,(0003H)
-    PUSH AF
-    PUSH HL
+    LD A,(P_SAVE)                       ; page map of the interrupted program
+    PUSH AF                             ; it is popped into A for IRQ_BRIDGE_TAIL
+    PUSH HL                             ; save the main register set ...
     PUSH DE
     PUSH BC
-    PUSH IX
+    PUSH IX                             ; ... the index registers ...
     PUSH IY
-
-; Exchange to AF' and EXX make the alternate accumulator and register pairs part of the interrupt
-; frame.
-    EX AF,AF'
+    EX AF,AF'                           ; ... and the alternate set
     PUSH AF
     EXX
     PUSH HL
     PUSH DE
     PUSH BC
-
-; The complete interrupt service body is isolated behind IRQ_CORE; all register restoration
-; follows the call.
-    CALL C437H
-    POP BC
+    CALL IRQ_CORE                       ; service every pending source
+    POP BC                              ; restore in exactly the reverse order
     POP DE
     POP HL
     EXX
@@ -1108,231 +1188,158 @@ IRQ_HANDLER:
     POP BC
     POP DE
     POP HL
-    POP AF
-    JP 0B41H
-
-; Core interrupt handler.
-; INT-FLAG is FFH while interrupt work is in progress.
+    POP AF                              ; A = interrupted page map
+    JP IRQ_BRIDGE_TAIL                  ; restore it, POP AF, EI, RET
 
 ; -----------------------------------------------------------------------------
-; SYSTEM INTERRUPT DISPATCH
+; SYSTEM INTERRUPT SERVICE
 ; -----------------------------------------------------------------------------
 ;
-; Ticks the system clock, services internal device requests, and dispatches expansion-card
-; interrupts.
+; Port 59H reports the interrupt sources, active low: bits 3-0 are expansion
+; slots 3-0, bit 4 is the shared request of the CRTC cursor pulse and the sound
+; timer. The cursor pulse is programmed to fire at the end of the visible picture,
+; so bit 4 is the 50 Hz system tick.
 ;
-; INT-FLAG at 0B20H is set to FFH for the duration of this routine. The two-byte interrupt counter
-; at 0B1DH is incremented, and BORDER at 0B4FH is written to port 00H on every interrupt so the
-; configured border colour is continuously enforced.
+; Every interrupt increments TIME and rewrites the border. A bit-4 request is
+; acknowledged through port 07H and runs INTERNAL_IRQ_DISPATCH. Expansion-slot
+; requests are acknowledged through ports 58H-5BH and passed to the extension
+; ROM card dispatcher, which calls each requesting card's vector at C00EH.
 ;
-; Port 59H reports the interrupt sources with active-low status bits. Bit 4 identifies the
-; cursor/sound request; it is acknowledged by setting the corresponding bit in the value sent to
-; port 07H. C47DH handles the internal video, keyboard, editor, and sound work according to the
-; active-low INT-DES mask at 0B10H.
+; INT_FLAG is FFH for the whole routine. The device-call path at LC3FC checks it:
+; while it is set, a device error is returned as is instead of entering the
+; extension ROM's error recovery at F1E6H.
 ;
-; The lower four status bits represent expansion-card requests. IRQ-STAT at 0B1FH supplies the
-; card-enable mask. A four-iteration loop rotates the enable and request bits together, writes bit
-; 7 to ports 58H-5BH only for cards that both request and are permitted to interrupt, then enters
-; the expansion dispatcher at F227H through the common EXT jump at FFF0H.
-;
-; Entry:
-;   Hardware interrupt status at port 59H and device masks in INT-DES/IRQ-STAT.
-;
-; Exit:
-;   All enabled pending interrupt sources have been acknowledged and dispatched.
-;
-; Effects:
-;   Updates INT-FLAG and the interrupt counter; writes border, acknowledge, and card-enable I/O
-;   ports.
-;
-; Destroys:
-;   AF, BC, DE, HL internally; IRQ_HANDLER restores the saved context.
-;
-; Note:
-;   The card loop uses D for IRQ-STAT enable bits and H for the active-low card request bits; C
-;   remains synchronized with the port number being tested.
+; Entry:   from IRQ_HANDLER; all registers are free.
+; Exit:    INT_FLAG = 00H.
 ; -----------------------------------------------------------------------------
 IRQ_CORE:
-    LD A,FFH
-
-; Set INTFLAG while servicing an interrupt.
-    LD (0B20H),A
-
-; The two-byte interrupt counter at 0B1DH advances once per accepted interrupt.
-    LD HL,(0B1DH)
-
-; Increment HL.
+    LD A,FFH                            ; mark interrupt service in progress
+    LD (INT_FLAG),A
+    LD HL,(TIME)                        ; advance the 16-bit software clock
     INC HL
-    LD (0B1DH),HL
+    LD (TIME),HL
+    LD A,(BORDER)                       ; reapply the border colour on every
+    OUT (00H),A                         ; interrupt
+    IN A,(59H)                          ; read the active-low source bits
+    LD C,A                              ; and keep a copy in C
+    BIT 4,A                             ; Z = cursor/sound tick pending
+    SET 4,C                             ; (C bit 4 is not tested again)
+    OUT (07H),A                         ; any write to 07H clears the bit-4 request
+    CALL Z,INTERNAL_IRQ_DISPATCH        ; tick: device and card function 0
+    LD A,C                              ; keep only the four slot bits,
+    OR F0H                              ; forcing bits 7-4 high
+    INC A                               ; FFH + 1 = 0: no slot requested
+    JR Z,IRQ_CORE_EXIT
 
-; Load BORDER system variable into A.
-; BORDER is written on every interrupt, keeping the configured border colour applied.
-    LD A,(0B4FH)
-    OUT (00H),A
+; At least one expansion slot requested service. For each requesting slot,
+; write 80H to its port (58H + slot) when IRQ_STAT enables that slot and 00H
+; when it does not; bit 7 clear disables and clears the slot's request.
 
-; Port 59H reports active-low interrupt sources; bit 4 is the cursor/sound request.
-    IN A,(59H)
-    LD C,A
-    BIT 4,A
-    SET 4,C
-
-; Clear cursor/sound interrupt.
-; Writing port 07H acknowledges the cursor/sound interrupt after its status bit has been
-; inspected.
-    OUT (07H),A
-    CALL Z,C47DH
-
-; OR F0H leaves only the four expansion-card request bits to be tested.
-    LD A,C
-    OR F0H
-    INC A
-    JR Z,C478H
-
-; IRQ-STAT supplies the enable mask; its two low bits are reserved for cursor and sound.
-    LD A,(0B1FH)
+    LD A,(IRQ_STAT)                     ; bits 5-2 enable slots 3-0
     RRCA
-    RRCA
-    LD H,C
-    LD L,C
+    RRCA                                ; now bits 3-0
+    LD H,C                              ; H = request bits, rotated in the loop
+    LD L,C                              ; L = unrotated copy for the dispatcher
+    LD BC,0458H                         ; B = 4 slots, C = port 58H (slot 0)
+    LD D,A                              ; D = enable bits, rotated in the loop
 
-; C addresses ports 58H through 5BH while B counts the four expansion-card slots.
-    LD BC,0458H
-    LD D,A
+IRQ_CARD_ACK_LOOP:
+    XOR A                               ; A = 00H
+    RRC D                               ; Cy = this slot's enable bit
+    RRA                                 ; A = 80H if enabled, 00H if not
+    RRC H                               ; Cy = this slot's request bit (1 = idle)
+    JR C,IRQ_CARD_ACK_NEXT              ; idle slot: leave its port alone
+    OUT (C),A                           ; requesting slot: write its enable bit
 
-; A becomes 80H only when the current card is enabled; H carry skips the write when that card did
-; not request service.
+IRQ_CARD_ACK_NEXT:
+    INC C                               ; next port, 58H-5BH
+    DJNZ IRQ_CARD_ACK_LOOP
+    LD C,L                              ; C = the port 59H value again
+    LD HL,IRQ_CORE_EXIT                 ; the card dispatcher returns there
+    JR EXPANSION_IRQ_DISPATCH           ; call every requesting card's vector
 
-LC465:
-    XOR A
-    RRC D
-    RRA
-    RRC H
-    JR C,C46FH
-    OUT (C),A
-
-LC46F:
-    INC C
-    DJNZ C465H
-
-; C is restored before the expansion handoff so the original active-card mask reaches EXT.
-    LD C,L
-    LD HL,C478H
-    JR C4A3H
-
-; INT-FLAG is cleared only after internal and expansion interrupt work has completed.
-
-LC478:
-    XOR A
-    LD (0B20H),A
+IRQ_CORE_EXIT:
+    XOR A                               ; interrupt service finished
+    LD (INT_FLAG),A
     RET
-
-; INT-DES bits are active low and order the built-in devices as video, keyboard, editor, sound
-; when rotated.
 
 ; -----------------------------------------------------------------------------
 ; INTERNAL DEVICE INTERRUPTS
 ; -----------------------------------------------------------------------------
 ;
-; Runs the interrupt-time function 0 of the built-in video, keyboard, editor, and sound devices.
+; Runs on every 50 Hz tick. INT_DES selects, active low, which devices get their
+; function 0 (the interrupt-time routine):
 ;
-; INT-DES at 0B10H is active low and orders the devices from bit 7 to bit 0 as expansion cards 3
-; through 0, sound, editor, keyboard, and video. This routine rotates the mask four times so the
-; internal devices are visited in video, keyboard, editor, sound order.
+;   bit 0  video     function 0 is a RET
+;   bit 1  keyboard  KB_INT scans the matrix and handles auto-repeat
+;   bit 2  editor    ED_INT blinks the cursor
+;   bit 3  sound     TONE_INT times and stops a tone
+;   bit 4+n          expansion card n, through the card dispatcher
 ;
-; For each active device, the device number is converted into B and C=00H is selected as the
-; interrupt-time function. Four copies of the C499H return address are placed on the stack before
-; entering the normal device-function dispatcher at C3D8H. That makes the ordinary jump-table
-; mechanism usable without losing the loop state.
+; Each internal device is called through LC3D8, the device-table half of the
+; RST 30H dispatcher. LC3D8 expects the frame that LC37E builds for an RST 30H
+; call: saved DE, BC and AF above a return address. The four pushes of
+; INTERNAL_IRQ_NEXT fill those three slots and the return address, so after the
+; device returns, by either the normal or the error path, control comes back to
+; INTERNAL_IRQ_NEXT with the loop state intact.
 ;
-; Function 0 performs no video work, scans the keyboard and updates the key/repeat state, blinks
-; the editor cursor, or advances and eventually stops a timed sound. The saved mapping and loop
-; registers are recovered after each device call.
-;
-; Entry:
-;   INT-DES at 0B10H; the internal-device interrupt mask is active low.
-;
-; Exit:
-;   Each requested internal device has received function 0.
-;
-; Effects:
-;   Calls device jump tables and temporarily changes the paging configuration through the common
-;   dispatcher.
-;
-; Destroys:
-;   AF, BC, DE, HL internally; the caller's interrupt frame is preserved.
+; Entry:   C = port 59H value (saved and restored for IRQ_CORE).
+; Exit:    to the caller of IRQ_CORE's CALL, through INTERNAL_IRQ_EXIT.
 ; -----------------------------------------------------------------------------
 INTERNAL_IRQ_DISPATCH:
-    PUSH BC
-    LD A,(0B10H)
+    PUSH BC                             ; keep the port 59H value for IRQ_CORE
+    LD A,(INT_DES)                      ; active-low function-0 request mask
     LD C,A
-    LD B,04H
+    LD B,04H                            ; four internal devices
 
-; A zero carry from RR C identifies an internal device that must receive function 0.
-
-LC484:
-    RR C
-    PUSH BC
-    JR C,C499H
-
-; Subtracting the loop count converts the four-pass counter into device numbers 0 through 3.
-    LD A,04H
-    SUB B
-    LD B,A
-    LD C,00H
-
-; Four copies of the return continuation protect the stack while the normal device dispatcher
-; runs.
-    LD HL,C499H
+INTERNAL_IRQ_LOOP:
+    RR C                                ; Cy = this device's INT_DES bit
+    PUSH BC                             ; save the loop state
+    JR C,INTERNAL_IRQ_NEXT              ; bit set: device not requested
+    LD A,04H                            ; B counts 4..1; turn it into
+    SUB B                               ; the device number 0..3
+    LD B,A                              ; B = device (video, keyboard, editor, sound)
+    LD C,00H                            ; C = function 0
+    LD HL,INTERNAL_IRQ_NEXT             ; fake the RST 30H frame: DE, BC and AF
+    PUSH HL                             ; slots, then the return address
     PUSH HL
     PUSH HL
     PUSH HL
-    PUSH HL
-    JP C3D8H
+    JP LC3D8                            ; look up and call device B, function 0
 
-; Restore the normal U U U S mapping before testing the next internal device.
+INTERNAL_IRQ_NEXT:
+    LD A,70H                            ; U0 U1 U2 SYS again: the device may have
+    OUT (02H),A                         ; mapped video RAM in
+    POP BC                              ; recover the loop state
+    DJNZ INTERNAL_IRQ_LOOP
 
-LC499:
-    LD A,70H
-    OUT (02H),A
-    POP BC
-    DJNZ C484H
-    LD HL,C4AAH
+; C has now been rotated four times, so its low nibble holds INT_DES bits 7-4:
+; bit n set to 0 means card n wants its function 0 on every tick.
 
-; F227H in EXT receives the active expansion-card interrupt mask in C.
+    LD HL,INTERNAL_IRQ_EXIT             ; the card dispatcher returns there
 
 ; -----------------------------------------------------------------------------
 ; EXPANSION INTERRUPT HANDOFF
 ; -----------------------------------------------------------------------------
 ;
-; Transfers pending expansion-card interrupt service to the EXT ROM dispatcher.
+; Calls the extension ROM card dispatcher at EXT F227H. For every clear bit in
+; C bits 3-0 it selects that slot through port 03H, calls the address stored at
+; C00EH in the card's ROM, restores the page map and finally rewrites port 03H
+; from PORT03_MIRROR. Control then returns, through the FFF0H gateway, to the
+; address in HL.
 ;
-; After the four internal device slots have been considered, the lower four bits of C still
-; contain the original active-low expansion request mask. C4A3 pushes the common return address,
-; loads F227H, the EXT ROM entry for card interrupt service, and jumps through FFF0H.
+; IRQ_CORE uses this with the port 59H request bits; INTERNAL_IRQ_DISPATCH uses
+; it with the INT_DES card bits.
 ;
-; The EXT dispatcher selects each requested card, maps its memory into the appropriate page, and
-; calls the routine address stored at the card's 0C00EH-0C00FH entry. On return it restores the
-; previous mapping and eventually returns to C4AAH, where C is recovered and the system interrupt
-; routine finishes.
-;
-; Entry:
-;   C low four bits contain pending expansion-card requests; HL points at the internal return
-;   continuation.
-;
-; Exit:
-;   Control returns after EXT has serviced the requested cards.
-;
-; Effects:
-;   May page expansion memory and execute code outside SYS.
-;
-; Destroys:
-;   EXT-specific working registers; the SYS interrupt frame is restored by the outer handler.
+; Entry:   C bits 3-0 = active-low slot mask; HL = continuation address.
 ; -----------------------------------------------------------------------------
 EXPANSION_IRQ_DISPATCH:
-    PUSH HL
-    LD HL,F227H
-    JP FFF0H
-    POP BC
+    PUSH HL                             ; the continuation becomes the return address
+    LD HL,F227H                         ; EXT ROM card dispatcher
+    JP CALL_EXTENSION_HL                ; map EXT into page 3 and JP (HL)
+
+INTERNAL_IRQ_EXIT:
+    POP BC                              ; C = port 59H value for IRQ_CORE
     RET
 
 ; Kernel routine jump table; first byte is the routine count, followed by routine addresses.
@@ -1364,7 +1371,7 @@ EXPANSION_IRQ_DISPATCH:
 ;   The two-byte entry at C4ADH is intentionally present even though function 0 does no work.
 ; -----------------------------------------------------------------------------
 KERNEL_JUMP_TABLE:
-    DB 05H, 09H, C5H, B7H, C4H, D0H, C4H, E2H, C4H, 0EH, C5H                        ; |...........|
+    DB 05H, 09H, C5H, B7H, C4H, D0H, C4H, E2H, C4H, 0EH, C5H                          ; |...........|
 
 ; HI_MEM_SET (KERNEL 01) expects the number of bytes to reserve above HI_MEM in DE; on success DE
 ; returns the new HI_MEM+1, on failure A returns FBh.
@@ -1400,7 +1407,7 @@ KERNEL_JUMP_TABLE:
 ;   HL and flags; DE is replaced by the returned start address.
 ; -----------------------------------------------------------------------------
 HI_MEM_SET:
-    LD HL,(0B19H)
+    LD HL,(HI_MEM)
     LD A,FBH
     OR A
     SBC HL,DE
@@ -1413,7 +1420,7 @@ HI_MEM_SET:
     LD D,H
     LD E,L
     INC DE
-    LD (0B19H),HL
+    LD (HI_MEM),HL
     XOR A
     RET
 
@@ -1446,14 +1453,14 @@ HI_MEM_SET:
 ;   HL and flags; DE and BC are used as parameters and are not promised on exit.
 ; -----------------------------------------------------------------------------
 SLOT_ASN:
-    LD HL,0B07H
+    LD HL,IO_ASSIGN_IN+7
     INC B
-    JR Z,C4D9H
-    LD HL,0B0FH
+    JR Z,LC4D9
+    LD HL,IO_ASSIGN_OUT+7
 
 LC4D9:
     PUSH HL
-    CALL C50EH
+    CALL SLOT_NUM
     POP HL
     OR A
     RET NZ
@@ -1490,34 +1497,34 @@ LC4D9:
 ;   DE, HL and flags; BC carries the request and is not promised on exit.
 ; -----------------------------------------------------------------------------
 IO_ASN:
-    LD HL,0B00H
+    LD HL,IO_ASSIGN_IN
     INC D
-    JR Z,C4EBH
-    LD HL,0B08H
+    JR Z,LC4EB
+    LD HL,IO_ASSIGN_OUT
 
 LC4EB:
     PUSH HL
     LD A,06H
     CP B
-    JR C,C50AH
+    JR C,LC50A
     LD E,B
     LD D,00H
     ADD HL,DE
     LD E,(HL)
     INC E
-    JR Z,C50AH
+    JR Z,LC50A
     POP DE
     PUSH HL
     EX DE,HL
     CP C
-    JR C,C50AH
+    JR C,LC50A
     LD E,C
     XOR A
     LD D,A
     ADD HL,DE
     LD E,(HL)
     INC E
-    JR Z,C50AH
+    JR Z,LC50A
     POP HL
     LD (HL),C
     RET
@@ -1570,10 +1577,10 @@ LC515:
 LC51C:
     LD A,(DE)
     CP (HL)
-    JR NZ,C537H
+    JR NZ,LC537
     INC HL
     INC DE
-    DJNZ C51CH
+    DJNZ LC51C
     POP BC
     PUSH IX
     POP HL
@@ -1583,7 +1590,7 @@ LC51C:
     ADD HL,DE
     LD A,(HL)
     CP C
-    JR NZ,C538H
+    JR NZ,LC538
 
 ; A=04H minus the restored slot counter yields the zero-based physical slot number.
     LD A,04H
@@ -1603,9 +1610,9 @@ LC538:
     ADD IX,DE
     POP DE
     PUSH DE
-    DJNZ C515H
+    DJNZ LC515
     LD A,FDH
-    JR C535H
+    JR LC535
 
 ; Initial values for the 6845 video controller registers after reset.
 ; Sixteen bytes initialize CRTC registers R0 through R15 via ports 70H/71H.
@@ -1665,7 +1672,7 @@ CRTC_RESET_VALUES:
 ;   Indirectly initializes video, keyboard, sound, and cassette state.
 ; -----------------------------------------------------------------------------
 STARTUP_DEVICE_INIT_TABLE:
-    DB F2H, C9H, ECH, D5H, 60H, D9H, E2H, D9H                                       ; |....`...|
+    DB F2H, C9H, ECH, D5H, 60H, D9H, E2H, D9H                                         ; |....`...|
 
 ; Class pointers: video, keyboard, editor, sound, printer, cassette, expansion placeholder,
 ; kernel.
@@ -1727,9 +1734,16 @@ DEVICE_JUMP_TABLE_POINTERS:
 ;   AF, BC, DE, HL and flags.
 ; -----------------------------------------------------------------------------
 OUT_CHARS_SAFE:
-    DB EBH, E5H, D5H, C5H, E5H, D5H                                                 ; |......|
     EX DE,HL
-    LD HL,(0B19H)
+
+LC56E:
+    PUSH HL
+    PUSH DE
+    PUSH BC
+    PUSH HL
+    PUSH DE
+    EX DE,HL
+    LD HL,(HI_MEM)
     OR A
     SBC HL,DE
     LD A,FAH
@@ -1740,7 +1754,7 @@ OUT_CHARS_SAFE:
     EX DE,HL
 
 ; The synthetic stack continuation makes JP (HL) at C58EH behave as an indirect CALL.
-    CALL C58EH
+    CALL CALL_HL
     POP BC
     POP DE
     POP HL
@@ -1748,7 +1762,7 @@ OUT_CHARS_SAFE:
     RET NZ
     CPI
     RET PO
-    JR C56EH
+    JR LC56E
 
 ; -----------------------------------------------------------------------------
 ; INDIRECT CALL PRIMITIVE
@@ -1808,14 +1822,14 @@ IN_CHARS_SAFE:
     PUSH BC
     PUSH HL
     PUSH DE
-    LD HL,(0B19H)
+    LD HL,(HI_MEM)
     OR A
     SBC HL,DE
     LD A,FAH
     POP DE
     POP HL
     RET C
-    CALL C58EH
+    CALL CALL_HL
     EX AF,AF'
     LD A,C
     POP BC
@@ -1831,7 +1845,7 @@ IN_CHARS_SAFE:
     CPI
     EX DE,HL
     RET PO
-    JR C58FH
+    JR IN_CHARS_SAFE
 
 ; Built-in character matrix table for character codes 32-127, ten bytes per character.
 ; Ninety-six fixed glyphs, character codes 20H-7FH, occupy ten bytes per character.
@@ -1950,7 +1964,7 @@ FIXED_CHARACTER_GLYPHS:
 ; -----------------------------------------------------------------------------
 VIDEO_JUMP_TABLE:
     DB 0DH, A9H, C9H, 94H, CCH, 86H, CCH, 4BH, CFH, F4H, C9H, 49H, CAH, DAH, CAH, D7H ; |.......K...I....|
-    DB CAH, F3H, CBH, FFH, CBH, 48H, CDH, 2CH, CFH, 38H, CAH                        ; |.....H.,.8.|
+    DB CAH, F3H, CBH, FFH, CBH, 48H, CDH, 2CH, CFH, 38H, CAH                          ; |.....H.,.8.|
 
 ; Video routines run with the video-memory mapping selected and P-SAVE preserved.
 
@@ -2022,13 +2036,13 @@ CALL_WITH_VIDEO_PAGED:
 ; -----------------------------------------------------------------------------
 VIDEO_PAGE_GUARD:
     POP HL
-    LD A,(0003H)
+    LD A,(P_SAVE)
     PUSH AF
     LD A,50H
-    LD (0003H),A
+    LD (P_SAVE),A
     OUT (02H),A
     PUSH HL
-    LD HL,C9A1H
+    LD HL,VIDEO_PAGE_RETURN
     EX (SP),HL
     JP (HL)
 
@@ -2056,7 +2070,7 @@ VIDEO_PAGE_GUARD:
 VIDEO_PAGE_RETURN:
     EX AF,AF'
     POP AF
-    LD (0003H),A
+    LD (P_SAVE),A
     OUT (02H),A
     EX AF,AF'
     RET
@@ -2207,7 +2221,7 @@ CHECK_Y_COORDINATE:
 ;   AF, B and flags; HL contains the transformed value.
 ; -----------------------------------------------------------------------------
 LOGICAL_TO_PHYSICAL_COORDINATE:
-    LD A,(0B73H)
+    LD A,(COLOR_MODE)
     LD B,A
     INC B
 
@@ -2238,7 +2252,7 @@ LOGICAL_TO_PHYSICAL_COORDINATE:
 SHIFT_HL_RIGHT:
     SRL H
     RR L
-    DJNZ C9C6H
+    DJNZ SHIFT_HL_RIGHT
     RET
 
 ; Graphics preparation derives the line-style and paper/ink video values before drawing.
@@ -2298,16 +2312,16 @@ PREPARE_GRAPHICS_POINT:
 ;   AF, BC, DE, HL; IY is deliberately changed.
 ; -----------------------------------------------------------------------------
 PREPARE_DRAW_STATE:
-    CALL CB6DH
+    CALL LOAD_LINE_STYLE
 
 LC9D0:
-    CALL CC05H
+    CALL LCC05
     LD (0B93H),A
     LD DE,0040H
 
 LC9D9:
-    CALL CB8FH
-    CALL CC0DH
+    CALL SELECT_CROSSING_MODE
+    CALL LCC0D
 
 LC9DF:
     LD (0B94H),A
@@ -2337,9 +2351,9 @@ LC9DF:
 ;   AF, C and HL contain the returned state.
 ; -----------------------------------------------------------------------------
 GET_PIXEL_WORK_STATE:
-    LD A,(0B75H)
+    LD A,(FILL_BYTE)
     LD C,A
-    LD HL,(0B76H)
+    LD HL,(VID_ADDR)
     RET
 
 ; Initial palette bytes when the hardware color switch is on.
@@ -2367,10 +2381,9 @@ GET_PIXEL_WORK_STATE:
 ;   None.
 ; -----------------------------------------------------------------------------
 DEFAULT_PALETTE_TABLE:
-    DB 00H, 50H, 44H, 41H                                                           ; |.PDA|
 
 ; Initial palette bytes when the hardware color switch is off.
-    DB 00H, 55H, 50H, 44H                                                           ; |.UPD|
+    DB 00H, 50H, 44H, 41H, 00H, 55H, 50H, 44H                                         ; |.PDA.UPD|
 
 ; The startup entry selects C=01H (four-colour mode) and falls through into VID_MODE.
 
@@ -2446,29 +2459,29 @@ VID_MODE:
     LD A,F7H
     RET NC
     XOR A
-    LD (0B4BH),A
-    LD (0B4EH),A
-    LD (0B50H),A
+    LD (L_MODE),A
+    LD (PAPER),A
+    LD (V_FLAG),A
     INC A
-    LD (0B4CH),A
+    LD (L_STYLE),A
     CP C
-    JR NC,CA15H
+    JR NC,LCA15
     IN A,(59H)
     RLCA
     RLCA
     LD A,0FH
-    JR NC,CA15H
+    JR NC,LCA15
     LD A,0CH
 
 LCA15:
-    LD (0B4DH),A
+    LD (INK),A
     LD A,C
-    LD (0B73H),A
+    LD (COLOR_MODE),A
     PUSH BC
-    CALL CA49H
+    CALL VID_CLS
     POP BC
     LD A,C
-    LD HL,0B13H
+    LD HL,PORT06_MIRROR
     XOR (HL)
     AND FCH
     XOR C
@@ -2478,8 +2491,8 @@ LCA15:
     RLCA
     RLCA
     LD DE,C9EEH
-    JR NC,CA38H
-    LD DE,C9EAH
+    JR NC,PAL_DEF
+    LD DE,DEFAULT_PALETTE_TABLE
 
 ; PAL routine (VIDEO 0C); defines palette colors.
 
@@ -2547,18 +2560,17 @@ PAL_DEF:
 ;   AF, BC, DE, HL, IY; video paging is restored by VIDEO_PAGE_GUARD.
 ; -----------------------------------------------------------------------------
 VID_CLS:
-    CALL C98FH
-    CALL CFD4H
-    CALL CC05H
-    DB 21H, 00H                                                                     ; |!.|
+    CALL CALL_WITH_SYS_PAGED
+    CALL EDITOR_INIT
+    CALL LCC05
 
 ; CLS fills 3C00H bytes from 8000H through BAFFH: the 15-KiB display area.
-    ADD A,B
+    LD HL,8000H
     LD DE,8001H
     LD (HL),A
     LD BC,3BFFH
     LDIR
-    CALL CBFFH
+    CALL B_OFF
     LD B,A
     LD C,A
     LD D,A
@@ -2600,17 +2612,17 @@ VID_CLS:
 ;   used by line drawing and point output.
 ; -----------------------------------------------------------------------------
 PIXEL_ADDRESS:
-    LD (0B7EH),DE
+    LD (Y_PHYSICAL),DE
 
 LCA69:
-    LD (0B7CH),BC
-    LD HL,(0B7CH)
+    LD (X_PHYSICAL),BC
+    LD HL,(X_PHYSICAL)
     PUSH HL
     LD B,04H
-    CALL C9C6H
+    CALL SHIFT_HL_RIGHT
     EX (SP),HL
-    CALL C9C1H
-    LD (0B78H),HL
+    CALL LOGICAL_TO_PHYSICAL_COORDINATE
+    LD (X_LOGICAL),HL
     LD C,A
     LD A,L
     LD HL,CAB4H
@@ -2619,19 +2631,19 @@ LCA69:
     INC A
     LD B,A
     LD A,(HL)
-    DB 1EH                                                                          ; |.|
+    DB 1EH                                ; = LD E,0FH when run from here, hiding the entry below
 
 LCA89:
     RRCA
-    DJNZ CA89H
-    LD (0B75H),A
-    LD DE,(0B7EH)
+    DJNZ LCA89
+    LD (FILL_BYTE),A
+    LD DE,(Y_PHYSICAL)
     LD HL,03BFH
     XOR A
     SBC HL,DE
     LD B,02H
-    CALL C9C6H
-    LD (0B7AH),HL
+    CALL SHIFT_HL_RIGHT
+    LD (Y_LOGICAL),HL
     LD H,L
     SRL H
     RRA
@@ -2642,7 +2654,7 @@ LCA89:
     ADD HL,BC
     LD DE,8000H
     ADD HL,DE
-    LD (0B76H),HL
+    LD (VID_ADDR),HL
     XOR A
     RET
 
@@ -2676,13 +2688,13 @@ LCA89:
 ;   AF; other registers are inputs to the selected implementation.
 ; -----------------------------------------------------------------------------
 PLOT_CHARACTER_PIXEL:
-    JR NC,CAC5H
+    JR NC,LCAC5
     AND 01H
-    JR Z,CAC0H
+    JR Z,LCAC0
     RET
 
 LCABE:
-    JR NC,CAC8H
+    JR NC,LCAC8
 
 LCAC0:
     LD A,(0B94H)
@@ -2727,6 +2739,8 @@ LCAC8:
 PLOT_PIXEL_CROSSING:
     AND (HL)
     XOR (HL)
+
+LCACF:
     AND C
     XOR (HL)
     LD (HL),A
@@ -2761,7 +2775,7 @@ PLOT_PIXEL_CROSSING:
 ;   AF, BC, DE, HL.
 ; -----------------------------------------------------------------------------
 B_REL:
-    CALL CC7AH
+    CALL ADD_BEAM_OFFSET
 
 ; BABS routine (VIDEO 06); sets pen position to absolute coordinates.
 
@@ -2798,14 +2812,14 @@ B_REL:
 ;   DRAW_LINE at CAEDH is the continuation used only when B_STAT at 0B74H indicates pen down.
 ; -----------------------------------------------------------------------------
 B_ABS:
-    CALL C98FH
+    CALL CALL_WITH_SYS_PAGED
     LD A,F9H
-    CALL C9B3H
-    CALL NC,C9BAH
+    CALL CHECK_X_COORDINATE
+    CALL NC,CHECK_Y_COORDINATE
     RET C
-    LD A,(0B74H)
+    LD A,(B_STAT)
     OR A
-    JP Z,CA65H
+    JP Z,PIXEL_ADDRESS
 
 ; -----------------------------------------------------------------------------
 ; INTEGER LINE DRAWER
@@ -2836,34 +2850,34 @@ B_ABS:
 ; -----------------------------------------------------------------------------
 DRAW_LINE:
     EXX
-    LD BC,(0B78H)
-    LD DE,(0B7AH)
+    LD BC,(X_LOGICAL)
+    LD DE,(Y_LOGICAL)
     PUSH BC
     PUSH DE
-    CALL C9CDH
+    CALL PREPARE_GRAPHICS_POINT
     EXX
-    CALL CA65H
-    LD BC,(0B78H)
-    LD DE,(0B7AH)
+    CALL PIXEL_ADDRESS
+    LD BC,(X_LOGICAL)
+    LD DE,(Y_LOGICAL)
     XOR A
     EX DE,HL
     POP DE
-    CALL CB61H
+    CALL ABSOLUTE_DIFFERENCE
     POP DE
     PUSH HL
     LD H,B
     LD L,C
-    CALL CB61H
+    CALL ABSOLUTE_DIFFERENCE
     PUSH HL
     LD HL,CBDBH
-    CALL C9AAH
-    LD (0B86H),DE
+    CALL JUMP_TABLE_DISPATCH
+    LD (LINE_STEP_2),DE
     POP HL
     POP DE
     PUSH HL
     SBC HL,DE
     POP HL
-    JR C,CB28H
+    JR C,LCB28
     EX DE,HL
 
 LCB28:
@@ -2878,8 +2892,8 @@ LCB28:
     ADD HL,DE
     PUSH HL
     LD HL,CBE3H
-    CALL C9AAH
-    LD (0B84H),DE
+    CALL JUMP_TABLE_DISPATCH
+    LD (LINE_STEP_1),DE
     POP HL
     POP DE
     EXX
@@ -2890,26 +2904,24 @@ LCB28:
     INC A
     EX AF,AF'
     POP HL
-    JR CB50H
+    JR LCB50
 
 LCB4C:
     EX AF,AF'
 
 LCB4D:
-    DB CDH, A8H                                                                     ; |..|
 
-LCB4F:
-    DB CBH                                                                          ; |.|
+    CALL STEP_LINE_PIXEL
 
 LCB50:
-    LD A,(0B83H)
+    LD A,(LINE_PATTERN)
     RLCA
-    LD (0B83H),A
-    CALL CABEH
-    DJNZ CB4DH
+    LD (LINE_PATTERN),A
+    CALL LCABE
+    DJNZ LCB4D
     EX AF,AF'
     DEC A
-    JR NZ,CB4CH
+    JR NZ,LCB4C
     RET
 
 ; -----------------------------------------------------------------------------
@@ -2938,7 +2950,7 @@ LCB50:
 ; -----------------------------------------------------------------------------
 ABSOLUTE_DIFFERENCE:
     SBC HL,DE
-    JR NC,CB6BH
+    JR NC,LCB6B
     EX DE,HL
     LD HL,0001H
     SBC HL,DE
@@ -2972,15 +2984,15 @@ LCB6B:
 ;   AF, BC, HL.
 ; -----------------------------------------------------------------------------
 LOAD_LINE_STYLE:
-    LD A,(0B4CH)
+    LD A,(L_STYLE)
     DEC A
     AND 0FH
     LD C,A
-    LD HL,CB7FH
+    LD HL,LINE_STYLE_TABLE
     LD B,00H
     ADD HL,BC
     LD A,(HL)
-    LD (0B83H),A
+    LD (LINE_PATTERN),A
     RET
 
 ; Line style bit-pattern table; 16 bytes, 14 unique patterns.
@@ -3032,8 +3044,15 @@ LINE_STYLE_TABLE:
 ;   AF, BC, DE, HL.
 ; -----------------------------------------------------------------------------
 SELECT_CROSSING_MODE:
-    DB D5H, 3AH, 4BH, 0BH, E6H, 03H, 21H, A0H, CBH, CDH, AAH, C9H, D5H, FDH, E1H, D1H ; |.:K...!.........|
-    DB C9H                                                                          ; |.|
+    PUSH DE
+    LD A,(L_MODE)
+    AND 03H
+    LD HL,LINE_MODE_TABLE
+    CALL JUMP_TABLE_DISPATCH
+    PUSH DE
+    POP IY
+    POP DE
+    RET
 
 ; Line crossing mode dispatch table selected by L_MODE.
 
@@ -3060,7 +3079,7 @@ SELECT_CROSSING_MODE:
 ;   None.
 ; -----------------------------------------------------------------------------
 LINE_MODE_TABLE:
-    DB CEH, CAH, D3H, CAH, CDH, CAH, CFH, CAH                                       ; |........|
+    DB CEH, CAH, D3H, CAH, CDH, CAH, CFH, CAH                                         ; |........|
 
 ; -----------------------------------------------------------------------------
 ; LINE PIXEL STEPPER
@@ -3087,13 +3106,41 @@ LINE_MODE_TABLE:
 ;   AF, BC, DE, HL and alternates according to selected path.
 ; -----------------------------------------------------------------------------
 STEP_LINE_PIXEL:
-    DB D9H, CBH, 7CH, 28H, 08H, 09H, D9H, DDH, 2AH, 84H, 0BH, DDH, E9H, 19H, D9H, DDH ; |..|(....*.......|
-    DB 2AH, 86H, 0BH, DDH, E9H, B7H, EDH, 52H, CBH, 01H, D0H, 2DH, C9H, CBH, 09H, 30H ; |*......R...-...0|
-    DB 01H, 2CH, B7H, EDH, 52H, C9H, CBH, 01H, 30H, 01H, 2DH, 19H, C9H, 19H, CBH, 09H ; |.,..R...0.-.....|
-    DB D0H, 2CH, C9H                                                                ; |.,.|
+    EXX
+    BIT 7,H
+    JR Z,LCBB5
+    ADD HL,BC
+    EXX
+    LD IX,(LINE_STEP_1)
+    JP (IX)
+
+LCBB5:
+    ADD HL,DE
+    EXX
+    LD IX,(LINE_STEP_2)
+    JP (IX)
+    DB B7H, EDH, 52H                                                                  ; |..R|
+
+LCBC0:
+    RLC C
+    RET NC
+    DEC L
+    RET
+    DB CBH, 09H, 30H, 01H, 2CH, B7H, EDH, 52H, C9H, CBH, 01H, 30H, 01H, 2DH           ; |..0.,..R...0.-|
+
+LCBD3:
+    ADD HL,DE
+    RET
+    DB 19H                                                                            ; |.|
+
+LCBD6:
+    RRC C
+    RET NC
+    INC L
+    RET
 
 ; Helper table used by BABS/BREL line drawing.
-    DB D5H, CBH                                                                     ; |..|
+    DB D5H, CBH                                                                       ; |..|
     ADC A,CBH
     PUSH BC
     RES 7,L
@@ -3105,7 +3152,7 @@ STEP_LINE_PIXEL:
     SET 1,D
     SET 0,B
     SET 1,D
-    DB CBH                                                                          ; |.|
+    DB CBH                                                                            ; |.|
 
 ; BON routine (VIDEO 08); pen down (starts drawing).
 ; B_STAT: zero means the beam is raised; nonzero means subsequent beam movement draws.
@@ -3132,11 +3179,11 @@ STEP_LINE_PIXEL:
 ;   AF, BC, DE, HL, IY.
 ; -----------------------------------------------------------------------------
 B_ON:
-    CALL C98FH
-    CALL C9D9H
-    CALL CAC0H
+    CALL CALL_WITH_SYS_PAGED
+    CALL LC9D9
+    CALL LCAC0
     LD A,FFH
-    DB 26H                                                                          ; |&|
+    DB 26H                                ; = LD H,AFH when run from here, hiding the entry below
 
 ; BOFF routine (VIDEO 09); pen up (stops drawing).
 
@@ -3163,25 +3210,25 @@ B_ON:
 ; -----------------------------------------------------------------------------
 B_OFF:
     XOR A
-    LD (0B74H),A
+    LD (B_STAT),A
     XOR A
     RET
 
 LCC05:
-    LD A,(0B4EH)
-    CALL CC10H
+    LD A,(PAPER)
+    CALL LCC10
     LD B,A
     RET
 
 LCC0D:
-    LD A,(0B4DH)
+    LD A,(INK)
 
 LCC10:
-    LD HL,(0B73H)
+    LD HL,(COLOR_MODE)
     SRL L
-    JR C,CC20H
+    JR C,LCC20
     SRL L
-    JR C,CC31H
+    JR C,LCC31
     AND 01H
     RRA
     SBC A,A
@@ -3209,7 +3256,7 @@ LCC35:
     RR L
     SRA L
     DEC H
-    JR NZ,CC35H
+    JR NZ,LCC35
     LD A,L
     RET
 
@@ -3236,15 +3283,15 @@ LCC35:
 ;   AF, BC, DE, HL.
 ; -----------------------------------------------------------------------------
 READ_PIXEL_COLOR:
-    CALL C9E2H
-    LD A,(0B73H)
+    CALL GET_PIXEL_WORK_STATE
+    LD A,(COLOR_MODE)
     LD B,A
     LD A,C
     AND (HL)
     SRL B
-    JR C,CC56H
+    JR C,LCC56
     SRL B
-    JR C,CC65H
+    JR C,LCC65
     ADD A,FFH
     RLA
     AND 01H
@@ -3298,11 +3345,11 @@ LCC65:
 ;   AF, HL, BC, DE replaced.
 ; -----------------------------------------------------------------------------
 ADD_BEAM_OFFSET:
-    LD HL,(0B7CH)
+    LD HL,(X_PHYSICAL)
     ADD HL,BC
     LD B,H
     LD C,L
-    LD HL,(0B7EH)
+    LD HL,(Y_PHYSICAL)
     ADD HL,DE
     EX DE,HL
     RET
@@ -3337,12 +3384,12 @@ LCC87:
     PUSH HL
     PUSH BC
     LD C,(HL)
-    CALL CC94H
+    CALL VID_CHOUT
     POP BC
     POP HL
     CPI
     RET PO
-    JR CC87H
+    JR LCC87
 
 ; -----------------------------------------------------------------------------
 ; VIDEO 01 - CHARACTER OUTPUT
@@ -3373,14 +3420,14 @@ LCC87:
 ;   AF, BC, DE, HL, alternate registers, IY.
 ; -----------------------------------------------------------------------------
 VID_CHOUT:
-    CALL C98FH
+    CALL CALL_WITH_SYS_PAGED
     LD A,C
     CP 20H
-    JR NC,CCA8H
+    JR NC,LCCA8
     CP 0AH
-    JP Z,CD31H
+    JP Z,LCD31
     CP 0DH
-    JP Z,CD2BH
+    JP Z,LCD2B
     XOR A
     RET
 
@@ -3390,14 +3437,14 @@ LCCA8:
     RET NC
     EXX
     LD DE,FFDCH
-    LD A,(0B73H)
+    LD A,(COLOR_MODE)
     LD B,A
     LD A,01H
     INC B
 
 LCCB8:
     ADD A,A
-    DJNZ CCB8H
+    DJNZ LCCB8
     LD (0B82H),A
     LD L,A
     ADD A,A
@@ -3406,13 +3453,13 @@ LCCB8:
     ADD A,L
     LD C,A
     XOR A
-    CALL CC7AH
-    CALL C9BAH
+    CALL ADD_BEAM_OFFSET
+    CALL CHECK_Y_COORDINATE
     RET C
-    CALL C9B3H
-    JR NC,CCD7H
-    CALL CD2BH
-    CALL CD31H
+    CALL CHECK_X_COORDINATE
+    JR NC,VID_CHOUT_AT
+    CALL LCD2B
+    CALL LCD31
 
 ; -----------------------------------------------------------------------------
 ; RENDER GLYPH AT PIXEL POSITION
@@ -3440,11 +3487,11 @@ LCCB8:
 ;   AF, BC, DE, HL, alternate registers, IY.
 ; -----------------------------------------------------------------------------
 VID_CHOUT_AT:
-    CALL C9D0H
+    CALL LC9D0
     EXX
     LD DE,C474H
     BIT 7,C
-    JR Z,CCE5H
+    JR Z,LCCE5
     LD DE,0740H
 
 LCCE5:
@@ -3458,7 +3505,7 @@ LCCE5:
     ADD HL,HL
     ADD HL,DE
     LD B,0AH
-    LD A,(0B50H)
+    LD A,(V_FLAG)
     LD E,A
     DEC HL
 
@@ -3467,53 +3514,53 @@ LCCF7:
     LD C,(HL)
     EXX
     LD B,08H
-    JR CD01H
+    JR LCD01
 
 LCCFE:
-    CALL CBD6H
+    CALL LCBD6
 
 LCD01:
     EXX
     RL C
     LD A,E
     EXX
-    CALL CAB7H
-    DJNZ CCFEH
-    CALL CBD3H
+    CALL PLOT_CHARACTER_PIXEL
+    DJNZ LCCFE
+    CALL LCBD3
     LD B,07H
 
 LCD10:
-    CALL CBC0H
-    DJNZ CD10H
+    CALL LCBC0
+    DJNZ LCD10
     EXX
-    DJNZ CCF7H
+    DJNZ LCCF7
     LD A,(0B82H)
     ADD A,A
     ADD A,A
     ADD A,A
     LD C,A
-    CALL CC7AH
-    CALL C9B3H
-    JR NC,CD2EH
-    LD BC,CD31H
+    CALL ADD_BEAM_OFFSET
+    CALL CHECK_X_COORDINATE
+    JR NC,LCD2E
+    LD BC,LCD31
     PUSH BC
 
 LCD2B:
     LD BC,0000H
 
 LCD2E:
-    JP CA69H
+    JP LCA69
 
 LCD31:
     LD DE,FFB4H
-    CALL CC7AH
+    CALL ADD_BEAM_OFFSET
     XOR A
-    CALL C9BAH
+    CALL CHECK_Y_COORDINATE
     RET C
     LD DE,FFD8H
     LD BC,0000H
-    CALL CC7AH
-    JP CA65H
+    CALL ADD_BEAM_OFFSET
+    JP PIXEL_ADDRESS
 
 ; FILL routine (VIDEO 0A); fills closed shapes with color.
 
@@ -3549,24 +3596,24 @@ LCD31:
 ;   ROM.
 ; -----------------------------------------------------------------------------
 PAINT:
-    CALL C98FH
-    LD (0B88H),SP
-    LD IY,CACFH
-    CALL CC3FH
-    CALL CC10H
+    CALL CALL_WITH_SYS_PAGED
+    LD (PAINT_SP_SAVE),SP
+    LD IY,LCACF
+    CALL READ_PIXEL_COLOR
+    CALL LCC10
     LD (0B8AH),A
     LD E,A
-    CALL CC0DH
+    CALL LCC0D
     XOR E
     LD HL,0000H
     RET Z
     LD (0B91H),HL
     PUSH HL
-    LD HL,(0B7CH)
+    LD HL,(X_PHYSICAL)
     LD B,04H
-    CALL C9C6H
+    CALL SHIFT_HL_RIGHT
     PUSH HL
-    CALL C9DFH
+    CALL LC9DF
     LD A,40H
     POP DE
     SUB E
@@ -3574,7 +3621,7 @@ PAINT:
     LD (0B8DH),HL
     LD (0B8BH),BC
     LD B,01H
-    JR CDA3H
+    JR LCDA3
 
 LCD85:
     POP HL
@@ -3591,14 +3638,14 @@ LCD85:
     LD B,02H
     LD DE,BC00H
     SBC HL,DE
-    JP NC,CE63H
+    JP NC,LCE63
 
 LCDA3:
     EXX
 
 LCDA4:
-    CALL CE92H
-    JR C,CD85H
+    CALL LCE92
+    JR C,LCD85
     LD HL,(0B91H)
     LD A,H
     RES 7,H
@@ -3606,13 +3653,13 @@ LCDA4:
     LD (0B8FH),HL
     EX DE,HL
     BIT 6,A
-    JR Z,CDC2H
+    JR Z,LCDC2
     RLCA
     EXX
     XOR B
     EXX
     AND 01H
-    JP NZ,CE62H
+    JP NZ,LCE62
 
 LCDC2:
     LD HL,(0B8DH)
@@ -3620,27 +3667,27 @@ LCDC2:
     LD A,(0B8AH)
     XOR (HL)
     AND C
-    JR NZ,CE2FH
+    JR NZ,LCE2F
     LD A,40H
     SUB B
     INC A
     LD B,A
     LD DE,0000H
-    JR CDE5H
+    JR LCDE5
 
 LCDDA:
     LD A,(0B8AH)
     XOR (HL)
     AND C
-    JR NZ,CDECH
-    CALL CAC0H
+    JR NZ,LCDEC
+    CALL LCAC0
     INC DE
 
 LCDE5:
     RLC C
-    JR NC,CDDAH
+    JR NC,LCDDA
     DEC L
-    DJNZ CDDAH
+    DJNZ LCDDA
 
 LCDEC:
     LD A,40H
@@ -3648,7 +3695,7 @@ LCDEC:
     INC A
     LD B,A
     RRC C
-    JR NC,CDF7H
+    JR NC,LCDF7
     INC L
     DEC B
 
@@ -3658,11 +3705,11 @@ LCDF7:
     PUSH DE
     LD HL,(0B8DH)
     LD BC,(0B8BH)
-    CALL CE7AH
+    CALL LCE7A
     EX (SP),HL
     LD A,H
     OR L
-    JR Z,CE0BH
+    JR Z,LCE0B
     SET 7,H
 
 LCE0B:
@@ -3679,8 +3726,8 @@ LCE0D:
     PUSH AF
     LD A,80H
     BIT 7,H
-    JR NZ,CE26H
-    JR C,CE28H
+    JR NZ,LCE26
+    JR C,LCE28
     EXX
     RRC B
     RLC B
@@ -3694,37 +3741,37 @@ LCE26:
 LCE28:
     POP AF
     EX (SP),HL
-    JR C,CE62H
-    JR Z,CE62H
+    JR C,LCE62
+    JR Z,LCE62
     EX DE,HL
 
 LCE2F:
-    CALL CE92H
-    JP C,CD85H
+    CALL LCE92
+    JP C,LCD85
     LD A,E
     OR A
-    JR NZ,CE3AH
+    JR NZ,LCE3A
     DEC D
 
 LCE3A:
     LD A,(0B8AH)
     XOR (HL)
     AND C
-    JR Z,CE4CH
+    JR Z,LCE4C
     DEC E
-    JR Z,CE5EH
+    JR Z,LCE5E
 
 LCE44:
     RRC C
-    JR NC,CE3AH
+    JR NC,LCE3A
     INC L
     DEC B
-    JR CE3AH
+    JR LCE3A
 
 LCE4C:
     LD A,E
     OR A
-    JR NZ,CE51H
+    JR NZ,LCE51
     INC D
 
 LCE51:
@@ -3732,28 +3779,28 @@ LCE51:
     PUSH HL
     EX (SP),HL
     PUSH BC
-    CALL CE7AH
+    CALL LCE7A
     PUSH DE
-    JR CE0DH
+    JR LCE0D
 
 LCE5E:
     DEC D
-    JP P,CE44H
+    JP P,LCE44
 
 LCE62:
     EXX
 
 LCE63:
     DEC B
-    JP Z,CD85H
+    JP Z,LCD85
     EXX
     LD HL,(0B8DH)
     LD DE,FF80H
     ADD HL,DE
     LD (0B8DH),HL
     BIT 7,H
-    JP Z,CD85H
-    JP CDA4H
+    JP Z,LCD85
+    JP LCDA4
 
 LCE7A:
     LD DE,0000H
@@ -3769,9 +3816,9 @@ LCE7D:
     XOR (HL)
     LD (HL),A
     RRC C
-    JR NC,CE7DH
+    JR NC,LCE7D
     INC L
-    DJNZ CE7DH
+    DJNZ LCE7D
     RET
 
 LCE92:
@@ -3779,13 +3826,13 @@ LCE92:
     PUSH DE
     LD HL,FFEAH
     ADD HL,SP
-    LD DE,(0B17H)
+    LD DE,(PAINT_STACK_MIN)
     SBC HL,DE
-    JP NC,CEC9H
+    JP NC,LCEC9
     PUSH BC
     EXX
     PUSH BC
-    LD HL,(0B88H)
+    LD HL,(PAINT_SP_SAVE)
     DEC HL
     DEC HL
     DEC HL
@@ -3801,7 +3848,7 @@ LCEAC:
     SBC HL,BC
     LD H,B
     LD L,C
-    JR NZ,CECCH
+    JR NZ,LCECC
     LD BC,000AH
     LDDR
     EX DE,HL
@@ -3821,35 +3868,35 @@ LCEC9:
     RET
 
 LCECC:
-    CALL CEFEH
+    CALL LCEFE
     ADD HL,BC
     LD BC,BC00H
     SBC HL,BC
-    JR NC,CEDDH
+    JR NC,LCEDD
     ADD HL,BC
-    CALL CF14H
-    JR Z,CEECH
+    CALL LCF14
+    JR Z,LCEEC
 
 LCEDD:
-    CALL CEFDH
+    CALL LCEFD
     OR A
     SBC HL,BC
     LD BC,8000H
     SBC HL,BC
     ADD HL,BC
-    CALL NC,CF14H
+    CALL NC,LCF14
 
 LCEEC:
     EXX
     LD BC,0006H
-    JR NZ,CEF7H
+    JR NZ,LCEF7
     LDDR
-    JP CEACH
+    JP LCEAC
 
 LCEF7:
     OR A
     SBC HL,BC
-    JP CEACH
+    JP LCEAC
 
 LCEFD:
     EXX
@@ -3886,17 +3933,17 @@ LCF19:
     AND C
     RET Z
     DEC E
-    JR Z,CF27H
+    JR Z,LCF27
 
 LCF20:
     RRC C
-    JR NC,CF19H
+    JR NC,LCF19
     INC HL
-    JR CF19H
+    JR LCF19
 
 LCF27:
     DEC D
-    JP P,CF20H
+    JP P,LCF20
     RET
 
 ; DEFC routine (VIDEO 0B); defines a character with specified code.
@@ -3926,7 +3973,7 @@ LCF27:
 CH_DEF:
     LD A,C
     CP E0H
-    JR NC,CF32H
+    JR NC,LCF32
     OR A
 
 LCF32:
@@ -3978,40 +4025,40 @@ CH_POS:
     PUSH BC
     LD HL,0000H
     DEC B
-    JP M,CF54H
+    JP M,LCF54
     LD L,B
 
 LCF54:
-    LD A,(0B73H)
+    LD A,(COLOR_MODE)
     ADD A,04H
     LD B,A
 
 LCF5A:
     ADD HL,HL
-    DJNZ CF5AH
+    DJNZ LCF5A
     PUSH HL
     LD DE,FFD8H
     LD HL,03BFH
     LD B,C
     DEC B
-    JP M,CF6EH
-    JR Z,CF6EH
+    JP M,LCF6E
+    JR Z,LCF6E
 
 LCF6B:
     ADD HL,DE
-    DJNZ CF6BH
+    DJNZ LCF6B
 
 LCF6E:
     EX DE,HL
     POP BC
     EXX
-    LD BC,(0B7CH)
-    LD DE,(0B7EH)
+    LD BC,(X_PHYSICAL)
+    LD DE,(Y_PHYSICAL)
     EXX
     POP HL
     LD A,L
     OR A
-    JR NZ,CF83H
+    JR NZ,LCF83
     EXX
     PUSH DE
     EXX
@@ -4020,7 +4067,7 @@ LCF6E:
 LCF83:
     LD A,H
     OR A
-    JR NZ,CF8BH
+    JR NZ,LCF8B
     EXX
     PUSH BC
     EXX
@@ -4028,11 +4075,11 @@ LCF83:
 
 LCF8B:
     LD A,F9H
-    CALL C9B3H
+    CALL CHECK_X_COORDINATE
     RET C
-    CALL C9BAH
+    CALL CHECK_Y_COORDINATE
     RET C
-    JP CA65H
+    JP PIXEL_ADDRESS
 
 ; EDITOR routine jump table; first byte is the routine count, followed by routine addresses.
 
@@ -4060,7 +4107,7 @@ LCF8B:
 ;   None.
 ; -----------------------------------------------------------------------------
 EDITOR_JUMP_TABLE:
-    DB 05H, A3H, CFH, 52H, D0H, 41H, D0H, 1DH, D0H, 13H, D0H                        ; |...R.A.....|
+    DB 05H, A3H, CFH, 52H, D0H, 41H, D0H, 1DH, D0H, 13H, D0H                          ; |...R.A.....|
 
 ; Cursor blink phase at 0E48H: 00H..14H shows the saved cell and 80H..94H shows the cursor
 ; overlay.
@@ -4095,10 +4142,36 @@ EDITOR_JUMP_TABLE:
 ;   AF, BC, DE, HL, IY according to the save/restore path.
 ; -----------------------------------------------------------------------------
 ED_INT:
-    DB 3EH, 50H, D3H, 02H, 21H, 48H, 0EH, EDH, 4BH, 49H, 0EH, 34H, 3EH, 94H, 96H, 28H ; |>P..!H..KI.4>..(|
-    DB 1CH, FEH, 80H, C0H, 77H, 3AH, 66H, 0BH, 16H, 7FH, B7H, 28H, 0CH, 16H, 9EH, 0FH ; |....w:f....(....|
-    DB 38H, 07H, 16H, 9FH, 0FH, 38H, 02H, 16H, 8FH, 7AH, C3H, 20H, D4H, 77H, C3H, 91H ; |8....8...z. .w..|
-    DB D4H                                                                          ; |.|
+    LD A,50H
+    OUT (02H),A
+    LD HL,CU_BLINK
+    LD BC,(CU_Y)
+    INC (HL)
+    LD A,94H
+    SUB (HL)
+    JR Z,LCFD0
+    CP 80H
+    RET NZ
+    LD (HL),A
+    LD A,(LOCK_KEY)
+    LD D,7FH
+    OR A
+    JR Z,LCFCC
+    LD D,9EH
+    RRCA
+    JR C,LCFCC
+    LD D,9FH
+    RRCA
+    JR C,LCFCC
+    LD D,8FH
+
+LCFCC:
+    LD A,D
+    JP CU_SAVE_SCREEN
+
+LCFD0:
+    LD (HL),A
+    JP CU_RESTORE_SCREEN
 
 ; EDITOR_INIT installs the RAM renderer dispatch at 0E68H, row width at 0E6BH, and character width
 ; at 0E6CH.
@@ -4133,10 +4206,34 @@ ED_INT:
 ;   AF, BC, DE, HL.
 ; -----------------------------------------------------------------------------
 EDITOR_INIT:
-    DB 21H, 48H, 0EH, 06H, 20H, AFH, 77H, 23H, 10H, FCH, 21H, 01H, 01H, 22H, 49H, 0EH ; |!H.. .w#..!.."I.|
-    DB 21H, 00H, 01H, 11H, 01H, 01H, 01H, FFH, 05H, 36H, 20H, EDH, B0H, 3AH, 73H, 0BH ; |!........6 ..:s.|
-    DB 87H, 87H, 21H, 07H, D0H, 4FH, 09H, 11H, 68H, 0EH, 3EH, C3H, 12H, 13H, 0EH, 04H ; |..!..O..h.>.....|
-    DB EDH, B0H, C9H                                                                ; |...|
+    LD HL,CU_BLINK
+    LD B,20H
+    XOR A
+
+LCFDA:
+    LD (HL),A
+    INC HL
+    DJNZ LCFDA
+    LD HL,0101H
+    LD (CU_Y),HL
+    LD HL,0100H
+    LD DE,0101H
+    LD BC,05FFH
+    LD (HL),20H
+    LDIR
+    LD A,(COLOR_MODE)
+    ADD A,A
+    ADD A,A
+    LD HL,EDITOR_MODE_TABLE
+    LD C,A
+    ADD HL,BC
+    LD DE,ED_MODE_VECTOR
+    LD A,C3H
+    LD (DE),A
+    INC DE
+    LD C,04H
+    LDIR
+    RET
 
 ; Editor mode descriptor table; each four-byte entry holds routine address, row width, and bits
 ; per pixel.
@@ -4165,7 +4262,7 @@ EDITOR_INIT:
 ;   None.
 ; -----------------------------------------------------------------------------
 EDITOR_MODE_TABLE:
-    DB ADH, D3H, 40H, 01H, BCH, D3H, 20H, 02H, D9H, D3H, 10H, 04H                   ; |..@... .....|
+    DB ADH, D3H, 40H, 01H, BCH, D3H, 20H, 02H, D9H, D3H, 10H, 04H                     ; |..@... .....|
 
 ; CFIX routine (EDITOR 04); notes the current cursor position.
 ; Current and saved editor cursor positions are kept at 0E49H and 0E4EH as one-based column/row
@@ -4196,10 +4293,10 @@ EDITOR_MODE_TABLE:
 ;   AF, HL.
 ; -----------------------------------------------------------------------------
 CU_FIX:
-    LD HL,(0E49H)
-    LD (0E4EH),HL
+    LD HL,(CU_Y)
+    LD (CU_SAVED_POS),HL
     LD A,80H
-    JR D039H
+    JR LD039
 
 ; -----------------------------------------------------------------------------
 ; EDITOR 03 - POSITION CURSOR
@@ -4225,32 +4322,32 @@ CU_FIX:
 ;   AF, HL.
 ; -----------------------------------------------------------------------------
 CU_POS:
-    LD HL,(0E49H)
+    LD HL,(CU_Y)
     LD A,B
     OR A
-    JR Z,D02BH
-    LD A,(0E6BH)
+    JR Z,LD02B
+    LD A,(ED_ROW_LEN)
     CP B
-    JR C,D03EH
+    JR C,LD03E
     LD H,B
 
 LD02B:
     LD A,C
     OR A
-    JR Z,D035H
+    JR Z,LD035
     LD A,18H
     CP C
-    JR C,D03EH
+    JR C,LD03E
     LD L,C
 
 LD035:
-    LD (0E49H),HL
+    LD (CU_Y),HL
 
 LD038:
     XOR A
 
 LD039:
-    LD (0E4DH),A
+    LD (CU_STATE),A
     XOR A
     RET
 
@@ -4287,12 +4384,12 @@ LD03E:
 ; -----------------------------------------------------------------------------
 ED_BKIN_OUT:
     EXX
-    CALL D449H
+    CALL EDITOR_COLOR_BYTES
     EXX
-    LD HL,D0B7H
-    JP P,C56DH
-    LD HL,D058H
-    JP C58FH
+    LD HL,LD0B7
+    JP P,OUT_CHARS_SAFE
+    LD HL,LD058
+    JP IN_CHARS_SAFE
 
 ; Input-start state at 0E4DH: 00H starts a new edit, 01H requests the next character of a
 ; completed paragraph, and 80H uses CU_FIX's saved position.
@@ -4328,133 +4425,135 @@ ED_BKIN_OUT:
 ;   AF, BC, DE, HL, alternate registers.
 ; -----------------------------------------------------------------------------
 ED_CHIN_OUT:
-    CALL D449H
-    JP P,D0B7H
+    CALL EDITOR_COLOR_BYTES
+    JP P,LD0B7
+
+LD058:
     LD A,50H
-    LD (0003H),A
+    LD (P_SAVE),A
     OUT (02H),A
-    LD A,(0E4DH)
+    LD A,(CU_STATE)
     RRCA
-    JP C,D0FAH
+    JP C,LD0FA
 
 LD066:
-    CALL D39CH
-    LD BC,(0E49H)
+    CALL ROW_STATUS_ADDRESS
+    LD BC,(CU_Y)
     PUSH BC
-    LD DE,(0E4EH)
+    LD DE,(CU_SAVED_POS)
 
 LD072:
     LD A,C
     CP E
-    JR C,D07CH
-    JR NZ,D081H
+    JR C,LD07C
+    JR NZ,LD081
     LD A,B
     CP D
-    JR NC,D08BH
+    JR NC,LD08B
 
 LD07C:
-    CALL D038H
-    JR D08BH
+    CALL LD038
+    JR LD08B
 
 LD081:
     DEC C
-    JR Z,D07CH
+    JR Z,LD07C
     DEC HL
     BIT 7,(HL)
     LD D,01H
-    JR NZ,D072H
+    JR NZ,LD072
 
 LD08B:
     POP BC
-    CALL D477H
+    CALL CU_SAVE_CELL
     LD A,13H
-    LD (0E48H),A
-    LD HL,0B10H
+    LD (CU_BLINK),A
+    LD HL,INT_DES
     RES 2,(HL)
     RST 30H
-    SUB C
+    DB 91H                                ; RST 30H fn 91H: keyboard 1, output side -> KB_CHIN
     SET 2,(HL)
     PUSH AF
     PUSH BC
-    LD BC,(0E49H)
-    CALL D491H
+    LD BC,(CU_Y)
+    CALL CU_RESTORE_SCREEN
     POP BC
     POP AF
     RET NZ
     LD A,C
     CP 1BH
-    JR Z,D038H
+    JR Z,LD038
     CP 0DH
-    JR Z,D0EBH
-    CALL D124H
-    JR D066H
+    JR Z,LD0EB
+    CALL EDITOR_CHAR_DISPATCH
+    JR LD066
 
 LD0B7:
     LD A,50H
-    LD (0003H),A
+    LD (P_SAVE),A
     OUT (02H),A
-    LD HL,D038H
+    LD HL,LD038
     PUSH HL
     LD A,C
     CP 0DH
-    JR NZ,D0CDH
+    JR NZ,LD0CD
     LD A,01H
-    LD (0E4AH),A
+    LD (CU_X),A
     RET
 
 LD0CD:
     CP 0AH
-    JR NZ,D0E6H
-    LD BC,(0E49H)
+    JR NZ,LD0E6
+    LD BC,(CU_Y)
 
 LD0D5:
     LD A,C
-    CALL D39FH
+    CALL LD39F
     INC C
-    JR C,D0D5H
+    JR C,LD0D5
     DEC C
     PUSH BC
-    CALL D363H
+    CALL EDITOR_NEXT_ROW
     POP AF
-    LD (0E4AH),A
+    LD (CU_X),A
     RET
 
 LD0E6:
-    CALL D124H
+    CALL EDITOR_CHAR_DISPATCH
     XOR A
     RET
 
 LD0EB:
-    LD A,(0E4DH)
+    LD A,(CU_STATE)
     RLCA
-    LD BC,(0E4EH)
-    CALL NC,D370H
-    LD (0E49H),BC
+    LD BC,(CU_SAVED_POS)
+    CALL NC,EDITOR_PARAGRAPH_START
+    LD (CU_Y),BC
 
 LD0FA:
-    LD BC,(0E49H)
+    LD BC,(CU_Y)
     LD A,C
-    CALL D39FH
+    CALL LD39F
     CP B
-    JR C,D11CH
-    CALL D384H
+    JR C,LD11C
+    CALL ASCII_CURSOR_ADDRESS
     INC B
-    LD A,(0E6BH)
+    LD A,(ED_ROW_LEN)
     CP B
-    JR NC,D112H
+    JR NC,LD112
     LD B,01H
     INC C
 
 LD112:
-    LD (0E49H),BC
+    LD (CU_Y),BC
     LD C,(HL)
     LD A,01H
-    JP D039H
+    JP LD039
 
 LD11C:
-    CALL D363H
+    CALL EDITOR_NEXT_ROW
     LD C,0DH
-    JP D038H
+    JP LD038
 
 ; Editor state: 0E50H..0E67H contains 24 row occupancy bytes; low seven bits hold character count
 ; and bit 7 marks a full row. The ASCII screen itself is 24 rows of 40 bytes at 0100H.
@@ -4495,39 +4594,39 @@ LD11C:
 ; -----------------------------------------------------------------------------
 EDITOR_CHAR_DISPATCH:
     CP 20H
-    JR C,D157H
+    JR C,LD157
     CP E0H
-    JR NC,D157H
+    JR NC,LD157
     EX AF,AF'
-    CALL D384H
+    CALL ASCII_CURSOR_ADDRESS
     EX AF,AF'
     LD (HL),A
-    LD BC,(0E49H)
+    LD BC,(CU_Y)
     PUSH BC
-    CALL D420H
+    CALL CU_SAVE_SCREEN
     POP BC
     LD A,C
-    CALL D39FH
+    CALL LD39F
     CP B
-    JR NC,D143H
+    JR NC,LD143
     LD (HL),B
 
 LD143:
     INC B
-    LD A,(0E6BH)
+    LD A,(ED_ROW_LEN)
     CP B
-    JR NC,D152H
+    JR NC,LD152
     LD B,01H
     INC C
     BIT 7,(HL)
-    CALL Z,D2CBH
+    CALL Z,EDITOR_INSERT_ROW
 
 LD152:
-    LD (0E49H),BC
+    LD (CU_Y),BC
     RET
 
 LD157:
-    LD HL,D170H
+    LD HL,EDITOR_COMMAND_TABLE
     LD B,0BH
 
 LD15C:
@@ -4537,13 +4636,13 @@ LD15C:
     INC HL
     LD D,(HL)
     INC HL
-    JR Z,D167H
-    DJNZ D15CH
+    JR Z,LD167
+    DJNZ LD15C
     RET
 
 LD167:
-    LD BC,(0E49H)
-    LD A,(0E6BH)
+    LD BC,(CU_Y)
+    LD A,(ED_ROW_LEN)
     EX DE,HL
     JP (HL)
 
@@ -4576,7 +4675,7 @@ LD167:
 EDITOR_COMMAND_TABLE:
     DB 13H, 91H, D1H, 04H, 98H, D1H, 05H, 95H, D1H, 18H, 9EH, D1H, 16H, 05H, D2H, 07H ; |................|
     DB 87H, D2H, 08H, 78H, D2H, 19H, FDH, D1H, 0EH, F7H, D1H, 0BH, A8H, D1H, 09H, CDH ; |...x............|
-    DB D1H                                                                          ; |.|
+    DB D1H                                                                            ; |.|
 
 ; -----------------------------------------------------------------------------
 ; EDITOR CURSOR ARROW HANDLER
@@ -4603,13 +4702,13 @@ EDITOR_COMMAND_TABLE:
 ; -----------------------------------------------------------------------------
 EDITOR_CURSOR_ARROWS:
     DEC B
-    JR NZ,D1A3H
+    JR NZ,LD1A3
     LD B,A
     DEC C
-    JR D1A2H
+    JR LD1A2
     INC B
     CP B
-    JR NC,D1A3H
+    JR NC,LD1A3
     LD B,01H
     INC C
     LD A,C
@@ -4619,7 +4718,7 @@ LD1A2:
     RET Z
 
 LD1A3:
-    LD (0E49H),BC
+    LD (CU_Y),BC
     RET
 
 ; -----------------------------------------------------------------------------
@@ -4646,19 +4745,19 @@ LD1A3:
 ; -----------------------------------------------------------------------------
 EDITOR_CLEAR_TO_END:
     PUSH BC
-    CALL D4ADH
+    CALL CU_CLEAR_ROW_TAIL
     POP BC
-    CALL D384H
+    CALL ASCII_CURSOR_ADDRESS
     DEC B
-    LD A,(0E6BH)
+    LD A,(ED_ROW_LEN)
     SUB B
 
 LD1B5:
     LD (HL),20H
     INC HL
     DEC A
-    JR NZ,D1B5H
-    CALL D39CH
+    JR NZ,LD1B5
+    CALL ROW_STATUS_ADDRESS
     LD (HL),B
     INC C
     INC HL
@@ -4670,10 +4769,10 @@ LD1C2:
     LD B,(HL)
     LD A,C
     EXX
-    CALL D31EH
+    CALL EDITOR_DELETE_ROW
     EXX
     RLC B
-    JR D1C1H
+    JR LD1C1
 
 ; -----------------------------------------------------------------------------
 ; TAB - ADVANCE TO NEXT TAB STOP
@@ -4699,40 +4798,40 @@ LD1C2:
 ;   AF, BC, DE, HL.
 ; -----------------------------------------------------------------------------
 EDITOR_TAB:
-    CALL D39CH
+    CALL ROW_STATUS_ADDRESS
     EX AF,AF'
     LD A,B
     DEC A
     AND F8H
     ADD A,09H
     LD B,A
-    LD A,(0E6BH)
+    LD A,(ED_ROW_LEN)
     CP B
-    JR NC,D1E8H
+    JR NC,LD1E8
     OR 80H
     LD (HL),A
     LD B,01H
     INC C
     EX AF,AF'
-    CALL NC,D2CBH
+    CALL NC,EDITOR_INSERT_ROW
 
 LD1E8:
     LD A,C
-    CALL D39FH
+    CALL LD39F
     DEC B
     CP B
-    JR NC,D1F1H
+    JR NC,LD1F1
     LD (HL),B
 
 LD1F1:
     INC B
-    LD (0E49H),BC
+    LD (CU_Y),BC
     RET
-    CALL D370H
-    JP D2D6H
-    CALL D370H
-    CALL D39CH
-    JR D1C2H
+    CALL EDITOR_PARAGRAPH_START
+    JP LD2D6
+    CALL EDITOR_PARAGRAPH_START
+    CALL ROW_STATUS_ADDRESS
+    JR LD1C2
 
 ; -----------------------------------------------------------------------------
 ; INS - INSERT CHARACTER SPACE
@@ -4763,11 +4862,11 @@ LD1F1:
 ;   AF, BC, DE, HL, alternate registers, stack temporaries.
 ; -----------------------------------------------------------------------------
 EDITOR_INSERT_CHAR:
-    CALL D39CH
+    CALL ROW_STATUS_ADDRESS
     CP B
     RET C
     LD E,01H
-    JR D210H
+    JR LD210
 
 LD20E:
     INC HL
@@ -4777,29 +4876,29 @@ LD210:
     LD A,(HL)
     RLCA
     INC C
-    JR C,D20EH
+    JR C,LD20E
     INC (HL)
-    LD A,(0E6BH)
+    LD A,(ED_ROW_LEN)
     CP (HL)
-    JR NZ,D233H
+    JR NZ,LD233
     LD A,E
     ADD A,C
     CP 31H
-    JR NZ,D226H
+    JR NZ,LD226
     DEC (HL)
     SCF
-    JR D234H
+    JR LD234
 
 LD226:
     PUSH DE
     PUSH BC
-    CALL D2CBH
+    CALL EDITOR_INSERT_ROW
     POP AF
     POP DE
     LD B,A
     LD A,C
     DEC A
-    CALL D39FH
+    CALL LD39F
 
 LD233:
     OR A
@@ -4813,23 +4912,22 @@ LD234:
     PUSH BC
     PUSH HL
     PUSH AF
-    JR Z,D240H
+    JR Z,LD240
     LD B,01H
 
 LD240:
     PUSH BC
-    CALL D592H
+    CALL EDITOR_SHIFT_RIGHT
     POP BC
-    LD DE,0E6BH
+    LD DE,ED_ROW_LEN
     LD A,(DE)
     LD H,A
     LD L,C
-    CALL D387H
+    CALL LD387
     PUSH HL
 
-LD24F:
     EX AF,AF'
-    JR NC,D254H
+    JR NC,LD254
     DEC HL
     INC B
 
@@ -4841,7 +4939,7 @@ LD254:
     LD D,H
     LD E,L
     DEC HL
-    JR Z,D260H
+    JR Z,LD260
     LDDR
 
 LD260:
@@ -4850,7 +4948,7 @@ LD260:
     ADD HL,BC
     LD B,(HL)
     POP AF
-    JR NZ,D26BH
+    JR NZ,LD26B
     LD B,20H
 
 LD26B:
@@ -4860,8 +4958,8 @@ LD26B:
     POP BC
     POP DE
     DEC HL
-    JR NZ,D234H
-    LD (0E49H),BC
+    JR NZ,LD234
+    LD (CU_Y),BC
     RET
 
 ; -----------------------------------------------------------------------------
@@ -4888,16 +4986,16 @@ LD26B:
 ; -----------------------------------------------------------------------------
 EDITOR_DELETE_BEFORE:
     DEC B
-    JR NZ,D283H
+    JR NZ,LD283
     DEC C
     RET Z
     LD A,C
-    CALL D39FH
+    CALL LD39F
     RET NC
     LD B,A
 
 LD283:
-    LD (0E49H),BC
+    LD (CU_Y),BC
 
 ; -----------------------------------------------------------------------------
 ; DC - DELETE AT CURSOR
@@ -4925,7 +5023,7 @@ LD283:
 ;   AF, BC, DE, HL, stack temporaries.
 ; -----------------------------------------------------------------------------
 EDITOR_DELETE_AT:
-    CALL D39CH
+    CALL ROW_STATUS_ADDRESS
     CP B
     RET C
 
@@ -4934,20 +5032,20 @@ LD28C:
     LD A,(HL)
     AND 7FH
     SUB B
-    JR C,D2C3H
+    JR C,LD2C3
     PUSH HL
     PUSH AF
     PUSH DE
     PUSH BC
-    CALL D542H
+    CALL EDITOR_SHIFT_LEFT
     POP BC
     POP DE
     LD H,B
     LD L,C
-    CALL D387H
+    CALL LD387
     EX AF,AF'
     LD A,(HL)
-    JR NC,D2A6H
+    JR NC,LD2A6
     LD (DE),A
 
 LD2A6:
@@ -4956,7 +5054,7 @@ LD2A6:
     INC HL
     POP AF
     PUSH BC
-    JR Z,D2B2H
+    JR Z,LD2B2
     LD C,A
     LD B,00H
     LDIR
@@ -4971,7 +5069,7 @@ LD2B2:
     BIT 7,(HL)
     INC HL
     SCF
-    JR NZ,D28CH
+    JR NZ,LD28C
     DEC HL
     DEC (HL)
     RET
@@ -4981,7 +5079,7 @@ LD2C3:
     DEC (HL)
     RES 7,(HL)
     LD A,C
-    JP D31EH
+    JP EDITOR_DELETE_ROW
 
 ; -----------------------------------------------------------------------------
 ; INSERT EDITOR ROW
@@ -5010,7 +5108,7 @@ EDITOR_INSERT_ROW:
     SET 7,(HL)
     LD A,C
     CP 19H
-    JR Z,D311H
+    JR Z,EDITOR_ROLL_SCREEN
     INC HL
     LD A,(HL)
     OR A
@@ -5018,13 +5116,13 @@ EDITOR_INSERT_ROW:
 
 LD2D6:
     PUSH BC
-    CALL D509H
+    CALL EDITOR_INSERT_ROW_VIDEO
     POP BC
     PUSH BC
     LD A,19H
     SUB C
-    LD HL,0E66H
-    LD DE,0E67H
+    LD HL,ED_ROW_DESC+22
+    LD DE,ED_ROW_DESC+23
     PUSH DE
     LD B,00H
     LD C,A
@@ -5048,9 +5146,9 @@ LD2D6:
 LD304:
     INC DE
     LD (DE),A
-    DJNZ D304H
+    DJNZ LD304
     POP BC
-    LD HL,0E4EH
+    LD HL,CU_SAVED_POS
     LD A,(HL)
     SUB C
     RET C
@@ -5082,9 +5180,9 @@ LD304:
 ; -----------------------------------------------------------------------------
 EDITOR_ROLL_SCREEN:
     LD A,01H
-    CALL D31EH
+    CALL EDITOR_DELETE_ROW
     LD BC,0118H
-    LD (0E49H),BC
+    LD (CU_Y),BC
     RET
 
 ; -----------------------------------------------------------------------------
@@ -5112,28 +5210,28 @@ EDITOR_ROLL_SCREEN:
 EDITOR_DELETE_ROW:
     PUSH AF
     LD C,A
-    LD HL,0E4EH
+    LD HL,CU_SAVED_POS
     SUB (HL)
-    CALL Z,D039H
-    JR NC,D32AH
+    CALL Z,LD039
+    JR NC,LD32A
     DEC (HL)
 
 LD32A:
-    CALL D4E0H
+    CALL EDITOR_DELETE_ROW_VIDEO
     POP BC
     LD A,B
-    CALL D39FH
+    CALL LD39F
     PUSH HL
     LD L,B
     LD H,01H
-    CALL D387H
+    CALL LD387
     EX DE,HL
     LD HL,0040H
     ADD HL,DE
     LD A,18H
     SUB B
     PUSH AF
-    JR Z,D34FH
+    JR Z,LD34F
     LD C,00H
     RRA
     RR C
@@ -5148,14 +5246,14 @@ LD34F:
 LD351:
     DEC HL
     LD (HL),20H
-    DJNZ D351H
+    DJNZ LD351
     POP AF
     LD C,A
     POP HL
     LD D,H
     LD E,L
     INC HL
-    JR Z,D360H
+    JR Z,LD360
     LDIR
 
 LD360:
@@ -5188,10 +5286,10 @@ LD360:
 EDITOR_NEXT_ROW:
     LD A,C
     CP 18H
-    JR Z,D311H
+    JR Z,EDITOR_ROLL_SCREEN
     INC C
     LD B,01H
-    LD (0E49H),BC
+    LD (CU_Y),BC
     RET
 
 ; -----------------------------------------------------------------------------
@@ -5217,17 +5315,17 @@ EDITOR_NEXT_ROW:
 ;   AF, BC, HL.
 ; -----------------------------------------------------------------------------
 EDITOR_PARAGRAPH_START:
-    LD BC,(0E49H)
+    LD BC,(CU_Y)
 
 LD374:
     OR A
     DEC C
     LD A,C
-    CALL NZ,D39FH
-    JR C,D374H
+    CALL NZ,LD39F
+    JR C,LD374
     INC C
     LD B,01H
-    LD (0E49H),BC
+    LD (CU_Y),BC
     RET
 
 ; -----------------------------------------------------------------------------
@@ -5253,7 +5351,7 @@ LD374:
 ;   AF, HL.
 ; -----------------------------------------------------------------------------
 ASCII_CURSOR_ADDRESS:
-    LD HL,(0E49H)
+    LD HL,(CU_Y)
 
 LD387:
     DEC H
@@ -5270,7 +5368,7 @@ LD387:
     LD A,H
     ADD A,01H
     LD H,A
-    LD (0E4BH),HL
+    LD (ED_LINE_PTR),HL
     RET
 
 ; -----------------------------------------------------------------------------
@@ -5295,7 +5393,7 @@ LD387:
 ;   AF, HL.
 ; -----------------------------------------------------------------------------
 ROW_STATUS_ADDRESS:
-    LD A,(0E49H)
+    LD A,(CU_Y)
 
 LD39F:
     ADD A,4FH
@@ -5347,7 +5445,7 @@ LD3B1:
     ADD HL,DE
     EXX
     INC HL
-    DJNZ D3B1H
+    DJNZ LD3B1
     RET
 
 ; -----------------------------------------------------------------------------
@@ -5398,7 +5496,7 @@ LD3BD:
     ADD HL,DE
     EXX
     INC HL
-    DJNZ D3BDH
+    DJNZ LD3BD
     RET
 
 ; -----------------------------------------------------------------------------
@@ -5482,7 +5580,7 @@ LD3DA:
     ADD HL,DE
     EXX
     INC HL
-    DJNZ D3DAH
+    DJNZ LD3DA
     RET
 
 ; The cursor backup buffer at 0E6DH..0E94H holds the raw video cell under the cursor.
@@ -5511,7 +5609,7 @@ LD3DA:
 ; -----------------------------------------------------------------------------
 CU_SAVE_SCREEN:
     EX AF,AF'
-    CALL D459H
+    CALL EDITOR_VIDEO_ADDRESS
     PUSH HL
     EX AF,AF'
     LD C,A
@@ -5524,19 +5622,19 @@ CU_SAVE_SCREEN:
     ADD HL,HL
     BIT 7,C
     LD BC,C474H
-    JR Z,D439H
+    JR Z,LD439
     LD BC,0240H
 
 LD439:
     ADD HL,BC
     LD B,0AH
     EXX
-    LD A,(0E96H)
+    LD A,(CU_PAPER_LINE)
     LD B,A
-    LD A,(0E95H)
+    LD A,(CU_INK_LINE)
     LD C,A
     POP HL
-    JP 0E68H
+    JP ED_MODE_VECTOR
 
 ; -----------------------------------------------------------------------------
 ; EDITOR INK/PAPER BYTE PREPARATION
@@ -5562,11 +5660,11 @@ LD439:
 ; -----------------------------------------------------------------------------
 EDITOR_COLOR_BYTES:
     EX AF,AF'
-    CALL CC05H
-    LD (0E96H),A
-    CALL CC0DH
+    CALL LCC05
+    LD (CU_PAPER_LINE),A
+    CALL LCC0D
     XOR B
-    LD (0E95H),A
+    LD (CU_INK_LINE),A
     EX AF,AF'
     RET
 
@@ -5597,14 +5695,14 @@ EDITOR_COLOR_BYTES:
 ; -----------------------------------------------------------------------------
 EDITOR_VIDEO_ADDRESS:
     DEC B
-    LD A,(0B73H)
+    LD A,(COLOR_MODE)
     OR A
-    JR Z,D465H
+    JR Z,LD465
 
 LD460:
     SLA B
     DEC A
-    JR NZ,D460H
+    JR NZ,LD460
 
 LD465:
     DEC C
@@ -5647,9 +5745,9 @@ LD465:
 ;   AF, BC, DE, HL.
 ; -----------------------------------------------------------------------------
 CU_SAVE_CELL:
-    CALL D459H
-    LD DE,0E6DH
-    LD A,(0E6CH)
+    CALL EDITOR_VIDEO_ADDRESS
+    LD DE,CU_SAVE_AREA
+    LD A,(ED_CHAR_WIDTH)
     LD C,A
     LD B,0AH
 
@@ -5662,7 +5760,7 @@ LD483:
     LD C,40H
     ADD HL,BC
     POP BC
-    DJNZ D483H
+    DJNZ LD483
     RET
 
 ; -----------------------------------------------------------------------------
@@ -5688,9 +5786,9 @@ LD483:
 ;   AF, BC, DE, HL.
 ; -----------------------------------------------------------------------------
 CU_RESTORE_SCREEN:
-    CALL D459H
-    LD DE,0E6DH
-    LD A,(0E6CH)
+    CALL EDITOR_VIDEO_ADDRESS
+    LD DE,CU_SAVE_AREA
+    LD A,(ED_CHAR_WIDTH)
     LD C,A
     LD B,0AH
 
@@ -5705,7 +5803,7 @@ LD49D:
     LD C,40H
     ADD HL,BC
     POP BC
-    DJNZ D49DH
+    DJNZ LD49D
     RET
 
 ; -----------------------------------------------------------------------------
@@ -5731,13 +5829,13 @@ LD49D:
 ;   AF, BC, DE, HL.
 ; -----------------------------------------------------------------------------
 CU_CLEAR_ROW_TAIL:
-    CALL D459H
-    LD A,(0E96H)
+    CALL EDITOR_VIDEO_ADDRESS
+    LD A,(CU_PAPER_LINE)
     EX AF,AF'
     LD A,3FH
     SUB L
     AND 3FH
-    JR Z,D4D3H
+    JR Z,CU_CLEAR_CELL
     LD C,A
     LD A,L
     LD B,0AH
@@ -5757,7 +5855,7 @@ LD4BF:
     POP BC
     EX DE,HL
     EX AF,AF'
-    DJNZ D4BFH
+    DJNZ LD4BF
     RET
 
 ; -----------------------------------------------------------------------------
@@ -5784,12 +5882,12 @@ LD4BF:
 CU_CLEAR_CELL:
     LD DE,0040H
     LD B,0AH
-    LD A,(0E96H)
+    LD A,(CU_PAPER_LINE)
 
 LD4DB:
     LD (HL),A
     ADD HL,DE
-    DJNZ D4DBH
+    DJNZ LD4DB
     RET
 
 ; Video row deletion moves the rows below the selected row upward, then fills the bottom
@@ -5821,9 +5919,9 @@ LD4DB:
 EDITOR_DELETE_ROW_VIDEO:
     LD A,C
     CP 18H
-    JR Z,D4F9H
+    JR Z,LD4F9
     LD B,01H
-    CALL D459H
+    CALL EDITOR_VIDEO_ADDRESS
     EX DE,HL
     LD HL,B980H
     OR A
@@ -5840,7 +5938,7 @@ LD4F9:
 
 LD4FF:
     LD BC,027FH
-    LD A,(0E96H)
+    LD A,(CU_PAPER_LINE)
     LD (HL),A
     LDIR
     RET
@@ -5873,7 +5971,7 @@ LD4FF:
 EDITOR_INSERT_ROW_VIDEO:
     LD A,18H
     SUB C
-    JR Z,D4F9H
+    JR Z,LD4F9
     LD C,A
     ADD A,A
     ADD A,A
@@ -5893,7 +5991,7 @@ EDITOR_INSERT_ROW_VIDEO:
     LD D,H
     LD E,L
     INC DE
-    JR D4FFH
+    JR LD4FF
 
 ; -----------------------------------------------------------------------------
 ; MOVE CHARACTER CELLS
@@ -5923,7 +6021,7 @@ EDITOR_INSERT_ROW_VIDEO:
 ;   screen manipulation when called with valid parameters.
 ; -----------------------------------------------------------------------------
 EDITOR_MOVE_CELLS:
-    LD A,(0E6CH)
+    LD A,(ED_CHAR_WIDTH)
     LD C,A
 
 ; Alternate entry into MOVE_CELLS: callers can supply their own byte count and bypass the default
@@ -5945,7 +6043,7 @@ LD530:
     POP HL
     ADD HL,BC
     POP BC
-    DJNZ D530H
+    DJNZ LD530
     RET
 
 ; SHIFT_LEFT propagates a full-row overflow by importing the next row's first character into the
@@ -5976,44 +6074,44 @@ LD530:
 ;   AF, BC, DE, HL.
 ; -----------------------------------------------------------------------------
 EDITOR_SHIFT_LEFT:
-    JR Z,D562H
+    JR Z,LD562
     PUSH HL
     PUSH BC
     LD E,A
-    LD A,(0B73H)
+    LD A,(COLOR_MODE)
     OR A
-    JR Z,D552H
+    JR Z,LD552
 
 LD54D:
     SLA E
     DEC A
-    JR NZ,D54DH
+    JR NZ,LD54D
 
 LD552:
-    CALL D459H
+    CALL EDITOR_VIDEO_ADDRESS
     LD C,E
     LD D,H
-    LD A,(0E6CH)
+    LD A,(ED_CHAR_WIDTH)
     ADD A,L
     LD E,A
     EX DE,HL
-    CALL D52EH
+    CALL LD52E
     POP BC
     POP HL
 
 LD562:
     LD B,(HL)
     BIT 7,B
-    JR Z,D578H
+    JR Z,EDITOR_CLEAR_CELL_AT
     PUSH BC
     RES 7,B
-    CALL D459H
+    CALL EDITOR_VIDEO_ADDRESS
     EX DE,HL
     POP BC
     INC C
     LD B,01H
-    CALL D459H
-    JP D52AH
+    CALL EDITOR_VIDEO_ADDRESS
+    JP EDITOR_MOVE_CELLS
 
 ; -----------------------------------------------------------------------------
 ; CLEAR CELL AT POSITION
@@ -6037,24 +6135,24 @@ LD562:
 ;   AF, BC, DE, HL.
 ; -----------------------------------------------------------------------------
 EDITOR_CLEAR_CELL_AT:
-    CALL D459H
+    CALL EDITOR_VIDEO_ADDRESS
     LD C,0AH
     LD DE,0040H
 
 LD580:
-    LD A,(0E6CH)
+    LD A,(ED_CHAR_WIDTH)
     LD B,A
-    LD A,(0E96H)
+    LD A,(CU_PAPER_LINE)
     PUSH HL
 
 LD588:
     LD (HL),A
     INC HL
-    DJNZ D588H
+    DJNZ LD588
     POP HL
     ADD HL,DE
     DEC C
-    JR NZ,D580H
+    JR NZ,LD580
     RET
 
 ; SHIFT_RIGHT is the screen-side primitive used by INS; its Z flag chooses clearing versus
@@ -6090,28 +6188,28 @@ EDITOR_SHIFT_RIGHT:
     LD A,(HL)
     AND 7FH
     SUB B
-    JR Z,D5CEH
+    JR Z,LD5CE
     LD E,A
-    LD A,(0B73H)
+    LD A,(COLOR_MODE)
     OR A
-    JR Z,D5A5H
+    JR Z,LD5A5
 
 LD5A0:
     SLA E
     DEC A
-    JR NZ,D5A0H
+    JR NZ,LD5A0
 
 LD5A5:
     PUSH HL
     PUSH BC
     LD B,(HL)
     RES 7,B
-    CALL D459H
+    CALL EDITOR_VIDEO_ADDRESS
     DEC HL
     LD C,E
     LD B,00H
     EX DE,HL
-    LD A,(0E6CH)
+    LD A,(ED_CHAR_WIDTH)
     LD L,A
     LD H,B
     ADD HL,DE
@@ -6131,24 +6229,24 @@ LD5BB:
     POP HL
     ADD HL,BC
     POP BC
-    DJNZ D5BBH
+    DJNZ LD5BB
     POP BC
     POP HL
 
 LD5CE:
     POP AF
-    JR Z,D578H
+    JR Z,EDITOR_CLEAR_CELL_AT
     EX DE,HL
     PUSH BC
-    CALL D459H
+    CALL EDITOR_VIDEO_ADDRESS
     POP BC
     EX DE,HL
     DEC C
     DEC HL
     LD B,(HL)
     RES 7,B
-    CALL D459H
-    JP D52AH
+    CALL EDITOR_VIDEO_ADDRESS
+    JP EDITOR_MOVE_CELLS
 
 ; KEYBOARD routine jump table; first byte is the routine count, followed by routine addresses.
 ; Keyboard OS service table: count followed by KBD-INT, KBD-CHIN, a reserved NOP, and KBD-STAT
@@ -6170,12 +6268,7 @@ LD5CE:
 ;   function 2 is a compatibility NOP; function 3 reports availability.
 ; -----------------------------------------------------------------------------
 KEYBOARD_JUMP_TABLE:
-    INC B
-    DEC L
-    SUB 18H
-    SUB 2CH
-    SUB 12H
-    DB D6H                                                                          ; |.|
+    DB 04H, 2DH, D6H, 18H, D6H, 2CH, D6H, 12H, D6H                                    ; |.-...,...|
 
 ; -----------------------------------------------------------------------------
 ; KEYBOARD INITIALIZATION
@@ -6202,28 +6295,24 @@ KEYBOARD_JUMP_TABLE:
 ; -----------------------------------------------------------------------------
 KEYBOARD_INIT:
     LD A,1EH
-    LD (0B65H),A
+    LD (DELAY_KEY),A
     LD A,03H
-    DB 32H                                                                          ; |2|
 
 ; DELAY-KEY default is 1EH (about 0.6 s at 20 ms ticks); RATE-KEY default is 03H (about 60 ms
 ; between repeats); LOCK-KEY starts clear.
-    LD H,A
-    DEC BC
+    LD (RATE_KEY),A
     XOR A
-    LD (0B66H),A
-    LD HL,0B51H
-    LD DE,0B52H
-    DB 01H                                                                          ; |.|
+    LD (LOCK_KEY),A
+    LD HL,KB_PICTURE
+    LD DE,KB_PICTURE+1
 
 ; Clear PICTURE and OLD-PIC, each ten bytes for the ten physical keyboard rows.
-    INC DE
-    NOP
+    LD BC,0013H
     LD (HL),A
     LDIR
 
 ; Clear keyboard event and repeat work bytes at 0BE5H-0BEFH.
-    LD HL,0BE5H
+    LD HL,KEY_PENDING
     LD DE,0BE6H
     LD C,09H
     LD (HL),A
@@ -6254,7 +6343,7 @@ KEYBOARD_INIT:
 ;   Does not consume the pending character.
 ; -----------------------------------------------------------------------------
 KB_STATUS:
-    LD A,(0BE5H)
+    LD A,(KEY_PENDING)
     LD C,A
     XOR A
     RET
@@ -6287,16 +6376,16 @@ KB_STATUS:
 ;   AF, C, HL.
 ; -----------------------------------------------------------------------------
 KB_CHIN:
-    LD HL,0BE5H
+    LD HL,KEY_PENDING
 
 LD61B:
     LD A,(HL)
     OR A
-    JR Z,D61BH
-    LD A,(0BE9H)
+    JR Z,LD61B
+    LD A,(KEY_CODE)
     LD C,A
     LD (HL),00H
-    LD A,(0B16H)
+    LD A,(STOP_FLAG)
     OR A
 
 ; CTRL+ESC is reported to character consumers as status F5H after the pending key has been
@@ -6355,7 +6444,7 @@ KB_BLOCK_NOP:
 ;   treatment when two directions are held.
 ; -----------------------------------------------------------------------------
 KB_INT:
-    LD A,(0B66H)
+    LD A,(LOCK_KEY)
 
 ; LOCK-KEY uses only CTRL, SHIFT, and ALT-LOCK bits; NEG/AND leaves at most the lowest asserted
 ; lock bit.
@@ -6363,11 +6452,11 @@ KB_INT:
     LD B,A
     NEG
     AND B
-    LD (0B66H),A
-    CALL D7A5H
-    LD HL,0BE7H
+    LD (LOCK_KEY),A
+    CALL KEY_MATRIX_READ
+    LD HL,KEY_LOCK_ACT
     BIT 5,(IY+06H)
-    JR Z,D652H
+    JR Z,LD652
     LD A,(HL)
     OR A
     RET NZ
@@ -6376,8 +6465,8 @@ KB_INT:
 ; until release.
     DEC (HL)
     LD A,01H
-    CALL D790H
-    LD (0B66H),A
+    CALL KEY_MODIFIER_STATE
+    LD (LOCK_KEY),A
     RET NZ
 
 ; Decode the current modifier combination, then ask KEY_MATRIX_DECODE for one newly pressed matrix
@@ -6386,8 +6475,8 @@ KB_INT:
 LD652:
     LD (HL),B
     LD A,04H
-    CALL D790H
-    LD (0BE8H),A
+    CALL KEY_MODIFIER_STATE
+    LD (KEY_MODIFIER),A
 
 LD65B:
     XOR A
@@ -6396,42 +6485,42 @@ LD65B:
 ; to the interrupt dispatcher.
 
 LD65C:
-    CALL D6C7H
+    CALL KEY_MATRIX_DECODE
     INC E
-    JR Z,D672H
+    JR Z,LD672
     LD A,C
-    LD (0BE9H),A
+    LD (KEY_CODE),A
     LD A,FFH
-    LD (0BE5H),A
-    LD A,(0B65H)
-    LD (0BEAH),A
+    LD (KEY_PENDING),A
+    LD A,(DELAY_KEY)
+    LD (KEY_DELAY_CNT),A
     RET
 
 LD672:
     LD A,(HL)
     OR A
-    JR NZ,D65CH
+    JR NZ,LD65C
 
 ; Auto-repeat decrements DELAY-KEY first and RATE-KEY second; a code is generated only when one of
 ; the counters expires.
-    LD HL,0BEAH
-    CALL D6C0H
+    LD HL,KEY_DELAY_CNT
+    CALL LD6C0
     INC HL
-    CALL NC,D6C0H
+    CALL NC,LD6C0
     RET NC
-    LD A,(0BEEH)
+    LD A,(KEY_DIFF_MASK)
     LD C,A
-    LD DE,(0BECH)
-    LD HL,0B64H
+    LD DE,(KEY_DIFF_ADDR)
+    LD HL,KB_OLD_PIC+9
     SBC HL,DE
     EX DE,HL
-    JR Z,D69BH
+    JR Z,LD69B
     OR A
     EX DE,HL
-    LD HL,0B64H
+    LD HL,KB_OLD_PIC+9
     SBC HL,DE
     EX DE,HL
-    JR NZ,D6A4H
+    JR NZ,LD6A4
 
 ; Joystick directions in the last two rows alternate when two directions are held, preventing one
 ; direction from starving the other.
@@ -6439,23 +6528,23 @@ LD672:
 LD69B:
     LD D,66H
     AND D
-    JR Z,D6A4H
+    JR Z,LD6A4
     XOR D
     AND (HL)
-    JR NZ,D6B5H
+    JR NZ,LD6B5
 
 LD6A4:
     LD A,C
     AND (HL)
-    JR NZ,D6B5H
-    LD HL,0B5BH
+    JR NZ,LD6B5
+    LD HL,KB_OLD_PIC
     LD B,0AH
 
 LD6AD:
     LD (HL),A
     INC HL
-    DJNZ D6ADH
-    LD (0BEBH),A
+    DJNZ LD6AD
+    LD (KEY_RATE_CNT),A
     RET
 
 ; If the held key disappeared from OLD-PIC, clear its repeat state; otherwise temporarily remove
@@ -6465,9 +6554,9 @@ LD6B5:
     CPL
     AND (HL)
     LD (HL),A
-    LD A,(0B67H)
-    LD (0BEBH),A
-    JR D65BH
+    LD A,(RATE_KEY)
+    LD (KEY_RATE_CNT),A
+    JR LD65B
 
 ; A one-byte countdown helper returns Z when the counter is zero and carry when this decrement
 ; reached zero.
@@ -6519,7 +6608,7 @@ LD6C0:
 ;   9 within each column.
 ; -----------------------------------------------------------------------------
 KEY_MATRIX_DECODE:
-    CALL NZ,D7A5H
+    CALL NZ,KEY_MATRIX_READ
     RES 3,(IY+06H)
     RES 4,(IY+07H)
     RES 0,(IY+07H)
@@ -6527,8 +6616,8 @@ KEY_MATRIX_DECODE:
     LD HL,0BE6H
     LD DE,000AH
     EXX
-    LD HL,0B65H
-    LD DE,0B5BH
+    LD HL,DELAY_KEY
+    LD DE,KB_OLD_PIC
 
 LD6E7:
     DEC DE
@@ -6544,7 +6633,7 @@ LD6E7:
     AND (HL)
     LD (HL),A
     XOR B
-    JR Z,D6E7H
+    JR Z,LD6E7
     LD B,A
     NEG
 
@@ -6555,8 +6644,8 @@ LD6E7:
     XOR (HL)
     LD (HL),A
     LD A,B
-    LD (0BECH),HL
-    LD (0BEEH),A
+    LD (KEY_DIFF_ADDR),HL
+    LD (KEY_DIFF_MASK),A
     LD A,50H
 
 ; Store the active bit and its row address; these values index the eight-column, ten-row code
@@ -6565,39 +6654,39 @@ LD6E7:
 LD706:
     SUB 0AH
     SRL B
-    JR NC,D706H
+    JR NC,LD706
     EXX
     ADD A,E
     LD E,A
-    LD A,(0BE8H)
+    LD A,(KEY_MODIFIER)
     LD B,A
-    LD A,(0B66H)
+    LD A,(LOCK_KEY)
     XOR B
     LD B,A
     PUSH HL
-    CALL D747H
+    CALL KEY_CODE_TABLE_SELECT
     POP HL
-    LD A,(0B68H)
+    LD A,(HOLD_KEY)
     INC A
     RET Z
     LD A,(HL)
     OR A
     LD A,C
-    JR Z,D73CH
-    LD A,(0B11H)
+    JR Z,LD73C
+    LD A,(PORT03_MIRROR)
     AND F0H
     OR 07H
     OUT (03H),A
     IN A,(58H)
     AND 18H
-    JR Z,D740H
+    JR Z,LD740
     XOR A
-    LD (0B16H),A
-    JR D740H
+    LD (STOP_FLAG),A
+    JR LD740
 
 LD73C:
     CP 10H
-    JR Z,D743H
+    JR Z,LD743
 
 LD740:
     LD (HL),00H
@@ -6630,24 +6719,24 @@ LD743:
 ;   If the selected code is CTRL+ESC, sets STOP-FLAG and returns the ESC code path.
 ; -----------------------------------------------------------------------------
 KEY_CODE_TABLE_SELECT:
-    LD HL,D784H
+    LD HL,LD784
     PUSH HL
     LD HL,D85FH
     BIT 2,B
     RET NZ
     BIT 0,B
-    JR Z,D774H
-    LD HL,D7BFH
+    JR Z,LD774
+    LD HL,KEYBOARD_CODE_TABLES
     ADD HL,DE
     LD A,(HL)
     CP 61H
-    JR C,D774H
+    JR C,LD774
     CP 7BH
-    JR C,D76AH
+    JR C,LD76A
     CP 90H
-    JR C,D774H
+    JR C,LD774
     CP 99H
-    JR NC,D774H
+    JR NC,LD774
 
 ; CTRL table is independent of lock state; SHIFT/ALT cases choose the table that implements their
 ; reversible lock behavior.
@@ -6656,7 +6745,7 @@ LD76A:
     LD HL,D80FH
     BIT 1,B
     RET Z
-    LD HL,D7BFH
+    LD HL,KEYBOARD_CODE_TABLES
     RET
 
 LD774:
@@ -6667,15 +6756,17 @@ LD774:
     BIT 3,B
     RET NZ
     POP HL
-    LD HL,D7BFH
+    LD HL,KEYBOARD_CODE_TABLES
 
 ; Normal-table result is returned in C; CTRL+ESC sets STOP-FLAG and returns the ESC code path.
+
+LD784:
     ADD HL,DE
     LD C,(HL)
     LD A,C
     CP FFH
     RET NZ
-    LD (0B16H),A
+    LD (STOP_FLAG),A
     LD C,1BH
     RET
 
@@ -6735,10 +6826,10 @@ KEY_MODIFIER_STATE:
 ;   AF, BC, DE, HL, IY.
 ; -----------------------------------------------------------------------------
 KEY_MATRIX_READ:
-    LD A,(0B11H)
+    LD A,(PORT03_MIRROR)
     AND F0H
     LD C,A
-    LD HL,0B51H
+    LD HL,KB_PICTURE
     PUSH HL
     POP IY
     LD B,0AH
@@ -6754,7 +6845,7 @@ LD7B3:
     LD (HL),A
     INC C
     INC HL
-    DJNZ D7B3H
+    DJNZ LD7B3
     RET
 
 ; Keyboard matrix decode tables for normal, SHIFT, CTRL, and ALT modes.
@@ -6777,28 +6868,28 @@ LD7B3:
 ;   must remain a single data region when disassembling.
 ; -----------------------------------------------------------------------------
 KEYBOARD_CODE_TABLES:
+
+; SHIFT-lock keyboard code table.
+
+; CTRL-lock keyboard code table; control/function codes are independent of persistent SHIFT/ALT
+; lock state.
+
+; ALT-lock keyboard code table.
     DB 34H, 37H, 72H, 75H, 66H, 6AH, 76H, 6DH, 2AH, 2AH, 31H, 94H, 71H, 70H, 61H, 91H ; |47rufjvm**1.qpa.|
     DB 79H, 2DH, 13H, F3H, 92H, 93H, 40H, 96H, 3CH, 98H, 2AH, 20H, 04H, E4H, 36H, 2AH ; |y-....@.<.* ..6*|
     DB 7AH, 5BH, 68H, 0DH, 6EH, 2AH, 01H, E1H, 30H, 97H, 3BH, 95H, 5CH, 90H, 2AH, 1BH ; |z[h.n*..0.;.\.*.|
     DB 06H, E6H, 32H, 39H, 77H, 6FH, 73H, 6CH, 78H, 2EH, 18H, F8H, 33H, 38H, 65H, 69H ; |..29woslx...38ei|
     DB 64H, 6BH, 63H, 2CH, 05H, E5H, 35H, 5EH, 74H, 5DH, 67H, 08H, 62H, 2AH, 16H, 43H ; |dkc,..5^t]g.b*.C|
-
-; SHIFT-lock keyboard code table.
     DB 21H, 3DH, 52H, 55H, 46H, 4AH, 56H, 4DH, 2AH, 2AH, 27H, 84H, 51H, 50H, 41H, 81H ; |!=RUFJVM**'.QPA.|
     DB 59H, 5FH, 13H, F3H, 82H, 83H, 60H, 86H, 3EH, 88H, 2AH, 20H, 04H, E4H, 2FH, 23H ; |Y_....`.>.* ../#|
     DB 5AH, 7BH, 48H, 0DH, 4EH, 2AH, 01H, E1H, 26H, 87H, 24H, 85H, 7CH, 80H, 2AH, 1BH ; |Z{H.N*..&.$.|.*.|
     DB 06H, E6H, 22H, 29H, 57H, 4FH, 53H, 4CH, 58H, 3AH, 18H, F8H, 2BH, 28H, 45H, 49H ; |..")WOSLX:..+(EI|
     DB 44H, 4BH, 43H, 3FH, 05H, E5H, 25H, 7EH, 54H, 7DH, 47H, 07H, 42H, 2AH, 16H, 49H ; |DKC?..%~T}G.B*.I|
-
-; CTRL-lock keyboard code table; control/function codes are independent of persistent SHIFT/ALT
-; lock state.
     DB 8BH, 9CH, 12H, 15H, 06H, 0AH, 16H, 0DH, 2AH, 2AH, 99H, DCH, 11H, 10H, 01H, D9H ; |........**......|
     DB 19H, 1FH, 13H, F3H, DAH, DBH, 00H, DEH, 3CH, 98H, 2AH, 20H, 04H, E4H, 8CH, 8EH ; |........<.* ....|
     DB 1AH, 1BH, 08H, 0DH, 0EH, 2AH, 01H, E1H, 89H, DFH, 3BH, DDH, 1CH, CFH, 2AH, FFH ; |.....*....;...*.|
     DB 06H, E6H, 8AH, 9DH, 17H, 0FH, 13H, 0CH, 18H, 2EH, 18H, F8H, 9AH, 8DH, 05H, 09H ; |................|
     DB 04H, 0BH, 03H, 2CH, 05H, E5H, 9BH, 1EH, 14H, 1DH, 07H, 08H, 02H, 2AH, 16H, 53H ; |...,.........*.S|
-
-; ALT-lock keyboard code table.
     DB A4H, A7H, C2H, C5H, B6H, BAH, C6H, BDH, 2AH, 2AH, A1H, D4H, C1H, C0H, B1H, D1H ; |........**......|
     DB C9H, ADH, 13H, F3H, D2H, D3H, B0H, D6H, ACH, D8H, 2AH, 20H, 04H, E4H, A6H, AAH ; |..........* ....|
     DB CAH, CBH, B8H, 0DH, BEH, 2AH, 01H, E1H, A0H, D7H, ABH, D5H, CCH, D0H, 2AH, 1BH ; |.....*........*.|
@@ -6820,7 +6911,7 @@ KEYBOARD_CODE_TABLES:
 ; through ACK.
 ; -----------------------------------------------------------------------------
 PRINTER_JUMP_TABLE:
-    DB 03H, 29H, D9H, 0CH, D9H, 06H, D9H                                            ; |.).....|
+    DB 03H, 29H, D9H, 0CH, D9H, 06H, D9H                                              ; |.).....|
 
 ; Block output delegates each byte to PR-CHOUT through the bounded C56DH helper; DE is source and
 ; BC is count.
@@ -6845,8 +6936,8 @@ PRINTER_JUMP_TABLE:
 ;   Sends each character to the parallel printer and may stop early on user abort.
 ; -----------------------------------------------------------------------------
 PAR_BKOUT:
-    LD HL,D90CH
-    JP C56DH
+    LD HL,PAR_CHOUT
+    JP OUT_CHARS_SAFE
 
 ; PR-CHOUT waits for ACK on port 59H bit 7, writes C to port 01H, and pulses port 06H bit 7 low
 ; then high.
@@ -6875,20 +6966,19 @@ PAR_BKOUT:
 ;   AF; port state is changed only in printer data and STROBE bits.
 ; -----------------------------------------------------------------------------
 PAR_CHOUT:
-    LD A,(0B16H)
+    LD A,(STOP_FLAG)
     INC A
-    DB 3EH                                                                          ; |>|
 
 ; Interrupts are disabled only around the data/STROBE sequence so the printer sees a clean pulse.
-    PUSH AF
+    LD A,F5H
     RET Z
     IN A,(59H)
     RLCA
-    JR NC,D90CH
+    JR NC,PAR_CHOUT
     DI
     LD A,C
     OUT (01H),A
-    LD A,(0B13H)
+    LD A,(PORT06_MIRROR)
     AND 7FH
     OUT (06H),A
     OR 80H
@@ -6911,7 +7001,7 @@ PAR_CHOUT:
 ; enabled only while a tone is active.
 ; -----------------------------------------------------------------------------
 SOUND_JUMP_TABLE:
-    DB 04H, 33H, D9H, 60H, D9H, 60H, D9H, 61H, D9H                                  ; |.3.`.`.a.|
+    DB 04H, 33H, D9H, 60H, D9H, 60H, D9H, 61H, D9H                                    ; |.3.`.`.a.|
 
 ; SOUND-INT decrements the 20-ms duration counter and turns off sound when it reaches zero or
 ; STOP-FLAG is set.
@@ -6940,13 +7030,31 @@ SOUND_JUMP_TABLE:
 ;   AF and temporary registers.
 ; -----------------------------------------------------------------------------
 TONE_INT:
-    DB 3AH, 14H, 0BH, 3CH, C0H, 3AH, 16H, 0BH, 3CH, 28H, 08H, 3AH, EFH, 0BH, 3DH, 32H ; |:..<.:..<(.:..=2|
-    DB EFH, 0BH                                                                     ; |..|
+    LD A,(SOUND_ACT)
+    INC A
+    RET NZ
+    LD A,(STOP_FLAG)
+    INC A
+    JR Z,LD946
+    LD A,(TONE_DURATION)
+    DEC A
+    LD (TONE_DURATION),A
 
 ; Disable SOUND in INT-DES and clear port-05 sound and sound-interrupt bits while preserving
 ; unrelated port state.
-    DB C0H, 32H, 14H, 0BH, 32H, EFH, 0BH, 3AH, 10H, 0BH, F6H, 08H, 32H, 10H, 0BH, 3AH ; |.2..2..:....2..:|
-    DB 12H, 0BH, E6H, CFH, 32H, 12H, 0BH, D3H, 05H, 3EH, F5H                        ; |....2....>.|
+    RET NZ
+
+LD946:
+    LD (SOUND_ACT),A
+    LD (TONE_DURATION),A
+    LD A,(INT_DES)
+    OR 08H
+    LD (INT_DES),A
+    LD A,(PORT05_MIRROR)
+    AND CFH
+    LD (PORT05_MIRROR),A
+    OUT (05H),A
+    LD A,F5H
 
 ; Reserved sound functions are a single RET; the slots exist for uniform function numbering.
 
@@ -6960,7 +7068,7 @@ TONE_INT:
 ; introducing an operation that the BASIC 1.2 ROM does not implement.
 ; -----------------------------------------------------------------------------
 TONE_NOP:
-    DB C9H                                                                          ; |.|
+    RET
 
 ; TONE-SET input: B duration in 20-ms units, C volume 0..15, DE 12-bit PITCH divider.
 
@@ -6995,22 +7103,65 @@ TONE_NOP:
 ;   AF, BC, DE, HL.
 ; -----------------------------------------------------------------------------
 TONE_SET:
-    DB 3AH, 15H, 0BH, 3CH, 28H, 07H, 3AH, EFH, 0BH, D6H, 02H, 30H, F3H, AFH, 32H, 14H ; |:..<(.:....0..2.|
-    DB 0BH, 3AH, 16H                                                                ; |.:.|
+    LD A,(TONE_REPLACE)
+    INC A
+    JR Z,LD96E
+    LD A,(TONE_DURATION)
+    SUB 02H
+    JR NC,TONE_SET
+
+LD96E:
+    XOR A
+    LD (SOUND_ACT),A
 
 ; Map volume bits b3..b0 into port-06 bits b5..b2 and preserve the remaining PORT06 mirror bits.
-    DB 0BH, 3CH, 28H, CEH, 78H, B7H, 20H, 05H, CDH, 46H, D9H, AFH, C9H, 32H, EFH, 0BH ; |.<(.x. ..F...2..|
-    DB 79H, E6H, 0FH, 07H, 07H, 4FH                                                 ; |y....O|
+    LD A,(STOP_FLAG)
+    INC A
+    JR Z,LD946
+    LD A,B
+    OR A
+    JR NZ,LD981
+    CALL LD946
+    XOR A
+    RET
+
+LD981:
+    LD (TONE_DURATION),A
+    LD A,C
+    AND 0FH
+    RLCA
+    RLCA
+    LD C,A
 
 ; Enable the tone with PITCH high nibble through port 05H and write the low PITCH byte to port
 ; 04H.
-    DB 3AH, 13H, 0BH, E6H, C3H, B1H, 32H, 13H, 0BH, D3H, 06H, 7AH, E6H, 0FH, F6H, 10H ; |:.....2....z....|
-    DB 57H, 3AH, 12H, 0BH, E6H, C0H, B2H, 32H, 12H, 0BH, D3H, 05H, 7BH, D3H, 04H    ; |W:.....2....{..|
+    LD A,(PORT06_MIRROR)
+    AND C3H
+    OR C
+    LD (PORT06_MIRROR),A
+    OUT (06H),A
+    LD A,D
+    AND 0FH
+    OR 10H
+    LD D,A
+    LD A,(PORT05_MIRROR)
+    AND C0H
+    OR D
+    LD (PORT05_MIRROR),A
+    OUT (05H),A
+    LD A,E
+    OUT (04H),A
 
 ; Mark SOUND-ACTIVE and route sound interrupts through INT-DES; SER-OK is cleared because the
 ; divider no longer supplies serial timing.
-    DB 3EH, FFH, 32H, 14H, 0BH, 32H, 71H, 0BH, 3AH, 10H, 0BH, E6H, F7H, 32H, 10H, 0BH ; |>.2..2q.:....2..|
-    DB AFH, C9H                                                                     ; |..|
+    LD A,FFH
+    LD (SOUND_ACT),A
+    LD (SER_OK),A
+    LD A,(INT_DES)
+    AND F7H
+    LD (INT_DES),A
+    XOR A
+    RET
 
 ; CASSETTE routine jump table.
 ; Cassette service table: reserved, character I/O, block I/O, open/create, close, and verify.
@@ -7026,7 +7177,7 @@ TONE_SET:
 ; and motor handling are implemented in the extension ROM.
 ; -----------------------------------------------------------------------------
 CASSETTE_JUMP_TABLE:
-    DB 06H, E7H, D9H, D2H, D9H, D7H, D9H, C8H, D9H, CDH, D9H, DCH, D9H              ; |.............|
+    DB 06H, E7H, D9H, D2H, D9H, D7H, D9H, C8H, D9H, CDH, D9H, DCH, D9H                ; |.............|
 
 ; Cassette operations are forwarding stubs; the selected EXTH routine is entered through the
 ; common FFF0H gateway.
@@ -7047,8 +7198,8 @@ CASSETTE_JUMP_TABLE:
 ;   Selects the extension-ROM implementation through the FFF0H gateway.
 ; -----------------------------------------------------------------------------
 CAS_OPEN_CREATE:
-    LD HL,F3E2H
-    JR D9DFH
+    LD HL,F3E2H                           ; EXT ROM routine LF3E2, entered through the FFF0H gateway
+    JR LD9DF
 
 ; -----------------------------------------------------------------------------
 ; CASSETTE CLOSE FORWARDER
@@ -7066,8 +7217,8 @@ CAS_OPEN_CREATE:
 ;   Selects the extension-ROM implementation through the FFF0H gateway.
 ; -----------------------------------------------------------------------------
 CAS_CLOSE:
-    LD HL,F3E7H
-    JR D9DFH
+    LD HL,F3E7H                           ; EXT ROM routine LF3E7, entered through the FFF0H gateway
+    JR LD9DF
 
 ; -----------------------------------------------------------------------------
 ; CASSETTE CHARACTER I/O FORWARDER
@@ -7085,8 +7236,8 @@ CAS_CLOSE:
 ;   Selects the extension-ROM implementation through the FFF0H gateway.
 ; -----------------------------------------------------------------------------
 CAS_CHIN_OUT:
-    LD HL,F3D8H
-    JR D9DFH
+    LD HL,F3D8H                           ; EXT ROM routine EXT_CAS_CHIN_OUT, entered through the FFF0H gateway
+    JR LD9DF
 
 ; -----------------------------------------------------------------------------
 ; CASSETTE BLOCK I/O FORWARDER
@@ -7104,8 +7255,8 @@ CAS_CHIN_OUT:
 ;   Selects the extension-ROM implementation through the FFF0H gateway.
 ; -----------------------------------------------------------------------------
 CAS_BKIN_OUT:
-    LD HL,F3DDH
-    JR D9DFH
+    LD HL,F3DDH                           ; EXT ROM routine EXT_CAS_BKIN_OUT, entered through the FFF0H gateway
+    JR LD9DF
 
 ; CAS VERIFY routine (CAS 05); verifies cassette data.
 
@@ -7125,10 +7276,10 @@ CAS_BKIN_OUT:
 ;   Selects the extension-ROM implementation through the FFF0H gateway.
 ; -----------------------------------------------------------------------------
 CAS_VERIFY:
-    LD HL,F3ECH
+    LD HL,F3ECH                           ; EXT ROM routine LF3EC, entered through the FFF0H gateway
 
 LD9DF:
-    JP FFF0H
+    JP CALL_EXTENSION_HL
 
 ; CAS_INIT forwards cassette work-area initialization to EXTH.
 
@@ -7148,8 +7299,10 @@ LD9DF:
 ;   Selects the extension-ROM implementation through the FFF0H gateway.
 ; -----------------------------------------------------------------------------
 CAS_INIT:
-    LD HL,F3F1H
-    JR D9DFH
+    LD HL,F3F1H                           ; EXT ROM routine LF3F1, entered through the FFF0H gateway
+    JR LD9DF
+
+LD9E7:
     RET
     JR Z,DA4DH
     ADD HL,HL
@@ -7197,27 +7350,27 @@ CAS_INIT:
 ;   BASIC interpreter.
 ; -----------------------------------------------------------------------------
 BASIC_INIT:
-    LD HL,1700H
+    LD HL,BASIC_FLAGS
     PUSH HL
     POP IX
-    LD A,(0B21H)
+    LD A,(WARM_FLAG)
     OR A
-    JP NZ,DAD3H
+    JP NZ,LDAD3
     LD BC,02EFH
 
 LD9FF:
     LD (HL),A
     CPI
-    JP PE,D9FFH
+    JP PE,LD9FF
 
 ; Initialize TEXT/VLOMEM, BASIC stack boundary, DATA pointers, symbol-chain boundary, and TOP.
-    LD (1720H),HL
-    LD (1722H),HL
+    LD (VLOMEM),HL
+    LD (TEXT_START),HL
     LD HL,FB5BH
     LD DE,0008H
-    LD BC,0027H
+    LD BC,USRTAB+6
     LDIR
-    CALL DE10H
+    CALL LDE10
 
 ; Startup animation uses RST 30H video calls and loops until a keyboard event is available.
 
@@ -7244,9 +7397,9 @@ LD9FF:
 STARTUP_SCREEN:
     LD DE,DC15H
     RST 30H
-    INC C
+    DB 0CH                                ; RST 30H fn 0CH: video 12 -> PAL_DEF
     LD A,02H
-    LD (0B4FH),A
+    LD (BORDER),A
     LD (IX+05H),00H
     LD BC,0303H
     LD A,0CH
@@ -7255,36 +7408,31 @@ LDA2C:
     PUSH BC
     PUSH AF
     RST 30H
-    INC BC
-    CALL DBF2H
+    DB 03H                                ; RST 30H fn 03H: video 3 -> CH_POS
+    CALL LDBF2
     POP AF
     PUSH AF
-    DB CDH                                                                          ; |.|
 
-LDA36:
-    INC C
-    CALL C,F2CDH
-    IN A,(CDH)
-    SUB E
-    CP F1H
+    CALL LDC0C
+    CALL LDBF2
+    CALL FE93H
+    POP AF
     POP BC
     INC B
     INC C
     INC C
     SUB 02H
-    JR NC,DA2CH
-    LD BC,0D15H
+    JR NC,LDA2C
+    LD BC,CAS_OUT_NAME
     RST 30H
-    INC BC
-    DB CDH                                                                          ; |.|
+    DB 03H                                ; RST 30H fn 03H: video 3 -> CH_POS
 
-LDA4D:
-    DB F2H, DBH                                                                     ; |..|
+    CALL LDBF2
 
 LDA4F:
-    LD BC,0B12H
+    LD BC,PORT05_MIRROR
     RST 30H
-    INC BC
+    DB 03H                                ; RST 30H fn 03H: video 3 -> CH_POS
     LD HL,DBFFH
     LD B,(HL)
 
@@ -7298,45 +7446,68 @@ LDA58:
 LDA5F:
     CALL E6D8H
     AND 03H
-    JR Z,DA5FH
+    JR Z,LDA5F
     POP BC
     POP HL
-    LD (0B4DH),A
+    LD (INK),A
 
 LDA6B:
     DEC C
-    JR NZ,DA6BH
-    DJNZ DA58H
+    JR NZ,LDA6B
+    DJNZ LDA58
     RST 30H
-    SUB E
+    DB 93H                                ; RST 30H fn 93H: keyboard 3, output side -> KB_STATUS
     INC C
-    JR NZ,DA4FH
+    JR NZ,LDA4F
     RST 30H
-    SUB C
+    DB 91H                                ; RST 30H fn 91H: keyboard 1, output side -> KB_CHIN
     LD C,01H
     RST 30H
-    INC B
-    LD (0B4FH),A
+    DB 04H                                ; RST 30H fn 04H: video 4 -> VID_MODE
+    LD (BORDER),A
     CALL FC18H
-    CALL FE79H
+    CALL PRINT_INLINE_TEXT
 
 ; TVC BASIC 1.2 copyright sign-on text.
 ; Embedded BASIC 1.2 sign-on text: TV COMPUTER BASIC 1.2 and Copyright 1985 VIDEOTON.
-    DB 32H, 54H, 56H, 20H, 43H, 4FH, 4DH, 50H, 55H, 54H, 45H, 52H, 20H, 42H, 41H, 53H ; |2TV COMPUTER BAS|
-    DB 49H, 43H, 20H, 31H, 2EH, 32H, 0DH, 0AH, 43H, 6FH, 70H, 79H, 72H, 69H, 67H, 68H ; |IC 1.2..Copyrigh|
-    DB 74H, 20H, 31H, 39H, 38H, 35H, 20H, 56H, 49H, 44H, 45H, 4FH, 54H, 4FH, 4EH, 0DH ; |t 1985 VIDEOTON.|
-    DB 0AH, 0DH, 0AH, CDH, 4CH, ECH, CDH, C1H, FEH, CDH, 1BH, FAH, CDH, 79H, FEH    ; |....L........y.|
+    DB "2TV COMPUTER BASIC 1.2", 0DH, 0AH, "Copyright 1985 VIDEOTON", 0DH, 0AH, 0DH, 0AH ; inline text, 50 bytes
+    CALL BASIC_FREE
+    CALL FEC1H
+    CALL DISCARD_NUMBER
+    CALL PRINT_INLINE_TEXT
 
 ; "bytes free" text.
 ; Embedded bytes-free message and the code that computes the available BASIC workspace.
-    DB 0FH, 20H, 62H, 79H, 74H, 65H, 73H, 20H, 66H, 72H, 65H, 65H, 0DH, 0AH, 0DH, 0AH ; |. bytes free....|
-    DB AFH, 32H, 21H, 0BH, CDH, FCH, DCH, 31H, ACH, 16H, 21H, 03H, 17H, 7EH, B7H, 36H ; |.2!....1..!..~.6|
-    DB 00H, C4H, 10H, DEH, DDH, 36H, 05H, 20H, DDH, CBH, 00H, 96H, DDH, CBH, 00H, 4EH ; |.....6. .......N|
-    DB 20H, 0AH, CDH, 18H, FCH, CDH, 79H, FEH                                       ; | .....y.|
+    DB 0FH, " bytes free", 0DH, 0AH, 0DH, 0AH ; inline text, 15 bytes
+
+LDAD3:
+    XOR A
+    LD (WARM_FLAG),A
+    CALL BASIC_WORKSPACE_INIT
+
+LDADA:
+    LD SP,STACK_TOP
+    LD HL,1703H
+    LD A,(HL)
+    OR A
+    LD (HL),00H
+    CALL NZ,LDE10
+    LD (IX+05H),20H
+    RES 2,(IX+00H)
+    BIT 1,(IX+00H)
+    JR NZ,LDAFF
+
+LDAF5:
+    CALL FC18H
+    CALL PRINT_INLINE_TEXT
 
 ; "ok" text followed by clear-to-end-of-line control character.
 ; Embedded OK prompt followed by the editor clear-to-end-of-line control sequence.
-    DB 03H, 6FH, 6BH, 0BH, DDH, CBH, 00H, 8EH, CDH, 93H, FEH                        ; |.ok........|
+    DB 03H, "ok", 0BH                     ; inline text, 3 bytes
+
+LDAFF:
+    RES 1,(IX+00H)
+    CALL FE93H
 
 ; Read a complete editor paragraph into INPUT at 1831H, tokenize it into COMMAND, and classify
 ; line-numbered versus immediate input.
@@ -7370,45 +7541,45 @@ LDA6B:
 ;   AF, BC, DE, HL, alternate registers.
 ; -----------------------------------------------------------------------------
 BASIC_COMMAND_LOOP:
-    CALL FF4FH
+    CALL BASIC_LINE_INPUT
     CP F5H
     JP Z,FFA3H
     CP ECH
-    JR Z,DAF5H
-    CALL DC19H
+    JR Z,LDAF5
+    CALL TOKENIZE_BASIC_LINE
     LD E,L
     LD D,H
     INC HL
-    CALL F914H
-    JR C,DB2AH
+    CALL ASCII_TO_FP
+    JR C,LDB2A
     LD A,(HL)
     CP A8H
-    JR Z,DB25H
+    JR Z,LDB25
     INC A
-    JR NZ,DB61H
+    JR NZ,LDB61
 
 LDB25:
-    CALL FA1BH
-    JR DB06H
+    CALL DISCARD_NUMBER
+    JR BASIC_COMMAND_LOOP
 
 LDB2A:
     RLA
-    JR C,DB61H
+    JR C,LDB61
     LD B,(HL)
     LD A,(IY+08H)
     CP 40H
-    JR C,DB61H
+    JR C,LDB61
     CP 44H
-    JR NC,DB61H
+    JR NC,LDB61
     LD A,(IY+06H)
     OR A
-    JR Z,DB61H
+    JR Z,LDB61
 
 LDB3F:
     LD A,(HL)
     INC HL
     CP 20H
-    JR Z,DB3FH
+    JR Z,LDB3F
     DEC HL
     EX DE,HL
     LD A,(HL)
@@ -7417,7 +7588,7 @@ LDB3F:
     SBC HL,DE
     ADD A,L
     LD C,A
-    CALL FAC3H
+    CALL STACK_NUMBER_TO_INTEGER
     EX DE,HL
     DEC HL
     LD (HL),D
@@ -7425,13 +7596,13 @@ LDB3F:
     LD (HL),E
     DEC HL
     LD (HL),C
-    LD (170CH),HL
-    CALL DCAFH
-    JR DB06H
+    LD (CUR_LINE),HL
+    CALL BASIC_INSERT_LINE
+    JR BASIC_COMMAND_LOOP
 
 LDB61:
     EX DE,HL
-    CALL FA1BH
+    CALL DISCARD_NUMBER
     LD C,(HL)
     XOR A
     LD (HL),A
@@ -7443,10 +7614,10 @@ LDB61:
     LD (HL),C
 
 LDB6E:
-    LD (170CH),HL
+    LD (CUR_LINE),HL
     INC HL
     BIT 0,(IX+00H)
-    CALL NZ,DE4DH
+    CALL NZ,BASIC_TRACE_LINE
     RES 0,(IX+02H)
     INC HL
     INC HL
@@ -7483,16 +7654,16 @@ BASIC_NEXT_STATEMENT:
     EXX
 
 LDB81:
-    CALL FF9DH
-    LD (171AH),IY
+    CALL CHECK_STOP_FLAG
+    LD (BASIC_SP),IY
 
 LDB88:
     LD A,(HL)
     CP FEH
-    JR NC,DBBBH
+    JR NC,BASIC_REM_ENTRY
     INC HL
     CP 20H
-    JR Z,DB88H
+    JR Z,LDB88
     CP CAH
     JP C,E3BCH
     PUSH AF
@@ -7509,7 +7680,9 @@ LDB88:
     POP AF
     CP FBH
     CALL C,FC43H
-    LD SP,16ACH
+    LD SP,STACK_TOP
+
+LDBAD:
     JP (HL)
 
 LDBAE:
@@ -7519,8 +7692,10 @@ LDBB1:
     EXX
     LD A,B
     EXX
+
+LDBB4:
     CP FDH
-    JR Z,DB80H
+    JR Z,BASIC_NEXT_STATEMENT
     JP C,FD5AH
 
 ; REM routine.
@@ -7538,7 +7713,7 @@ LDBB1:
 ; boundary logic supports the exclamation/comment spelling accepted by the tokenizer.
 ; -----------------------------------------------------------------------------
 BASIC_REM_ENTRY:
-    LD HL,(170CH)
+    LD HL,(CUR_LINE)
     LD C,(HL)
     XOR A
     LD B,A
@@ -7546,45 +7721,52 @@ BASIC_REM_ENTRY:
 
 LDBC2:
     OR (HL)
-    JR NZ,DB6EH
+    JR NZ,LDB6E
 
 LDBC5:
     LD A,(IY+00H)
     CP 2BH
-    JR Z,DBDAH
+    JR Z,LDBDA
     CP 06H
-    JR Z,DBDAH
+    JR Z,LDBDA
 
 LDBD0:
     BIT 2,(IX+00H)
-    JP Z,DADAH
+    JP Z,LDADA
     JP E10EH
 
 LDBDA:
     LD E,(IY+03H)
     LD D,(IY+04H)
-    LD HL,1831H
+    LD HL,INPUT_BUFFER
     SBC HL,DE
-    JR C,DBD0H
+    JR C,LDBD0
     LD C,A
     LD B,00H
     ADD IY,BC
-    LD (171AH),IY
-    JR DBC5H
+    LD (BASIC_SP),IY
+    JR LDBC5
 
 LDBF2:
-    CALL FE79H
-    EX AF,AF'
+    CALL PRINT_INLINE_TEXT
 
 ; "VIDEOTON" sign-on text.
-    DB 56H, 49H, 44H, 45H, 4FH, 54H, 4FH, 4EH, C9H, 0CH                             ; |VIDEOTON..|
+    DB 08H, "VIDEOTON"                    ; inline text, 8 bytes
+    RET
 
 ; "TV COMPUTER" sign-on text.
-    DB 54H, 56H, 20H, 20H, 43H, 4FH, 4DH, 50H, 55H, 54H, 45H, 52H, 3DH, F8H, F5H, CDH ; |TV  COMPUTER=...|
-    DB C7H, FEH, F1H, 18H, F7H                                                      ; |.....|
+    DB 0CH, 54H, 56H, 20H, 20H, 43H, 4FH, 4DH, 50H, 55H, 54H, 45H, 52H                ; |.TV  COMPUTER|
+
+LDC0C:
+    DEC A
+    RET M
+    PUSH AF
+    CALL FEC7H
+    POP AF
+    JR LDC0C
 
 ; Cold-start sign-on picture palette bytes.
-    DB 01H, 44H, 54H, 51H                                                           ; |.DTQ|
+    DB 01H, 44H, 54H, 51H                                                             ; |.DTQ|
 
 ; TOKENIZE_BASIC_LINE writes compact output to COMMAND; quoted text is copied literally and
 ; keyword matching resumes after the closing quote.
@@ -7618,9 +7800,10 @@ LDBF2:
 ;   AF, BC, DE, HL, IY and alternate AF.
 ; -----------------------------------------------------------------------------
 TOKENIZE_BASIC_LINE:
-    DB FDH, E5H, EBH, FDH, 21H, 35H, 17H, 01H                                       ; |....!5..|
-    NOP
-    NOP
+    PUSH IY
+    EX DE,HL
+    LD IY,CMD_BUFFER+3
+    LD BC,0000H
 
 LDC23:
     INC DE
@@ -7636,53 +7819,53 @@ LDC2A:
     CALL FBBFH
     LD (IY+00H),A
     INC A
-    JR Z,DC9FH
+    JR Z,LDC9F
     LD A,B
     OR A
-    JR Z,DC41H
+    JR Z,LDC41
     CP 3AH
-    JR NZ,DC4BH
+    JR NZ,LDC4B
 
 LDC41:
     LD A,(DE)
     CP 22H
-    JR NZ,DC4BH
+    JR NZ,LDC4B
     LD C,B
     LD B,A
     INC DE
-    JR DC2AH
+    JR LDC2A
 
 LDC4B:
     CALL FBBFH
     INC DE
     OR A
-    JR Z,DC60H
+    JR Z,LDC60
     CP B
-    JR NZ,DC60H
+    JR NZ,LDC60
     LD B,C
     LD C,00H
     CP 22H
-    JR Z,DC24H
+    JR Z,LDC24
     LD A,FDH
-    JR DC88H
+    JR LDC88
 
 LDC60:
     INC B
     DEC B
-    JR NZ,DC2AH
+    JR NZ,LDC2A
     XOR (HL)
     ADD A,A
-    JR NZ,DC8DH
+    JR NZ,LDC8D
     INC HL
-    JR NC,DC4BH
+    JR NC,LDC4B
     EX AF,AF'
     LD C,B
     CP A6H
-    JR Z,DC79H
+    JR Z,LDC79
     CP A5H
-    JR Z,DC79H
+    JR Z,LDC79
     CP A3H
-    JR NZ,DC7BH
+    JR NZ,LDC7B
 
 ; Keyword-table matches use the high bit on the final character; recognized words become one-byte
 ; tokens while numbers and punctuation remain unchanged.
@@ -7692,16 +7875,16 @@ LDC79:
 
 LDC7B:
     CP FDH
-    JR Z,DC88H
+    JR Z,LDC88
     CP FBH
-    JR C,DC88H
+    JR C,LDC88
     LD B,A
-    JR NZ,DC88H
+    JR NZ,LDC88
     LD B,3AH
 
 LDC88:
     LD (IY+00H),A
-    JR DC24H
+    JR LDC24
 
 LDC8D:
     LD DE,(171CH)
@@ -7709,14 +7892,14 @@ LDC8D:
 LDC91:
     BIT 7,(HL)
     INC HL
-    JR Z,DC91H
+    JR Z,LDC91
     EX AF,AF'
     DEC A
     EX AF,AF'
     LD A,(HL)
     INC A
-    JR Z,DC23H
-    JR DC4BH
+    JR Z,LDC23
+    JR LDC4B
 
 ; Finalize tokenized line: store its length and append FFH as the line terminator.
 
@@ -7725,7 +7908,7 @@ LDC9F:
     POP HL
     INC HL
     LD (HL),A
-    LD DE,1735H
+    LD DE,CMD_BUFFER+3
     OR A
     SBC HL,DE
     EX DE,HL
@@ -7763,17 +7946,17 @@ LDC9F:
 BASIC_INSERT_LINE:
     LD (171CH),HL
     PUSH BC
-    CALL DD45H
-    CALL NC,DCE6H
+    CALL FIND_BASIC_LINE
+    CALL NC,BASIC_DELETE_LINE
     POP BC
     INC B
     RET Z
     LD B,00H
-    CALL DCC9H
+    CALL BASIC_FREE_SPACE
     EX DE,HL
     LD HL,(171CH)
     LDIR
-    JR DCFCH
+    JR BASIC_WORKSPACE_INIT
 
 ; -----------------------------------------------------------------------------
 ; MAKE ROOM IN BASIC PROGRAM
@@ -7796,11 +7979,11 @@ BASIC_INSERT_LINE:
 ;   Moves program storage and causes subsequent addresses to change.
 ; -----------------------------------------------------------------------------
 BASIC_FREE_SPACE:
-    CALL DCFCH
+    CALL BASIC_WORKSPACE_INIT
     CALL FC8EH
     PUSH BC
     PUSH HL
-    CALL DD41H
+    CALL LDD41
     POP DE
     PUSH HL
     OR A
@@ -7841,10 +8024,12 @@ BASIC_FREE_SPACE:
 BASIC_DELETE_LINE:
     LD C,(HL)
     LD B,00H
+
+LDCE9:
     PUSH HL
     ADD HL,BC
     PUSH HL
-    CALL DD41H
+    CALL LDD41
     POP DE
     OR A
     SBC HL,DE
@@ -7881,21 +8066,21 @@ BASIC_WORKSPACE_INIT:
     PUSH HL
     PUSH DE
     PUSH BC
-    LD IY,(0B19H)
+    LD IY,(HI_MEM)
     LD HL,0000H
     LD (IY+00H),L
-    LD (170EH),HL
-    LD (1714H),HL
-    LD HL,F094H
-    LD (1724H),HL
-    LD HL,1709H
+    LD (NEXT_LINE),HL
+    LD (DATA_PTR),HL
+    LD HL,FN_REC_VERNUM
+    LD (SYMBOL_END),HL
+    LD HL,RND_STATE
     LD (HL),L
-    LD (170AH),HL
-    LD HL,(1722H)
-    LD (1712H),HL
-    CALL DD41H
+    LD (RND_STATE+1),HL
+    LD HL,(TEXT_START)
+    LD (DATA_LINE),HL
+    CALL LDD41
     INC HL
-    LD (1726H),HL
+    LD (SYMBOL_TOP),HL
     POP BC
     POP DE
     POP HL
@@ -7930,7 +8115,7 @@ BASIC_PRINT_LINE:
     INC HL
     PUSH HL
     EX DE,HL
-    CALL FF19H
+    CALL PRINT_INTEGER_HL
     POP HL
     CALL FEDDH
     POP AF
@@ -7970,7 +8155,7 @@ LDD44:
 ;   Reads program text but does not modify it.
 ; -----------------------------------------------------------------------------
 FIND_BASIC_LINE:
-    LD HL,(1722H)
+    LD HL,(TEXT_START)
     LD BC,0000H
 
 LDD4B:
@@ -7994,12 +8179,12 @@ LDD4B:
     EX DE,HL
     POP HL
     RET Z
-    JR NC,DD4BH
+    JR NC,LDD4B
     RET
 
 LDD63:
     RST 08H
-    LD A,(BC)
+    DB 0AH                                ; error code 0AH: Cannot CONTINUE
 
 ; CONTINUE routine.
 ; CONTINUE restores the saved line and statement pointers; zero saved address is the END state and
@@ -8026,15 +8211,15 @@ LDD63:
 ; -----------------------------------------------------------------------------
 BASIC_CONTINUE:
     BIT 2,(IX+00H)
-    JP NZ,DBB1H
+    JP NZ,LDBB1
     SET 2,(IX+00H)
-    LD HL,(170EH)
+    LD HL,(NEXT_LINE)
     LD A,H
     OR L
-    JR Z,DD63H
-    LD (170CH),HL
-    LD HL,(1710H)
-    JP DB81H
+    JR Z,LDD63
+    LD (CUR_LINE),HL
+    LD HL,(NEXT_STMT)
+    JP LDB81
 
 ; LLIST routine.
 ; LLIST selects printer output and falls into the shared LIST range parser.
@@ -8052,7 +8237,7 @@ BASIC_CONTINUE:
 BASIC_LLIST_ENTRY:
     LD C,40H
     OR C
-    JR DD88H
+    JR LDD88
 
 ; LIST routine.
 ; LIST selects editor output unless a #device reference overrides it; LLIST, LIST, and DELETE
@@ -8091,10 +8276,11 @@ LDD88:
     PUSH AF
     CALL FBEEH
     POP AF
-    JR NZ,DD94H
+    JR NZ,LDD94
     LD A,C
     CP 20H
-    LD D,F6H
+    DB 16H                                ; = LD D,F6H when run from here, hiding the entry below
+    DB F6H                                ; = OR 37H when run from here, hiding the entry below
 
 LDD94:
     SCF
@@ -8105,26 +8291,26 @@ LDD94:
     LD HL,0000H
     LD DE,FFFFH
     CP FDH
-    JR NC,DDD1H
-    JR DDB6H
+    JR NC,LDDD1
+    JR LDDB6
 
 LDDA5:
     EXX
     LD A,B
     EXX
     CP A4H
-    JR Z,DDB3H
+    JR Z,LDDB3
     EX AF,AF'
-    JP C,DBB1H
-    JP DADAH
+    JP C,LDBB1
+    JP LDADA
 
 LDDB3:
     CALL FC43H
 
 LDDB6:
-    CALL DDFBH
+    CALL BASIC_LIST_RANGE_PARAM
     INC D
-    JR NZ,DDC4H
+    JR NZ,LDDC4
     CP A2H
     JP NZ,FD5AH
     LD DE,0100H
@@ -8133,22 +8319,22 @@ LDDC4:
     DEC D
     PUSH DE
     CP A2H
-    JR NZ,DDD0H
+    JR NZ,LDDD0
     CALL FC43H
-    CALL DDFBH
+    CALL BASIC_LIST_RANGE_PARAM
 
 LDDD0:
     POP HL
 
 LDDD1:
     PUSH DE
-    CALL DD44H
+    CALL LDD44
     POP DE
 
 LDDD6:
     LD A,(HL)
     OR A
-    JR Z,DDA5H
+    JR Z,LDDA5
     INC HL
     LD C,(HL)
     INC HL
@@ -8159,22 +8345,22 @@ LDDD6:
     SBC HL,BC
     ADD HL,BC
     EX DE,HL
-    JR C,DDA5H
+    JR C,LDDA5
     PUSH DE
     EX AF,AF'
-    JR NC,DDF0H
-    CALL DD2DH
-    JR DDF4H
+    JR NC,LDDF0
+    CALL BASIC_PRINT_LINE
+    JR LDDF4
 
 LDDF0:
-    CALL DCE6H
+    CALL BASIC_DELETE_LINE
     OR A
 
 LDDF4:
     EX AF,AF'
-    CALL FF9DH
+    CALL CHECK_STOP_FLAG
     POP DE
-    JR DDD6H
+    JR LDDD6
 
 ; A single line-number parameter is converted to an open-ended range; comma introduces another
 ; range.
@@ -8200,7 +8386,7 @@ BASIC_LIST_RANGE_PARAM:
     LD DE,FFFFH
     CP 02H
     RET NZ
-    CALL FAC3H
+    CALL STACK_NUMBER_TO_INTEGER
     EX DE,HL
     JP FC43H
 
@@ -8223,15 +8409,15 @@ BASIC_LIST_RANGE_PARAM:
 ;   Clears the current program logically, BASIC stack, DATA pointers, and user symbol chain.
 ; -----------------------------------------------------------------------------
 BASIC_NEW:
-    LD HL,DADAH
+    LD HL,LDADA
     PUSH HL
     RES 0,(IX+00H)
 
 LDE10:
-    LD HL,(1720H)
-    LD (1722H),HL
+    LD HL,(VLOMEM)
+    LD (TEXT_START),HL
     LD (HL),00H
-    JP DCFCH
+    JP BASIC_WORKSPACE_INIT
 
 ; RUN routine.
 ; RUN selects TEXT or an optional line, initializes execution/file state, sets the running flag,
@@ -8257,14 +8443,18 @@ LDE10:
 ;   Resets execution state and closes/initializes device files as required.
 ; -----------------------------------------------------------------------------
 BASIC_RUN:
-    LD HL,(1722H)
+    LD HL,(TEXT_START)
     CP 02H
     CALL Z,FBDEH
-    CALL DCFCH
+
+LDE23:
+    CALL BASIC_WORKSPACE_INIT
     CALL FC3EH
+
+LDE29:
     SET 2,(IX+00H)
     XOR A
-    JP DBC2H
+    JP LDBC2
 
 ; TRACE parses ON/OFF and retains the selected trace device class separately from the general
 ; output class.
@@ -8287,13 +8477,13 @@ BASIC_TRACE:
     CALL FBECH
     LD (IX+06H),C
     CP E3H
-    JR Z,DE46H
+    JR Z,LDE46
     CP C1H
     JP NZ,FD5AH
 
 ; TRACE OFF routine.
     RES 0,(IX+00H)
-    JR DE4AH
+    JR LDE4A
 
 ; TRACE ON routine.
 
@@ -8301,7 +8491,7 @@ LDE46:
     SET 0,(IX+00H)
 
 LDE4A:
-    JP DBAEH
+    JP LDBAE
 
 ; When TRACE is enabled for a running program, emit '<', the current decimal line number, and '>'
 ; before its statements.
@@ -8328,8 +8518,8 @@ LDE4A:
 BASIC_TRACE_LINE:
     BIT 2,(IX+00H)
     RET Z
-    LD A,(1706H)
-    LD (1705H),A
+    LD A,(DEVICE_NUM)
+    LD (FUNC_CLASS),A
     PUSH HL
     LD E,(HL)
     INC HL
@@ -8364,311 +8554,31 @@ BASIC_TRACE_LINE:
 ;   immediately following token associations intact.
 ; -----------------------------------------------------------------------------
 BASIC_KEYWORD_TABLE:
-    RST 38H
-    AND C
-    CP D
-    LD D,D
-    LD B,L
-    CALL 4144H
-    LD D,H
-    POP BC
-    LD B,E
-    LD C,H
-    LD C,A
-    LD D,E
-    PUSH BC
-    LD B,E
-    LD C,H
-    OUT (43H),A
-    LD C,A
-    LD C,(HL)
-    LD D,H
-    LD C,C
-    LD C,(HL)
-    LD D,L
-    PUSH BC
-    LD B,H
-    LD B,L
-    ADD A,44H
-    LD B,L
-    LD C,H
-    LD B,L
-    LD D,H
-    PUSH BC
-    LD B,H
-    LD C,C
-    CALL 4C45H
-    LD D,E
-    PUSH BC
-    LD B,L
-    LD C,(HL)
-    CALL NZ,4F46H
-    JP NC,4547H
-    CALL NC,4F47H
-    LD D,E
-    LD D,L
-    JP NZ,4F47H
-    LD D,H
-    RST 08H
-    LD B,A
-    LD D,D
-    LD B,C
-    LD D,B
-    LD C,B
-    LD C,C
-    LD B,E
-    OUT (49H),A
-    ADD A,49H
-    LD C,(HL)
-    LD D,B
-    LD D,L
-    CALL NC,454CH
-    CALL NC,494CH
-    LD D,E
-    CALL NC,4C4CH
-    LD C,C
-    LD D,E
-    CALL NC,4F4CH
-    LD B,C
-    CALL NZ,4F4CH
-    LD C,L
-    LD B,L
-    CALL 454EH
-    RST 10H
-    LD C,(HL)
-    LD B,L
-    LD E,B
-    CALL NC,CB4FH
-    LD C,A
-    ADC A,4FH
-    LD D,B
-    LD B,L
-    ADC A,4FH
-    LD D,L
-    LD D,H
-    LD D,B
-    LD D,L
-    CALL NC,554FH
-    CALL NC,4C50H
-    LD C,A
-    CALL NC,4F50H
-    LD C,E
-    PUSH BC
-    LD D,B
-    LD D,D
-    LD C,C
-    LD C,(HL)
-    CALL NC,4152H
-    LD C,(HL)
-    LD B,H
-    LD C,A
-    LD C,L
-    LD C,C
-    LD E,D
-    PUSH BC
-    LD D,D
-    LD B,L
-    LD B,C
-    CALL NZ,4552H
-    LD D,E
-    LD D,H
-    LD C,A
-    LD D,D
-    PUSH BC
-    LD D,D
-    LD B,L
-    LD D,H
-    LD D,L
-    LD D,D
-    ADC A,52H
-    LD D,L
-    ADC A,53H
-    LD B,C
-    LD D,(HL)
-    PUSH BC
-    LD D,E
-    LD B,L
-    CALL NC,4F53H
-    LD D,L
-    LD C,(HL)
-    CALL NZ,5453H
-    LD C,A
-    RET NC
-    LD D,H
-    LD D,D
-    LD B,C
-    LD B,E
-    PUSH BC
-    LD D,(HL)
-    LD B,L
-    LD D,D
-    LD C,C
-    LD B,(HL)
-    EXX
-    LD B,L
-    LD E,B
-    CALL NC,504CH
-    LD D,D
-    LD C,C
-    LD C,(HL)
-    CALL NC,A1A1H
-    AND C
-    AND C
-    AND C
-    AND C
-    LD B,C
-    LD C,(HL)
-    CALL NZ,4843H
-    LD B,C
-    LD D,D
-    LD B,C
-    LD B,E
-    LD D,H
-    LD B,L
-    JP NC,4544H
-    LD C,H
-    LD B,C
-    EXX
-    LD B,H
-    LD D,L
-    LD D,D
-    LD B,C
-    LD D,H
-    LD C,C
-    LD C,A
-    ADC A,49H
-    LD C,(HL)
-    LD C,E
-    LD B,L
-    LD E,C
-    AND H
-    LD C,C
-    LD C,(HL)
-    BIT 1,L
-    LD C,A
-    LD B,H
-    PUSH BC
-    LD C,(HL)
-    LD C,A
-    CALL NC,464FH
-    ADD A,4FH
-    LD D,D
-    CALL NZ,D24FH
-    LD D,B
-    LD B,C
-    LD C,C
-    LD C,(HL)
-    CALL NC,4150H
-    LD C,H
-    LD B,L
-    LD D,H
-    LD D,H
-    PUSH BC
-    LD D,B
-    LD B,C
-    LD D,B
-    LD B,L
-    JP NC,4950H
-    LD D,H
-    LD B,E
-    RET Z
-    LD D,B
-    LD D,D
-    LD C,A
-    LD C,L
-    LD D,B
-    CALL NC,4152H
-    LD D,H
-    PUSH BC
-    LD D,E
-    LD D,H
-    LD B,L
-    RET NC
-    LD D,E
-    LD D,H
-    LD E,C
-    LD C,H
-    PUSH BC
-    LD D,H
-    LD B,C
-    JP NZ,4854H
-    LD B,L
-    ADC A,54H
-    RST 08H
-    LD D,(HL)
-    LD C,A
-    LD C,H
-    LD D,L
-    LD C,L
-    PUSH BC
-    LD E,B
-    LD C,A
-    JP NC,5441H
-    ADC A,41H
-    CALL NC,5355H
-    LD C,C
-    LD C,(HL)
-    RST 00H
-    LD B,D
-    LD C,A
-    LD D,D
-    LD B,H
-    LD B,L
-    JP NC,A1A1H
-    AND C
-    AND C
-    AND C
-    XOR D
-    AND E
-    DEC A
-    CP (HL)
-    LD A,BCH
-    XOR H
-    DEC A
-    CP H
-    XOR L
-    XOR A
-    CP E
-    SBC A,3EH
-    CP L
-    INC A
-    CP (HL)
-    CP (HL)
-    INC A
-    CP L
-    CP L
-    CP H
-    XOR E
-    AND (HL)
-    XOR B
-    XOR C
-    RST 38H
-    JR NZ,E044H
-    LD L,C
-    LD (HL),E
-    LD (HL),E
-    LD L,C
-    LD L,(HL)
-    RST 20H
-    LD (HL),D
-    LD H,A
-    LD (HL),L
-    LD L,L
-    LD H,L
-    LD L,(HL)
-    CALL P,6142H
-    LD H,H
-    AND B
-    LD C,(HL)
-    LD L,A
-    AND B
-    LD B,E
-    LD H,C
-    LD L,(HL)
-    LD L,(HL)
-    LD L,A
-    LD (HL),H
-    AND B
+    DB FFH, A1H, BAH, 52H, 45H, CDH, 44H, 41H, 54H, C1H, 43H, 4CH, 4FH, 53H, C5H, 43H ; |...RE.DAT.CLOS.C|
+    DB 4CH, D3H, 43H, 4FH, 4EH, 54H, 49H, 4EH, 55H, C5H, 44H, 45H, C6H, 44H, 45H, 4CH ; |L.CONTINU.DE.DEL|
+    DB 45H, 54H, C5H, 44H, 49H, CDH, 45H, 4CH, 53H, C5H, 45H, 4EH, C4H, 46H, 4FH, D2H ; |ET.DI.ELS.EN.FO.|
+    DB 47H, 45H, D4H, 47H, 4FH, 53H, 55H, C2H, 47H, 4FH, 54H, CFH, 47H, 52H, 41H, 50H ; |GE.GOSU.GOT.GRAP|
+    DB 48H, 49H, 43H, D3H, 49H, C6H, 49H, 4EH, 50H, 55H, D4H, 4CH, 45H, D4H, 4CH, 49H ; |HIC.I.INPU.LE.LI|
+    DB 53H, D4H, 4CH, 4CH, 49H, 53H, D4H, 4CH, 4FH, 41H, C4H, 4CH, 4FH, 4DH, 45H, CDH ; |S.LLIS.LOA.LOME.|
+    DB 4EH, 45H, D7H, 4EH, 45H, 58H, D4H, 4FH, CBH, 4FH, CEH, 4FH, 50H, 45H, CEH, 4FH ; |NE.NEX.O.O.OPE.O|
+    DB 55H, 54H, 50H, 55H, D4H, 4FH, 55H, D4H, 50H, 4CH, 4FH, D4H, 50H, 4FH, 4BH, C5H ; |UTPU.OU.PLO.POK.|
+    DB 50H, 52H, 49H, 4EH, D4H, 52H, 41H, 4EH, 44H, 4FH, 4DH, 49H, 5AH, C5H, 52H, 45H ; |PRIN.RANDOMIZ.RE|
+    DB 41H, C4H, 52H, 45H, 53H, 54H, 4FH, 52H, C5H, 52H, 45H, 54H, 55H, 52H, CEH, 52H ; |A.RESTOR.RETUR.R|
+    DB 55H, CEH, 53H, 41H, 56H, C5H, 53H, 45H, D4H, 53H, 4FH, 55H, 4EH, C4H, 53H, 54H ; |U.SAV.SE.SOUN.ST|
+    DB 4FH, D0H, 54H, 52H, 41H, 43H, C5H, 56H, 45H, 52H, 49H, 46H, D9H, 45H, 58H, D4H ; |O.TRAC.VERIF.EX.|
+    DB 4CH, 50H, 52H, 49H, 4EH, D4H, A1H, A1H, A1H, A1H, A1H, A1H, 41H, 4EH, C4H, 43H ; |LPRIN.......AN.C|
+    DB 48H, 41H, 52H, 41H, 43H, 54H, 45H, D2H, 44H, 45H, 4CH, 41H, D9H, 44H, 55H, 52H ; |HARACTE.DELA.DUR|
+    DB 41H, 54H, 49H, 4FH, CEH, 49H, 4EH, 4BH, 45H, 59H, A4H, 49H, 4EH, CBH, 4DH, 4FH ; |ATIO.INKEY.IN.MO|
+    DB 44H, C5H, 4EH, 4FH, D4H, 4FH, 46H, C6H, 4FH, 52H, C4H, 4FH, D2H, 50H, 41H, 49H ; |D.NO.OF.OR.O.PAI|
+    DB 4EH, D4H, 50H, 41H, 4CH, 45H, 54H, 54H, C5H, 50H, 41H, 50H, 45H, D2H, 50H, 49H ; |N.PALETT.PAPE.PI|
+    DB 54H, 43H, C8H, 50H, 52H, 4FH, 4DH, 50H, D4H, 52H, 41H, 54H, C5H, 53H, 54H, 45H ; |TC.PROMP.RAT.STE|
+    DB D0H, 53H, 54H, 59H, 4CH, C5H, 54H, 41H, C2H, 54H, 48H, 45H, CEH, 54H, CFH, 56H ; |.STYL.TA.THE.T.V|
+    DB 4FH, 4CH, 55H, 4DH, C5H, 58H, 4FH, D2H, 41H, 54H, CEH, 41H, D4H, 55H, 53H, 49H ; |OLUM.XO.AT.A.USI|
+    DB 4EH, C7H, 42H, 4FH, 52H, 44H, 45H, D2H, A1H, A1H, A1H, A1H, A1H, AAH, A3H, 3DH ; |N.BORDE........=|
+    DB BEH, 3EH, BCH, ACH, 3DH, BCH, ADH, AFH, BBH, DEH, 3EH, BDH, 3CH, BEH, BEH, 3CH ; |.>..=.....>.<..<|
+    DB BDH, BDH, BCH, ABH, A6H, A8H, A9H, FFH, 20H, 6DH, 69H, 73H, 73H, 69H, 6EH, E7H ; |........ missin.|
+    DB 72H, 67H, 75H, 6DH, 65H, 6EH, F4H, 42H, 61H, 64H, A0H, 4EH, 6FH, A0H, 43H, 61H ; |rgumen.Bad.No.Ca|
+    DB 6EH, 6EH, 6FH, 74H, A0H                                                        ; |nnot.|
 
 ; DATA routine.
 ; DATA performs no immediate computation; advance to the next statement boundary and leave values
@@ -8690,9 +8600,9 @@ BASIC_DATA_ENTRY:
 LDFF3:
     LD A,(HL)
     CP FDH
-    JP NC,DB81H
+    JP NC,LDB81
     INC HL
-    JR DFF3H
+    JR LDFF3
 
 ; CLS BASIC routine.
 ; CLS is a thin BASIC wrapper around the video clear-screen function.
@@ -8712,6 +8622,6 @@ LDFF3:
 ; -----------------------------------------------------------------------------
 BASIC_CLS:
     RST 30H
-    DEC B
+    DB 05H                                ; RST 30H fn 05H: video 5 -> VID_CLS
     RST 10H
-    DB C3H                                                                          ; |.|
+    DB C3H                                ; JP LDBB1 - continues in the next ROM chip

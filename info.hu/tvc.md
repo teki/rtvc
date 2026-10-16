@@ -96,8 +96,10 @@ Az interrupt életciklusa:
 
 A bővítőkártyák kérését slotonként a `0x58`/`0x59`/`0x5A`/`0x5B` port 7. bitje
 vezérli: `1` engedélyezi, `0` letiltja és törli. Reset után minden slot
-interruptja tiltott. A rendszer-ROM interruptkezelője csak azokra a kártyákra ír
-1-et, amelyek kérnek, és amelyek a `0x0B1F` IRQ-STAT maszkban engedélyezettek.
+interruptja tiltott. A BASIC 1.2 rendszer-ROM interruptkezelője csak a kérést
+jelző slotok portjára ír: `0x80`-at, ha a `0x0B1F` IRQ-STAT maszk az adott slotot
+engedélyezi, és `0x00`-t, ha nem. Ezután minden kérő kártya interruptvektorát
+meghívja, akár engedélyezett, akár nem.
 
 ## Bővítőkártyák
 

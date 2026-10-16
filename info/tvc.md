@@ -797,8 +797,10 @@ Port assignment is positional: the same card answers on `0x11` in slot 0 and on
 Each slot has one active-low status/interrupt bit in port `0x59`/`0x5D`.
 Writing to `0x58`/`0x59`/`0x5A`/`0x5B` controls slot 0/1/2/3: bit 7 set
 enables that slot's request, bit 7 clear disables and clears it. The
-system ROM's interrupt handler writes bit 7 to these ports only for cards
-that request service and are enabled in its IRQ-STAT mask at `0x0B1F`.
+BASIC 1.2 system ROM's interrupt handler writes only to the ports of slots
+that are requesting service: `0x80` when its IRQ-STAT mask at `0x0B1F`
+enables that slot, `0x00` when it does not. It then calls the interrupt
+vector of every requesting card, enabled or not.
 Port `0x5A`/`0x5E` reports the two-bit card type identifiers described in the
 I/O map.
 

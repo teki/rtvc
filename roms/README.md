@@ -26,12 +26,35 @@ listing records the alternate CPU address without emitting extra bytes.
 - `ORG address, map-name, mapped-address` records a named transformation from
   the canonical CPU address to an alternate CPU-visible address. It is
   assembler metadata and emits no bytes.
-- `DB` regions are tables, strings, copied RAM initialization bytes, character
-  matrices, or other data that must not be decoded as instructions.
+- Instruction boundaries come from tracing control flow from the reset entry,
+  the device and BASIC jump tables, the BASIC function records, and the
+  cross-ROM `FFF0H` gateway calls. Untraced bytes keep their linear decode
+  unless a data label heads them.
+- `DB`/`DW`/`DS` lines are data: tables, strings, copied RAM initialization
+  bytes, character matrices, and the inline operands that follow some calls.
+  Inline operands carry a decoding comment:
+  - `RST 08H` + error code (`00H` means no error, and execution continues at
+    that byte);
+  - `RST 18H` + BASIC-stack bytecode, ending with the first byte that has bit
+    7 set (operation 5, `CONST`, takes one extra byte);
+  - `RST 30H` + OS function byte (class in bits 6-4, function in bits 3-0,
+    with the target routine named);
+  - `CALL PRINT_INLINE_TEXT` (`FE79H`) + a counted string.
+- A `DB` of one or two bytes commented `= <instruction> when run from here`
+  is the first byte of an instruction that deliberately hides the entry point
+  below it (the `LD A,n` / `LD BC,nn` skip idiom).
+- The `EQU` block before `ORG` names the U0 RAM cells the listing uses and,
+  in the two SYS listings, the routines it calls in the other SYS half.
+  Addresses whose meaning is not documented stay numeric.
+- `LD HL,nnnn` that feeds the `FFF0H` page-and-jump gateway targets the other
+  ROM bank (SYS to EXT or EXT to SYS); its comment names the routine there.
 - `Lxxxx` labels are mechanical branch/call targets. Named labels are curated
   routine or table landmarks.
 - Rich routine blocks include purpose, algorithm, inputs, outputs, side
   effects, destroyed state, and important implementation notes where known.
+- The interrupt path in `TVC12_D4.64K.asm` (`IRQ_HANDLER` through
+  `INTERNAL_IRQ_EXIT`) is commented instruction by instruction. It is the
+  reference style for further inline annotation.
 
 ## Verifying
 

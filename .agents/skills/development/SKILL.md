@@ -303,9 +303,10 @@ This skill provides step-by-step instructions and references for compiling, exec
 
 - **Disassemble ROM or binary bytes to helper assembler source:**
   ```bash
-  cargo run --bin rtvc-disasm -- --origin C000H roms/TVC12_D4.64K -o roms/TVC12_D4.64K.asm
+  cargo run --bin rtvc-disasm -- --origin C000H roms/TVC12_D4.64K -o /tmp/TVC12_D4.64K.asm
   ```
   - Uses the emulator's Z80 disassembler and validates emitted instructions with the helper assembler.
+  - The output is a linear sweep. Do not write it over `roms/TVC12_*.64K.asm`: those listings are hand-maintained, with code boundaries recovered by tracing, inline data, EQU names, and inline comments that a regenerated file would lose. Use the tool for new images or to inspect a byte range (`-` reads stdin).
   - Pass `--symbols roms/TVC12_D4.64K.symbols.json --comments roms/TVC12_D4.64K.comments.json --bank sys --bank-offset 0000H` to add ROM labels and comments. Use the matching `TVC12_D3` or `TVC12_D7` files for the other images.
   - Stacked labels from the symbol database (`alt_names`) render as bare `NAME:` lines under the primary entry without repeating its comment block.
   - Pass repeated `--data-range START-END` options for known tables or text regions that should remain `DB` data.
