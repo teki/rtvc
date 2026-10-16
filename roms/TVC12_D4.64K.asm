@@ -381,7 +381,7 @@ L_STYLE            EQU 0B4CH              ; line style index
 INK                EQU 0B4DH              ; logical ink colour
 PAPER              EQU 0B4EH              ; logical paper colour
 BORDER             EQU 0B4FH              ; border colour (I.G.R.B in bits 7,5,3,1)
-V_FLAG             EQU 0B50H              ; character overwrite mode
+V_FLAG             EQU 0B50H              ; bit 0: skip ink pixels, bit 1: skip paper pixels
 KB_PICTURE         EQU 0B51H              ; current keyboard matrix image
 KB_OLD_PIC         EQU 0B5BH              ; previous keyboard matrix image
 DELAY_KEY          EQU 0B65H              ; key repeat delay, 20 ms units
@@ -391,16 +391,24 @@ HOLD_KEY           EQU 0B68H              ; FFH: CTRL+P hold disabled
 SER_OK             EQU 0B71H              ; 00H while the divider is set up for serial
 COLOR_MODE         EQU 0B73H              ; current mode: 00H 2, 01H 4, 02H 16 colours
 B_STAT             EQU 0B74H              ; pen state: FFH down, 00H up
-FILL_BYTE          EQU 0B75H              ; video byte used by area operations
+PIXEL_MASK         EQU 0B75H              ; mask of the beam pixel in its video byte
 VID_ADDR           EQU 0B76H              ; current video RAM address
 X_LOGICAL          EQU 0B78H              ; logical beam X
 Y_LOGICAL          EQU 0B7AH              ; logical beam Y
 X_PHYSICAL         EQU 0B7CH              ; physical beam X
 Y_PHYSICAL         EQU 0B7EH              ; physical beam Y
+CHAR_PIXEL_W       EQU 0B82H              ; physical units per pixel: 2, 4 or 8
 LINE_PATTERN       EQU 0B83H              ; rotating line-style bit pattern
 LINE_STEP_1        EQU 0B84H              ; line stepper entry used when the error term is negative
 LINE_STEP_2        EQU 0B86H              ; line stepper entry used when the error term is positive
 PAINT_SP_SAVE      EQU 0B88H              ; SP saved on PAINT entry
+PAINT_TARGET       EQU 0B8AH              ; PAINT: colour being replaced, as a byte pattern
+PAINT_SPAN         EQU 0B8BH              ; PAINT: C = mask, B = bytes to the right edge
+PAINT_ADDR         EQU 0B8DH              ; PAINT: video address being scanned
+PAINT_WIDTH        EQU 0B8FH              ; PAINT: parent run pixels left to scan
+PAINT_RECORD       EQU 0B91H              ; PAINT: width word of the run being scanned
+PAPER_PATTERN      EQU 0B93H              ; PAPER as a byte pattern
+INK_PATTERN        EQU 0B94H              ; INK as a byte pattern (PAINT: INK XOR target)
 KEY_PENDING        EQU 0BE5H              ; FFH: a translated key waits in KEY_CODE
 HOLD_STATE         EQU 0BE6H              ; FFH while CTRL+P hold is active
 KEY_LOCK_ACT       EQU 0BE7H              ; FFH while LOCK is held after setting a lock mode
@@ -1982,110 +1990,60 @@ VIDEO_JUMP_TABLE:
     DW CH_DEF                             ; 11 define character
     DW PAL_DEF                            ; 12 define palette
 
-; Video routines run with the video-memory mapping selected and P-SAVE preserved.
+; =============================================================================
+; VIDEO AND GRAPHICS
+; =============================================================================
+; Coordinates. Graphics calls use physical coordinates: X 0-1023 (03FFH) from
+; the left, Y 0-959 (03BFH) from the bottom. One logical pixel is 2, 4 or 8
+; units wide in 2-, 4- and 16-colour mode (2 ^ (COLOR_MODE + 1); 512, 256 or
+; 128 pixels across) and 4 units high (240 rows). X_PHYSICAL / Y_PHYSICAL hold
+; the beam position, X_LOGICAL / Y_LOGICAL the same point as pixel column and
+; row, with row 0 at the top.
+;
+; Video RAM. With page 2 mapped to VID (port 02H = 50H, U0 U1 VID SYS) the
+; picture is at 8000H-BBFFH: 240 rows of 64 bytes, address = 8000H +
+; 40H * row + X / 16. A byte holds 8, 4 or 2 pixels. PIXEL_MASK selects the
+; current pixel's bits: 80H, 88H or AAH for the leftmost pixel, rotated right
+; for the next one. A 4-colour pixel keeps colour bit 0 in the high nibble and
+; bit 1 in the low nibble; a 16-colour pixel keeps colour bits 3-0 in bits
+; 7, 5, 3, 1 (left pixel) or 6, 4, 2, 0 (right pixel).
+;
+; Colours are written as whole-byte patterns (COLOR_BYTE): the colour repeated
+; for every pixel of a byte, so writing "pattern AND mask" sets one pixel.
+; PAPER_PATTERN and INK_PATTERN hold the patterns for the current drawing.
+;
+; Characters are 8 x 10 pixels: 64, 32 or 16 per line and 24 lines, 40 units
+; apart. X_PHYSICAL / Y_PHYSICAL give the top left pixel of the next cell.
+; =============================================================================
 
-; CALL_WITH_SYS_PAGED - Pages SYS into page 3, invokes the routine in HL, then restores paging.
-; Entry: HL = target routine; target must finish with RET
-; Exit: Target-specific
-; Effects: Temporarily changes the memory map and return address.
-CALL_WITH_SYS_PAGED:
-; -----------------------------------------------------------------------------
-; VIDEO-MEMORY PAGING WRAPPER
-; -----------------------------------------------------------------------------
-;
-; Maps the video-memory configuration, calls a routine in SYS, and restores the caller's paging
-; state.
-;
-; The return address is taken from the stack and the current P-SAVE byte at 0003H is preserved.
-; The wrapper writes 50H to the memory-map port, selecting the video-memory configuration while
-; retaining SYS for the executing code, then arranges C9A1H as the continuation after the target's
-; RET.
-;
-; The called video routine can use the mapped video memory without needing to know or preserve the
-; caller's mapping. C9A1H restores the saved P-SAVE value and returns to the caller through the
-; original stack address. This wrapper is the protection boundary used by the graphics routines
-; that access video RAM.
-;
-; Entry:
-;   HL = video routine address; the target must return with RET.
-;
-; Exit:
-;   Target-specific result after the original paging value has been restored.
-;
-; Effects:
-;   Temporarily changes port 02H and P-SAVE at 0003H.
-;
-; Destroys:
-;   AF and the temporary stack frame; the called routine determines other register effects.
-; -----------------------------------------------------------------------------
-CALL_WITH_VIDEO_PAGED:
 ; -----------------------------------------------------------------------------
 ; VIDEO RAM PAGING GUARD
 ; -----------------------------------------------------------------------------
+; A video routine starts with CALL CALL_WITH_SYS_PAGED. The guard maps page 2
+; to video RAM (port 02H = 50H), then continues the routine with the old page
+; map and VIDEO_PAGE_RETURN pushed in front of its return address. When the
+; routine returns, VIDEO_PAGE_RETURN restores the page map and returns to the
+; routine's caller with the routine's AF.
 ;
-; Temporarily maps video RAM, then arranges for the caller's RET to restore the original mapping.
-;
-; This is the video driver's central paging wrapper. It removes the caller's return address, saves
-; the current page configuration, selects U-U-V-S so the video RAM is visible at 8000H, and
-; replaces the saved return address with VIDEO_PAGE_RESTORE at C9A1H.
-;
-; The caller therefore runs with the video page selected and returns into the restore tail. That
-; tail restores the saved page register while preserving the caller's A result, then returns to
-; the caller's caller. The unusual return-address surgery lets deeply nested video routines share
-; one small paging mechanism.
-;
-; Entry:
-;   Called with a normal return address on the stack.
-;
-; Exit:
-;   The caller resumes with video RAM visible; its eventual RET restores the previous mapping.
-;
-; Effects:
-;   Changes port 02H paging and uses the stack to splice VIDEO_PAGE_RESTORE into the return path.
-;
-; Destroys:
-;   AF is preserved across the restore tail; HL and the stack are used internally.
-;
-; Note:
-;   VIDEO 00 is just the restore-tail RET at C9A9H. The wrapper is used by drawing, text output,
-;   paint, and cursor routines.
+; Destroys HL on entry and AF' on exit.
 ; -----------------------------------------------------------------------------
+CALL_WITH_SYS_PAGED:
+CALL_WITH_VIDEO_PAGED:
 VIDEO_PAGE_GUARD:
-    POP HL
+    POP HL                              ; HL = the rest of the video routine
     LD A,(P_SAVE)
-    PUSH AF
-    LD A,50H
+    PUSH AF                             ; keep the caller's page map
+    LD A,50H                            ; U0 U1 VID SYS
     LD (P_SAVE),A
     OUT (02H),A
     PUSH HL
-    LD HL,VIDEO_PAGE_RETURN
+    LD HL,VIDEO_PAGE_RETURN             ; the routine's RET comes back here
     EX (SP),HL
-    JP (HL)
+    JP (HL)                             ; continue the routine
 
-; This continuation restores P-SAVE and port 02H after the mapped video routine returns.
-
-; -----------------------------------------------------------------------------
-; VIDEO PAGING WRAPPER RETURN
-; -----------------------------------------------------------------------------
-;
-; Restores the saved memory map after a video routine returns.
-;
-; C98FH arranges a return through this continuation. The alternate accumulator holds the saved
-; paging value while the target routine runs; C9A1H exchanges back, restores AF and P-SAVE, writes
-; port 02H, and returns through the caller's original address.
-;
-; Entry:
-;   Saved paging value in the stack/alternate accumulator as established by C98FH.
-;
-; Exit:
-;   Original caller mapping and return address restored.
-;
-; Effects:
-;   Writes P-SAVE and port 02H.
-; -----------------------------------------------------------------------------
 VIDEO_PAGE_RETURN:
-    EX AF,AF'
-    POP AF
+    EX AF,AF'                           ; keep the routine's result
+    POP AF                              ; A = the caller's page map
     LD (P_SAVE),A
     OUT (02H),A
     EX AF,AF'
@@ -2093,57 +2051,14 @@ VIDEO_PAGE_RETURN:
 VID_INT_NOP:
     RET
 
-; Double the selector because each jump-table entry is a little-endian word.
-
-; JUMP_TABLE_DISPATCH - Selects a target from a ROM jump table.
-; Entry: Table and selector are caller-specific
-; Effects: Transfers control to the selected entry.
+; -----------------------------------------------------------------------------
+; WORD TABLE LOOKUP
+; -----------------------------------------------------------------------------
+; Entry:   HL -> table of words; A = index.
+; Exit:    DE = entry A; HL -> its high byte; A = 2 * index.
+; -----------------------------------------------------------------------------
 JUMP_TABLE_DISPATCH:
-; -----------------------------------------------------------------------------
-; WORD JUMP-TABLE LOOKUP
-; -----------------------------------------------------------------------------
-;
-; Reads the address of entry A from a table of little-endian word pointers at HL.
-;
-; The selector in A is doubled because every table entry is a two-byte address. The resulting
-; offset is added to HL, the low and high bytes are read, and DE returns the selected target
-; address. The source table and selector are intentionally generic so the helper can serve several
-; video subsystems.
-;
-; Entry:
-;   HL = first table entry; A = zero-based entry number.
-;
-; Exit:
-;   DE = selected little-endian target address.
-;
-; Effects:
-;   Read-only table access.
-;
-; Destroys:
-;   AF and HL; DE contains the result.
-; -----------------------------------------------------------------------------
 JUMP_TABLE_LOOKUP:
-; -----------------------------------------------------------------------------
-; WORD JUMP-TABLE LOOKUP
-; -----------------------------------------------------------------------------
-;
-; Loads the A-th two-byte entry from the table addressed by HL into DE.
-;
-; The index is doubled, added to HL, and the little-endian word at that address is returned in DE.
-; Video line-direction dispatch and line-crossing dispatch both use this compact helper.
-;
-; Entry:
-;   HL = table base; A = zero-based entry number.
-;
-; Exit:
-;   DE = selected table word.
-;
-; Effects:
-;   HL is advanced to the selected entry; flags follow the arithmetic.
-;
-; Destroys:
-;   AF, HL; DE receives the result.
-; -----------------------------------------------------------------------------
 TABLE_LOOKUP_WORD:
     ADD A,A
     LD E,A
@@ -2154,352 +2069,126 @@ TABLE_LOOKUP_WORD:
     LD D,(HL)
     RET
 
-; The graphics X limit is 03FFH, or 1023 decimal.
+; Range checks. Cy if BC (X) or DE (Y) is off the screen; HL = the distance to
+; the right or top edge otherwise.
 
-; -----------------------------------------------------------------------------
-; CHECK AND MIRROR X
-; -----------------------------------------------------------------------------
-;
-; Checks a physical x coordinate and returns its distance from the right edge.
-;
-; The legal physical x range is 0..03FFH. The routine computes 03FFH-BC, leaving carry set when BC
-; was outside the range. Drawing callers use that carry as the F9H off-screen error path.
-;
-; Entry:
-;   BC = physical x coordinate.
-;
-; Exit:
-;   HL = 03FFH - BC; carry indicates an invalid coordinate.
-;
-; Effects:
-;   No memory or hardware effects.
-;
-; Destroys:
-;   AF, HL.
-; -----------------------------------------------------------------------------
 CHECK_X_COORDINATE:
-    LD HL,03FFH
+    LD HL,03FFH                         ; X 0-1023
     OR A
     SBC HL,BC
     RET
 
-; The graphics Y limit is 03BFH, or 959 decimal.
-
-; -----------------------------------------------------------------------------
-; CHECK AND MIRROR Y
-; -----------------------------------------------------------------------------
-;
-; Checks a physical y coordinate and returns its distance from the top edge.
-;
-; The physical y range is 0..03BFH (959). The result 03BFH-DE converts the external bottom-origin
-; graphics coordinate into the top-origin video-memory coordinate used by the driver.
-;
-; Entry:
-;   DE = physical y coordinate.
-;
-; Exit:
-;   HL = 03BFH - DE; carry indicates an invalid coordinate.
-;
-; Effects:
-;   No memory or hardware effects.
-;
-; Destroys:
-;   AF, HL.
-; -----------------------------------------------------------------------------
 CHECK_Y_COORDINATE:
-    LD HL,03BFH
+    LD HL,03BFH                         ; Y 0-959
     OR A
     SBC HL,DE
     RET
 
-; Mode plus one is the right-shift count used to convert logical coordinates to packed-pixel
-; coordinates.
+; HL = physical X / (2 ^ (COLOR_MODE + 1)): the pixel column. A = COLOR_MODE.
 
-; -----------------------------------------------------------------------------
-; GRAPHICS MODE COORDINATE TRANSFORM
-; -----------------------------------------------------------------------------
-;
-; Converts a logical coordinate into a mode-dependent physical coordinate by shifting it by the
-; graphics resolution.
-;
-; The mode byte at 0B73H is incremented and used as the shift count. C9C6H then divides HL by 2,
-; 4, or 8 for the 2-, 4-, or 16-colour pixel packing modes. This removes the mode-dependent
-; horizontal or vertical sub-pixel component before address generation.
-;
-; Entry:
-;   HL = logical coordinate; current video mode is stored at 0B73H.
-;
-; Exit:
-;   HL = mode-scaled physical coordinate.
-;
-; Effects:
-;   No direct memory or hardware writes.
-;
-; Destroys:
-;   AF, B and flags; HL contains the transformed value.
-; -----------------------------------------------------------------------------
 LOGICAL_TO_PHYSICAL_COORDINATE:
     LD A,(COLOR_MODE)
     LD B,A
     INC B
 
-; SRL H/RR L performs an unsigned divide of HL by a power of two.
+; HL = HL / (2 ^ B), unsigned.
 
-; -----------------------------------------------------------------------------
-; MODE-SCALED DIVISION
-; -----------------------------------------------------------------------------
-;
-; Divides HL by 2 to the power of B using paired logical shifts.
-;
-; The caller sets B to 1, 2, or 3 to scale a physical coordinate for 4-, 16-, or 2-pixel-per-byte
-; layouts. The routine preserves the quotient in HL and is used repeatedly while building pixel
-; addresses.
-;
-; Entry:
-;   HL = unsigned value; B = number of right shifts.
-;
-; Exit:
-;   HL = floor(original HL / 2^B).
-;
-; Effects:
-;   No memory or hardware effects.
-;
-; Destroys:
-;   AF, B; HL is replaced by the quotient.
-; -----------------------------------------------------------------------------
 SHIFT_HL_RIGHT:
     SRL H
     RR L
     DJNZ SHIFT_HL_RIGHT
     RET
 
-; Graphics preparation derives the line-style and paper/ink video values before drawing.
-
-; -----------------------------------------------------------------------------
-; GRAPHICS POINT PREPARATION
-; -----------------------------------------------------------------------------
-;
-; Builds the mode-dependent state used by the pixel, line, and fill routines.
-;
-; The routine obtains the current line-style bit pattern, converts paper and ink colours through
-; the mode helper, stores the resulting video values in 0B93H and 0B94H, and prepares IY for the
-; line-crossing write routine. C9E2H then exposes the pixel address and bit mask previously
-; prepared by PIXEL_ADDRESS.
-;
-; Entry:
-;   Current video mode, line style, paper/ink colours, and pixel working state.
-;
-; Exit:
-;   Graphics work variables and IY are ready for a pixel or line operation.
-;
-; Effects:
-;   Updates 0B83H, 0B93H, 0B94H and related graphics state.
-;
-; Destroys:
-;   AF, DE and flags; internal graphics routines determine the remaining register effects.
-; -----------------------------------------------------------------------------
-PREPARE_GRAPHICS_POINT:
 ; -----------------------------------------------------------------------------
 ; PREPARE DRAWING STATE
 ; -----------------------------------------------------------------------------
+; Entries, each doing less than the one before:
+;   PREPARE_DRAW_STATE    load the line style, then as PREPARE_COLOURS
+;   PREPARE_COLOURS       PAPER_PATTERN; then as PREPARE_INK
+;   PREPARE_INK           IY = the L_MODE pixel writer, INK_PATTERN = INK
+;   SET_INK_PATTERN       INK_PATTERN = A (PAINT stores INK XOR the target)
+; All end in GET_PIXEL_WORK_STATE and return DE = 0040H, the row stride
+; (PREPARE_INK keeps the caller's DE).
 ;
-; Builds the line-style, PAPER, INK, crossing-mode, pixel-mask, and pixel-address state consumed
-; by drawing helpers.
-;
-; The routine obtains the selected line pattern from LINE_STYLE_TABLE, derives the mode-specific
-; PAPER and INK byte values, selects the crossing-mode implementation through LINE_MODE_TABLE, and
-; finally obtains the current pixel's video byte address and mask. The results are kept in the
-; video work variables at 0B75H-0B94H and in IY.
-;
-; Its multiple calls are intentional: the same preparation is shared by beam movement, character
-; output, and paint. The internal state lets the tight pixel routines avoid repeating mode and
-; palette calculations.
-;
-; Entry:
-;   Current video variables, especially L_STYLE, L_MODE, GR_MODE, INK, PAPER, and the current
-;   physical beam position.
-;
-; Exit:
-;   IY points at the selected pixel-write implementation; video work variables contain the derived
-;   bytes and address.
-;
-; Effects:
-;   Reads video variables and updates the video work area.
-;
-; Destroys:
-;   AF, BC, DE, HL; IY is deliberately changed.
+; Exit:    A = C = PIXEL_MASK; HL = VID_ADDR.
 ; -----------------------------------------------------------------------------
+PREPARE_GRAPHICS_POINT:
 PREPARE_DRAW_STATE:
     CALL LOAD_LINE_STYLE
 
-LC9D0:
-    CALL LCC05
-    LD (0B93H),A
-    LD DE,0040H
+PREPARE_COLOURS:
+    CALL PAPER_BYTE
+    LD (PAPER_PATTERN),A
+    LD DE,0040H                         ; one row down
 
-LC9D9:
-    CALL SELECT_CROSSING_MODE
-    CALL LCC0D
+PREPARE_INK:
+    CALL SELECT_CROSSING_MODE           ; IY = pixel writer
+    CALL INK_BYTE
 
-LC9DF:
-    LD (0B94H),A
+SET_INK_PATTERN:
+    LD (INK_PATTERN),A
 
-; Return the prepared pixel mask in A/C and video-memory address in HL.
-
-; -----------------------------------------------------------------------------
-; PIXEL ADDRESS WORK-STATE ACCESS
-; -----------------------------------------------------------------------------
-;
-; Loads the current pixel bit mask and video-memory address from graphics variables.
-;
-; The bit mask at 0B75H is returned in A/C and the prepared video-memory address at 0B76H is
-; returned in HL. READ_PIXEL_COLOR and the drawing primitives use this compact interface after
-; PIXEL_ADDRESS has performed the mode-dependent address calculation.
-;
-; Entry:
-;   PIXEL_ADDRESS has populated 0B75H and 0B76H.
-;
-; Exit:
-;   A/C = pixel mask; HL = video-memory byte address.
-;
-; Effects:
-;   Read-only access to graphics work variables.
-;
-; Destroys:
-;   AF, C and HL contain the returned state.
-; -----------------------------------------------------------------------------
 GET_PIXEL_WORK_STATE:
-    LD A,(FILL_BYTE)
+    LD A,(PIXEL_MASK)
     LD C,A
     LD HL,(VID_ADDR)
     RET
 
-; Initial palette bytes when the hardware color switch is on.
-
 ; -----------------------------------------------------------------------------
 ; RESET PALETTE TABLE
 ; -----------------------------------------------------------------------------
-;
-; Four-byte palette defaults for the color-switch-on and color-switch-off configurations.
-;
-; The first quartet is 00H, 50H, 44H, 41H for normal color operation; the second at C9EEH is 00H,
-; 55H, 50H, 44H for monochrome operation. VMODE selects one quartet and PAL_DEF writes it to
-; palette ports 60H-63H.
-;
-; Entry:
-;   No call inputs; entries are read as four consecutive bytes.
-;
-; Exit:
-;   Palette values consumed by PAL_DEF.
-;
-; Effects:
-;   Read-only ROM data.
-;
-; Destroys:
-;   None.
+; VID_MODE loads the first four bytes when port 59H bit 6 is 1, the second
+; four when it is 0.
 ; -----------------------------------------------------------------------------
 DEFAULT_PALETTE_TABLE:
-
-; Initial palette bytes when the hardware color switch is off.
-    DB 00H, 50H, 44H, 41H, 00H, 55H, 50H, 44H                                         ; |.PDA.UPD|
-
-; The startup entry selects C=01H (four-colour mode) and falls through into VID_MODE.
-
-; -----------------------------------------------------------------------------
-; VIDEO INITIALIZATION ENTRY
-; -----------------------------------------------------------------------------
-;
-; Selects four-colour mode and falls through to the general video-mode routine.
-;
-; The startup table calls this entry as the first built-in device initializer. It loads C=01H, the
-; TVC four-colour mode code, and immediately continues at VID_MODE (C9F4H), so initialization and
-; an ordinary VIDEO 04 function call share the same mode-setting implementation.
-;
-; VID_MODE clears the mode-dependent graphics variables, records the mode at 0B73H, clears the
-; screen, programs the mode-specific palette, and updates the port-06 mode bits.
-;
-; Entry:
-;   No external parameters for startup; C is set internally to 01H.
-;
-; Exit:
-;   Video mode 01H is requested through VID_MODE.
-;
-; Effects:
-;   Updates video mode state, screen memory, palette, and hardware mode bits through the
-;   fall-through routine.
-;
-; Destroys:
-;   As specified by VID_MODE; C remains the selected mode during its setup.
-; -----------------------------------------------------------------------------
-SET_4_COLOR_MODE:
-    LD C,01H
-
-; VMODE routine (VIDEO 04); sets the video display mode.
-; Video initialization enters VID_MODE with C=01H, selecting the four-color default mode.
+    DB 00H, 50H, 44H, 41H                 ; port 59H bit 6 = 1
+DEFAULT_PALETTE_ALT:
+    DB 00H, 55H, 50H, 44H                 ; port 59H bit 6 = 0
 
 ; -----------------------------------------------------------------------------
 ; VIDEO 04 - SELECT DISPLAY MODE
 ; -----------------------------------------------------------------------------
+; SET_4_COLOR_MODE is the reset entry (STARTUP_DEVICE_INIT_TABLE). VID_MODE
+; resets L_MODE, PAPER and V_FLAG to 0 and L_STYLE to 1 (solid), sets INK to
+; 1, or in 16-colour mode to 0FH (port 59H bit 6 = 0) or 0CH (bit 6 = 1),
+; clears the screen (VID_CLS), sets the mode bits of port 06H and loads the
+; default palette.
 ;
-; Selects 2-, 4-, or 16-color video mode, resets drawing attributes, clears the display, and
-; installs the corresponding palette.
-;
-; C is the mode code: 00H selects mode 2, 01H selects mode 4, and 02H selects mode 16. Values 03H
-; and above return F7H. A valid selection resets L_MODE, PAPER, V_FLAG, and L_STYLE, chooses the
-; default INK color according to the hardware color switch, records GR_MODE at 0B73H, and enters
-; CLS.
-;
-; The routine updates only the low two bits of the port-06H shadow at 0B13H, preserving unrelated
-; video control bits. It then chooses the color or monochrome default palette table and falls
-; through to PAL_DEF. The reset entry at C9F2H supplies C=01H, making the power-on default the
-; four-color mode.
-;
-; Entry:
-;   C = 00H (mode 2), 01H (mode 4), or 02H (mode 16).
-;
-; Exit:
-;   A = 00H on success; A = F7H for an unsupported mode.
-;
-; Effects:
-;   Changes the video mode, palette ports, drawing defaults, screen contents, and editor state
-;   through CLS.
-;
-; Destroys:
-;   AF, BC, DE, HL; video paging is handled by called routines.
-;
-; Note:
-;   The public VIDEO jump-table entry is function 04. The entry at C9F2H is the video initializer,
-;   not a separate algorithm.
+; Entry:   C = mode: 00H 2 colours, 01H 4 colours, 02H 16 colours.
+; Exit:    A = 00H, or F7H for another value.
 ; -----------------------------------------------------------------------------
+SET_4_COLOR_MODE:
+    LD C,01H                            ; 4-colour mode
+
 VID_MODE:
     LD A,C
     CP 03H
-    LD A,F7H
+    LD A,F7H                            ; error F7H: no such mode
     RET NC
     XOR A
-    LD (L_MODE),A
-    LD (PAPER),A
-    LD (V_FLAG),A
+    LD (L_MODE),A                       ; put
+    LD (PAPER),A                        ; paper colour 0
+    LD (V_FLAG),A                       ; draw both ink and paper
     INC A
-    LD (L_STYLE),A
+    LD (L_STYLE),A                      ; solid lines
     CP C
-    JR NC,LCA15
+    JR NC,VID_MODE_SET_INK              ; 2 or 4 colours: INK = 1
     IN A,(59H)
     RLCA
-    RLCA
+    RLCA                                ; Cy = port 59H bit 6
     LD A,0FH
-    JR NC,LCA15
+    JR NC,VID_MODE_SET_INK
     LD A,0CH
 
-LCA15:
+VID_MODE_SET_INK:
     LD (INK),A
     LD A,C
     LD (COLOR_MODE),A
     PUSH BC
-    CALL VID_CLS
+    CALL VID_CLS                        ; clear the screen in the new mode
     POP BC
-    LD A,C
-    LD HL,PORT06_MIRROR
+    LD A,C                              ; port 06H bits 1-0 = mode,
+    LD HL,PORT06_MIRROR                 ; other bits unchanged
     XOR (HL)
     AND FCH
     XOR C
@@ -2507,504 +2196,295 @@ LCA15:
     OUT (06H),A
     IN A,(59H)
     RLCA
-    RLCA
-    LD DE,C9EEH
+    RLCA                                ; Cy = port 59H bit 6
+    LD DE,DEFAULT_PALETTE_ALT
     JR NC,PAL_DEF
     LD DE,DEFAULT_PALETTE_TABLE
-
-; PAL routine (VIDEO 0C); defines palette colors.
 
 ; -----------------------------------------------------------------------------
 ; VIDEO 12 - DEFINE PALETTE
 ; -----------------------------------------------------------------------------
-;
-; Writes four palette bytes from memory to palette registers 0 through 3.
-;
-; DE addresses four consecutive bytes. Each byte is sent to ports 60H, 61H, 62H, and 63H in order.
-; VMODE reaches this tail after selecting the appropriate default quartet, but software can call
-; the VIDEO 12 function directly to install arbitrary palette values.
-;
-; Entry:
-;   DE = address of four palette bytes.
-;
-; Exit:
-;   A = 00H always.
-;
-; Effects:
-;   Writes palette hardware ports 60H-63H.
-;
-; Destroys:
-;   AF, DE.
+; Entry:   DE -> four bytes for palette registers 0-3 (ports 60H-63H).
+; Exit:    A = 00H.
 ; -----------------------------------------------------------------------------
 PAL_DEF:
     LD A,(DE)
-    OUT (60H),A
+    OUT (60H),A                         ; palette 0
     INC DE
     LD A,(DE)
-    OUT (61H),A
+    OUT (61H),A                         ; palette 1
     INC DE
     LD A,(DE)
-    OUT (62H),A
+    OUT (62H),A                         ; palette 2
     INC DE
     LD A,(DE)
-    OUT (63H),A
+    OUT (63H),A                         ; palette 3
     XOR A
     RET
-
-; CLS routine (VIDEO 05); clears the screen.
 
 ; -----------------------------------------------------------------------------
 ; VIDEO 05 - CLEAR SCREEN
 ; -----------------------------------------------------------------------------
-;
-; Clears the 15-KiB video display area to PAPER, resets the editor, raises the beam, and homes the
-; graphics position.
-;
-; CLS enters the video paging guard, initializes the editor workspace, derives the current PAPER
-; byte, and fills 8000H-BAFFH (3C00H bytes) with that value. It then calls B_OFF and clears the
-; physical beam coordinates BC and DE to zero. This is a complete display reset rather than only a
-; memory fill.
-;
-; Entry:
-;   No public arguments.
-;
-; Exit:
-;   A is the status returned by the final video operation (normally 00H).
-;
-; Effects:
-;   Destructively rewrites video RAM and resets editor/cursor state and pen state.
-;
-; Destroys:
-;   AF, BC, DE, HL, IY; video paging is restored by VIDEO_PAGE_GUARD.
+; Resets the editor, fills the whole picture (8000H-BBFFH) with PAPER, raises
+; the pen and moves the beam to X = 0, Y = 0 (bottom left), falling into
+; PIXEL_ADDRESS.
 ; -----------------------------------------------------------------------------
 VID_CLS:
     CALL CALL_WITH_SYS_PAGED
     CALL EDITOR_INIT
-    CALL LCC05
-
-; CLS fills 3C00H bytes from 8000H through BAFFH: the 15-KiB display area.
+    CALL PAPER_BYTE                     ; A = PAPER as a byte pattern
     LD HL,8000H
     LD DE,8001H
     LD (HL),A
-    LD BC,3BFFH
+    LD BC,3BFFH                         ; 3C00H bytes: 240 rows x 64
     LDIR
-    CALL B_OFF
-    LD B,A
+    CALL B_OFF                          ; pen up, A = 00H
+    LD B,A                              ; BC = X = 0, DE = Y = 0
     LD C,A
     LD D,A
     LD E,A
 
-; Mode-specific PAPER and INK line bytes at 0B93H and 0B94H feed point and character rendering.
-
 ; -----------------------------------------------------------------------------
 ; PIXEL ADDRESS AND MASK
 ; -----------------------------------------------------------------------------
+; Moves the beam to (BC, DE) without checking the range: stores the physical
+; and logical coordinates, PIXEL_MASK and VID_ADDR. SET_BEAM_X changes only X.
 ;
-; Converts a physical pixel coordinate into the corresponding video-RAM byte address and bit mask.
-;
-; The physical x coordinate is divided by 16 to obtain the byte-column contribution and again by
-; the current graphics mode to obtain the logical x coordinate. The low three bits select one of
-; the mode-dependent leftmost-pixel masks at CAB4H. The y coordinate is mirrored against 03BFH,
-; divided by four for the logical row, and combined with the x byte-column to form 8000H + row*40H
-; + column.
-;
-; The routine records the physical and logical coordinates in the video work variables, stores the
-; selected bit mask at 0B75H, and stores the video byte address at 0B76H-0B77H. It deliberately
-; does not perform range checking; B_ABS performs that before calling it.
-;
-; Entry:
-;   BC = physical x (0..03FFH); DE = physical y (0..03BFH).
-;
-; Exit:
-;   A = 00H; 0B75H = pixel mask; 0B76H-0B77H = video byte address; related logical coordinates are
-;   saved in the work area.
-;
-; Effects:
-;   Updates video work variables only.
-;
-; Destroys:
-;   AF, BC, DE, HL.
-;
-; Note:
-;   CAB4H contains the mode masks 80H, 88H, and AAH. The address formula is the same foundation
-;   used by line drawing and point output.
+; Entry:   BC = X; DE = Y (PIXEL_ADDRESS only).
+; Exit:    A = 00H.
 ; -----------------------------------------------------------------------------
 PIXEL_ADDRESS:
     LD (Y_PHYSICAL),DE
 
-LCA69:
+SET_BEAM_X:
     LD (X_PHYSICAL),BC
     LD HL,(X_PHYSICAL)
     PUSH HL
     LD B,04H
-    CALL SHIFT_HL_RIGHT
-    EX (SP),HL
-    CALL LOGICAL_TO_PHYSICAL_COORDINATE
+    CALL SHIFT_HL_RIGHT                 ; X / 16 = byte column 0-63
+    EX (SP),HL                          ; keep it; HL = X
+    CALL LOGICAL_TO_PHYSICAL_COORDINATE ; HL = pixel column, A = mode
     LD (X_LOGICAL),HL
-    LD C,A
+    LD C,A                              ; BC = mode (B is 0)
     LD A,L
-    LD HL,CAB4H
-    ADD HL,BC
+    LD HL,PIXEL_LEFT_MASKS
+    ADD HL,BC                           ; HL -> the mode's leftmost mask
     AND 07H
     INC A
-    LD B,A
+    LD B,A                              ; B = (column AND 7) + 1
     LD A,(HL)
     DB 1EH                                ; = LD E,0FH when run from here, hiding the entry below
 
-LCA89:
-    RRCA
-    DJNZ LCA89
-    LD (FILL_BYTE),A
+PIXEL_MASK_ROTATE:
+    RRCA                                ; rotate once per pixel: the LD E,0FH
+    DJNZ PIXEL_MASK_ROTATE              ; above skips the first RRCA
+    LD (PIXEL_MASK),A
     LD DE,(Y_PHYSICAL)
     LD HL,03BFH
     XOR A
-    SBC HL,DE
+    SBC HL,DE                           ; flip Y: 0 at the top
     LD B,02H
-    CALL SHIFT_HL_RIGHT
+    CALL SHIFT_HL_RIGHT                 ; / 4 = row 0-239
     LD (Y_LOGICAL),HL
-    LD H,L
+    LD H,L                              ; HL = row * 64
     SRL H
     RRA
     SRL H
     RRA
     LD L,A
-    POP BC
+    POP BC                              ; + byte column
     ADD HL,BC
-    LD DE,8000H
+    LD DE,8000H                         ; + start of video RAM
     ADD HL,DE
     LD (VID_ADDR),HL
     XOR A
     RET
 
-; Mode-dependent leftmost-pixel masks: 80H for mode 2, 88H for mode 4, and AAH for mode 16.
-    ADD A,B
-    ADC A,B
-    XOR D
+PIXEL_LEFT_MASKS:
+    DB 80H                                ; 2 colours: 8 pixels per byte
+    DB 88H                                ; 4 colours: 4 pixels per byte
+    DB AAH                                ; 16 colours: 2 pixels per byte
 
 ; -----------------------------------------------------------------------------
-; PIXEL COLOR SELECTOR
+; PIXEL WRITERS
 ; -----------------------------------------------------------------------------
-;
-; Applies the INK/PAPER and overwrite rules before plotting one character pixel.
-;
-; Carry identifies whether the incoming pixel belongs to INK or PAPER. The current overwrite mode
-; decides whether that color is effective; the helper then dispatches through IY to one of the
-; four crossing-mode implementations. The adjacent entry at CABEH is the line-drawing variant,
-; which always treats an accepted INK point as drawable.
-;
-; Entry:
-;   Carry = INK/PAPER selector; A = overwrite mode; HL = video byte; C = pixel mask; IY = selected
-;   crossing implementation.
-;
-; Exit:
-;   The selected bit operation is applied, or the routine returns without changing memory.
-;
-; Effects:
-;   May modify the video byte at HL.
-;
-; Destroys:
-;   AF; other registers are inputs to the selected implementation.
+; PLOT_CHARACTER_PIXEL draws one character pixel: Cy = glyph bit (1 = ink);
+; A = V_FLAG. V_FLAG bit 0 set: ink pixels are not drawn; bit 1 set: paper
+; pixels are not drawn. PLOT_LINE_PIXEL draws a line pixel: Cy = line pattern
+; bit, 1 = ink, 0 = paper. PLOT_INK / PLOT_PAPER draw the pixel in that
+; colour. All write through IY, one of the four L_MODE writers below, which
+; take A = colour pattern, C = PIXEL_MASK, HL = video address.
 ; -----------------------------------------------------------------------------
 PLOT_CHARACTER_PIXEL:
-    JR NC,LCAC5
-    AND 01H
-    JR Z,LCAC0
+    JR NC,PLOT_CHAR_PAPER
+    AND 01H                             ; ink pixel: suppressed by V_FLAG bit 0?
+    JR Z,PLOT_INK
     RET
 
-LCABE:
-    JR NC,LCAC8
+PLOT_LINE_PIXEL:
+    JR NC,PLOT_PAPER
 
-LCAC0:
-    LD A,(0B94H)
+PLOT_INK:
+    LD A,(INK_PATTERN)
     JP (IY)
 
-LCAC5:
-    AND 02H
+PLOT_CHAR_PAPER:
+    AND 02H                             ; paper pixel: suppressed by bit 1?
     RET NZ
 
-LCAC8:
-    LD A,(0B93H)
+PLOT_PAPER:
+    LD A,(PAPER_PATTERN)
     JP (IY)
 
-; -----------------------------------------------------------------------------
-; PIXEL CROSSING OPERATIONS
-; -----------------------------------------------------------------------------
-;
-; Implements overwrite, XOR, AND, and OR pixel writes without disturbing unrelated bits in the
-; video byte.
-;
-; The four entry points are selected by L_MODE through the table at CBA0H. The mode-0 entry
-; performs the direct overwrite operation, the mode-1 entry XORs the selected mask, the mode-2
-; entry ANDs it, and the mode-3 entry ORs it. Each operation combines the incoming color byte with
-; the existing video byte so the other pixels packed into that byte survive.
-;
-; Entry:
-;   HL = video byte address; C = selected pixel bits; A = INK or PAPER line byte.
-;
-; Exit:
-;   The selected operation updates (HL).
-;
-; Effects:
-;   Writes one video-RAM byte.
-;
-; Destroys:
-;   AF.
-;
-; Note:
-;   Entry labels CACD, CAD3, CAC8, and CACF are intentionally adjacent dispatch points; use the
-;   table rather than treating CACD as the only entry.
-; -----------------------------------------------------------------------------
+; L_MODE writers (LINE_MODE_TABLE). Only the bits in C change.
+
 PLOT_PIXEL_CROSSING:
-    AND (HL)
+    AND (HL)                            ; 2 AND: colour AND old, then as put
 
-LCACE:
-    XOR (HL)
+PLOT_PUT:
+    XOR (HL)                            ; 0 put: old XOR ((colour XOR old) AND C)
 
-LCACF:
-    AND C
+PLOT_XOR:
+    AND C                               ; 3 XOR: old XOR (colour AND C)
     XOR (HL)
     LD (HL),A
     RET
 
-LCAD3:
-    AND C
+PLOT_OR:
+    AND C                               ; 1 OR: old OR (colour AND C)
     OR (HL)
     LD (HL),A
     RET
 
-; BREL routine (VIDEO 07); sets pen position relative to current point.
-
 ; -----------------------------------------------------------------------------
-; VIDEO 07 - MOVE BEAM RELATIVELY
+; VIDEO 07 - MOVE BEAM RELATIVELY / VIDEO 06 - MOVE BEAM ABSOLUTELY
 ; -----------------------------------------------------------------------------
+; Moves the beam to (BC, DE), or by (BC, DE) for B_REL. With the pen down
+; (B_STAT not 00H) a line is drawn from the old position, both ends included.
 ;
-; Adds a relative graphics displacement to the current beam position and delegates to B_ABS.
-;
-; The relative x and y offsets in BC and DE are added to the stored beam coordinates by CC7AH. The
-; resulting absolute position then follows the same range checks, pen-state handling, and line
-; drawing as B_ABS.
-;
-; Entry:
-;   BC = signed/unsigned x displacement; DE = y displacement in the graphics calling convention.
-;
-; Exit:
-;   A = 00H on success or F9H when the new point is outside the display.
-;
-; Effects:
-;   Updates the beam position and may draw a line.
-;
-; Destroys:
-;   AF, BC, DE, HL.
+; Entry:   BC = X, DE = Y (signed offsets for B_REL).
+; Exit:    A = 00H, or F9H if the point is off the screen (beam unchanged).
 ; -----------------------------------------------------------------------------
 B_REL:
-    CALL ADD_BEAM_OFFSET
+    CALL ADD_BEAM_OFFSET                ; BC, DE += the beam position
 
-; BABS routine (VIDEO 06); sets pen position to absolute coordinates.
-
-; -----------------------------------------------------------------------------
-; VIDEO 06 - MOVE BEAM ABSOLUTELY
-; -----------------------------------------------------------------------------
-;
-; Moves the graphics beam to an absolute point, optionally drawing the line from the previous
-; point.
-;
-; B_ABS enters the paging guard, mirrors and validates x and y, and returns F9H if either
-; coordinate is outside the physical display. With the pen raised it only computes and stores the
-; new pixel address. With the pen lowered it saves the old logical point, prepares drawing state,
-; computes both endpoint addresses, chooses direction and major-axis line helpers, and plots the
-; points until the endpoint is reached.
-;
-; The line algorithm is an integer incremental method: the larger coordinate difference determines
-; the number of steps, while an error accumulator decides when to step along the smaller axis.
-; Eight dispatch cases cover the signs of x and y and which magnitude is greater.
-;
-; Entry:
-;   BC = new physical x; DE = new physical y.
-;
-; Exit:
-;   A = 00H on success; A = F9H for an off-screen point.
-;
-; Effects:
-;   Updates 0B78H-0B7BH beam coordinates and may write many video bytes.
-;
-; Destroys:
-;   AF, BC, DE, HL, alternate registers, and IY.
-;
-; Note:
-;   DRAW_LINE at CAEDH is the continuation used only when B_STAT at 0B74H indicates pen down.
-; -----------------------------------------------------------------------------
 B_ABS:
     CALL CALL_WITH_SYS_PAGED
-    LD A,F9H
+    LD A,F9H                            ; error F9H: off the screen
     CALL CHECK_X_COORDINATE
     CALL NC,CHECK_Y_COORDINATE
     RET C
     LD A,(B_STAT)
     OR A
-    JP Z,PIXEL_ADDRESS
+    JP Z,PIXEL_ADDRESS                  ; pen up: just move
 
 ; -----------------------------------------------------------------------------
 ; INTEGER LINE DRAWER
 ; -----------------------------------------------------------------------------
+; Bresenham's algorithm in pixel coordinates. The major axis is the one with
+; the larger difference. Each step takes the straight step along the major
+; axis (LINE_STEP_1) while the error term in HL' is negative, otherwise the
+; diagonal step (LINE_STEP_2). The direction picks the step routines:
 ;
-; Plots an inclusive line between the previous beam point and the newly selected point.
+;   LINE_DIAG_TABLE, index Y-up * 2 + X-left
+;   LINE_AXIS_TABLE, index Y-up * 4 + X-left * 2 + Y-major
 ;
-; The routine stores endpoint deltas, initializes the line-style and crossing state, compares
-; absolute x and y differences, and selects one of eight directional step routines from the tables
-; at CBDBH and CBE3H. The major-axis difference drives the loop; a signed accumulator determines
-; when the minor axis advances.
+; Each pixel takes the next bit of LINE_PATTERN (from L_STYLE): 1 draws INK,
+; 0 draws PAPER.
 ;
-; The active pixel mask and video byte address are advanced by V15 (CBA8H), then V8 (CABE/CAC0)
-; applies the current line style and color. This keeps the high-level graphics call independent of
-; the packed-pixel representation of the three display modes.
-;
-; Entry:
-;   Saved old and new logical coordinates in the video work area; prepared line state.
-;
-; Exit:
-;   The video RAM contains the line through the endpoint; beam state remains at the endpoint.
-;
-; Effects:
-;   Writes video RAM according to L_STYLE, L_MODE, INK, PAPER, and B_STAT.
-;
-; Destroys:
-;   AF, BC, DE, HL, alternate registers, IY, stack temporaries.
+; Entry:   from B_ABS; BC, DE = new physical point, already checked.
 ; -----------------------------------------------------------------------------
 DRAW_LINE:
     EXX
-    LD BC,(X_LOGICAL)
+    LD BC,(X_LOGICAL)                   ; the old point, in pixels
     LD DE,(Y_LOGICAL)
     PUSH BC
     PUSH DE
-    CALL PREPARE_GRAPHICS_POINT
+    CALL PREPARE_GRAPHICS_POINT         ; this set: HL, C = old address, mask;
+                                        ; DE = 0040H
     EXX
-    CALL PIXEL_ADDRESS
+    CALL PIXEL_ADDRESS                  ; the beam moves to the new point
     LD BC,(X_LOGICAL)
     LD DE,(Y_LOGICAL)
     XOR A
-    EX DE,HL
-    POP DE
-    CALL ABSOLUTE_DIFFERENCE
-    POP DE
+    EX DE,HL                            ; HL = new row
+    POP DE                              ; DE = old row
+    CALL ABSOLUTE_DIFFERENCE            ; HL = |dy|, A bit 0 = up
+    POP DE                              ; DE = old column
     PUSH HL
     LD H,B
-    LD L,C
-    CALL ABSOLUTE_DIFFERENCE
+    LD L,C                              ; HL = new column
+    CALL ABSOLUTE_DIFFERENCE            ; HL = |dx|, A = up * 2 + left
     PUSH HL
-    LD HL,CBDBH
-    CALL JUMP_TABLE_DISPATCH
-    LD (LINE_STEP_2),DE
-    POP HL
-    POP DE
+    LD HL,LINE_DIAG_TABLE
+    CALL JUMP_TABLE_DISPATCH            ; A doubles to up * 4 + left * 2
+    LD (LINE_STEP_2),DE                 ; the diagonal step
+    POP HL                              ; HL = |dx|
+    POP DE                              ; DE = |dy|
     PUSH HL
-    SBC HL,DE
+    SBC HL,DE                           ; Cy = Y major
     POP HL
-    JR C,LCB28
+    JR C,LINE_AXES_SET                  ; HL = minor, DE = major
     EX DE,HL
 
-LCB28:
+LINE_AXES_SET:
     LD B,H
-    LD C,L
-    PUSH DE
-    ADC A,00H
-    SBC HL,DE
+    LD C,L                              ; BC = minor
+    PUSH DE                             ; keep major, the step count
+    ADC A,00H                           ; + Y-major
+    SBC HL,DE                           ; HL = minor - major
     PUSH HL
     SRL D
     RR E
-    ADD HL,DE
+    ADD HL,DE                           ; error = minor - major / 2
     PUSH HL
-    LD HL,CBE3H
+    LD HL,LINE_AXIS_TABLE
     CALL JUMP_TABLE_DISPATCH
-    LD (LINE_STEP_1),DE
-    POP HL
-    POP DE
+    LD (LINE_STEP_1),DE                 ; the straight step
+    POP HL                              ; HL' = error, DE' = minor - major,
+    POP DE                              ; BC' = minor
     EXX
-    EX (SP),HL
-    LD A,H
-    LD B,L
+    EX (SP),HL                          ; HL = major, the old address on the stack
+    LD A,H                              ; A:B = major + 1 points (two-level
+    LD B,L                              ; count: B inner, A' outer)
     INC B
     INC A
     EX AF,AF'
-    POP HL
-    JR LCB50
+    POP HL                              ; HL = old address
+    JR LINE_PLOT                        ; plot the start point first
 
-LCB4C:
+LINE_NEXT_OUTER:
     EX AF,AF'
 
-LCB4D:
-
+LINE_NEXT:
     CALL STEP_LINE_PIXEL
 
-LCB50:
+LINE_PLOT:
     LD A,(LINE_PATTERN)
-    RLCA
+    RLCA                                ; Cy = next pattern bit
     LD (LINE_PATTERN),A
-    CALL LCABE
-    DJNZ LCB4D
+    CALL PLOT_LINE_PIXEL
+    DJNZ LINE_NEXT
     EX AF,AF'
     DEC A
-    JR NZ,LCB4C
+    JR NZ,LINE_NEXT_OUTER
     RET
 
-; -----------------------------------------------------------------------------
-; SIGNED DIFFERENCE HELPER
-; -----------------------------------------------------------------------------
-;
-; Returns the absolute difference of HL and DE while encoding the subtraction direction in A and
-; carry.
-;
-; If HL is at least DE, the difference remains in HL and the carry is clear. Otherwise the
-; operands are exchanged and negated so HL is still an absolute magnitude, while A/carry preserve
-; which original operand was larger. DRAW_LINE uses that compact sign information to choose a
-; directional stepping case.
-;
-; Entry:
-;   HL = minuend; DE = subtrahend.
-;
-; Exit:
-;   HL = absolute difference; A/carry describe the original ordering.
-;
-; Effects:
-;   No memory effects.
-;
-; Destroys:
-;   AF, DE; HL is replaced.
-; -----------------------------------------------------------------------------
+; HL = |HL - DE|; A = A * 2 + (1 if HL < DE). Enter with Cy clear.
+
 ABSOLUTE_DIFFERENCE:
     SBC HL,DE
-    JR NC,LCB6B
-    EX DE,HL
+    JR NC,ABS_DIFF_DONE
+    EX DE,HL                            ; negative: HL = 1 - (HL - DE) - 1
     LD HL,0001H
     SBC HL,DE
 
-LCB6B:
+ABS_DIFF_DONE:
     RLA
     RET
 
-; Active line-style pattern byte at 0B83H is rotated as each line pixel is emitted.
+; LINE_PATTERN = LINE_STYLE_TABLE entry L_STYLE - 1 (1-16).
 
-; -----------------------------------------------------------------------------
-; LOAD LINE STYLE
-; -----------------------------------------------------------------------------
-;
-; Loads the selected L_STYLE bit pattern into the current line-pattern work byte.
-;
-; L_STYLE is reduced to a 0..0FH index and used to select one byte from LINE_STYLE_TABLE at CB7FH.
-; The resulting pattern is written to 0B83H and rotated as each line pixel is emitted, producing
-; dotted, dashed, or solid lines.
-;
-; Entry:
-;   L_STYLE at 0B4CH, normally 1..14.
-;
-; Exit:
-;   0B83H contains the active pattern byte.
-;
-; Effects:
-;   Updates video work state.
-;
-; Destroys:
-;   AF, BC, HL.
-; -----------------------------------------------------------------------------
 LOAD_LINE_STYLE:
     LD A,(L_STYLE)
     DEC A
@@ -3017,54 +2497,13 @@ LOAD_LINE_STYLE:
     LD (LINE_PATTERN),A
     RET
 
-; Line style bit-pattern table; 16 bytes, 14 unique patterns.
+; Line patterns for L_STYLE 1-16, used from bit 7 down: 1 = ink, 0 = paper.
 
-; -----------------------------------------------------------------------------
-; LINE STYLE PATTERNS
-; -----------------------------------------------------------------------------
-;
-; Sixteen-byte table of line-pattern bitmaps used by the beam line drawer.
-;
-; The table contains the solid, dashed, dotted, and mixed line patterns selected by L_STYLE.
-; Fourteen patterns are distinct; the remaining entries repeat the solid pattern or provide
-; aliases. The active byte is rotated once per plotted point.
-;
-; Entry:
-;   Indexed by L_STYLE-1, masked to four bits.
-;
-; Exit:
-;   One 8-bit pattern per table entry.
-;
-; Effects:
-;   Read-only ROM data.
-;
-; Destroys:
-;   None.
-; -----------------------------------------------------------------------------
 LINE_STYLE_TABLE:
     DB FFH, AAH, CCH, EEH, 88H, DAH, E4H, F6H, FAH, FEH, FCH, F8H, F0H, EAH, FFH, FFH ; |................|
 
-; -----------------------------------------------------------------------------
-; SELECT PIXEL CROSSING MODE
-; -----------------------------------------------------------------------------
-;
-; Selects the pixel operation entry point corresponding to L_MODE and leaves it in IY.
-;
-; The low two bits of L_MODE index LINE_MODE_TABLE at CBA0H. The selected word is loaded into IY,
-; so the tight plot routines can dispatch with JP (IY) without branching on mode for every pixel.
-;
-; Entry:
-;   L_MODE at 0B4EH.
-;
-; Exit:
-;   IY = crossing-mode implementation address.
-;
-; Effects:
-;   Updates IY only.
-;
-; Destroys:
-;   AF, BC, DE, HL.
-; -----------------------------------------------------------------------------
+; IY = the writer for L_MODE (bits 1-0). DE is preserved.
+
 SELECT_CROSSING_MODE:
     PUSH DE
     LD A,(L_MODE)
@@ -3076,299 +2515,205 @@ SELECT_CROSSING_MODE:
     POP DE
     RET
 
-; Line crossing mode dispatch table selected by L_MODE.
-
-; -----------------------------------------------------------------------------
-; PIXEL OPERATION DISPATCH TABLE
-; -----------------------------------------------------------------------------
-;
-; Word table mapping the four L_MODE values to the overwrite, XOR, AND, and OR pixel writers.
-;
-; Each two-byte entry points into the adjacent bit-manipulation implementations at CACDH onward.
-; The table is consumed by SELECT_CROSSING_MODE, and its compact dispatch is shared by character
-; output and graphics.
-;
-; Entry:
-;   Index 0..3 from L_MODE.
-;
-; Exit:
-;   A pixel-writer address for IY.
-;
-; Effects:
-;   Read-only ROM data.
-;
-; Destroys:
-;   None.
-; -----------------------------------------------------------------------------
 LINE_MODE_TABLE:
-    DW LCACE                              ; L_MODE 0 put
-    DW LCAD3                              ; L_MODE 1 OR
+    DW PLOT_PUT                           ; L_MODE 0 put
+    DW PLOT_OR                            ; L_MODE 1 OR
     DW PLOT_PIXEL_CROSSING                ; L_MODE 2 AND
-    DW LCACF                              ; L_MODE 3 XOR
+    DW PLOT_XOR                           ; L_MODE 3 XOR
 
 ; -----------------------------------------------------------------------------
 ; LINE PIXEL STEPPER
 ; -----------------------------------------------------------------------------
-;
-; Uses the signed error accumulator and direction tables to advance one line pixel.
-;
-; The routine examines the accumulator in HL', chooses one of the directional entries selected by
-; DRAW_LINE, adjusts the video-byte address in HL and pixel mask in C, and returns the updated
-; state. The entry points below the dispatcher cover left/right and up/down combinations,
-; including byte-boundary crossings.
-;
-; Entry:
-;   HL' = error accumulator; BC'/DE' = positive and negative increments; HL = video address; DE =
-;   0040H row stride; C = pixel mask.
-;
-; Exit:
-;   HL and C identify the next pixel; the accumulator is updated.
-;
-; Effects:
-;   No memory effects itself; caller then plots the selected pixel.
-;
-; Destroys:
-;   AF, BC, DE, HL and alternates according to selected path.
+; Advances the error term and calls the straight or diagonal step. The steps
+; move HL (video address) and C (pixel mask) by one pixel; DE = 0040H. Up is
+; towards the top of the screen (lower addresses). VID_CHOUT_AT also uses
+; LINE_RIGHT, LINE_LEFT and LINE_DOWN.
 ; -----------------------------------------------------------------------------
 STEP_LINE_PIXEL:
     EXX
-    BIT 7,H
-    JR Z,LCBB5
-    ADD HL,BC
+    BIT 7,H                             ; error negative?
+    JR Z,LINE_STEP_DIAGONAL
+    ADD HL,BC                           ; error += minor
     EXX
-    LD IX,(LINE_STEP_1)
+    LD IX,(LINE_STEP_1)                 ; straight step
     JP (IX)
 
-LCBB5:
-    ADD HL,DE
+LINE_STEP_DIAGONAL:
+    ADD HL,DE                           ; error += minor - major
     EXX
-    LD IX,(LINE_STEP_2)
+    LD IX,(LINE_STEP_2)                 ; diagonal step
     JP (IX)
-    DB B7H, EDH, 52H                                                                  ; |..R|
 
-LCBC0:
-    RLC C
+LINE_UP_LEFT:
+    OR A
+    SBC HL,DE                           ; up a row, then left
+
+LINE_LEFT:
+    RLC C                               ; mask one pixel left
     RET NC
-    DEC L
+    DEC L                               ; into the previous byte
     RET
-    DB CBH, 09H, 30H, 01H, 2CH, B7H, EDH, 52H, C9H, CBH, 01H, 30H, 01H, 2DH           ; |..0.,..R...0.-|
 
-LCBD3:
-    ADD HL,DE
-    RET
-    DB 19H                                                                            ; |.|
-
-LCBD6:
-    RRC C
-    RET NC
+LINE_RIGHT_UP:
+    RRC C                               ; right, then up
+    JR NC,LINE_UP
     INC L
+
+LINE_UP:
+    OR A
+    SBC HL,DE                           ; up a row
     RET
 
-; Helper table used by BABS/BREL line drawing.
-    DB D5H, CBH                                                                       ; |..|
-    ADC A,CBH
-    PUSH BC
-    RES 7,L
-    SET 2,(HL)
-    SET 2,E
-    SET 0,B
-    SET 2,E
-    SET 2,(HL)
-    SET 1,D
-    SET 0,B
-    SET 1,D
-    DB CBH                                                                            ; |.|
+LINE_LEFT_DOWN:
+    RLC C                               ; left, then down
+    JR NC,LINE_DOWN
+    DEC L
 
-; BON routine (VIDEO 08); pen down (starts drawing).
-; B_STAT: zero means the beam is raised; nonzero means subsequent beam movement draws.
+LINE_DOWN:
+    ADD HL,DE                           ; down a row
+    RET
+
+LINE_DOWN_RIGHT:
+    ADD HL,DE                           ; down, then right
+
+LINE_RIGHT:
+    RRC C                               ; mask one pixel right
+    RET NC
+    INC L                               ; into the next byte
+    RET
+
+LINE_DIAG_TABLE:
+    DW LINE_DOWN_RIGHT                    ; down, right
+    DW LINE_LEFT_DOWN                     ; down, left
+    DW LINE_RIGHT_UP                      ; up, right
+    DW LINE_UP_LEFT                       ; up, left
+
+LINE_AXIS_TABLE:
+    DW LINE_RIGHT                         ; down, right, X major
+    DW LINE_DOWN                          ; down, right, Y major
+    DW LINE_LEFT                          ; down, left, X major
+    DW LINE_DOWN                          ; down, left, Y major
+    DW LINE_RIGHT                         ; up, right, X major
+    DW LINE_UP                            ; up, right, Y major
+    DW LINE_LEFT                          ; up, left, X major
+    DW LINE_UP                            ; up, left, Y major
 
 ; -----------------------------------------------------------------------------
-; VIDEO 08 - LOWER BEAM
+; VIDEO 08 - LOWER BEAM / VIDEO 09 - RAISE BEAM
 ; -----------------------------------------------------------------------------
-;
-; Turns the graphics pen on and plots the current point using INK and the selected crossing mode.
-;
-; B_ON enters the video paging guard, prepares drawing state, calls the INK pixel writer, and
-; records B_STAT=FFH. Subsequent B_ABS or B_REL movements draw lines from the current point.
-;
-; Entry:
-;   No public arguments.
-;
-; Exit:
-;   A = 00H.
-;
-; Effects:
-;   May modify the current pixel and sets pen-down state at 0B74H.
-;
-; Destroys:
-;   AF, BC, DE, HL, IY.
+; B_ON plots the current point in INK and sets B_STAT = FFH, so beam moves
+; draw. B_OFF sets B_STAT = 00H. Both return A = 00H.
 ; -----------------------------------------------------------------------------
 B_ON:
     CALL CALL_WITH_SYS_PAGED
-    CALL LC9D9
-    CALL LCAC0
+    CALL PREPARE_INK
+    CALL PLOT_INK                       ; draw the current point
     LD A,FFH
     DB 26H                                ; = LD H,AFH when run from here, hiding the entry below
 
-; BOFF routine (VIDEO 09); pen up (stops drawing).
-
-; -----------------------------------------------------------------------------
-; VIDEO 09 - RAISE BEAM
-; -----------------------------------------------------------------------------
-;
-; Turns the graphics pen off so future beam moves do not draw.
-;
-; B_OFF writes zero to B_STAT at 0B74H and returns a zero status. CLS uses it while homing the
-; beam; the routine deliberately does not erase or move the current point.
-;
-; Entry:
-;   No public arguments.
-;
-; Exit:
-;   A = 00H.
-;
-; Effects:
-;   Updates pen state only.
-;
-; Destroys:
-;   AF.
-; -----------------------------------------------------------------------------
 B_OFF:
     XOR A
     LD (B_STAT),A
     XOR A
     RET
 
-LCC05:
+; Colour patterns. PAPER_BYTE returns A = B = PAPER as a byte pattern,
+; INK_BYTE A = INK, COLOR_BYTE A = colour A. Destroys HL.
+
+PAPER_BYTE:
     LD A,(PAPER)
-    CALL LCC10
+    CALL COLOR_BYTE
     LD B,A
     RET
 
-LCC0D:
+INK_BYTE:
     LD A,(INK)
 
-LCC10:
-    LD HL,(COLOR_MODE)
+COLOR_BYTE:
+    LD HL,(COLOR_MODE)                  ; L = mode
     SRL L
-    JR C,LCC20
+    JR C,COLOR_BYTE_4                   ; mode 1
     SRL L
-    JR C,LCC31
-    AND 01H
+    JR C,COLOR_BYTE_16                  ; mode 2
+    AND 01H                             ; 2 colours: 00H or FFH
     RRA
     SBC A,A
     RET
 
-LCC20:
-    AND 03H
+COLOR_BYTE_4:
+    AND 03H                             ; 4 colours: bit 0 in bits 7-4,
+    RRA                                 ; bit 1 in bits 3-0
+    RL L                                ; L bit 0 = colour bit 0
     RRA
-    RL L
-    RRA
-    SBC A,A
+    SBC A,A                             ; A = FFH if colour bit 1
     RR L
-    RRA
-    SRA A
+    RRA                                 ; bit 7 = colour bit 0
+    SRA A                               ; copy it to bits 6-4
     SRA A
     SRA A
     RET
 
-LCC31:
-    AND 0FH
-    LD H,04H
+COLOR_BYTE_16:
+    AND 0FH                             ; 16 colours: bit n in bits
+    LD H,04H                            ; 2n+1 and 2n
 
-LCC35:
-    RRA
+COLOR_BYTE_16_BIT:
+    RRA                                 ; next colour bit, from bit 0
     RR L
-    SRA L
+    SRA L                               ; doubled into the top two bits
     DEC H
-    JR NZ,LCC35
+    JR NZ,COLOR_BYTE_16_BIT
     LD A,L
     RET
 
 ; -----------------------------------------------------------------------------
-; READ LAST PIXEL COLOR
+; READ PIXEL COLOUR
 ; -----------------------------------------------------------------------------
-;
-; Decodes the selected pixel from video RAM according to the current graphics mode.
-;
-; The routine uses the address and mask left by PIXEL_ADDRESS, extracts the pixel bits from the
-; selected video byte, and expands the mode-specific bit encoding into the TVC color code returned
-; to the caller. It is the read-side companion to the plot helpers.
-;
-; Entry:
-;   Video work variables 0B73H, 0B75H, and 0B76H-0B77H identify the last pixel.
-;
-; Exit:
-;   A = decoded pixel color code.
-;
-; Effects:
-;   Reads video RAM; no writes.
-;
-; Destroys:
-;   AF, BC, DE, HL.
+; Exit:    A = colour number of the pixel at the beam.
 ; -----------------------------------------------------------------------------
 READ_PIXEL_COLOR:
-    CALL GET_PIXEL_WORK_STATE
+    CALL GET_PIXEL_WORK_STATE           ; C = mask, HL = address
     LD A,(COLOR_MODE)
     LD B,A
     LD A,C
-    AND (HL)
+    AND (HL)                            ; the pixel's bits
     SRL B
-    JR C,LCC56
+    JR C,READ_PIXEL_4
     SRL B
-    JR C,LCC65
-    ADD A,FFH
+    JR C,READ_PIXEL_16
+    ADD A,FFH                           ; 2 colours: Cy if the bit is set
     RLA
     AND 01H
     RET
 
-LCC56:
-    ADD A,F0H
-    RL C
+READ_PIXEL_4:
+    ADD A,F0H                           ; Cy = colour bit 0 (high nibble)
+    RL C                                ; keep it in C
     AND 0FH
-    ADD A,FFH
+    ADD A,FFH                           ; Cy = colour bit 1 (low nibble)
     RLA
     RR C
     RLA
     AND 03H
     RET
 
-LCC65:
-    ADD A,C0H
+READ_PIXEL_16:
+    ADD A,C0H                           ; Cy = colour bit 3 (bits 7-6)
     RLA
     AND 7FH
-    ADD A,E0H
+    ADD A,E0H                           ; bit 2 (bits 5-4)
     RLA
     AND 3FH
-    ADD A,F0H
+    ADD A,F0H                           ; bit 1 (bits 3-2)
     RLA
     AND 1FH
-    ADD A,F8H
+    ADD A,F8H                           ; bit 0 (bits 1-0)
     RLA
     AND 0FH
     RET
 
-; -----------------------------------------------------------------------------
-; ADD RELATIVE BEAM COORDINATES
-; -----------------------------------------------------------------------------
-;
-; Adds a relative x/y displacement to the stored physical beam coordinates.
-;
-; BC is added to the x coordinate at 0B7CH and DE to the y coordinate at 0B7EH. The result is
-; returned in BC/DE and is immediately suitable for B_ABS range checks.
-;
-; Entry:
-;   BC = x displacement; DE = y displacement; stored beam coordinates in 0B7CH/0B7EH.
-;
-; Exit:
-;   BC/DE = resulting absolute coordinates.
-;
-; Effects:
-;   No direct hardware effects; reads the beam work area.
-;
-; Destroys:
-;   AF, HL, BC, DE replaced.
-; -----------------------------------------------------------------------------
+; BC += X_PHYSICAL, DE += Y_PHYSICAL.
+
 ADD_BEAM_OFFSET:
     LD HL,(X_PHYSICAL)
     ADD HL,BC
@@ -3382,144 +2727,95 @@ ADD_BEAM_OFFSET:
 ; -----------------------------------------------------------------------------
 ; VIDEO 02 - BLOCK OUTPUT
 ; -----------------------------------------------------------------------------
+; Calls VID_CHOUT for each byte. There is no HI_MEM check and errors are not
+; checked; A is the status of the last character.
 ;
-; Sends a counted character block to the video character-output routine.
-;
-; The source pointer is moved to HL and each byte is passed through VID_CHOUT. CPI advances the
-; source and decrements the count while preserving the block loop. The generic OS block-output
-; wrapper normally supplies bounds checking, although the reference notes a ROM defect in that
-; generic path.
-;
-; Entry:
-;   DE = source address; BC = byte count.
-;
-; Exit:
-;   A = status from character output after the last byte.
-;
-; Effects:
-;   Writes screen/editor state through VID_CHOUT.
-;
-; Destroys:
-;   AF, BC, DE, HL.
+; Entry:   DE -> text; BC = length.
 ; -----------------------------------------------------------------------------
 VID_BKOUT:
     EX DE,HL
 
-LCC87:
+VID_BKOUT_NEXT:
     PUSH HL
     PUSH BC
     LD C,(HL)
     CALL VID_CHOUT
     POP BC
     POP HL
-    CPI
+    CPI                                 ; HL++, BC--
     RET PO
-    JR LCC87
+    JR VID_BKOUT_NEXT
 
 ; -----------------------------------------------------------------------------
 ; VIDEO 01 - CHARACTER OUTPUT
 ; -----------------------------------------------------------------------------
+; Draws character C at the beam and moves the beam one cell right. If the cell
+; does not fit on the line, a CR and LF come first. 0DH (CR) moves to X = 0;
+; 0AH (LF) moves down one line if another line fits below, otherwise does
+; nothing. Codes 00H-1FH other than these, and E0H-FFH, are ignored. 20H-7FH
+; come from FIXED_CHARACTER_GLYPHS, 80H-DFH from the RAM glyphs at 0740H
+; (CH_DEF). The editor scrolls; this routine never does.
 ;
-; Outputs one character, handling control characters and dispatching printable glyphs to the
-; mode-specific renderer.
-;
-; Control codes below 20H are recognized as line feed (0AH) and carriage return (0DH); other
-; control values are ignored with success. Codes 20H..DFH are rendered, while E0H and above are
-; rejected. The routine validates and normalizes the beam position, selects the glyph matrix,
-; plots ten character rows, and advances by one character cell.
-;
-; A printable character is rendered using the fixed matrix at C474H or the programmable matrix at
-; 0740H, depending on bit 7 of the code. After output it checks the next x position and wraps or
-; returns an error as appropriate. The D2BH/D31H tails implement carriage return and line feed.
-;
-; Entry:
-;   C = character code.
-;
-; Exit:
-;   A = 00H on success, or the relevant off-screen/error status.
-;
-; Effects:
-;   Writes video RAM and updates beam coordinates.
-;
-; Destroys:
-;   AF, BC, DE, HL, alternate registers, IY.
+; Entry:   C = character.
+; Exit:    A = 00H.
 ; -----------------------------------------------------------------------------
 VID_CHOUT:
     CALL CALL_WITH_SYS_PAGED
     LD A,C
     CP 20H
-    JR NC,LCCA8
+    JR NC,VID_CHOUT_GLYPH
     CP 0AH
-    JP Z,LCD31
+    JP Z,VID_LINE_FEED
     CP 0DH
-    JP Z,LCD2B
-    XOR A
+    JP Z,VID_CARRIAGE_RETURN
+    XOR A                               ; other control codes: ignored
     RET
 
-LCCA8:
+VID_CHOUT_GLYPH:
     CP E0H
     LD A,00H
-    RET NC
-    EXX
-    LD DE,FFDCH
+    RET NC                              ; E0H-FFH: ignored
+    EXX                                 ; keep the character in C'
+    LD DE,FFDCH                         ; DE = -36: the cell's bottom row
     LD A,(COLOR_MODE)
     LD B,A
     LD A,01H
     INC B
 
-LCCB8:
-    ADD A,A
-    DJNZ LCCB8
-    LD (0B82H),A
+VID_PIXEL_WIDTH:
+    ADD A,A                             ; A = 2 ^ (mode + 1), units per pixel
+    DJNZ VID_PIXEL_WIDTH
+    LD (CHAR_PIXEL_W),A
     LD L,A
     ADD A,A
     ADD A,L
     ADD A,A
     ADD A,L
-    LD C,A
+    LD C,A                              ; BC = 7 * width: the cell's last column
     XOR A
     CALL ADD_BEAM_OFFSET
     CALL CHECK_Y_COORDINATE
-    RET C
+    RET C                               ; below the bottom: draw nothing
     CALL CHECK_X_COORDINATE
-    JR NC,VID_CHOUT_AT
-    CALL LCD2B
-    CALL LCD31
+    JR NC,VID_CHOUT_AT                  ; fits on this line
+    CALL VID_CARRIAGE_RETURN            ; else start a new line first
+    CALL VID_LINE_FEED
 
 ; -----------------------------------------------------------------------------
-; RENDER GLYPH AT PIXEL POSITION
+; RENDER GLYPH AT THE BEAM
 ; -----------------------------------------------------------------------------
-;
-; Renders the character in C at the supplied pixel coordinates without the public coordinate
-; checks.
-;
-; The code selects the fixed or programmable ten-byte glyph matrix, rotates each glyph row into
-; the current mode's packed-pixel representation, and invokes the pixel selector for each of eight
-; points per row. Ten raster rows are processed. This is the low-level engine used by VID_CHOUT
-; after it has validated the requested position.
-;
-; Entry:
-;   C = character code; BC/DE = physical pixel position; current video drawing attributes are
-;   installed.
-;
-; Exit:
-;   Video RAM contains the glyph; beam is advanced by one character cell.
-;
-; Effects:
-;   Writes video RAM and updates beam work variables.
-;
-; Destroys:
-;   AF, BC, DE, HL, alternate registers, IY.
+; Draws the 8 x 10 glyph of C' at VID_ADDR, row by row, most significant bit
+; leftmost, then advances the beam one cell.
 ; -----------------------------------------------------------------------------
 VID_CHOUT_AT:
-    CALL LC9D0
-    EXX
-    LD DE,C474H
+    CALL PREPARE_COLOURS                ; HL, C = cell address, mask; DE = 0040H
+    EXX                                 ; this set: C = character
+    LD DE,FIXED_CHARACTER_GLYPHS-140H   ; codes 20H-7FH ...
     BIT 7,C
-    JR Z,LCCE5
-    LD DE,0740H
+    JR Z,VID_GLYPH_ADDRESS
+    LD DE,0740H                         ; ... or 80H-DFH from RAM
 
-LCCE5:
+VID_GLYPH_ADDRESS:
     RES 7,C
     LD B,00H
     LD H,B
@@ -3527,417 +2823,440 @@ LCCE5:
     ADD HL,HL
     ADD HL,HL
     ADD HL,BC
-    ADD HL,HL
-    ADD HL,DE
-    LD B,0AH
+    ADD HL,HL                           ; HL = 10 * (code AND 7FH)
+    ADD HL,DE                           ; -> the glyph
+    LD B,0AH                            ; ten rows
     LD A,(V_FLAG)
-    LD E,A
+    LD E,A                              ; E = V_FLAG
     DEC HL
 
-LCCF7:
+VID_GLYPH_ROW:
     INC HL
-    LD C,(HL)
+    LD C,(HL)                           ; C = glyph row
     EXX
-    LD B,08H
-    JR LCD01
+    LD B,08H                            ; eight pixels
+    JR VID_GLYPH_PIXEL
 
-LCCFE:
-    CALL LCBD6
+VID_GLYPH_NEXT_PIXEL:
+    CALL LINE_RIGHT
 
-LCD01:
+VID_GLYPH_PIXEL:
     EXX
-    RL C
-    LD A,E
+    RL C                                ; Cy = next glyph bit
+    LD A,E                              ; A = V_FLAG
     EXX
     CALL PLOT_CHARACTER_PIXEL
-    DJNZ LCCFE
-    CALL LCBD3
-    LD B,07H
+    DJNZ VID_GLYPH_NEXT_PIXEL
+    CALL LINE_DOWN                      ; next row,
+    LD B,07H                            ; back to the first column
 
-LCD10:
-    CALL LCBC0
-    DJNZ LCD10
+VID_GLYPH_BACK:
+    CALL LINE_LEFT
+    DJNZ VID_GLYPH_BACK
     EXX
-    DJNZ LCCF7
-    LD A,(0B82H)
+    DJNZ VID_GLYPH_ROW
+    LD A,(CHAR_PIXEL_W)                 ; X += 8 * pixel width
     ADD A,A
     ADD A,A
     ADD A,A
     LD C,A
-    CALL ADD_BEAM_OFFSET
+    CALL ADD_BEAM_OFFSET                ; (only the new X is used)
     CALL CHECK_X_COORDINATE
-    JR NC,LCD2E
-    LD BC,LCD31
+    JR NC,VID_SET_X                     ; still on the screen
+    LD BC,VID_LINE_FEED                 ; past the right edge: CR, then LF
     PUSH BC
 
-LCD2B:
-    LD BC,0000H
+VID_CARRIAGE_RETURN:
+    LD BC,0000H                         ; X = 0
 
-LCD2E:
-    JP LCA69
+VID_SET_X:
+    JP SET_BEAM_X
 
-LCD31:
-    LD DE,FFB4H
-    CALL ADD_BEAM_OFFSET
+VID_LINE_FEED:
+    LD DE,FFB4H                         ; would the line after the next one
+    CALL ADD_BEAM_OFFSET                ; still fit (Y - 76 >= 0)?
     XOR A
     CALL CHECK_Y_COORDINATE
-    RET C
-    LD DE,FFD8H
+    RET C                               ; no: stay
+    LD DE,FFD8H                         ; Y -= 40
     LD BC,0000H
     CALL ADD_BEAM_OFFSET
     JP PIXEL_ADDRESS
 
-; FILL routine (VIDEO 0A); fills closed shapes with color.
-
 ; -----------------------------------------------------------------------------
 ; VIDEO 10 - FLOOD FILL
 ; -----------------------------------------------------------------------------
+; Fills, with INK, the area of the beam pixel's colour (the target) that
+; contains the beam: a scan-line fill. Each filled run is pushed on the Z80
+; stack as a 6-byte record:
 ;
-; Fills a connected graphics region using the current color and crossing rules.
+;   address  video address of the run's first byte (pushed first)
+;   mask     C = PIXEL_MASK of the first pixel; B = bytes to the right edge
+;   width    pixel count in bits 13-0; bits 15-14 are flags (popped first)
 ;
-; PAINT prepares the pixel address and crossing implementation, samples the boundary/test color,
-; and performs a scanline-style flood fill. It maintains a stack of pending spans in the caller's
-; stack area, checks the high-memory boundary before growing that stack, and processes neighboring
-; spans until no work remains.
+; A zero word under the first record ends the work. Each popped run is
+; scanned in the row below and the row above (PAINT_DIR' = 2, 1) for target
+; pixels, which are filled and pushed in turn. The flags are set from whether
+; a run grew left of its scan start and from the pass it was found in;
+; PAINT_SCAN_PASS uses them to skip rescanning a run's source row. (The exact
+; rule is only described by the code below.)
 ;
-; The fill operates on packed video bytes and masks, so it handles the three modes through the
-; same crossing-mode and pixel helpers. If the stack would cross the configured low-memory
-; boundary, the routine stops safely rather than corrupting the system workspace.
+; Pixels are written with the XOR writer and INK_PATTERN = INK XOR target, so
+; a target pixel becomes INK under any L_MODE. The stack may grow down to
+; PAINT_STACK_MIN. When it gets within 22 bytes of that, PAINT_COMPACT drops
+; the records whose rows above and below hold no target pixels any more; if
+; none can be dropped, the run waiting to be pushed is abandoned (that part of
+; the area may stay unfilled).
 ;
-; Entry:
-;   Current beam point and video drawing attributes.
-;
-; Exit:
-;   A = 00H on completion; the region is filled or the operation terminates at the memory guard.
-;
-; Effects:
-;   Writes a potentially large region of video RAM and temporarily uses SP.
-;
-; Destroys:
-;   AF, BC, DE, HL, IY, stack contents below the saved SP.
-;
-; Note:
-;   The algorithm is intentionally iterative; the explicit span stack avoids recursive calls in
-;   ROM.
+; Exit:    A = 00H (also when INK already equals the target colour).
 ; -----------------------------------------------------------------------------
 PAINT:
     CALL CALL_WITH_SYS_PAGED
-    LD (PAINT_SP_SAVE),SP
-    LD IY,LCACF
+    LD (PAINT_SP_SAVE),SP               ; base of the record stack
+    LD IY,PLOT_XOR                      ; target XOR (INK XOR target) = INK
     CALL READ_PIXEL_COLOR
-    CALL LCC10
-    LD (0B8AH),A
+    CALL COLOR_BYTE
+    LD (PAINT_TARGET),A                 ; the target as a byte pattern
     LD E,A
-    CALL LCC0D
+    CALL INK_BYTE
     XOR E
     LD HL,0000H
-    RET Z
-    LD (0B91H),HL
-    PUSH HL
+    RET Z                               ; INK = target: nothing to do
+    LD (PAINT_RECORD),HL                ; no parent run
+    PUSH HL                             ; end-of-work marker
     LD HL,(X_PHYSICAL)
     LD B,04H
-    CALL SHIFT_HL_RIGHT
+    CALL SHIFT_HL_RIGHT                 ; byte column
     PUSH HL
-    CALL LC9DF
+    CALL SET_INK_PATTERN                ; INK_PATTERN = INK XOR target;
+                                        ; C = mask, HL = beam address
     LD A,40H
     POP DE
     SUB E
-    LD B,A
-    LD (0B8DH),HL
-    LD (0B8BH),BC
-    LD B,01H
-    JR LCDA3
+    LD B,A                              ; B = bytes to the right edge
+    LD (PAINT_ADDR),HL
+    LD (PAINT_SPAN),BC
+    LD B,01H                            ; one pass: the beam row itself
+    JR PAINT_SCAN_ROW
 
-LCD85:
-    POP HL
+; Take the next run record: scan the row below it, then the row above.
+
+PAINT_NEXT_RECORD:
+    POP HL                              ; width word, or the 0000H marker
     LD A,H
     OR L
-    RET Z
+    RET Z                               ; done (A = 00H)
     POP BC
-    LD (0B91H),HL
-    LD (0B8BH),BC
-    POP HL
+    LD (PAINT_RECORD),HL
+    LD (PAINT_SPAN),BC
+    POP HL                              ; address
     LD DE,0040H
-    ADD HL,DE
-    LD (0B8DH),HL
-    LD B,02H
+    ADD HL,DE                           ; the row below
+    LD (PAINT_ADDR),HL
+    LD B,02H                            ; two passes: below, then above
     LD DE,BC00H
-    SBC HL,DE
-    JP NC,LCE63
+    SBC HL,DE                           ; below the picture?
+    JP NC,PAINT_NEXT_DIR
 
-LCDA3:
-    EXX
+PAINT_SCAN_ROW:
+    EXX                                 ; B' = passes left (PAINT_DIR')
 
-LCDA4:
-    CALL LCE92
-    JR C,LCD85
-    LD HL,(0B91H)
+PAINT_SCAN_PASS:
+    CALL PAINT_COMPACT                  ; room for another record?
+    JR C,PAINT_NEXT_RECORD              ; no: drop this run
+    LD HL,(PAINT_RECORD)
     LD A,H
     RES 7,H
     RES 6,H
-    LD (0B8FH),HL
+    LD (PAINT_WIDTH),HL                 ; the parent run's width
     EX DE,HL
-    BIT 6,A
-    JR Z,LCDC2
-    RLCA
+    BIT 6,A                             ; flag bit 14 set: compare flag
+    JR Z,PAINT_SCAN_START               ; bit 15 with this pass and maybe
+    RLCA                                ; skip the row
     EXX
     XOR B
     EXX
     AND 01H
-    JP NZ,LCE62
+    JP NZ,PAINT_NEXT_PASS
 
-LCDC2:
-    LD HL,(0B8DH)
-    LD BC,(0B8BH)
-    LD A,(0B8AH)
+PAINT_SCAN_START:
+    LD HL,(PAINT_ADDR)
+    LD BC,(PAINT_SPAN)
+    LD A,(PAINT_TARGET)
     XOR (HL)
-    AND C
-    JR NZ,LCE2F
-    LD A,40H
-    SUB B
+    AND C                               ; is the start pixel the target?
+    JR NZ,PAINT_FIND_RUN                ; no: look further right
+    LD A,40H                            ; yes: fill leftwards first.
+    SUB B                               ; B = bytes to the left edge
     INC A
     LD B,A
-    LD DE,0000H
-    JR LCDE5
+    LD DE,0000H                         ; DE = pixels filled to the left
+    JR PAINT_LEFT_STEP
 
-LCDDA:
-    LD A,(0B8AH)
+PAINT_LEFT:
+    LD A,(PAINT_TARGET)
     XOR (HL)
     AND C
-    JR NZ,LCDEC
-    CALL LCAC0
+    JR NZ,PAINT_LEFT_END                ; not the target: run starts after it
+    CALL PLOT_INK                       ; fill it
     INC DE
 
-LCDE5:
-    RLC C
-    JR NC,LCDDA
+PAINT_LEFT_STEP:
+    RLC C                               ; one pixel left
+    JR NC,PAINT_LEFT
     DEC L
-    DJNZ LCDDA
+    DJNZ PAINT_LEFT                     ; until the left edge
 
-LCDEC:
-    LD A,40H
+PAINT_LEFT_END:
+    LD A,40H                            ; B = bytes to the right edge again
     SUB B
     INC A
     LD B,A
-    RRC C
-    JR NC,LCDF7
+    RRC C                               ; back to the run's first pixel
+    JR NC,PAINT_RUN_LEFT_DONE
     INC L
     DEC B
 
-LCDF7:
-    PUSH HL
-    PUSH BC
-    PUSH DE
-    LD HL,(0B8DH)
-    LD BC,(0B8BH)
-    CALL LCE7A
+PAINT_RUN_LEFT_DONE:
+    PUSH HL                             ; record: address,
+    PUSH BC                             ; mask and byte count,
+    PUSH DE                             ; pixels so far
+    LD HL,(PAINT_ADDR)
+    LD BC,(PAINT_SPAN)
+    CALL PAINT_FILL_RIGHT               ; fill rightwards from the start
     EX (SP),HL
     LD A,H
     OR L
-    JR Z,LCE0B
-    SET 7,H
+    JR Z,PAINT_RUN_WIDTH
+    SET 7,H                             ; flag: it grew left of the start
 
-LCE0B:
-    ADD HL,DE
+PAINT_RUN_WIDTH:
+    ADD HL,DE                           ; width = left + right
     EX (SP),HL
 
-LCE0D:
+; Subtract the run from the parent's remaining width and set the record's
+; flags (bit 15 toggled, or bits 15-14 set by pass), then continue with the
+; rest of the parent.
+
+PAINT_RUN_CHECK:
     PUSH HL
-    LD HL,(0B8FH)
+    LD HL,(PAINT_WIDTH)
     OR A
-    SBC HL,DE
+    SBC HL,DE                           ; parent width left - pixels filled
     POP DE
     EX (SP),HL
     PUSH AF
     LD A,80H
     BIT 7,H
-    JR NZ,LCE26
-    JR C,LCE28
+    JR NZ,PAINT_FLAG_SET
+    JR C,PAINT_FLAG_DONE
     EXX
     RRC B
     RLC B
     EXX
     RRA
 
-LCE26:
+PAINT_FLAG_SET:
     XOR H
     LD H,A
 
-LCE28:
+PAINT_FLAG_DONE:
     POP AF
     EX (SP),HL
-    JR C,LCE62
-    JR Z,LCE62
+    JR C,PAINT_NEXT_PASS                ; parent width used up
+    JR Z,PAINT_NEXT_PASS
     EX DE,HL
 
-LCE2F:
-    CALL LCE92
-    JP C,LCD85
+; Skip non-target pixels to the next run under the parent.
+
+PAINT_FIND_RUN:
+    CALL PAINT_COMPACT
+    JP C,PAINT_NEXT_RECORD
     LD A,E
     OR A
-    JR NZ,LCE3A
+    JR NZ,PAINT_FIND_LOOP
     DEC D
 
-LCE3A:
-    LD A,(0B8AH)
+PAINT_FIND_LOOP:
+    LD A,(PAINT_TARGET)
     XOR (HL)
     AND C
-    JR Z,LCE4C
+    JR Z,PAINT_FOUND_RUN                ; a target pixel: a new run
     DEC E
-    JR Z,LCE5E
+    JR Z,PAINT_FIND_COUNT
 
-LCE44:
-    RRC C
-    JR NC,LCE3A
+PAINT_FIND_STEP:
+    RRC C                               ; one pixel right
+    JR NC,PAINT_FIND_LOOP
     INC L
     DEC B
-    JR LCE3A
+    JR PAINT_FIND_LOOP
 
-LCE4C:
+PAINT_FOUND_RUN:
     LD A,E
     OR A
-    JR NZ,LCE51
+    JR NZ,PAINT_FOUND_COUNT
     INC D
 
-LCE51:
-    LD (0B8FH),DE
-    PUSH HL
+PAINT_FOUND_COUNT:
+    LD (PAINT_WIDTH),DE                 ; parent width left
+    PUSH HL                             ; record: address,
     EX (SP),HL
-    PUSH BC
-    CALL LCE7A
-    PUSH DE
-    JR LCE0D
+    PUSH BC                             ; mask and byte count,
+    CALL PAINT_FILL_RIGHT
+    PUSH DE                             ; width
+    JR PAINT_RUN_CHECK
 
-LCE5E:
+PAINT_FIND_COUNT:
     DEC D
-    JP P,LCE44
+    JP P,PAINT_FIND_STEP                ; parent width left: keep looking
 
-LCE62:
+; This row is done: the next pass (the row above), or the next record.
+
+PAINT_NEXT_PASS:
     EXX
 
-LCE63:
+PAINT_NEXT_DIR:
     DEC B
-    JP Z,LCD85
+    JP Z,PAINT_NEXT_RECORD
     EXX
-    LD HL,(0B8DH)
+    LD HL,(PAINT_ADDR)
     LD DE,FF80H
-    ADD HL,DE
-    LD (0B8DH),HL
-    BIT 7,H
-    JP Z,LCD85
-    JP LCDA4
+    ADD HL,DE                           ; two rows up: the row above the run
+    LD (PAINT_ADDR),HL
+    BIT 7,H                             ; above the picture?
+    JP Z,PAINT_NEXT_RECORD
+    JP PAINT_SCAN_PASS
 
-LCE7A:
+; Fill target pixels rightwards from HL / C until a different pixel or the
+; right edge (B bytes). Exit: DE = pixels filled; HL, C, B at the stop.
+
+PAINT_FILL_RIGHT:
     LD DE,0000H
 
-LCE7D:
-    LD A,(0B8AH)
+PAINT_FILL_PIXEL:
+    LD A,(PAINT_TARGET)
     XOR (HL)
     AND C
-    RET NZ
+    RET NZ                              ; not the target: stop
     INC DE
-    LD A,(0B94H)
+    LD A,(INK_PATTERN)                  ; INK XOR target
     AND C
     XOR (HL)
-    LD (HL),A
+    LD (HL),A                           ; the pixel becomes INK
     RRC C
-    JR NC,LCE7D
+    JR NC,PAINT_FILL_PIXEL
     INC L
-    DJNZ LCE7D
+    DJNZ PAINT_FILL_PIXEL
     RET
 
-LCE92:
+; -----------------------------------------------------------------------------
+; PAINT STACK SPACE
+; -----------------------------------------------------------------------------
+; Exit:    NC if there is room for another record (SP - 22 >= PAINT_STACK_MIN),
+;          after compacting the record stack if needed; Cy if nothing could be
+;          freed. BC, DE, HL, BC' are preserved.
+;
+; Compaction walks the records from the oldest (just under PAINT_SP_SAVE) to
+; the newest and copies down only those whose row below or above still holds
+; a target pixel inside the run (PAINT_RUN_HAS_TARGET), then moves the saved
+; registers and the return address down to the new top.
+; -----------------------------------------------------------------------------
+PAINT_COMPACT:
     PUSH HL
     PUSH DE
-    LD HL,FFEAH
+    LD HL,FFEAH                         ; HL = SP - 22
     ADD HL,SP
     LD DE,(PAINT_STACK_MIN)
     SBC HL,DE
-    JP NC,LCEC9
+    JP NC,PAINT_COMPACT_EXIT            ; room: nothing to do
     PUSH BC
     EXX
     PUSH BC
-    LD HL,(PAINT_SP_SAVE)
-    DEC HL
+    LD HL,(PAINT_SP_SAVE)               ; HL = read pointer, DE = write
+    DEC HL                              ; pointer, both at the oldest record
     DEC HL
     DEC HL
     LD D,H
     LD E,L
 
-LCEAC:
+PAINT_COMPACT_LOOP:
     LD C,L
     LD B,H
     LD HL,0009H
     ADD HL,SP
     OR A
-    SBC HL,BC
+    SBC HL,BC                           ; reached the saved registers?
     LD H,B
     LD L,C
-    JR NZ,LCECC
-    LD BC,000AH
-    LDDR
+    JR NZ,PAINT_COMPACT_RECORD
+    LD BC,000AH                         ; move the four saved words and the
+    LDDR                                ; return address down
     EX DE,HL
     LD SP,HL
-    INC SP
+    INC SP                              ; the new stack top
     OR A
     EX DE,HL
     SBC HL,DE
-    CCF
+    CCF                                 ; Cy if nothing was dropped
     POP BC
     EXX
     POP BC
 
-LCEC9:
+PAINT_COMPACT_EXIT:
     POP DE
     POP HL
     RET
 
-LCECC:
-    CALL LCEFE
-    ADD HL,BC
+PAINT_COMPACT_RECORD:
+    CALL PAINT_READ_RECORD_ALT          ; HL = address, DE = width, A = mask
+    ADD HL,BC                           ; the row below
     LD BC,BC00H
     SBC HL,BC
-    JR NC,LCEDD
+    JR NC,PAINT_COMPACT_ABOVE           ; off the picture
     ADD HL,BC
-    CALL LCF14
-    JR Z,LCEEC
+    CALL PAINT_RUN_HAS_TARGET
+    JR Z,PAINT_COMPACT_KEEP             ; still work below: keep
 
-LCEDD:
-    CALL LCEFD
+PAINT_COMPACT_ABOVE:
+    CALL PAINT_READ_RECORD
     OR A
-    SBC HL,BC
+    SBC HL,BC                           ; the row above
     LD BC,8000H
     SBC HL,BC
     ADD HL,BC
-    CALL NC,LCF14
+    CALL NC,PAINT_RUN_HAS_TARGET
 
-LCEEC:
+PAINT_COMPACT_KEEP:
     EXX
     LD BC,0006H
-    JR NZ,LCEF7
-    LDDR
-    JP LCEAC
+    JR NZ,PAINT_COMPACT_DROP
+    LDDR                                ; keep: copy the record down
+    JP PAINT_COMPACT_LOOP
 
-LCEF7:
+PAINT_COMPACT_DROP:
     OR A
-    SBC HL,BC
-    JP LCEAC
+    SBC HL,BC                           ; drop: skip it
+    JP PAINT_COMPACT_LOOP
 
-LCEFD:
+; Read the record at HL' (top byte). Exit: HL = address, DE = width without
+; flags, A = mask, BC = 0040H.
+
+PAINT_READ_RECORD:
     EXX
 
-LCEFE:
+PAINT_READ_RECORD_ALT:
     PUSH HL
     EXX
     POP HL
-    LD D,(HL)
+    LD D,(HL)                           ; address
     DEC HL
     LD E,(HL)
     DEC HL
+    DEC HL                              ; (byte count)
+    LD B,(HL)                           ; mask
     DEC HL
-    LD B,(HL)
-    DEC HL
-    LD A,(HL)
+    LD A,(HL)                           ; width, flags removed
     AND 3FH
     DEC HL
     LD L,(HL)
@@ -3947,63 +3266,50 @@ LCEFE:
     EX DE,HL
     RET
 
-LCF14:
+; Z if the DE pixels from HL / mask A include a target pixel.
+
+PAINT_RUN_HAS_TARGET:
     LD C,A
-    LD A,(0B8AH)
+    LD A,(PAINT_TARGET)
     LD B,A
 
-LCF19:
+PAINT_RUN_TEST:
     LD A,B
     XOR (HL)
     AND C
-    RET Z
+    RET Z                               ; found one
     DEC E
-    JR Z,LCF27
+    JR Z,PAINT_RUN_COUNT
 
-LCF20:
+PAINT_RUN_NEXT:
     RRC C
-    JR NC,LCF19
+    JR NC,PAINT_RUN_TEST
     INC HL
-    JR LCF19
+    JR PAINT_RUN_TEST
 
-LCF27:
+PAINT_RUN_COUNT:
     DEC D
-    JP P,LCF20
-    RET
-
-; DEFC routine (VIDEO 0B); defines a character with specified code.
+    JP P,PAINT_RUN_NEXT
+    RET                                 ; NZ: none
 
 ; -----------------------------------------------------------------------------
 ; VIDEO 11 - DEFINE CHARACTER
 ; -----------------------------------------------------------------------------
+; Copies a 10-byte glyph (rows top to bottom, bit 7 leftmost) to the RAM glyph
+; table at 0740H, which holds codes 80H-DFH (0740H-0AFFH).
 ;
-; Copies a ten-byte glyph definition into the programmable character matrix.
-;
-; Codes below E0H are not programmable and return F8H. For E0H..FFH, bit 7 is removed, the code is
-; multiplied by ten, and the ten source bytes at DE are copied into the programmable matrix
-; beginning at 0740H. The ten bytes describe ten raster rows, each with eight logical pixels.
-;
-; Entry:
-;   C = programmable character code E0H..FFH; DE = ten-byte glyph source.
-;
-; Exit:
-;   A = 00H on success; A = F8H for a fixed/non-programmable code.
-;
-; Effects:
-;   Writes the programmable character matrix.
-;
-; Destroys:
-;   AF, BC, DE, HL.
+; Entry:   C = code 80H-DFH; DE -> ten bytes.
+; Exit:    A = 00H, or F8H for any other code.
 ; -----------------------------------------------------------------------------
 CH_DEF:
     LD A,C
     CP E0H
-    JR NC,LCF32
-    OR A
+    JR NC,CH_DEF_FAIL                   ; E0H-FFH (S clear here)
+    OR A                                ; S = bit 7
 
-LCF32:
-    LD A,F8H
-    RET P
+CH_DEF_FAIL:
+    LD A,F8H                            ; error F8H: not definable
+    RET P                               ; 00H-7FH or E0H-FFH
     RES 7,C
     LD B,00H
     LD L,C
@@ -4011,95 +3317,79 @@ LCF32:
     ADD HL,HL
     ADD HL,HL
     ADD HL,BC
-    ADD HL,HL
+    ADD HL,HL                           ; 10 * (code AND 7FH)
     LD BC,0740H
     ADD HL,BC
-    EX DE,HL
+    EX DE,HL                            ; DE -> the glyph slot
     LD BC,000AH
     LDIR
     XOR A
     RET
 
-; BTEXT routine (VIDEO 03); positions pen to normal character position.
-
 ; -----------------------------------------------------------------------------
 ; VIDEO 03 - CHARACTER POSITION
 ; -----------------------------------------------------------------------------
+; Moves the beam to the top left of a character cell. Columns and rows count
+; from 1; 0 keeps that coordinate. X = (column - 1) * 8 * pixel width,
+; Y = 959 - 40 * (row - 1).
 ;
-; Rounds a graphics beam position to the nearest normal character-cell origin.
-;
-; The routine converts the requested physical coordinates into a character-grid position based on
-; the active mode's pixel density, preserves the original x/y direction conventions, validates the
-; resulting point, and calls PIXEL_ADDRESS. It is used when software wants text output aligned to
-; the normal ten-raster-row character cells.
-;
-; Entry:
-;   BC/DE = requested physical beam coordinates.
-;
-; Exit:
-;   A = 00H on success; A = F9H for an invalid position; beam work variables hold the aligned
-;   position.
-;
-; Effects:
-;   Updates beam and pixel-address work variables.
-;
-; Destroys:
-;   AF, BC, DE, HL.
+; Entry:   B = column; C = row.
+; Exit:    A = 00H, or F9H if the cell is off the screen.
 ; -----------------------------------------------------------------------------
 CH_POS:
     PUSH BC
     LD HL,0000H
     DEC B
-    JP M,LCF54
-    LD L,B
+    JP M,CH_POS_X                       ; column 0
+    LD L,B                              ; column - 1
 
-LCF54:
+CH_POS_X:
     LD A,(COLOR_MODE)
     ADD A,04H
     LD B,A
 
-LCF5A:
-    ADD HL,HL
-    DJNZ LCF5A
+CH_POS_X_SHIFT:
+    ADD HL,HL                           ; * 2 ^ (mode + 4): one cell
+    DJNZ CH_POS_X_SHIFT
     PUSH HL
-    LD DE,FFD8H
-    LD HL,03BFH
+    LD DE,FFD8H                         ; -40 per row
+    LD HL,03BFH                         ; row 1 starts at the top, Y = 959
     LD B,C
     DEC B
-    JP M,LCF6E
-    JR Z,LCF6E
+    JP M,CH_POS_Y                       ; row 0
+    JR Z,CH_POS_Y                       ; row 1
 
-LCF6B:
+CH_POS_Y_STEP:
     ADD HL,DE
-    DJNZ LCF6B
+    DJNZ CH_POS_Y_STEP
 
-LCF6E:
-    EX DE,HL
-    POP BC
+CH_POS_Y:
+    EX DE,HL                            ; DE = Y
+    POP BC                              ; BC = X
     EXX
-    LD BC,(X_PHYSICAL)
+    LD BC,(X_PHYSICAL)                  ; the current position, for zeros
     LD DE,(Y_PHYSICAL)
     EXX
-    POP HL
+    POP HL                              ; H = column, L = row
     LD A,L
     OR A
-    JR NZ,LCF83
-    EXX
+    JR NZ,CH_POS_KEEP_X
+    EXX                                 ; row 0: keep Y
     PUSH DE
     EXX
     POP DE
 
-LCF83:
+CH_POS_KEEP_X:
     LD A,H
     OR A
-    JR NZ,LCF8B
-    EXX
+    JR NZ,CH_POS_SET
+    EXX                                 ; column 0: keep X
     PUSH BC
     EXX
     POP BC
 
-LCF8B:
-    LD A,F9H
+CH_POS_SET:
+    LD A,F9H                            ; error F9H: off the screen
     CALL CHECK_X_COORDINATE
     RET C
     CALL CHECK_Y_COORDINATE
@@ -5719,9 +5009,9 @@ LD439:
 ; -----------------------------------------------------------------------------
 EDITOR_COLOR_BYTES:
     EX AF,AF'
-    CALL LCC05
+    CALL PAPER_BYTE
     LD (CU_PAPER_LINE),A
-    CALL LCC0D
+    CALL INK_BYTE
     XOR B
     LD (CU_INK_LINE),A
     EX AF,AF'

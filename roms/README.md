@@ -59,7 +59,9 @@ listing records the alternate CPU address without emitting extra bytes.
   `INTERNAL_IRQ_EXIT`), the kernel functions (`KERNEL_JUMP_TABLE` through
   `SLOT_NUM`), the keyboard driver (`KEYBOARD_JUMP_TABLE` through the four
   code tables), the block I/O helpers (`OUT_CHARS_SAFE`, `IN_CHARS_SAFE`),
-  and the printer, sound, and cassette-forwarding drivers. In
+  the printer, sound, and cassette-forwarding drivers, and the video and
+  graphics driver (`VIDEO_JUMP_TABLE` through `CH_POS`, with a summary of
+  coordinates, video RAM layout, and colour patterns). In
   `TVC12_D7.64K.asm`, the cassette motor, text, physical block read/write,
   timing, and CRC routines (`CAS_MOTOR_CONTROL` through `CAS_CRC_UPDATE`)
   are annotated the same way, with a summary of the recording format.
