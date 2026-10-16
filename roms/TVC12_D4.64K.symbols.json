@@ -410,6 +410,253 @@
     },
     {
       "bank": "sys",
+      "address": "0xC37E",
+      "offset": "0x037E",
+      "name": "RST30_DECODE",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xC38D",
+      "offset": "0x038D",
+      "name": "RST30_PICK_TABLE",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xC397",
+      "offset": "0x0397",
+      "name": "RST30_CLASS",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xC3B3",
+      "offset": "0x03B3",
+      "name": "RST30_CHECK_SELECTOR",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xC3BC",
+      "offset": "0x03BC",
+      "name": "RST30_FAIL",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xC3C0",
+      "offset": "0x03C0",
+      "name": "RST30_ASSIGNED",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xC3C7",
+      "offset": "0x03C7",
+      "name": "RST30_TO_EXT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xC3CA",
+      "offset": "0x03CA",
+      "name": "RST30_REDIRECT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xC3D0",
+      "offset": "0x03D0",
+      "name": "RST30_CLASS_CHECK",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xC3D8",
+      "offset": "0x03D8",
+      "name": "DEVICE_CALL",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xC3FC",
+      "offset": "0x03FC",
+      "name": "DEVICE_RETURN",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xC40E",
+      "offset": "0x040E",
+      "name": "DEVICE_RECOVERY_RET",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xC410",
+      "offset": "0x0410",
+      "name": "DEVICE_EXIT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xC412",
       "offset": "0x0412",
       "name": "IRQ_HANDLER",
@@ -695,6 +942,25 @@
     },
     {
       "bank": "sys",
+      "address": "0xC4D9",
+      "offset": "0x04D9",
+      "name": "SLOT_ASN_FIND",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xC4E2",
       "offset": "0x04E2",
       "name": "IO_ASN",
@@ -722,6 +988,63 @@
     },
     {
       "bank": "sys",
+      "address": "0xC4EB",
+      "offset": "0x04EB",
+      "name": "IO_ASN_CHECK",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xC509",
+      "offset": "0x0509",
+      "name": "KERNEL_FN0_RET",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xC50A",
+      "offset": "0x050A",
+      "name": "IO_ASN_FAIL",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xC50E",
       "offset": "0x050E",
       "name": "SLOT_NUM",
@@ -746,6 +1069,101 @@
         "ROM"
       ],
       "confidence": "high"
+    },
+    {
+      "bank": "sys",
+      "address": "0xC515",
+      "offset": "0x0515",
+      "name": "SLOT_NUM_NEXT_SLOT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xC51C",
+      "offset": "0x051C",
+      "name": "SLOT_NUM_COMPARE",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xC535",
+      "offset": "0x0535",
+      "name": "SLOT_NUM_EXIT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xC537",
+      "offset": "0x0537",
+      "name": "SLOT_NUM_NO_NAME",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xC538",
+      "offset": "0x0538",
+      "name": "SLOT_NUM_SKIP",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
     },
     {
       "bank": "sys",
@@ -951,6 +1369,25 @@
       "address": "0xC9A1",
       "offset": "0x09A1",
       "name": "VIDEO_PAGE_RETURN",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xC9A9",
+      "offset": "0x09A9",
+      "name": "VID_INT_NOP",
       "alt_names": [],
       "kind": "routine",
       "usage": [],
@@ -2684,6 +3121,25 @@
     },
     {
       "bank": "sys",
+      "address": "0xD61B",
+      "offset": "0x161B",
+      "name": "KB_CHIN_WAIT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xD62C",
       "offset": "0x162C",
       "name": "KB_BLOCK_NOP",
@@ -2729,6 +3185,177 @@
     },
     {
       "bank": "sys",
+      "address": "0xD652",
+      "offset": "0x1652",
+      "name": "KB_INT_KEYS",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xD65B",
+      "offset": "0x165B",
+      "name": "KB_INT_DECODE",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xD65C",
+      "offset": "0x165C",
+      "name": "KB_INT_DECODE_SCAN",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xD672",
+      "offset": "0x1672",
+      "name": "KB_INT_NO_KEY",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xD69B",
+      "offset": "0x169B",
+      "name": "KEY_REPEAT_JOYSTICK",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xD6A4",
+      "offset": "0x16A4",
+      "name": "KEY_REPEAT_HELD",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xD6AD",
+      "offset": "0x16AD",
+      "name": "KEY_FORGET_ALL",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xD6B5",
+      "offset": "0x16B5",
+      "name": "KEY_REPEAT_AGAIN",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xD6C0",
+      "offset": "0x16C0",
+      "name": "KEY_COUNTDOWN",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xD6C7",
       "offset": "0x16C7",
       "name": "KEY_MATRIX_DECODE",
@@ -2753,9 +3380,161 @@
     },
     {
       "bank": "sys",
+      "address": "0xD6E7",
+      "offset": "0x16E7",
+      "name": "KEY_DECODE_ROW",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xD706",
+      "offset": "0x1706",
+      "name": "KEY_DECODE_COLUMN",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xD73C",
+      "offset": "0x173C",
+      "name": "KEY_HOLD_CHECK",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xD740",
+      "offset": "0x1740",
+      "name": "KEY_HOLD_END",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xD743",
+      "offset": "0x1743",
+      "name": "KEY_HOLD_START",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xD747",
       "offset": "0x1747",
       "name": "KEY_CODE_TABLE_SELECT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xD76A",
+      "offset": "0x176A",
+      "name": "KEY_TABLE_CAPS",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xD774",
+      "offset": "0x1774",
+      "name": "KEY_TABLE_NOT_CAPS",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xD784",
+      "offset": "0x1784",
+      "name": "KEY_TABLE_READ",
       "alt_names": [],
       "kind": "routine",
       "usage": [],
@@ -2816,9 +3595,85 @@
     },
     {
       "bank": "sys",
+      "address": "0xD7B3",
+      "offset": "0x17B3",
+      "name": "KEY_MATRIX_ROW",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xD7BF",
       "offset": "0x17BF",
       "name": "KEYBOARD_CODE_TABLES",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xD80F",
+      "offset": "0x180F",
+      "name": "KEY_TABLE_SHIFT",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xD85F",
+      "offset": "0x185F",
+      "name": "KEY_TABLE_CTRL",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xD8AF",
+      "offset": "0x18AF",
+      "name": "KEY_TABLE_ALT",
       "alt_names": [],
       "kind": "table",
       "usage": [],

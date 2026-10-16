@@ -52,9 +52,16 @@ listing records the alternate CPU address without emitting extra bytes.
   routine or table landmarks.
 - Rich routine blocks include purpose, algorithm, inputs, outputs, side
   effects, destroyed state, and important implementation notes where known.
-- The interrupt path in `TVC12_D4.64K.asm` (`IRQ_HANDLER` through
-  `INTERNAL_IRQ_EXIT`) is commented instruction by instruction. It is the
-  reference style for further inline annotation.
+- These parts of `TVC12_D4.64K.asm` are commented instruction by instruction
+  and are the reference style for further inline annotation: the RST 30H
+  dispatcher (`RST30_DISPATCH` through `DEVICE_EXIT`, with the U0 bridge code
+  in its header), the interrupt path (`IRQ_HANDLER` through
+  `INTERNAL_IRQ_EXIT`), the kernel functions (`KERNEL_JUMP_TABLE` through
+  `SLOT_NUM`), and the keyboard driver (`KEYBOARD_JUMP_TABLE` through the
+  four code tables).
+- The counted device jump tables, `DEVICE_JUMP_TABLE_POINTERS`, the BASIC
+  statement table (with each entry's keyword token), the RST 18H operation
+  table, and the editor key table are `DW` entries naming their targets.
 
 ## Verifying
 

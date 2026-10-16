@@ -1338,7 +1338,7 @@ LF1CC:
     CALL LFFF9
 
 ; Error recovery repairs the affected input/output assignment from the default templates and
-; returns through C40EH.
+; returns through C40EH (DEVICE_RECOVERY_RET).
 
 ; -----------------------------------------------------------------------------
 ; EXPANSION ASSIGNMENT ERROR RECOVERY
@@ -1348,11 +1348,11 @@ LF1CC:
 ;
 ; When an empty connector, unsupported function, or missing card table is detected, this path
 ; repairs the affected input or output assignment from the initialization templates. It returns a
-; system error status through C40EH rather than leaving the I/O tables pointed into an unmapped
-; card.
+; system error status through C40EH (DEVICE_RECOVERY_RET) rather than leaving the I/O tables
+; pointed into an unmapped card.
 ; -----------------------------------------------------------------------------
 EXPANSION_ASSIGNMENT_RECOVERY:
-    LD HL,C3FCH                           ; SYS ROM routine LC3FC, entered through the FFF0H gateway
+    LD HL,C3FCH                           ; SYS ROM routine DEVICE_RETURN, entered through the FFF0H gateway
     JP EXT_GATEWAY
 
 LF1D8:
@@ -1383,7 +1383,7 @@ LF1E6:
     LD IX,IO_ASSIGN_OUT+7
 
 ; Assignment recovery selects FB0EH for input or FB16H for output, copies the default class
-; selector, and returns via C40EH/FFF0H.
+; selector, and returns via C40EH (DEVICE_RECOVERY_RET) and FFF0H.
 
 ; -----------------------------------------------------------------------------
 ; REPAIR FAILED CARD ASSIGNMENT
@@ -1395,7 +1395,7 @@ LF1E6:
 ; failed class, and copies the default selector back into U0.
 ;
 ; If the failed class is cards, the serial assignment at 0B1CH is reinserted only when a serial
-; connector exists. The final path returns through C40EH via FFF0H.
+; connector exists. The final path returns through C40EH (DEVICE_RECOVERY_RET) via FFF0H.
 ;
 ; Entry:
 ;   Alternate AF identifies direction and logical class; U0 selector table is addressable.
@@ -1428,7 +1428,7 @@ CARD_REPAIR_ASSIGNMENT:
     LD (HL),A
 
 LF218:
-    LD HL,C40EH                           ; SYS ROM routine LC40E, entered through the FFF0H gateway
+    LD HL,C40EH                           ; SYS ROM routine DEVICE_RECOVERY_RET, entered through the FFF0H gateway
     JP EXT_GATEWAY
 
 LF21E:

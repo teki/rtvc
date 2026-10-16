@@ -7,8 +7,10 @@ Release notes start here. Older release history is intentionally not backfilled.
 - BASIC 1.2 ROM listings: code hidden in `DB` lines or decoded off its real
   instruction boundaries is now proper instructions, operands use labels and
   named U0 variables, and inline `RST` operands, inline strings, and BASIC
-  function records are decoded in comments. The interrupt path is commented
-  instruction by instruction. The debugger gains 45 new BASIC 1.2 symbols.
+  function records are decoded in comments. The interrupt path, the RST 30H
+  dispatcher, the kernel functions, and the keyboard driver are commented
+  instruction by instruction, and the jump tables name their targets. The
+  debugger gains 90 new BASIC 1.2 symbols.
 
 ## v0.8.10 - 2026-10-15
 

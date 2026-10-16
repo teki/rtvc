@@ -420,6 +420,8 @@ ORG E000H, SYS0, 2000H
     DB B1H, DBH                           ; operand bytes of the instruction at DFFFH, which starts in the previous ROM chip
 
 ; DEF routine.
+
+LE002:
     AND 81H
     CP 01H
     JP NZ,LFD5A
@@ -485,6 +487,8 @@ LE050:
     CALL LFC43
 
 ; DIM routine.
+
+LE053:
     OR A
     JP M,LFD5A
     BIT 0,A
@@ -595,6 +599,8 @@ LE0F8:
     JR LE099
 
 ; ELSE routine.
+
+LE104:
     BIT 0,(IX+02H)
     JP Z,LFD5A
     JP BASIC_REM_ENTRY
@@ -607,6 +613,8 @@ LE10E:
     JP DADAH
 
 ; EXT routine.
+
+LE117:
     CALL LFB1B
     CP 07H
     JP NC,LFB14
@@ -793,6 +801,8 @@ LE207:
     DB F6H                                ; = OR 37H when run from here, hiding the entry below
 
 ; READ routine.
+
+LE21B:
     SCF
     EX AF,AF'
     EXX
@@ -1014,6 +1024,8 @@ LE320:
     JR LE320
 
 ; ON routine.
+
+LE332:
     SET 0,(IX+02H)
     CALL LFB1B
     LD B,A
@@ -1235,6 +1247,8 @@ LE44A:
     JP NUMERIC_STRING_GATE
 
 ; LOMEM routine.
+
+LE452:
     CALL LFAC4
     LD DE,(VLOMEM)
     OR A
@@ -1435,6 +1449,8 @@ LE567:
     JP DBB1H
 
 ; LPRINT routine.
+
+LE570:
     LD C,40H
     DB 11H                                ; = LD DE,200EH when run from here, hiding the entry below
 
@@ -1677,6 +1693,8 @@ LE6A3:
     DB 3CH, 3EH, 23H, 2AH, 25H, 2BH, 2DH, 24H, 5EH, 2EH                               ; |<>#*%+-$^.|
 
 ; RANDOMIZE routine.
+
+LE6C7:
     LD A,R
     LD (RND_STATE),A
     LD HL,(TIME)
@@ -1706,6 +1724,8 @@ LE6E0:
     RET
 
 ; RESTORE routine.
+
+LE6F4:
     LD HL,(TEXT_START)
     CP 02H
     JR NZ,LE701
@@ -1997,6 +2017,8 @@ LE878:
     RET
 
 ; BASIC CLOSE routine.
+
+LE89B:
     LD C,50H
     CALL LFBEE
     CP E1H
@@ -2081,6 +2103,8 @@ LE905:
     JP DBB1H
 
 ; GET routine.
+
+LE910:
     LD C,10H
     CALL LFBEE
     EX AF,AF'
@@ -2206,6 +2230,8 @@ LE9B8:
     JP DBB1H
 
 ; VERIFY routine.
+
+LE9D3:
     CALL LEA35
     CALL DD41H
     INC HL
@@ -2317,6 +2343,8 @@ LEA75:
     CALL EVAL_STRING_EXPRESSION
     LD A,95H
     JP LFD54
+
+LEA82:
     LD HL,(RST18_NEXT)
     LD A,(HL)
     INC HL
@@ -2618,7 +2646,7 @@ LEC7F:
 LEC89:
     CALL LFC43
     RST 30H
-    DB 93H                                ; RST 30H fn 93H: keyboard 3, output side -> KB_STATUS
+    DB 93H                                ; RST 30H fn 93H: keyboard 3, input -> KB_STATUS
     RST 10H
     PUSH IY
     POP HL
@@ -2627,7 +2655,7 @@ LEC89:
     OR A
     JR Z,LEC9D
     RST 30H
-    DB 91H                                ; RST 30H fn 91H: keyboard 1, output side -> KB_CHIN
+    DB 91H                                ; RST 30H fn 91H: keyboard 1, input -> KB_CHIN
     RST 10H
     LD (HL),C
     DEC HL
@@ -6848,7 +6876,7 @@ LFC3E:
     RST 30H
     DB 54H                                ; RST 30H fn 54H: cassette 4 -> CAS_CLOSE
     RST 30H
-    DB D4H                                ; RST 30H fn D4H: cassette 4, output side -> CAS_CLOSE
+    DB D4H                                ; RST 30H fn D4H: cassette 4, input -> CAS_CLOSE
     RET
 
 LFC43:

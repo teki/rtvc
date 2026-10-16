@@ -71,7 +71,7 @@
 ; The default input classes are video, keyboard, editor, sound, printer, cassette, cards, and
 ; connector select at 0B00H-0B07H. The output table at 0B08H-0B0FH follows the same order.
 ; The RST30 function byte is encoded as direction in bit 7, device class in bits 6-4, and routine
-; number in bits 3-0. Bit 7 clear denotes an input/read operation; set denotes output/write.
+; number in bits 3-0. Bit 7 set selects the input assignment (0B00H-0B07H); clear selects output.
 ; For each class, routine 0 is the interrupt service, routine 1 is character I/O, and routine 2 is
 ; block I/O unless the class documents a narrower set. The dispatcher supplies the selected device
 ; context.
@@ -402,7 +402,8 @@ LINE_STEP_1        EQU 0B84H              ; line stepper entry used when the err
 LINE_STEP_2        EQU 0B86H              ; line stepper entry used when the error term is positive
 PAINT_SP_SAVE      EQU 0B88H              ; SP saved on PAINT entry
 KEY_PENDING        EQU 0BE5H              ; FFH: a translated key waits in KEY_CODE
-KEY_LOCK_ACT       EQU 0BE7H              ; lock-key activity
+HOLD_STATE         EQU 0BE6H              ; FFH while CTRL+P hold is active
+KEY_LOCK_ACT       EQU 0BE7H              ; FFH while LOCK is held after setting a lock mode
 KEY_MODIFIER       EQU 0BE8H              ; current modifier 00/02/04/08H
 KEY_CODE           EQU 0BE9H              ; translated key code
 KEY_DELAY_CNT      EQU 0BEAH              ; repeat delay counter
@@ -444,15 +445,63 @@ INPUT_BUFFER       EQU 1831H              ; INPUT buffer
 
 ; SYS ROM routines and tables defined in TVC12_D3.64K.asm; both halves of the SYS bank are
 ; visible together whenever SYS is mapped.
+LE002                          EQU E002H
+LE053                          EQU E053H
+LE104                          EQU E104H
+LE10E                          EQU E10EH
+LE117                          EQU E117H
+BASIC_FOR                      EQU E15CH
+BASIC_INPUT                    EQU E1CBH
+LE21B                          EQU E21BH
+BASIC_IF                       EQU E2EEH
+LE332                          EQU E332H
+BASIC_GOSUB                    EQU E382H
+BASIC_GOTO                     EQU E3B2H
+BASIC_LET                      EQU E3C1H
+LE452                          EQU E452H
+BASIC_NEXT                     EQU E4B6H
+BASIC_OUT                      EQU E542H
+BASIC_POKE                     EQU E553H
+LE570                          EQU E570H
+BASIC_PRINT                    EQU E573H
+LE6C7                          EQU E6C7H
+LE6F4                          EQU E6F4H
+BASIC_RETURN                   EQU E70FH
+BASIC_GRAPHICS                 EQU E733H
+BASIC_PLOT                     EQU E754H
+BASIC_SET                      EQU E790H
+BASIC_SOUND                    EQU E833H
+LE89B                          EQU E89BH
+BASIC_OPEN                     EQU E8C9H
+LE910                          EQU E910H
+BASIC_LOAD                     EQU E951H
+BASIC_SAVE                     EQU E982H
+LE9D3                          EQU E9D3H
+EVAL_NUMERIC_ARGUMENT          EQU EA68H
+LEA82                          EQU EA82H
+LEA9A                          EQU EA9AH
+LEA9F                          EQU EA9FH
+LEABE                          EQU EABEH
+LEAC3                          EQU EAC3H
+LEACD                          EQU EACDH
+LEAD2                          EQU EAD2H
 BASIC_FREE                     EQU EC4CH
 FN_REC_VERNUM                  EQU F094H
+FP_SUB                         EQU F48EH
+FP_ADD                         EQU F493H
+FP_MUL                         EQU F512H
+FP_DIV                         EQU F5FBH
+FP_NEGATE                      EQU F726H
 ASCII_TO_FP                    EQU F914H
 DISCARD_NUMBER                 EQU FA1BH
+LFA92                          EQU FA92H
 STACK_NUMBER_TO_INTEGER        EQU FAC3H
+LFB28                          EQU FB28H
 PRINT_INLINE_TEXT              EQU FE79H
 PRINT_INTEGER_HL               EQU FF19H
 BASIC_LINE_INPUT               EQU FF4FH
 CHECK_STOP_FLAG                EQU FF9DH
+LFFA3                          EQU FFA3H
 CALL_EXTENSION_HL              EQU FFF0H
 
 ORG C000H, SYS0, 0000H
@@ -514,12 +563,54 @@ BCD_MULTIPLICATION_TABLE:
 ; RETURN, RUN, SAVE, SET, SOUND, STOP, TRACE, VERIFY, EXT, and LPRINT.
 ; -----------------------------------------------------------------------------
 BASIC_STATEMENT_JUMP_TABLE:
-    DB BBH, DBH, BBH, DBH, 80H, DBH, BBH, DBH, F2H, DFH, 9BH, E8H, FCH, DFH, 65H, DDH ; |..............e.|
-    DB 02H, E0H, 93H, DDH, 53H, E0H, 04H, E1H, 0EH, E1H, 5CH, E1H, 10H, E9H, 82H, E3H ; |....S.....\.....|
-    DB B2H, E3H, 33H, E7H, EEH, E2H, CBH, E1H, C1H, E3H, 85H, DDH, 80H, DDH, 51H, E9H ; |..3...........Q.|
-    DB 52H, E4H, 08H, DEH, B6H, E4H, 06H, DBH, 32H, E3H, C9H, E8H, 73H, E5H, 42H, E5H ; |R.......2...s.B.|
-    DB 54H, E7H, 53H, E5H, 73H, E5H, C7H, E6H, 1BH, E2H, F4H, E6H, 0FH, E7H, 1BH, DEH ; |T.S.s...........|
-    DB 82H, E9H, 90H, E7H, 33H, E8H, A3H, FFH, 31H, DEH, D3H, E9H, 17H, E1H, 70H, E5H ; |....3...1.....p.|
+    DW BASIC_REM_ENTRY                    ; FFH (no keyword)
+    DW BASIC_REM_ENTRY                    ; FEH !
+    DW BASIC_NEXT_STATEMENT               ; FDH :
+    DW BASIC_REM_ENTRY                    ; FCH REM
+    DW BASIC_DATA_ENTRY                   ; FBH DATA
+    DW LE89B                              ; FAH CLOSE
+    DW BASIC_CLS                          ; F9H CLS
+    DW BASIC_CONTINUE                     ; F8H CONTINUE
+    DW LE002                              ; F7H DEF
+    DW LDD93                              ; F6H DELETE
+    DW LE053                              ; F5H DIM
+    DW LE104                              ; F4H ELSE
+    DW LE10E                              ; F3H END
+    DW BASIC_FOR                          ; F2H FOR
+    DW LE910                              ; F1H GET
+    DW BASIC_GOSUB                        ; F0H GOSUB
+    DW BASIC_GOTO                         ; EFH GOTO
+    DW BASIC_GRAPHICS                     ; EEH GRAPHICS
+    DW BASIC_IF                           ; EDH IF
+    DW BASIC_INPUT                        ; ECH INPUT
+    DW BASIC_LET                          ; EBH LET
+    DW BASIC_LIST                         ; EAH LIST
+    DW BASIC_LLIST_ENTRY                  ; E9H LLIST
+    DW BASIC_LOAD                         ; E8H LOAD
+    DW LE452                              ; E7H LOMEM
+    DW BASIC_NEW                          ; E6H NEW
+    DW BASIC_NEXT                         ; E5H NEXT
+    DW BASIC_COMMAND_LOOP                 ; E4H OK
+    DW LE332                              ; E3H ON
+    DW BASIC_OPEN                         ; E2H OPEN
+    DW BASIC_PRINT                        ; E1H OUTPUT
+    DW BASIC_OUT                          ; E0H OUT
+    DW BASIC_PLOT                         ; DFH PLOT
+    DW BASIC_POKE                         ; DEH POKE
+    DW BASIC_PRINT                        ; DDH PRINT
+    DW LE6C7                              ; DCH RANDOMIZE
+    DW LE21B                              ; DBH READ
+    DW LE6F4                              ; DAH RESTORE
+    DW BASIC_RETURN                       ; D9H RETURN
+    DW BASIC_RUN                          ; D8H RUN
+    DW BASIC_SAVE                         ; D7H SAVE
+    DW BASIC_SET                          ; D6H SET
+    DW BASIC_SOUND                        ; D5H SOUND
+    DW LFFA3                              ; D4H STOP
+    DW BASIC_TRACE                        ; D3H TRACE
+    DW LE9D3                              ; D2H VERIFY
+    DW LE117                              ; D1H EXT
+    DW LE570                              ; D0H LPRINT
 
 ; -----------------------------------------------------------------------------
 ; RST 18H ARITHMETIC DISPATCH TABLE
@@ -538,8 +629,21 @@ BASIC_STATEMENT_JUMP_TABLE:
 ;   function argument onto the stack.
 ; -----------------------------------------------------------------------------
 RST18_JUMP_TABLE:
-    DB 93H, F4H, FBH, F5H, 12H, F5H, 8EH, F4H, 26H, F7H, 82H, EAH, 9FH, EAH, 9AH, EAH ; |........&.......|
-    DB D2H, EAH, CDH, EAH, C3H, EAH, BEH, EAH, 92H, FAH, 28H, FBH, 68H, EAH           ; |..........(.h.|
+    DW FP_ADD                             ; op 00H
+    DW FP_DIV                             ; op 01H
+    DW FP_MUL                             ; op 02H
+    DW FP_SUB                             ; op 03H
+    DW FP_NEGATE                          ; op 04H
+    DW LEA82                              ; op 05H CONST: one extra byte, the constant number
+    DW LEA9F                              ; op 06H
+    DW LEA9A                              ; op 07H
+    DW LEAD2                              ; op 08H
+    DW LEACD                              ; op 09H
+    DW LEAC3                              ; op 0AH
+    DW LEABE                              ; op 0BH
+    DW LFA92                              ; op 0CH
+    DW LFB28                              ; op 0DH
+    DW EVAL_NUMERIC_ARGUMENT              ; op 0EH
 
 ; -----------------------------------------------------------------------------
 ; INTELLIGENT SOFTWARE COPYRIGHT
@@ -939,65 +1043,77 @@ LC358:
 ; RST 30H OPERATING-SYSTEM DISPATCHER
 ; -----------------------------------------------------------------------------
 ;
-; Decodes and invokes the operating-system function selected by the byte following RST 30H.
+; An OS call is RST 30H followed by one function byte:
 ;
-; The U0 RAM entry at 0030H jumps to a RAM-resident prologue at 0B23H. That prologue obtains the
-; function byte, saves the caller's paging state, maps SYS, and transfers here after preserving
-; the caller's alternate accumulator.
+;   bit 7     1 = use the input assignment table, 0 = the output table
+;   bits 6-4  class: 0 video, 1 keyboard, 2 editor, 3 sound, 4 printer,
+;             5 cassette, 6 expansion cards, 7 kernel
+;   bits 3-0  function number within the class
 ;
-; Bit 7 selects the input or output assignment table, bits 6-4 select the function class, and bits
-; 3-0 select a routine within that class. Class 7 is the non-redirectable kernel class. Other
-; classes are resolved through the U0 device-assignment tables and may dispatch to a built-in jump
-; table or an expansion-card routine in EXTH.
+; Parameters travel in BC and DE (for example the character in C); A returns
+; the status, 00H for success. RST 30H jumps through 0030H to the U0 bridge at
+; 0B23H, which the extension ROM copies from its template at reset:
 ;
-; The dispatcher preserves the caller's main and alternate working registers. Device routines
-; return an error code in A; zero means success. Both normal and error exits unwind through the
-; common RAM epilogue at 0B37H.
+;   0B23H  EX (SP),HL       ; HL = return address = address of the function byte
+;          LD A,(HL)        ; A = function byte (the caller's A is not an input)
+;          INC HL           ; return past the function byte
+;          EX (SP),HL
+;          EX AF,AF'        ; AF' = function byte
+;          PUSH AF          ; save the caller's AF'
+;          LD A,(P_SAVE)    ; save the caller's page map
+;          PUSH AF
+;          LD A,70H         ; U0 U1 U2 SYS
+;          LD (P_SAVE),A
+;          OUT (02H),A
+;          JP C363H         ; RST30_DISPATCH
 ;
-; Entry:
-;   The byte after RST 30H is the function code. Function-specific parameters are supplied in
-;   registers and U0 work variables.
+; and returns through 0B37H (RST30_BRIDGE_RET):
 ;
-; Exit:
-;   A = 00H on success or a non-zero operating-system error code; other results are
-;   function-specific.
+;   0B37H  EX AF,AF'        ; keep the result AF in AF'
+;          POP AF           ; restore the caller's page map
+;          LD (P_SAVE),A
+;          OUT (02H),A
+;          POP AF           ; the caller's AF' ...
+;          EX AF,AF'        ; ... back in AF', the result in AF
+;          RET
 ;
-; Effects:
-;   May change paging and call SYS, EXTH, cartridge, or expansion-card handlers.
+; How a call is routed (RST30_DECODE):
 ;
-; Destroys:
-;   Internal flags and dispatcher work state; the main caller register set is restored by
-;   RST30_RETURN.
+; - Class 7 goes straight to KERNEL_JUMP_TABLE.
+; - Otherwise the class indexes the input (0B00H) or output (0B08H) selector
+;   table. For functions 0-2 (interrupt, character, block I/O) a selector of
+;   00H-06H redirects the call to that class; functions 3 and up always stay
+;   with their own class. A selector with bit 7 set names an expansion slot
+;   (00H-03H in bits 6-0) for every function. A selector of FFH accepts only
+;   functions 3 and up.
+; - Class 6 is always handled by the extension ROM, which takes the slot from
+;   selector byte 7.
+;
+; DEVICE_CALL then indexes DEVICE_JUMP_TABLE_POINTERS by class and the class's
+; counted jump table by function. The device routine runs with A = function
+; byte (flags from OR A: S = input) and the caller's BC and DE.
+;
+; Entry:   from the 0B23H bridge; AF' = function byte; BC, DE = parameters.
+; Exit:    A = status (00H = success), BC and DE as left by the device;
+;          HL, IX, IY and the alternate BC, DE, HL are preserved.
 ; -----------------------------------------------------------------------------
 RST30_DISPATCH:
-    PUSH HL
-    PUSH IX
+    PUSH HL                             ; save the registers that are not
+    PUSH IX                             ; parameters: HL, IX, IY ...
     PUSH IY
-    EXX
+    EXX                                 ; ... and the alternate BC, DE, HL
     PUSH BC
     PUSH DE
     PUSH HL
     EXX
-    EX AF,AF'
-    CALL LC37E
+    EX AF,AF'                           ; A = function byte
+    CALL RST30_DECODE                   ; route and call the device routine
 
 ; -----------------------------------------------------------------------------
 ; RST 30H COMMON RETURN
 ; -----------------------------------------------------------------------------
-;
-; Restores the register sets saved by RST30_DISPATCH and returns through the U0 epilogue.
-;
-; The final jump to 0B37H restores the caller's alternate accumulator and previous paging
-; configuration before returning to the instruction after the RST 30H function byte.
-;
-; Exit:
-;   Function-specific
-;
-; Effects:
-;   Restores paging and caller state.
-; -----------------------------------------------------------------------------
 RST30_RETURN:
-    EXX
+    EXX                                 ; restore the alternate set
     POP HL
     POP DE
     POP BC
@@ -1005,133 +1121,146 @@ RST30_RETURN:
     POP IY
     POP IX
     POP HL
-    JP RST30_BRIDGE_RET
+    JP RST30_BRIDGE_RET                 ; restore the page map and return
 
-LC37E:
-    PUSH AF
-    PUSH BC
-    PUSH DE
-    LD C,A
-    OR A
-    EX AF,AF'
-    LD HL,IO_ASSIGN_IN+1
+; Decode the function byte. The three pushes below are the frame that
+; DEVICE_CALL and DEVICE_RETURN expect; INTERNAL_IRQ_DISPATCH fakes the same
+; frame.
+
+RST30_DECODE:
+    PUSH AF                             ; frame: function byte (popped into HL later)
+    PUSH BC                             ; frame: caller's BC
+    PUSH DE                             ; frame: caller's DE
+    LD C,A                              ; C = function byte
+    OR A                                ; S = bit 7 (input), Z = function byte 00H
+    EX AF,AF'                           ; keep it in AF' for the device routine
+    LD HL,IO_ASSIGN_IN+1                ; keyboard input selector
     LD A,(HL)
-    CP 02H
-    JR NZ,LC38D
-    DEC (HL)
+    CP 02H                              ; routed to the editor?
+    JR NZ,RST30_PICK_TABLE
+    DEC (HL)                            ; yes: force it back to 01H, the keyboard
 
-LC38D:
-    LD DE,IO_ASSIGN_IN
+RST30_PICK_TABLE:
+    LD DE,IO_ASSIGN_IN                  ; bit 7 set: input selectors
     LD A,C
-    RLCA
-    JR C,LC397
-    LD DE,IO_ASSIGN_OUT
+    RLCA                                ; Cy = bit 7
+    JR C,RST30_CLASS
+    LD DE,IO_ASSIGN_OUT                 ; bit 7 clear: output selectors
 
-LC397:
-    AND E0H
+RST30_CLASS:
+    AND E0H                             ; class, now in bits 7-5
     RLCA
     RLCA
-    RLCA
-    LD B,A
+    RLCA                                ; class in bits 2-0
+    LD B,A                              ; B = class
     LD A,C
     AND 0FH
-    LD C,A
+    LD C,A                              ; C = function number
     LD A,B
-    CP 07H
-    JR Z,LC3D8
-    LD L,B
+    CP 07H                              ; kernel calls are never redirected
+    JR Z,DEVICE_CALL
+    LD L,B                              ; HL = DE + class
     XOR A
     LD H,A
-    ADD HL,DE
-    DEC A
-    CP (HL)
-    JR NZ,LC3B3
-    LD A,C
-    CP 03H
-    JR NC,LC3D0
+    ADD HL,DE                           ; HL -> this class's selector
+    DEC A                               ; A = FFH
+    CP (HL)                             ; selector FFH?
+    JR NZ,RST30_CHECK_SELECTOR
+    LD A,C                              ; FFH: functions 3 and up go to the
+    CP 03H                              ; class's own routine,
+    JR NC,RST30_CLASS_CHECK             ; functions 0-2 fail below (7FH >= 07H)
 
-LC3B3:
+RST30_CHECK_SELECTOR:
     LD A,(HL)
-    RES 7,A
+    RES 7,A                             ; selector without the card bit
     CP 07H
-    JR C,LC3C0
-    LD A,FEH
+    JR C,RST30_ASSIGNED                 ; 00H-06H: valid
+    LD A,FEH                            ; error FEH: bad assignment
 
-LC3BC:
-    POP DE
-    POP BC
-    JR LC3FC
+RST30_FAIL:
+    POP DE                              ; drop the frame's DE and BC
+    POP BC                              ; (restoring the caller's)
+    JR DEVICE_RETURN
 
-LC3C0:
-    BIT 7,(HL)
-    JR Z,LC3CA
-    LD HL,F166H                           ; EXT ROM routine EXPANSION_INPUT_DISPATCH, entered through the FFF0H gateway
+RST30_ASSIGNED:
+    BIT 7,(HL)                          ; selector names an expansion slot?
+    JR Z,RST30_REDIRECT
+    LD HL,F166H                         ; EXT F166H: call the card in slot A
+                                        ; through its jump table
+                                        ; (EXPANSION_INPUT_DISPATCH)
 
-LC3C7:
-    JP CALL_EXTENSION_HL
+RST30_TO_EXT:
+    JP CALL_EXTENSION_HL                ; EXT returns through DEVICE_RETURN
 
-LC3CA:
-    LD A,C
-    CP 03H
-    JR NC,LC3D0
-    LD B,(HL)
+RST30_REDIRECT:
+    LD A,C                              ; functions 0-2 follow the selector,
+    CP 03H                              ; functions 3 and up stay put
+    JR NC,RST30_CLASS_CHECK
+    LD B,(HL)                           ; B = the class the selector names
 
-LC3D0:
+RST30_CLASS_CHECK:
     LD A,B
-    CP 06H
-    LD HL,F16CH                           ; EXT ROM routine EXPANSION_OUTPUT_DISPATCH, entered through the FFF0H gateway
-    JR Z,LC3C7
+    CP 06H                              ; class 6, expansion cards?
+    LD HL,F16CH                         ; EXT F16CH: call the card in the slot
+    JR Z,RST30_TO_EXT                   ; held in selector byte 7
+                                        ; (EXPANSION_OUTPUT_DISPATCH)
 
-LC3D8:
+; Call function C of device class B.
+
+DEVICE_CALL:
     LD DE,DEVICE_JUMP_TABLE_POINTERS
-    LD L,B
+    LD L,B                              ; HL = 2 * class
     LD H,00H
     ADD HL,HL
     ADD HL,DE
-    LD E,(HL)
+    LD E,(HL)                           ; DE = this class's jump table
     INC HL
     LD D,(HL)
-    EX DE,HL
+    EX DE,HL                            ; HL -> function count
     LD A,(HL)
-    DEC A
-    CP C
-    LD A,FFH
-    JR C,LC3BC
-    INC HL
+    DEC A                               ; highest function number
+    CP C                                ; Cy if C is beyond it
+    LD A,FFH                            ; error FFH: no such function
+    JR C,RST30_FAIL
+    INC HL                              ; HL -> first entry
     EX DE,HL
-    LD L,C
+    LD L,C                              ; HL = 2 * function
     LD H,00H
     ADD HL,HL
     ADD HL,DE
-    LD E,(HL)
+    LD E,(HL)                           ; HL = routine address
     INC HL
     LD D,(HL)
     EX DE,HL
-    EX AF,AF'
-    POP DE
-    POP BC
-    CALL JUMP_HL
+    EX AF,AF'                           ; A = function byte, S = input
+    POP DE                              ; the caller's DE and BC
+    POP BC                              ; are the routine's parameters
+    CALL JUMP_HL                        ; run the device routine
 
-LC3FC:
-    OR A
-    POP HL
-    RET Z
-    PUSH AF
+; A = status from the device routine (or a dispatcher error code). The stack
+; holds the frame's function byte, then the return address.
+
+DEVICE_RETURN:
+    OR A                                ; Z = success
+    POP HL                              ; H = function byte
+    RET Z                               ; done
+    PUSH AF                             ; keep the error code
     LD A,(INT_FLAG)
-    INC A
-    JR Z,LC410
+    INC A                               ; inside the interrupt routine?
+    JR Z,DEVICE_EXIT                    ; yes: just return the error
     PUSH BC
     PUSH DE
-    LD A,H
-    LD HL,F1E6H                           ; EXT ROM routine LF1E6, entered through the FFF0H gateway
-    JR LC3C7
+    LD A,H                              ; A = function byte
+    LD HL,F1E6H                         ; EXT F1E6H: reset the selector of this
+    JR RST30_TO_EXT                     ; class and direction to its default
+                                        ; unless it names a card slot
 
-LC40E:
-    POP DE
+DEVICE_RECOVERY_RET:
+    POP DE                              ; EXT returns here through FFF0H
     POP BC
 
-LC410:
-    POP AF
+DEVICE_EXIT:
+    POP AF                              ; A = error code, NZ
     RET
 
 ; -----------------------------------------------------------------------------
@@ -1205,7 +1334,7 @@ IRQ_HANDLER:
 ; requests are acknowledged through ports 58H-5BH and passed to the extension
 ; ROM card dispatcher, which calls each requesting card's vector at C00EH.
 ;
-; INT_FLAG is FFH for the whole routine. The device-call path at LC3FC checks it:
+; INT_FLAG is FFH for the whole routine. The device-call path at DEVICE_RETURN checks it:
 ; while it is set, a device error is returned as is instead of entering the
 ; extension ROM's error recovery at F1E6H.
 ;
@@ -1276,8 +1405,8 @@ IRQ_CORE_EXIT:
 ;   bit 3  sound     TONE_INT times and stops a tone
 ;   bit 4+n          expansion card n, through the card dispatcher
 ;
-; Each internal device is called through LC3D8, the device-table half of the
-; RST 30H dispatcher. LC3D8 expects the frame that LC37E builds for an RST 30H
+; Each internal device is called through DEVICE_CALL, the device-table half of the
+; RST 30H dispatcher. DEVICE_CALL expects the frame that LC37E builds for an RST 30H
 ; call: saved DE, BC and AF above a return address. The four pushes of
 ; INTERNAL_IRQ_NEXT fill those three slots and the return address, so after the
 ; device returns, by either the normal or the error path, control comes back to
@@ -1305,7 +1434,7 @@ INTERNAL_IRQ_LOOP:
     PUSH HL
     PUSH HL
     PUSH HL
-    JP LC3D8                            ; look up and call device B, function 0
+    JP DEVICE_CALL                            ; look up and call device B, function 0
 
 INTERNAL_IRQ_NEXT:
     LD A,70H                            ; U0 U1 U2 SYS again: the device may have
@@ -1342,277 +1471,189 @@ INTERNAL_IRQ_EXIT:
     POP BC                              ; C = port 59H value for IRQ_CORE
     RET
 
-; Kernel routine jump table; first byte is the routine count, followed by routine addresses.
-; The kernel table contains five entries; function 0 is the required RET placeholder.
-
 ; -----------------------------------------------------------------------------
 ; KERNEL FUNCTION TABLE
 ; -----------------------------------------------------------------------------
-;
-; Counted jump table for the five kernel-class operating-system functions.
-;
-; The first byte is 05H, followed by five little-endian addresses. Function 0 is C509H, a RET-only
-; placeholder reserved by the uniform interrupt-function convention. Functions 1 through 4 are
-; HI-MEM-SET, SLOT-ASN, IO-ASN, and SLOT-NUM at C4B7H, C4D0H, C4E2H, and C50EH.
-;
-; Kernel calls are class 7 calls in the RST 30H operating-system encoding. They are not redirected
-; through the ordinary input/output assignment tables; the dispatcher reaches this table directly.
-;
-; Entry:
-;   Function index selected by the RST 30H dispatcher.
-;
-; Exit:
-;   A target address for the selected kernel function.
-;
-; Effects:
-;   Read-only table; no state changes.
-;
-; Note:
-;   The two-byte entry at C4ADH is intentionally present even though function 0 does no work.
+; Class 7 functions (RST 30H 70H-74H, or F0H-F4H). The kernel class is never
+; redirected through the selector tables. Function 0 is the RET that ends
+; IO_ASN; it exists only to keep the table layout uniform.
 ; -----------------------------------------------------------------------------
 KERNEL_JUMP_TABLE:
-    DB 05H, 09H, C5H, B7H, C4H, D0H, C4H, E2H, C4H, 0EH, C5H                          ; |...........|
-
-; HI_MEM_SET (KERNEL 01) expects the number of bytes to reserve above HI_MEM in DE; on success DE
-; returns the new HI_MEM+1, on failure A returns FBh.
-; HI-MEM-SET reserves memory downward and leaves 1EACH bytes below the new boundary.
+    DB 05H                              ; five functions
+    DW KERNEL_FN0_RET                   ; 0  (no operation)
+    DW HI_MEM_SET                       ; 1  reserve memory below HI_MEM
+    DW SLOT_ASN                         ; 2  assign a card to class 6
+    DW IO_ASN                           ; 3  redirect a device class
+    DW SLOT_NUM                         ; 4  find the slot holding a card
 
 ; -----------------------------------------------------------------------------
 ; KERNEL 01 - HI-MEM-SET
 ; -----------------------------------------------------------------------------
+; Lowers HI_MEM by DE bytes and returns the reserved block, which runs from
+; the new HI_MEM + 1 up to the old HI_MEM. The new HI_MEM may not go below
+; 1EACH. On failure HI_MEM is unchanged.
 ;
-; Reserves a requested block below the BASIC high-memory limit while preserving stack space.
-;
-; DE supplies the number of bytes to reserve. The routine subtracts that size from HI-MEM at 0B19H
-; and rejects the request with error FBH if it crosses below the current limit.
-;
-; A second subtraction checks that at least 1EACH bytes remain. This is the protected lower
-; boundary, leaving approximately 2 KiB for the system stack and its required safety margin. If
-; the check passes, the new HI-MEM is stored and DE returns one byte above it, the start of the
-; reserved area.
-;
-; The carry flag is used as the fast failure path, while A is initialized to FBH before either
-; check and is cleared only on success.
-;
-; Entry:
-;   DE = requested byte count; HI-MEM at 0B19H is the current upper limit.
-;
-; Exit:
-;   DE = first address of the reserved area, A=00H on success or A=FBH on failure.
-;
-; Effects:
-;   Updates HI-MEM at 0B19H only when the request is accepted.
-;
-; Destroys:
-;   HL and flags; DE is replaced by the returned start address.
+; Entry:   DE = number of bytes to reserve.
+; Exit:    A = 00H, DE = first byte of the block; or A = FBH.
 ; -----------------------------------------------------------------------------
 HI_MEM_SET:
     LD HL,(HI_MEM)
-    LD A,FBH
-    OR A
-    SBC HL,DE
-    RET C
+    LD A,FBH                            ; error FBH unless both checks pass
+    OR A                                ; clear Cy
+    SBC HL,DE                           ; HL = proposed HI_MEM
+    RET C                               ; DE is larger than HI_MEM
     PUSH HL
-    LD DE,1EACH
-    SBC HL,DE
+    LD DE,1EACH                         ; lowest HI_MEM allowed
+    SBC HL,DE                           ; (Cy is clear here)
     POP HL
-    RET C
-    LD D,H
-    LD E,L
+    RET C                               ; would go below 1EACH
+    LD D,H                              ; DE = new HI_MEM + 1,
+    LD E,L                              ; the start of the block
     INC DE
-    LD (HI_MEM),HL
-    XOR A
+    LD (HI_MEM),HL                      ; commit
+    XOR A                               ; success
     RET
-
-; SLOT-ASN chooses the class-6 input table at 0B07H or output table at 0B0FH from B.
 
 ; -----------------------------------------------------------------------------
 ; KERNEL 02 - SLOT-ASN
 ; -----------------------------------------------------------------------------
+; Finds the card named by DE and C (see SLOT_NUM) and stores its slot number
+; in selector byte 7 of the input or output table. Class 6 calls then go to
+; that card.
 ;
-; Assigns a named expansion-card unit to the class-6 input or output slot.
-;
-; DE points to the length-prefixed card identifier, C is the unit number on that card, and B
-; selects the table: B=FFH requests input assignment, any other B requests output assignment. The
-; routine chooses the corresponding class-6 entry at 0B07H or 0B0FH.
-;
-; SLOT_NUM at C50EH searches the four expansion-card descriptors and returns the card's physical
-; slot. If no matching card and unit exist, A=FDH is returned. Otherwise C is stored into the
-; selected assignment entry and A=00H indicates success.
-;
-; Entry:
-;   DE = card identifier; C = card unit; B = FFH for input or another value for output.
-;
-; Exit:
-;   A=00H and the class-6 assignment is updated, or A=FDH when the card is absent.
-;
-; Effects:
-;   Writes one byte in the input or output assignment table.
-;
-; Destroys:
-;   HL and flags; DE and BC are used as parameters and are not promised on exit.
+; Entry:   DE -> counted card name; C = unit number; B = FFH for the input
+;          table, anything else for the output table.
+; Exit:    A = 00H, C = slot; or A = FDH (no such card), selector unchanged.
 ; -----------------------------------------------------------------------------
 SLOT_ASN:
-    LD HL,IO_ASSIGN_IN+7
-    INC B
-    JR Z,LC4D9
-    LD HL,IO_ASSIGN_OUT+7
+    LD HL,IO_ASSIGN_IN+7                ; input class-6 slot byte
+    INC B                               ; B = FFH?
+    JR Z,SLOT_ASN_FIND
+    LD HL,IO_ASSIGN_OUT+7               ; no: output class-6 slot byte
 
-LC4D9:
+SLOT_ASN_FIND:
     PUSH HL
-    CALL SLOT_NUM
+    CALL SLOT_NUM                       ; C = slot if found
     POP HL
     OR A
-    RET NZ
-    LD (HL),C
+    RET NZ                              ; FDH: not found
+    LD (HL),C                           ; record the slot
     RET
-
-; IO-ASN rejects class, device, and FFH unassigned entries before writing the assignment byte.
 
 ; -----------------------------------------------------------------------------
 ; KERNEL 03 - IO-ASN
 ; -----------------------------------------------------------------------------
+; Points the selector of class B at class C, so functions 0-2 of class B are
+; served by class C (see RST30_DECODE). Both classes must be 0-6 and neither
+; selector may be FFH (FFH marks a class with no character or block I/O).
+; Cards cannot be assigned here; use SLOT_ASN and class 6.
 ;
-; Changes the device assigned to an input or output function class.
-;
-; B supplies the function class (0 through 6), C the desired device number, and D selects the
-; input table when FFH or the output table otherwise. The routine locates the class entry in the
-; selected table, verifies that the class and device are valid, and rejects FFH assignment
-; entries.
-;
-; On success the selected input/output slot is overwritten with C and A=00H is returned. Invalid
-; class, unassigned class, out-of-range device, or unassigned device produces A=FEH without
-; changing the table.
-;
-; Entry:
-;   B = function class; C = device number; D = FFH for input, otherwise output.
-;
-; Exit:
-;   A=00H on success or A=FEH on assignment error.
-;
-; Effects:
-;   May update one byte in the input or output assignment table.
-;
-; Destroys:
-;   DE, HL and flags; BC carries the request and is not promised on exit.
+; Entry:   B = class to redirect; C = class to use; D = FFH for the input
+;          table, anything else for the output table.
+; Exit:    A = 00H; or A = FEH, table unchanged.
 ; -----------------------------------------------------------------------------
 IO_ASN:
     LD HL,IO_ASSIGN_IN
-    INC D
-    JR Z,LC4EB
+    INC D                               ; D = FFH?
+    JR Z,IO_ASN_CHECK
     LD HL,IO_ASSIGN_OUT
 
-LC4EB:
-    PUSH HL
+IO_ASN_CHECK:
+    PUSH HL                             ; table base
     LD A,06H
     CP B
-    JR C,LC50A
+    JR C,IO_ASN_FAIL                    ; B > 6
     LD E,B
     LD D,00H
-    ADD HL,DE
+    ADD HL,DE                           ; HL -> selector of class B
     LD E,(HL)
     INC E
-    JR Z,LC50A
-    POP DE
-    PUSH HL
+    JR Z,IO_ASN_FAIL                    ; class B has selector FFH
+    POP DE                              ; DE = table base
+    PUSH HL                             ; keep the selector address
     EX DE,HL
-    CP C
-    JR C,LC50A
+    CP C                                ; A is still 06H
+    JR C,IO_ASN_FAIL                    ; C > 6
     LD E,C
     XOR A
     LD D,A
-    ADD HL,DE
+    ADD HL,DE                           ; HL -> selector of class C
     LD E,(HL)
     INC E
-    JR Z,LC50A
-    POP HL
-    LD (HL),C
+    JR Z,IO_ASN_FAIL                    ; class C has selector FFH
+    POP HL                              ; HL -> selector of class B
+    LD (HL),C                           ; redirect it; A = 00H
+
+KERNEL_FN0_RET:
     RET
 
-LC50A:
-    POP HL
+IO_ASN_FAIL:
+    POP HL                              ; drop the saved pointer
     LD A,FEH
     RET
-
-; Four card descriptors are spaced 30H bytes apart from IX=0040H.
 
 ; -----------------------------------------------------------------------------
 ; KERNEL 04 - SLOT-NUM
 ; -----------------------------------------------------------------------------
+; Searches the four card descriptors that the extension ROM builds in U0 at
+; reset, one per slot at 0040H + 30H * slot:
 ;
-; Finds the physical expansion-card slot containing a named card unit.
+;   +0  counted card name (length byte, then up to six characters)
+;   +7  unit number (cards of the same type are numbered 0, 1, ...)
+;   +8  work area, passed in IX to the card's routines
 ;
-; DE points to the card's length-prefixed identifier and C supplies its unit number. Four card
-; descriptors are searched at IX=0040H, then IX+0030H, IX+0060H, and IX+0090H. Each descriptor
-; begins with the identifier and carries its unit-number field at offset seven.
-;
-; A matching identifier and unit return A=00H, C=the zero-based slot number (0 through 3), and IX
-; pointing at the matching card's I/O buffer. If all four descriptors differ, A=FDH is returned.
-;
-; Entry:
-;   DE = card identifier; C = unit number (normally 0 through 3).
-;
-; Exit:
-;   A=00H, C=slot number, IX=matching descriptor/buffer; or A=FDH if absent.
-;
-; Effects:
-;   Read-only search of the U0 expansion-card descriptor area.
-;
-; Destroys:
-;   AF, BC, DE, HL, IX and flags; only the documented result registers are meaningful.
+; Entry:   DE -> counted card name; C = unit number.
+; Exit:    A = 00H, C = slot 0-3, IX -> its descriptor; or A = FDH.
+;          DE is preserved.
 ; -----------------------------------------------------------------------------
 SLOT_NUM:
-    PUSH DE
-    LD IX,0040H
-    LD B,04H
+    PUSH DE                             ; keep the name pointer
+    LD IX,0040H                         ; slot 0 descriptor
+    LD B,04H                            ; four slots
 
-LC515:
+SLOT_NUM_NEXT_SLOT:
     PUSH IX
-    POP HL
+    POP HL                              ; HL -> descriptor name
     PUSH BC
-    LD A,(DE)
-    INC A
+    LD A,(DE)                           ; compare the length byte and
+    INC A                               ; that many characters
     LD B,A
 
-LC51C:
+SLOT_NUM_COMPARE:
     LD A,(DE)
     CP (HL)
-    JR NZ,LC537
+    JR NZ,SLOT_NUM_NO_NAME
     INC HL
     INC DE
-    DJNZ LC51C
-    POP BC
+    DJNZ SLOT_NUM_COMPARE
+    POP BC                              ; name matches
     PUSH IX
     POP HL
-
-; Descriptor offset seven contains the card unit number used with the identifier comparison.
     LD DE,0007H
-    ADD HL,DE
+    ADD HL,DE                           ; HL -> unit number
     LD A,(HL)
     CP C
-    JR NZ,LC538
+    JR NZ,SLOT_NUM_SKIP                 ; same card type, other unit
+    LD A,04H                            ; B counts 4..1:
+    SUB B                               ; turn it into the slot number
+    LD C,A                              ; C = slot
+    XOR A                               ; found
 
-; A=04H minus the restored slot counter yields the zero-based physical slot number.
-    LD A,04H
-    SUB B
-    LD C,A
-    XOR A
-
-LC535:
-    POP DE
+SLOT_NUM_EXIT:
+    POP DE                              ; restore the name pointer
     RET
 
-LC537:
+SLOT_NUM_NO_NAME:
     POP BC
 
-LC538:
-    LD DE,0030H
+SLOT_NUM_SKIP:
+    LD DE,0030H                         ; next descriptor
     ADD IX,DE
-    POP DE
+    POP DE                              ; DE -> name again
     PUSH DE
-    DJNZ LC515
-    LD A,FDH
-    JR LC535
+    DJNZ SLOT_NUM_NEXT_SLOT
+    LD A,FDH                            ; error FDH: no such card
+    JR SLOT_NUM_EXIT
 
 ; Initial values for the 6845 video controller registers after reset.
 ; Sixteen bytes initialize CRTC registers R0 through R15 via ports 70H/71H.
@@ -1672,7 +1713,10 @@ CRTC_RESET_VALUES:
 ;   Indirectly initializes video, keyboard, sound, and cassette state.
 ; -----------------------------------------------------------------------------
 STARTUP_DEVICE_INIT_TABLE:
-    DB F2H, C9H, ECH, D5H, 60H, D9H, E2H, D9H                                         ; |....`...|
+    DW SET_4_COLOR_MODE                   ; initialize video
+    DW KEYBOARD_INIT                      ; initialize keyboard
+    DW TONE_NOP                           ; initialize sound
+    DW CAS_INIT                           ; initialize cassette
 
 ; Class pointers: video, keyboard, editor, sound, printer, cassette, expansion placeholder,
 ; kernel.
@@ -1702,7 +1746,14 @@ STARTUP_DEVICE_INIT_TABLE:
 ;   Read-only table.
 ; -----------------------------------------------------------------------------
 DEVICE_JUMP_TABLE_POINTERS:
-    DB 74H, C9H, E3H, D5H, 98H, CFH, 2AH, D9H, FFH, D8H, BBH, D9H, 00H, 00H, ACH, C4H ; |t.....*.........|
+    DW VIDEO_JUMP_TABLE                   ; class 0: video
+    DW KEYBOARD_JUMP_TABLE                ; class 1: keyboard
+    DW EDITOR_JUMP_TABLE                  ; class 2: editor
+    DW SOUND_JUMP_TABLE                   ; class 3: sound
+    DW PRINTER_JUMP_TABLE                 ; class 4: printer
+    DW CASSETTE_JUMP_TABLE                ; class 5: cassette
+    DW 0000H                              ; class 6: cards (handled by the extension ROM)
+    DW KERNEL_JUMP_TABLE                  ; class 7: kernel
 
 ; OUT_CHARS_SAFE checks HI-MEM before invoking the selected device once per source byte.
 
@@ -1963,8 +2014,20 @@ FIXED_CHARACTER_GLYPHS:
 ;   Read-only table.
 ; -----------------------------------------------------------------------------
 VIDEO_JUMP_TABLE:
-    DB 0DH, A9H, C9H, 94H, CCH, 86H, CCH, 4BH, CFH, F4H, C9H, 49H, CAH, DAH, CAH, D7H ; |.......K...I....|
-    DB CAH, F3H, CBH, FFH, CBH, 48H, CDH, 2CH, CFH, 38H, CAH                          ; |.....H.,.8.|
+    DB 0DH                                ; 13 functions
+    DW VID_INT_NOP                        ; 0  interrupt (no work)
+    DW VID_CHOUT                          ; 1  character output
+    DW VID_BKOUT                          ; 2  block output
+    DW CH_POS                             ; 3  character position
+    DW VID_MODE                           ; 4  select mode
+    DW VID_CLS                            ; 5  clear screen
+    DW B_ABS                              ; 6  move beam to X,Y
+    DW B_REL                              ; 7  move beam by X,Y
+    DW B_ON                               ; 8  pen down
+    DW B_OFF                              ; 9  pen up
+    DW PAINT                              ; 10 flood fill
+    DW CH_DEF                             ; 11 define character
+    DW PAL_DEF                            ; 12 define palette
 
 ; Video routines run with the video-memory mapping selected and P-SAVE preserved.
 
@@ -2073,6 +2136,8 @@ VIDEO_PAGE_RETURN:
     LD (P_SAVE),A
     OUT (02H),A
     EX AF,AF'
+
+VID_INT_NOP:
     RET
 
 ; Double the selector because each jump-table entry is a little-endian word.
@@ -2738,6 +2803,8 @@ LCAC8:
 ; -----------------------------------------------------------------------------
 PLOT_PIXEL_CROSSING:
     AND (HL)
+
+LCACE:
     XOR (HL)
 
 LCACF:
@@ -2745,6 +2812,8 @@ LCACF:
     XOR (HL)
     LD (HL),A
     RET
+
+LCAD3:
     AND C
     OR (HL)
     LD (HL),A
@@ -3079,7 +3148,10 @@ SELECT_CROSSING_MODE:
 ;   None.
 ; -----------------------------------------------------------------------------
 LINE_MODE_TABLE:
-    DB CEH, CAH, D3H, CAH, CDH, CAH, CFH, CAH                                         ; |........|
+    DW LCACE                              ; L_MODE 0 put
+    DW LCAD3                              ; L_MODE 1 OR
+    DW PLOT_PIXEL_CROSSING                ; L_MODE 2 AND
+    DW LCACF                              ; L_MODE 3 XOR
 
 ; -----------------------------------------------------------------------------
 ; LINE PIXEL STEPPER
@@ -4107,7 +4179,12 @@ LCF8B:
 ;   None.
 ; -----------------------------------------------------------------------------
 EDITOR_JUMP_TABLE:
-    DB 05H, A3H, CFH, 52H, D0H, 41H, D0H, 1DH, D0H, 13H, D0H                          ; |...R.A.....|
+    DB 05H                                ; 5 functions
+    DW ED_INT                             ; 0  interrupt: blink the cursor
+    DW ED_CHIN_OUT                        ; 1  character in/out
+    DW ED_BKIN_OUT                        ; 2  block in/out
+    DW CU_POS                             ; 3  position the cursor
+    DW CU_FIX                             ; 4  save the cursor position
 
 ; Cursor blink phase at 0E48H: 00H..14H shows the saved cell and 80H..94H shows the cursor
 ; overlay.
@@ -4471,7 +4548,7 @@ LD08B:
     LD HL,INT_DES
     RES 2,(HL)
     RST 30H
-    DB 91H                                ; RST 30H fn 91H: keyboard 1, output side -> KB_CHIN
+    DB 91H                                ; RST 30H fn 91H: keyboard 1, input -> KB_CHIN
     SET 2,(HL)
     PUSH AF
     PUSH BC
@@ -4673,9 +4750,28 @@ LD167:
 ;   None.
 ; -----------------------------------------------------------------------------
 EDITOR_COMMAND_TABLE:
-    DB 13H, 91H, D1H, 04H, 98H, D1H, 05H, 95H, D1H, 18H, 9EH, D1H, 16H, 05H, D2H, 07H ; |................|
-    DB 87H, D2H, 08H, 78H, D2H, 19H, FDH, D1H, 0EH, F7H, D1H, 0BH, A8H, D1H, 09H, CDH ; |...x............|
-    DB D1H                                                                            ; |.|
+    DB 13H                                ; cursor left
+    DW EDITOR_CURSOR_ARROWS
+    DB 04H                                ; cursor right
+    DW LD198
+    DB 05H                                ; cursor up
+    DW LD195
+    DB 18H                                ; cursor down
+    DW LD19E
+    DB 16H                                ; INS
+    DW EDITOR_INSERT_CHAR
+    DB 07H                                ; SHIFT+DEL
+    DW EDITOR_DELETE_AT
+    DB 08H                                ; DEL
+    DW EDITOR_DELETE_BEFORE
+    DB 19H                                ; CTRL+Y
+    DW LD1FD
+    DB 0EH                                ; CTRL+N
+    DW LD1F7
+    DB 0BH                                ; CTRL+K
+    DW EDITOR_CLEAR_TO_END
+    DB 09H                                ; CTRL+I (TAB)
+    DW EDITOR_TAB
 
 ; -----------------------------------------------------------------------------
 ; EDITOR CURSOR ARROW HANDLER
@@ -4704,12 +4800,18 @@ EDITOR_CURSOR_ARROWS:
     DEC B
     JR NZ,LD1A3
     LD B,A
+
+LD195:
     DEC C
     JR LD1A2
+
+LD198:
     INC B
     CP B
     JR NC,LD1A3
     LD B,01H
+
+LD19E:
     INC C
     LD A,C
     CP 19H
@@ -4827,8 +4929,12 @@ LD1F1:
     INC B
     LD (CU_Y),BC
     RET
+
+LD1F7:
     CALL EDITOR_PARAGRAPH_START
     JP LD2D6
+
+LD1FD:
     CALL EDITOR_PARAGRAPH_START
     CALL ROW_STATUS_ADDRESS
     JR LD1C2
@@ -6248,320 +6354,214 @@ LD5CE:
     CALL EDITOR_VIDEO_ADDRESS
     JP EDITOR_MOVE_CELLS
 
-; KEYBOARD routine jump table; first byte is the routine count, followed by routine addresses.
-; Keyboard OS service table: count followed by KBD-INT, KBD-CHIN, a reserved NOP, and KBD-STAT
-; entries.
-
 ; -----------------------------------------------------------------------------
 ; KEYBOARD SERVICE TABLE
 ; -----------------------------------------------------------------------------
-;
-; Counted OS dispatch table for the keyboard device.
-;
-; The first byte gives the number of keyboard functions. The following little-endian pointers
-; select the interrupt scanner, character input, the deliberately empty block function, and
-; keyboard status. The table is the stable OS-facing entry mechanism; the routines below are the
-; implementation behind those entries.
-;
-; Note:
-;   Function 0 is called from the periodic interrupt service; function 1 waits for a character;
-;   function 2 is a compatibility NOP; function 3 reports availability.
+; Class 1. Function 2 has no block transfer; it is the RET that ends KB_CHIN.
 ; -----------------------------------------------------------------------------
 KEYBOARD_JUMP_TABLE:
-    DB 04H, 2DH, D6H, 18H, D6H, 2CH, D6H, 12H, D6H                                    ; |.-...,...|
+    DB 04H                              ; four functions
+    DW KB_INT                           ; 0  interrupt-time scan
+    DW KB_CHIN                          ; 1  wait for and read a key
+    DW KB_BLOCK_NOP                     ; 2  (no operation)
+    DW KB_STATUS                        ; 3  is a key waiting?
 
 ; -----------------------------------------------------------------------------
 ; KEYBOARD INITIALIZATION
 ; -----------------------------------------------------------------------------
-;
-; Restores keyboard timing, lock state, matrices, and transient state to power-on defaults.
-;
-; The initializer selects a roughly 0.6-second auto-repeat delay (DELAY-KEY), a 60-ms repeat rate
-; (RATE-KEY), and clears LOCK-KEY. It zeroes both ten-byte keyboard matrices, PICTURE at 0B51H and
-; OLD-PIC at 0B5BH, then clears the remaining keyboard work area at 0BE5H-0BEDH. The result is an
-; explicitly empty keyboard state rather than a scan-dependent state left over from reset.
-;
-; Entry:
-;   No input; normally reached during system device initialization.
-;
-; Exit:
-;   Keyboard variables and matrices contain their default values.
-;
-; Effects:
-;   Clears pending key, modifier, repeat, and HOLD state.
-;
-; Destroys:
-;   AF, BC, DE, HL.
+; Sets the default repeat timing (DELAY_KEY 1EH = 30 ticks = 0.6 s before the
+; first repeat, RATE_KEY 03H = 60 ms between repeats), clears the lock mode,
+; both matrix images and the key work bytes 0BE5H-0BEEH.
 ; -----------------------------------------------------------------------------
 KEYBOARD_INIT:
     LD A,1EH
-    LD (DELAY_KEY),A
+    LD (DELAY_KEY),A                    ; first repeat after 30 ticks
     LD A,03H
-
-; DELAY-KEY default is 1EH (about 0.6 s at 20 ms ticks); RATE-KEY default is 03H (about 60 ms
-; between repeats); LOCK-KEY starts clear.
-    LD (RATE_KEY),A
+    LD (RATE_KEY),A                     ; then every 3 ticks
     XOR A
-    LD (LOCK_KEY),A
-    LD HL,KB_PICTURE
-    LD DE,KB_PICTURE+1
-
-; Clear PICTURE and OLD-PIC, each ten bytes for the ten physical keyboard rows.
+    LD (LOCK_KEY),A                     ; no lock mode
+    LD HL,KB_PICTURE                    ; clear KB_PICTURE and KB_OLD_PIC,
+    LD DE,KB_PICTURE+1                  ; 20 bytes
     LD BC,0013H
     LD (HL),A
     LDIR
-
-; Clear keyboard event and repeat work bytes at 0BE5H-0BEFH.
-    LD HL,KEY_PENDING
-    LD DE,0BE6H
+    LD HL,KEY_PENDING                   ; clear 0BE5H-0BEEH (B is 0 after LDIR)
+    LD DE,KEY_PENDING+1
     LD C,09H
     LD (HL),A
     LDIR
     RET
 
-; KB STATUS routine (BILL 03); checks if a key is pressed.
-; C=00 means no pending key; C=FF means the code in 0BE9H is ready. A=00 reports a healthy
-; keyboard service.
-
 ; -----------------------------------------------------------------------------
-; KEYBOARD STATUS
+; KEYBOARD 03 - STATUS
 ; -----------------------------------------------------------------------------
-;
-; Reports whether the interrupt scanner has a character waiting.
-;
-; The scanner marks 0BE5H when it has accepted a key code. This routine copies that marker to C
-; and returns A=00 as the device-health status. C=00 means no key is pending; C=FF means KB_CHIN
-; can consume the code in 0BE9H.
-;
-; Entry:
-;   No device-specific input.
-;
-; Exit:
-;   C=00 or FF; A=00.
-;
-; Effects:
-;   Does not consume the pending character.
+; Entry:   none.
+; Exit:    A = 00H; C = FFH if KB_INT has queued a key, 00H if not.
 ; -----------------------------------------------------------------------------
 KB_STATUS:
     LD A,(KEY_PENDING)
-    LD C,A
+    LD C,A                              ; C = FFH: a key is waiting
     XOR A
     RET
 
-; KB CHIN routine (BILL 01); reads the pressed key code.
-; Poll the pending-key marker until the interrupt scanner publishes a code; acknowledge it before
-; checking STOP-FLAG.
-
 ; -----------------------------------------------------------------------------
-; KEYBOARD CHARACTER INPUT
+; KEYBOARD 01 - CHARACTER INPUT
 ; -----------------------------------------------------------------------------
+; Waits until KB_INT queues a key, then takes it. The wait relies on the
+; interrupt running; there is no time-out.
 ;
-; Waits until the interrupt scanner publishes a key code, then returns it.
-;
-; The routine polls the pending-key byte at 0BE5H. Until the interrupt routine sets it, the loop
-; yields only by being interrupted and continues polling. Once set, the character code is copied
-; from 0BE9H to C and the pending marker is acknowledged by clearing 0BE5H.
-;
-; Entry:
-;   No input; the keyboard interrupt routine supplies the code asynchronously.
-;
-; Exit:
-;   C=character code and A=00 on success. A=F5H indicates the STOP condition generated by
-;   CTRL+ESC.
-;
-; Effects:
-;   Consumes one pending key and observes STOP-FLAG at 0B16H.
-;
-; Destroys:
-;   AF, C, HL.
+; Entry:   none.
+; Exit:    C = key code; A = 00H, or F5H if STOP_FLAG is set (CTRL+ESC).
 ; -----------------------------------------------------------------------------
 KB_CHIN:
     LD HL,KEY_PENDING
 
-LD61B:
+KB_CHIN_WAIT:
     LD A,(HL)
     OR A
-    JR Z,LD61B
+    JR Z,KB_CHIN_WAIT                   ; until the interrupt queues a key
     LD A,(KEY_CODE)
-    LD C,A
-    LD (HL),00H
+    LD C,A                              ; C = the key
+    LD (HL),00H                         ; take it
     LD A,(STOP_FLAG)
     OR A
+    RET Z                               ; A = 00H: normal key
+    LD A,F5H                            ; error F5H: CTRL+ESC pressed
 
-; CTRL+ESC is reported to character consumers as status F5H after the pending key has been
-; acknowledged.
-    RET Z
-    LD A,F5H
-
-; -----------------------------------------------------------------------------
-; KEYBOARD BLOCK FUNCTION
-; -----------------------------------------------------------------------------
-;
-; Empty keyboard block-I/O entry retained for the uniform OS device interface.
-;
-; Keyboard has no block transfer operation. The counted jump table nevertheless reserves function
-; 2 so all device classes have the same function numbering. The entry is a single return and
-; performs no work.
-; -----------------------------------------------------------------------------
 KB_BLOCK_NOP:
-    RET
-
-; KBD-INT runs from the periodic interrupt path: scan, decode one transition, queue a code, and
-; manage auto-repeat/HOLD.
+    RET                                 ; as function 2 this returns A = the
+                                        ; function byte, which the dispatcher
+                                        ; reports as an error
 
 ; -----------------------------------------------------------------------------
-; KEYBOARD INTERRUPT SERVICE
+; KEYBOARD 00 - INTERRUPT SERVICE
 ; -----------------------------------------------------------------------------
+; Runs on every 50 Hz tick. Reads the whole matrix into KB_PICTURE (1 bits =
+; pressed) and queues at most one new key in KEY_CODE / KEY_PENDING.
 ;
-; Scans, debounces, decodes, and queues keyboard transitions on each periodic interrupt.
+; Lock modes. LOCK_KEY holds one of:
+;   00H  none
+;   01H  caps lock (CTRL+LOCK): letters only are shifted
+;   02H  shift lock (SHIFT+LOCK): every key is shifted
+;   08H  alt lock (ALT+LOCK)
+; LOCK alone clears the mode. A held modifier works against the lock: SHIFT
+; with shift lock or caps lock gives the unshifted key, ALT with alt lock gives
+; the normal key (see KEY_CODE_TABLE_SELECT). While LOCK is held after setting
+; a mode, KEY_LOCK_ACT is FFH and no keys are decoded.
 ;
-; This is the keyboard's main worker and is invoked by the interrupt dispatcher. It canonicalizes
-; LOCK-KEY to one of CTRL, SHIFT, or ALT-LOCK states, scans the ten physical rows into PICTURE,
-; and gives special treatment to the LOCK key so a held lock key changes mode only once and
-; suppresses other key processing until it is released.
+; Auto-repeat. A newly accepted key reloads KEY_DELAY_CNT from DELAY_KEY. When
+; that count reaches zero the last key (KEY_DIFF_ADDR / KEY_DIFF_MASK) is
+; reported again if it is still held, and KEY_RATE_CNT (from RATE_KEY) then
+; times the following repeats. On the joystick rows, holding two directions
+; makes them alternate.
 ;
-; For ordinary scans it compares PICTURE with OLD-PIC, selects one newly pressed bit, and asks
-; KEY_MATRIX_DECODE for the code in C. A successful code is published in 0BE9H and marked
-; available in 0BE5H; the repeat counter is reloaded from DELAY-KEY. CTRL+P enters HOLD, where
-; scanning continues internally until another accepted key releases the hold. CTRL+ESC sets
-; STOP-FLAG and is returned as the F5H status by character consumers.
-;
-; Entry:
-;   Periodic interrupt context; IY is used for the keyboard work area during scanning.
-;
-; Exit:
-;   A newly accepted code is queued in 0BE9H; E=FF indicates no new code or HOLD.
-;
-; Effects:
-;   Updates PICTURE, OLD-PIC, modifier locks, repeat counters, STOP-FLAG, and pending-key state.
-;
-; Destroys:
-;   AF, BC, DE, HL and alternate register pairs as required by helpers.
-;
-; Note:
-;   Auto-repeat is suppressed for ordinary matrix transitions until DELAY-KEY expires, then
-;   proceeds at RATE-KEY. Joystick directions in the last two rows receive alternating repeat
-;   treatment when two directions are held.
+; HOLD. CTRL+P (code 10H) is not queued; it sets HOLD_STATE and KB_INT then
+; keeps scanning inside the interrupt, freezing the machine, until another key
+; is pressed. That key ends the hold, is queued, and clears STOP_FLAG unless
+; CTRL+ESC is down. HOLD_KEY = FFH disables this.
 ; -----------------------------------------------------------------------------
 KB_INT:
     LD A,(LOCK_KEY)
-
-; LOCK-KEY uses only CTRL, SHIFT, and ALT-LOCK bits; NEG/AND leaves at most the lowest asserted
-; lock bit.
-    AND 0BH
+    AND 0BH                             ; valid lock bits are 0, 1 and 3;
     LD B,A
-    NEG
+    NEG                                 ; keep only the lowest one that is set
     AND B
     LD (LOCK_KEY),A
-    CALL KEY_MATRIX_READ
+    CALL KEY_MATRIX_READ                ; KB_PICTURE = keys down; IY -> it; B = 0
     LD HL,KEY_LOCK_ACT
-    BIT 5,(IY+06H)
-    JR Z,LD652
+    BIT 5,(IY+06H)                      ; LOCK (row 6, column 5) down?
+    JR Z,KB_INT_KEYS
     LD A,(HL)
     OR A
-    RET NZ
+    RET NZ                              ; LOCK still held after setting a mode
+    DEC (HL)                            ; KEY_LOCK_ACT = FFH
+    LD A,01H                            ; CTRL+LOCK gives 01H,
+    CALL KEY_MODIFIER_STATE             ; SHIFT 02H, ALT 08H, LOCK alone 00H
+    LD (LOCK_KEY),A                     ; new lock mode
+    RET NZ                              ; a mode was set: decode nothing yet
 
-; While LOCK is held, modifier changes are applied once and ordinary key decoding is suspended
-; until release.
-    DEC (HL)
-    LD A,01H
-    CALL KEY_MODIFIER_STATE
-    LD (LOCK_KEY),A
-    RET NZ
-
-; Decode the current modifier combination, then ask KEY_MATRIX_DECODE for one newly pressed matrix
-; bit.
-
-LD652:
-    LD (HL),B
-    LD A,04H
-    CALL KEY_MODIFIER_STATE
+KB_INT_KEYS:
+    LD (HL),B                           ; KEY_LOCK_ACT = 00H
+    LD A,04H                            ; CTRL gives 04H,
+    CALL KEY_MODIFIER_STATE             ; SHIFT 02H, ALT 08H, none 00H
     LD (KEY_MODIFIER),A
 
-LD65B:
-    XOR A
+KB_INT_DECODE:
+    XOR A                               ; Z: KB_PICTURE is fresh, do not rescan
 
-; On a new code, publish C in 0BE9H, set 0BE5H=FFH, reload the repeat delay at 0BEAH, and return
-; to the interrupt dispatcher.
-
-LD65C:
-    CALL KEY_MATRIX_DECODE
+KB_INT_DECODE_SCAN:
+    CALL KEY_MATRIX_DECODE              ; C = code, E = FFH if there is none
     INC E
-    JR Z,LD672
+    JR Z,KB_INT_NO_KEY
     LD A,C
-    LD (KEY_CODE),A
+    LD (KEY_CODE),A                     ; queue the key
     LD A,FFH
     LD (KEY_PENDING),A
-    LD A,(DELAY_KEY)
+    LD A,(DELAY_KEY)                    ; restart the repeat delay
     LD (KEY_DELAY_CNT),A
     RET
 
-LD672:
-    LD A,(HL)
-    OR A
-    JR NZ,LD65C
+KB_INT_NO_KEY:
+    LD A,(HL)                           ; HL = HOLD_STATE
+    OR A                                ; NZ: holding; rescan (CALL NZ in the
+    JR NZ,KB_INT_DECODE_SCAN            ; decoder) until a key arrives
 
-; Auto-repeat decrements DELAY-KEY first and RATE-KEY second; a code is generated only when one of
-; the counters expires.
+; No new key: count down for auto-repeat.
+
     LD HL,KEY_DELAY_CNT
-    CALL LD6C0
-    INC HL
-    CALL NC,LD6C0
-    RET NC
-    LD A,(KEY_DIFF_MASK)
+    CALL KEY_COUNTDOWN                  ; Cy when the delay just expired
+    INC HL                              ; HL = KEY_RATE_CNT
+    CALL NC,KEY_COUNTDOWN               ; otherwise count the rate
+    RET NC                              ; neither expired
+    LD A,(KEY_DIFF_MASK)                ; the key to repeat: bit ...
     LD C,A
-    LD DE,(KEY_DIFF_ADDR)
-    LD HL,KB_OLD_PIC+9
-    SBC HL,DE
-    EX DE,HL
-    JR Z,LD69B
+    LD DE,(KEY_DIFF_ADDR)               ; ... in this KB_OLD_PIC row
+    LD HL,KB_OLD_PIC+9                  ; Cy is set: HL - DE - 1 = 0
+    SBC HL,DE                           ; for row 8
+    EX DE,HL                            ; HL = row address
+    JR Z,KEY_REPEAT_JOYSTICK
     OR A
     EX DE,HL
     LD HL,KB_OLD_PIC+9
-    SBC HL,DE
-    EX DE,HL
-    JR NZ,LD6A4
+    SBC HL,DE                           ; zero for row 9
+    EX DE,HL                            ; HL = row address
+    JR NZ,KEY_REPEAT_HELD
 
-; Joystick directions in the last two rows alternate when two directions are held, preventing one
-; direction from starving the other.
-
-LD69B:
-    LD D,66H
+KEY_REPEAT_JOYSTICK:
+    LD D,66H                            ; up, down, right, left bits
     AND D
-    JR Z,LD6A4
-    XOR D
-    AND (HL)
-    JR NZ,LD6B5
+    JR Z,KEY_REPEAT_HELD                ; fire, accel or INS: repeat normally
+    XOR D                               ; the other directions ...
+    AND (HL)                            ; ... that are still held
+    JR NZ,KEY_REPEAT_AGAIN              ; report those instead
 
-LD6A4:
+KEY_REPEAT_HELD:
     LD A,C
-    AND (HL)
-    JR NZ,LD6B5
-    LD HL,KB_OLD_PIC
-    LD B,0AH
+    AND (HL)                            ; is the key still held?
+    JR NZ,KEY_REPEAT_AGAIN
+    LD HL,KB_OLD_PIC                    ; released: forget every held key,
+    LD B,0AH                            ; so keys still down are reported
+                                        ; again as new presses
 
-LD6AD:
+KEY_FORGET_ALL:
     LD (HL),A
     INC HL
-    DJNZ LD6AD
-    LD (KEY_RATE_CNT),A
+    DJNZ KEY_FORGET_ALL
+    LD (KEY_RATE_CNT),A                 ; no repeat pending
     RET
 
-; If the held key disappeared from OLD-PIC, clear its repeat state; otherwise temporarily remove
-; its old bit and let normal edge decoding repeat it.
-
-LD6B5:
-    CPL
-    AND (HL)
+KEY_REPEAT_AGAIN:
+    CPL                                 ; clear the bit(s) in KB_OLD_PIC so the
+    AND (HL)                            ; decoder sees them as newly pressed
     LD (HL),A
     LD A,(RATE_KEY)
-    LD (KEY_RATE_CNT),A
-    JR LD65B
+    LD (KEY_RATE_CNT),A                 ; time the next repeat
+    JR KB_INT_DECODE
 
-; A one-byte countdown helper returns Z when the counter is zero and carry when this decrement
-; reached zero.
+; Count (HL) down. Z, NC: already zero. NZ, NC: still running. Cy: reached
+; zero now.
 
-LD6C0:
+KEY_COUNTDOWN:
     LD A,(HL)
     OR A
     RET Z
@@ -6570,331 +6570,269 @@ LD6C0:
     SCF
     RET
 
-; Compare current PICTURE against OLD-PIC; equal bits are stable, while only newly asserted bits
-; survive for decoding.
-
 ; -----------------------------------------------------------------------------
 ; KEYBOARD MATRIX DECODER
 ; -----------------------------------------------------------------------------
+; Finds the first newly pressed key (rows 9 down to 0, lowest bit first),
+; records it in KB_OLD_PIC, KEY_DIFF_ADDR and KEY_DIFF_MASK, and translates it
+; with the code tables. The modifier and LOCK keys are removed from
+; KB_PICTURE first, so they never produce a code. Keys released since the last
+; scan are removed from KB_OLD_PIC.
 ;
-; Converts one newly pressed matrix bit into a mode-dependent TVC character or function code.
+; The table index is (7 - column) * 10 + row: each table holds the ten rows
+; of column 7, then column 6, and so on.
 ;
-; The routine compares each of the ten PICTURE bytes with the corresponding OLD-PIC byte. Stable
-; bits disappear; a newly asserted bit is isolated with two's-complement masking, written back to
-; OLD-PIC, and retained with its row/column location. This edge detector means a key is accepted
-; once per press rather than once per scan.
-;
-; The isolated bit chooses one of eight ten-byte columns in the keyboard code tables. A key value
-; combines the current modifier keys (SHIFT, CTRL, ALT) with the persistent LOCK-KEY state: SHIFT
-; and ALT are reversible, while CTRL remains effective regardless of lock mode. The selected table
-; supplies C. The routine also handles CTRL+P HOLD and tests CTRL+ESC, preserving HL=0BE6H as the
-; HOLD-state location for its caller.
-;
-; Entry:
-;   Z=0 requests a fresh physical scan; IY points at PICTURE.
-;
-; Exit:
-;   C=accepted keyboard code; E=FF if no new key or HOLD; HL=0BE6H for HOLD bookkeeping.
-;
-; Effects:
-;   Updates OLD-PIC, modifier state, HOLD/STOP handling, and selected keyboard work bytes.
-;
-; Destroys:
-;   AF, BC, DE, HL and alternate register pairs.
-;
-; Note:
-;   A keyboard row contains eight bits and there are ten rows, so each mode table is 8x10=80
-;   bytes. The matrix table uses bits b7 through b0 as the eight columns and row numbers 0 through
-;   9 within each column.
+; Entry:   NZ to rescan the matrix first, Z to use KB_PICTURE as it is.
+; Exit:    E = FFH if no key; otherwise C = code.
+;          HL = HOLD_STATE in both cases.
 ; -----------------------------------------------------------------------------
 KEY_MATRIX_DECODE:
     CALL NZ,KEY_MATRIX_READ
-    RES 3,(IY+06H)
-    RES 4,(IY+07H)
-    RES 0,(IY+07H)
-    RES 5,(IY+06H)
-    LD HL,0BE6H
-    LD DE,000AH
+    RES 3,(IY+06H)                      ; ignore SHIFT,
+    RES 4,(IY+07H)                      ; CTRL,
+    RES 0,(IY+07H)                      ; ALT
+    RES 5,(IY+06H)                      ; and LOCK
+    LD HL,HOLD_STATE                    ; alternate set: HL' = HOLD_STATE,
+    LD DE,000AH                         ; E' = row counter, D' = 0
     EXX
-    LD HL,DELAY_KEY
-    LD DE,KB_OLD_PIC
+    LD HL,KB_OLD_PIC+10                 ; HL -> just past KB_OLD_PIC
+    LD DE,KB_OLD_PIC                    ; DE -> just past KB_PICTURE
 
-LD6E7:
-    DEC DE
-    DEC HL
+KEY_DECODE_ROW:
+    DEC DE                              ; DE -> KB_PICTURE row
+    DEC HL                              ; HL -> KB_OLD_PIC row
     EXX
-    DEC E
-    RET M
+    DEC E                               ; E' = row 9..0
+    RET M                               ; all rows done: E' = FFH, no key
     EXX
-    LD A,(DE)
+    LD A,(DE)                           ; A = keys down now
     LD B,A
     XOR (HL)
     CPL
-    AND (HL)
-    LD (HL),A
-    XOR B
-    JR Z,LD6E7
+    AND (HL)                            ; keys down before and now
+    LD (HL),A                           ; drop released keys from KB_OLD_PIC
+    XOR B                               ; keys down now but not before
+    JR Z,KEY_DECODE_ROW
     LD B,A
     NEG
-
-; Two's-complement masking isolates the lowest newly pressed bit so simultaneous transitions are
-; accepted one at a time.
-    AND B
+    AND B                               ; isolate the lowest new key
     LD B,A
     XOR (HL)
-    LD (HL),A
+    LD (HL),A                           ; mark it as seen
     LD A,B
-    LD (KEY_DIFF_ADDR),HL
+    LD (KEY_DIFF_ADDR),HL               ; remember it for auto-repeat
     LD (KEY_DIFF_MASK),A
-    LD A,50H
+    LD A,50H                            ; A = 80 - 10 * (column + 1)
 
-; Store the active bit and its row address; these values index the eight-column, ten-row code
-; tables.
-
-LD706:
+KEY_DECODE_COLUMN:
     SUB 0AH
     SRL B
-    JR NC,LD706
+    JR NC,KEY_DECODE_COLUMN             ; = (7 - column) * 10
     EXX
-    ADD A,E
-    LD E,A
+    ADD A,E                             ; + row
+    LD E,A                              ; DE = table index (D is 0)
     LD A,(KEY_MODIFIER)
     LD B,A
     LD A,(LOCK_KEY)
-    XOR B
+    XOR B                               ; B = held modifier XOR lock mode
     LD B,A
-    PUSH HL
-    CALL KEY_CODE_TABLE_SELECT
+    PUSH HL                             ; HL = HOLD_STATE
+    CALL KEY_CODE_TABLE_SELECT          ; C = code
     POP HL
     LD A,(HOLD_KEY)
     INC A
-    RET Z
+    RET Z                               ; HOLD disabled: return the key
     LD A,(HL)
     OR A
     LD A,C
-    JR Z,LD73C
-    LD A,(PORT03_MIRROR)
-    AND F0H
+    JR Z,KEY_HOLD_CHECK                 ; not holding: is this CTRL+P?
+    LD A,(PORT03_MIRROR)                ; holding: this key ends the hold.
+    AND F0H                             ; Read row 7 directly
     OR 07H
     OUT (03H),A
     IN A,(58H)
-    AND 18H
-    JR Z,LD740
+    AND 18H                             ; ESC (bit 3) and CTRL (bit 4), 0 = down
+    JR Z,KEY_HOLD_END                   ; CTRL+ESC: keep STOP_FLAG
     XOR A
-    LD (STOP_FLAG),A
-    JR LD740
+    LD (STOP_FLAG),A                    ; any other key cancels the stop
+    JR KEY_HOLD_END
 
-LD73C:
-    CP 10H
-    JR Z,LD743
+KEY_HOLD_CHECK:
+    CP 10H                              ; CTRL+P?
+    JR Z,KEY_HOLD_START
 
-LD740:
-    LD (HL),00H
+KEY_HOLD_END:
+    LD (HL),00H                         ; not holding
     RET
 
-LD743:
-    DEC (HL)
-    LD E,FFH
+KEY_HOLD_START:
+    DEC (HL)                            ; HOLD_STATE = FFH
+    LD E,FFH                            ; and report no key
     RET
-
-; KEY_CODE_TABLE_SELECT: B combines persistent LOCK-KEY and currently held modifiers to select one
-; of four code tables.
 
 ; -----------------------------------------------------------------------------
 ; KEYBOARD CODE-TABLE SELECTOR
 ; -----------------------------------------------------------------------------
+; B = held modifier XOR lock mode (bit 0 caps lock, bit 1 shift, bit 2 CTRL,
+; bit 3 alt). Because of the XOR, a held SHIFT cancels shift lock and a held
+; ALT cancels alt lock. Caps lock shifts only letters: a-z (61H-7AH) and the
+; accented lower-case letters 90H-98H. With caps lock, SHIFT gives lower case.
 ;
-; Selects the normal, SHIFT-lock, CTRL-lock, or ALT-lock code table and returns the code for a
-; matrix position.
+;   CTRL held                       KEY_TABLE_CTRL
+;   caps lock, letter               KEY_TABLE_SHIFT, or normal with SHIFT
+;   otherwise shift                 KEY_TABLE_SHIFT
+;   otherwise alt                   KEY_TABLE_ALT
+;   otherwise                       KEYBOARD_CODE_TABLES (normal)
 ;
-; DE identifies the matrix position and B is the combined lock/modifier key. The selector uses a
-; small state matrix: the SHIFT and ALT combinations toggle their corresponding lock state, while
-; CTRL always selects the CTRL interpretation. It then indexes one of the four 80-byte tables and
-; returns the byte in C.
+; A table byte of FFH (CTRL+ESC) sets STOP_FLAG and is returned as ESC (1BH).
 ;
-; Exit:
-;   C=the code corresponding to the selected matrix position and modifier state.
-;
-; Effects:
-;   If the selected code is CTRL+ESC, sets STOP-FLAG and returns the ESC code path.
+; Entry:   DE = table index; B as above.
+; Exit:    C = code.
 ; -----------------------------------------------------------------------------
 KEY_CODE_TABLE_SELECT:
-    LD HL,LD784
-    PUSH HL
-    LD HL,D85FH
-    BIT 2,B
+    LD HL,KEY_TABLE_READ                ; most paths RET into KEY_TABLE_READ
+    PUSH HL                             ; with HL = the chosen table
+    LD HL,KEY_TABLE_CTRL
+    BIT 2,B                             ; CTRL held
     RET NZ
-    BIT 0,B
-    JR Z,LD774
-    LD HL,KEYBOARD_CODE_TABLES
+    BIT 0,B                             ; caps lock?
+    JR Z,KEY_TABLE_NOT_CAPS
+    LD HL,KEYBOARD_CODE_TABLES          ; look at the normal code:
     ADD HL,DE
     LD A,(HL)
-    CP 61H
-    JR C,LD774
+    CP 61H                              ; is it a lower-case letter?
+    JR C,KEY_TABLE_NOT_CAPS
     CP 7BH
-    JR C,LD76A
+    JR C,KEY_TABLE_CAPS                 ; a-z
     CP 90H
-    JR C,LD774
+    JR C,KEY_TABLE_NOT_CAPS
     CP 99H
-    JR NC,LD774
+    JR NC,KEY_TABLE_NOT_CAPS            ; not 90H-98H
 
-; CTRL table is independent of lock state; SHIFT/ALT cases choose the table that implements their
-; reversible lock behavior.
-
-LD76A:
-    LD HL,D80FH
+KEY_TABLE_CAPS:
+    LD HL,KEY_TABLE_SHIFT               ; letter with caps lock: shifted ...
     BIT 1,B
     RET Z
-    LD HL,KEYBOARD_CODE_TABLES
+    LD HL,KEYBOARD_CODE_TABLES          ; ... unless SHIFT is held
     RET
 
-LD774:
-    LD HL,D80FH
-    BIT 1,B
+KEY_TABLE_NOT_CAPS:
+    LD HL,KEY_TABLE_SHIFT
+    BIT 1,B                             ; shift (held or locked)
     RET NZ
-    LD HL,D8AFH
-    BIT 3,B
+    LD HL,KEY_TABLE_ALT
+    BIT 3,B                             ; alt (held or locked)
     RET NZ
-    POP HL
-    LD HL,KEYBOARD_CODE_TABLES
+    POP HL                              ; normal table: drop the return
+    LD HL,KEYBOARD_CODE_TABLES          ; address and fall through
 
-; Normal-table result is returned in C; CTRL+ESC sets STOP-FLAG and returns the ESC code path.
-
-LD784:
+KEY_TABLE_READ:
     ADD HL,DE
-    LD C,(HL)
+    LD C,(HL)                           ; C = code
     LD A,C
-    CP FFH
+    CP FFH                              ; CTRL+ESC?
     RET NZ
-    LD (STOP_FLAG),A
-    LD C,1BH
+    LD (STOP_FLAG),A                    ; STOP_FLAG = FFH
+    LD C,1BH                            ; and return ESC
     RET
-
-; Modifier helper gives CTRL priority, then reports SHIFT=02H, ALT=08H, or no modifier=00H.
 
 ; -----------------------------------------------------------------------------
 ; MODIFIER KEY STATE
 ; -----------------------------------------------------------------------------
-;
-; Reports currently held CTRL, SHIFT, and ALT modifier keys.
-;
-; The caller supplies the CTRL result in A. If CTRL is active it is preserved; otherwise the
-; routine checks the keyboard matrix for SHIFT and then ALT, returning 02H, 08H, or 00H. This
-; deliberately gives CTRL priority because it is not a reversible lock in the table-selection
-; rules.
-;
-; Exit:
-;   A=modifier selector: 04H for CTRL supplied by the caller, 02H for SHIFT, 08H for ALT, or 00H
-;   for none.
+; Entry:   A = value to return for CTRL; IY = KB_PICTURE.
+; Exit:    A = that value if CTRL is down, else 02H for SHIFT, 08H for ALT,
+;          00H for none; Z only for none.
 ; -----------------------------------------------------------------------------
 KEY_MODIFIER_STATE:
-    BIT 4,(IY+07H)
+    BIT 4,(IY+07H)                      ; CTRL (row 7, column 4)
     RET NZ
     LD A,02H
-    BIT 3,(IY+06H)
+    BIT 3,(IY+06H)                      ; SHIFT (row 6, column 3)
     RET NZ
-    BIT 0,(IY+07H)
+    BIT 0,(IY+07H)                      ; ALT (row 7, column 0)
     LD A,08H
     RET NZ
     XOR A
     RET
 
-; KEY_MATRIX_READ preserves the upper nibble of PORT03 and selects rows 0..9 through its lower
-; nibble.
-
 ; -----------------------------------------------------------------------------
 ; PHYSICAL KEYBOARD SCAN
 ; -----------------------------------------------------------------------------
+; Reads rows 0-9 into KB_PICTURE, inverted so that 1 = pressed. Port 03H keeps
+; the card-select bits from PORT03_MIRROR; it is left selecting row 9 and the
+; mirror is not updated.
 ;
-; Selects rows 0 through 9 on port 03H and stores the active-low matrix in PICTURE.
-;
-; The upper four bits of the port-03 mirror are preserved; the lower nibble selects a keyboard
-; row. For each row the routine writes the row number to port 03H, reads port 58H, complements the
-; active-low result, and stores one byte at 0B51H. IY is set to the beginning of this ten-byte
-; PICTURE matrix for the decoder.
-;
-; Entry:
-;   Port-03 mirror at 0B11H and a physically connected keyboard matrix.
-;
-; Exit:
-;   Ten bytes at 0B51H-0B5AH, one per row; IY points to 0B51H.
-;
-; Effects:
-;   Writes the row-select port and replaces the current keyboard picture.
-;
-; Destroys:
-;   AF, BC, DE, HL, IY.
+; Exit:    HL -> KB_PICTURE+10; IY = KB_PICTURE; B = 0.
 ; -----------------------------------------------------------------------------
 KEY_MATRIX_READ:
     LD A,(PORT03_MIRROR)
-    AND F0H
+    AND F0H                             ; keep the card select, row 0
     LD C,A
     LD HL,KB_PICTURE
     PUSH HL
-    POP IY
-    LD B,0AH
+    POP IY                              ; IY = KB_PICTURE for the bit tests
+    LD B,0AH                            ; ten rows
 
-; Read port 58H, complement its active-low columns, and store one row byte at PICTURE; repeat for
-; all ten rows.
-
-LD7B3:
+KEY_MATRIX_ROW:
     LD A,C
-    OUT (03H),A
-    IN A,(58H)
-    CPL
+    OUT (03H),A                         ; select the row
+    IN A,(58H)                          ; 0 = pressed
+    CPL                                 ; 1 = pressed
     LD (HL),A
     INC C
     INC HL
-    DJNZ LD7B3
+    DJNZ KEY_MATRIX_ROW
     RET
-
-; Keyboard matrix decode tables for normal, SHIFT, CTRL, and ALT modes.
-; Normal keyboard code table: 8 columns x 10 rows, indexed by matrix bit and row number.
 
 ; -----------------------------------------------------------------------------
 ; KEYBOARD CODE TABLES
 ; -----------------------------------------------------------------------------
-;
-; Four 80-byte lookup tables for normal, SHIFT-lock, CTRL-lock, and ALT-lock keyboard modes.
-;
-; Each table is organized as eight columns of ten rows. The matrix bit selects a column and the
-; row number selects an element; each byte is the resulting ASCII, control, joystick, or function
-; code. Values marked FFH represent unused matrix positions. The table layout is part of the
-; decoder algorithm, not merely a printable-character catalogue.
-;
-; Note:
-;   The normal table begins at D7BFH, SHIFT-lock at D80FH, CTRL-lock at D85FH, and ALT-lock at
-;   D8AFH. The final column is followed immediately by printer-table data, so the 320-byte extent
-;   must remain a single data region when disassembling.
+; Four 80-byte tables: normal, shift, CTRL and alt. Each line below is one
+; matrix column, rows 0-9; the comment names the keys in that column (row 8 is
+; INS and the built-in joystick, row 9 the second joystick). Besides the '*'
+; key, 2AH fills the modifier and LOCK positions and the positions with no
+; key; the decoder never looks those up. Row 9 column 0 has no key; the four tables hold 'C', 'I',
+; 'S', 'L' there. FFH in the CTRL table is CTRL+ESC (see KEY_TABLE_READ).
 ; -----------------------------------------------------------------------------
 KEYBOARD_CODE_TABLES:
+    DB 34H, 37H, 72H, 75H, 66H, 6AH, 76H, 6DH, 2AH, 2AH  ; C7: 4 7 r u f j v m - -
+    DB 31H, 94H, 71H, 70H, 61H, 91H, 79H, 2DH, 13H, F3H  ; C6: 1 ö q p a é y - LT LT2
+    DB 92H, 93H, 40H, 96H, 3CH, 98H, 2AH, 20H, 04H, E4H  ; C5: í ó @ ú < ű LOCK SPC RT RT2
+    DB 36H, 2AH, 7AH, 5BH, 68H, 0DH, 6EH, 2AH, 01H, E1H  ; C4: 6 * z [ h RET n CTRL ACC ACC2
+    DB 30H, 97H, 3BH, 95H, 5CH, 90H, 2AH, 1BH, 06H, E6H  ; C3: 0 ü ; ő \ á SHIFT ESC FIRE FIRE2
+    DB 32H, 39H, 77H, 6FH, 73H, 6CH, 78H, 2EH, 18H, F8H  ; C2: 2 9 w o s l x . DN DN2
+    DB 33H, 38H, 65H, 69H, 64H, 6BH, 63H, 2CH, 05H, E5H  ; C1: 3 8 e i d k c , UP UP2
+    DB 35H, 5EH, 74H, 5DH, 67H, 08H, 62H, 2AH, 16H, 43H  ; C0: 5 ^ t ] g DEL b ALT INS -
 
-; SHIFT-lock keyboard code table.
+KEY_TABLE_SHIFT:
+    DB 21H, 3DH, 52H, 55H, 46H, 4AH, 56H, 4DH, 2AH, 2AH  ; C7: 4 7 r u f j v m - -
+    DB 27H, 84H, 51H, 50H, 41H, 81H, 59H, 5FH, 13H, F3H  ; C6: 1 ö q p a é y - LT LT2
+    DB 82H, 83H, 60H, 86H, 3EH, 88H, 2AH, 20H, 04H, E4H  ; C5: í ó @ ú < ű LOCK SPC RT RT2
+    DB 2FH, 23H, 5AH, 7BH, 48H, 0DH, 4EH, 2AH, 01H, E1H  ; C4: 6 * z [ h RET n CTRL ACC ACC2
+    DB 26H, 87H, 24H, 85H, 7CH, 80H, 2AH, 1BH, 06H, E6H  ; C3: 0 ü ; ő \ á SHIFT ESC FIRE FIRE2
+    DB 22H, 29H, 57H, 4FH, 53H, 4CH, 58H, 3AH, 18H, F8H  ; C2: 2 9 w o s l x . DN DN2
+    DB 2BH, 28H, 45H, 49H, 44H, 4BH, 43H, 3FH, 05H, E5H  ; C1: 3 8 e i d k c , UP UP2
+    DB 25H, 7EH, 54H, 7DH, 47H, 07H, 42H, 2AH, 16H, 49H  ; C0: 5 ^ t ] g DEL b ALT INS -
 
-; CTRL-lock keyboard code table; control/function codes are independent of persistent SHIFT/ALT
-; lock state.
+KEY_TABLE_CTRL:
+    DB 8BH, 9CH, 12H, 15H, 06H, 0AH, 16H, 0DH, 2AH, 2AH  ; C7: 4 7 r u f j v m - -
+    DB 99H, DCH, 11H, 10H, 01H, D9H, 19H, 1FH, 13H, F3H  ; C6: 1 ö q p a é y - LT LT2
+    DB DAH, DBH, 00H, DEH, 3CH, 98H, 2AH, 20H, 04H, E4H  ; C5: í ó @ ú < ű LOCK SPC RT RT2
+    DB 8CH, 8EH, 1AH, 1BH, 08H, 0DH, 0EH, 2AH, 01H, E1H  ; C4: 6 * z [ h RET n CTRL ACC ACC2
+    DB 89H, DFH, 3BH, DDH, 1CH, CFH, 2AH, FFH, 06H, E6H  ; C3: 0 ü ; ő \ á SHIFT ESC FIRE FIRE2
+    DB 8AH, 9DH, 17H, 0FH, 13H, 0CH, 18H, 2EH, 18H, F8H  ; C2: 2 9 w o s l x . DN DN2
+    DB 9AH, 8DH, 05H, 09H, 04H, 0BH, 03H, 2CH, 05H, E5H  ; C1: 3 8 e i d k c , UP UP2
+    DB 9BH, 1EH, 14H, 1DH, 07H, 08H, 02H, 2AH, 16H, 53H  ; C0: 5 ^ t ] g DEL b ALT INS -
 
-; ALT-lock keyboard code table.
-    DB 34H, 37H, 72H, 75H, 66H, 6AH, 76H, 6DH, 2AH, 2AH, 31H, 94H, 71H, 70H, 61H, 91H ; |47rufjvm**1.qpa.|
-    DB 79H, 2DH, 13H, F3H, 92H, 93H, 40H, 96H, 3CH, 98H, 2AH, 20H, 04H, E4H, 36H, 2AH ; |y-....@.<.* ..6*|
-    DB 7AH, 5BH, 68H, 0DH, 6EH, 2AH, 01H, E1H, 30H, 97H, 3BH, 95H, 5CH, 90H, 2AH, 1BH ; |z[h.n*..0.;.\.*.|
-    DB 06H, E6H, 32H, 39H, 77H, 6FH, 73H, 6CH, 78H, 2EH, 18H, F8H, 33H, 38H, 65H, 69H ; |..29woslx...38ei|
-    DB 64H, 6BH, 63H, 2CH, 05H, E5H, 35H, 5EH, 74H, 5DH, 67H, 08H, 62H, 2AH, 16H, 43H ; |dkc,..5^t]g.b*.C|
-    DB 21H, 3DH, 52H, 55H, 46H, 4AH, 56H, 4DH, 2AH, 2AH, 27H, 84H, 51H, 50H, 41H, 81H ; |!=RUFJVM**'.QPA.|
-    DB 59H, 5FH, 13H, F3H, 82H, 83H, 60H, 86H, 3EH, 88H, 2AH, 20H, 04H, E4H, 2FH, 23H ; |Y_....`.>.* ../#|
-    DB 5AH, 7BH, 48H, 0DH, 4EH, 2AH, 01H, E1H, 26H, 87H, 24H, 85H, 7CH, 80H, 2AH, 1BH ; |Z{H.N*..&.$.|.*.|
-    DB 06H, E6H, 22H, 29H, 57H, 4FH, 53H, 4CH, 58H, 3AH, 18H, F8H, 2BH, 28H, 45H, 49H ; |..")WOSLX:..+(EI|
-    DB 44H, 4BH, 43H, 3FH, 05H, E5H, 25H, 7EH, 54H, 7DH, 47H, 07H, 42H, 2AH, 16H, 49H ; |DKC?..%~T}G.B*.I|
-    DB 8BH, 9CH, 12H, 15H, 06H, 0AH, 16H, 0DH, 2AH, 2AH, 99H, DCH, 11H, 10H, 01H, D9H ; |........**......|
-    DB 19H, 1FH, 13H, F3H, DAH, DBH, 00H, DEH, 3CH, 98H, 2AH, 20H, 04H, E4H, 8CH, 8EH ; |........<.* ....|
-    DB 1AH, 1BH, 08H, 0DH, 0EH, 2AH, 01H, E1H, 89H, DFH, 3BH, DDH, 1CH, CFH, 2AH, FFH ; |.....*....;...*.|
-    DB 06H, E6H, 8AH, 9DH, 17H, 0FH, 13H, 0CH, 18H, 2EH, 18H, F8H, 9AH, 8DH, 05H, 09H ; |................|
-    DB 04H, 0BH, 03H, 2CH, 05H, E5H, 9BH, 1EH, 14H, 1DH, 07H, 08H, 02H, 2AH, 16H, 53H ; |...,.........*.S|
-    DB A4H, A7H, C2H, C5H, B6H, BAH, C6H, BDH, 2AH, 2AH, A1H, D4H, C1H, C0H, B1H, D1H ; |........**......|
-    DB C9H, ADH, 13H, F3H, D2H, D3H, B0H, D6H, ACH, D8H, 2AH, 20H, 04H, E4H, A6H, AAH ; |..........* ....|
-    DB CAH, CBH, B8H, 0DH, BEH, 2AH, 01H, E1H, A0H, D7H, ABH, D5H, CCH, D0H, 2AH, 1BH ; |.....*........*.|
-    DB 06H, E6H, A2H, A9H, C7H, BFH, C3H, BCH, C8H, AEH, 18H, F8H, A3H, A8H, B5H, B9H ; |................|
-    DB B4H, BBH, B3H, AFH, 05H, E5H, A5H, CEH, C4H, CDH, B7H, 08H, B2H, 2AH, 16H, 4CH ; |.............*.L|
+KEY_TABLE_ALT:
+    DB A4H, A7H, C2H, C5H, B6H, BAH, C6H, BDH, 2AH, 2AH  ; C7: 4 7 r u f j v m - -
+    DB A1H, D4H, C1H, C0H, B1H, D1H, C9H, ADH, 13H, F3H  ; C6: 1 ö q p a é y - LT LT2
+    DB D2H, D3H, B0H, D6H, ACH, D8H, 2AH, 20H, 04H, E4H  ; C5: í ó @ ú < ű LOCK SPC RT RT2
+    DB A6H, AAH, CAH, CBH, B8H, 0DH, BEH, 2AH, 01H, E1H  ; C4: 6 * z [ h RET n CTRL ACC ACC2
+    DB A0H, D7H, ABH, D5H, CCH, D0H, 2AH, 1BH, 06H, E6H  ; C3: 0 ü ; ő \ á SHIFT ESC FIRE FIRE2
+    DB A2H, A9H, C7H, BFH, C3H, BCH, C8H, AEH, 18H, F8H  ; C2: 2 9 w o s l x . DN DN2
+    DB A3H, A8H, B5H, B9H, B4H, BBH, B3H, AFH, 05H, E5H  ; C1: 3 8 e i d k c , UP UP2
+    DB A5H, CEH, C4H, CDH, B7H, 08H, B2H, 2AH, 16H, 4CH  ; C0: 5 ^ t ] g DEL b ALT INS -
 
 ; PRINTER routine jump table.
 ; Printer OS service table: reserved function, PR-CHOUT, and PR-BKOUT.
@@ -6911,7 +6849,10 @@ KEYBOARD_CODE_TABLES:
 ; through ACK.
 ; -----------------------------------------------------------------------------
 PRINTER_JUMP_TABLE:
-    DB 03H, 29H, D9H, 0CH, D9H, 06H, D9H                                              ; |.).....|
+    DB 03H                                ; 3 functions
+    DW LD929                              ; 0  interrupt (no work)
+    DW PAR_CHOUT                          ; 1  character output
+    DW PAR_BKOUT                          ; 2  block output
 
 ; Block output delegates each byte to PR-CHOUT through the bounded C56DH helper; DE is source and
 ; BC is count.
@@ -6985,6 +6926,8 @@ PAR_CHOUT:
     OUT (06H),A
     EI
     XOR A
+
+LD929:
     RET
 
 ; SOUND routine jump table.
@@ -7001,7 +6944,11 @@ PAR_CHOUT:
 ; enabled only while a tone is active.
 ; -----------------------------------------------------------------------------
 SOUND_JUMP_TABLE:
-    DB 04H, 33H, D9H, 60H, D9H, 60H, D9H, 61H, D9H                                    ; |.3.`.`.a.|
+    DB 04H                                ; 4 functions
+    DW TONE_INT                           ; 0  interrupt: time the tone
+    DW TONE_NOP                           ; 1  (no operation)
+    DW TONE_NOP                           ; 2  (no operation)
+    DW TONE_SET                           ; 3  start a tone
 
 ; SOUND-INT decrements the 20-ms duration counter and turns off sound when it reaches zero or
 ; STOP-FLAG is set.
@@ -7177,7 +7124,13 @@ LD981:
 ; and motor handling are implemented in the extension ROM.
 ; -----------------------------------------------------------------------------
 CASSETTE_JUMP_TABLE:
-    DB 06H, E7H, D9H, D2H, D9H, D7H, D9H, C8H, D9H, CDH, D9H, DCH, D9H                ; |.............|
+    DB 06H                                ; 6 functions
+    DW LD9E7                              ; 0  interrupt
+    DW CAS_CHIN_OUT                       ; 1  character in/out
+    DW CAS_BKIN_OUT                       ; 2  block in/out
+    DW CAS_OPEN_CREATE                    ; 3  open/create
+    DW CAS_CLOSE                          ; 4  close
+    DW CAS_VERIFY                         ; 5  verify
 
 ; Cassette operations are forwarding stubs; the selected EXTH routine is entered through the
 ; common FFF0H gateway.
@@ -7456,11 +7409,11 @@ LDA6B:
     JR NZ,LDA6B
     DJNZ LDA58
     RST 30H
-    DB 93H                                ; RST 30H fn 93H: keyboard 3, output side -> KB_STATUS
+    DB 93H                                ; RST 30H fn 93H: keyboard 3, input -> KB_STATUS
     INC C
     JR NZ,LDA4F
     RST 30H
-    DB 91H                                ; RST 30H fn 91H: keyboard 1, output side -> KB_CHIN
+    DB 91H                                ; RST 30H fn 91H: keyboard 1, input -> KB_CHIN
     LD C,01H
     RST 30H
     DB 04H                                ; RST 30H fn 04H: video 4 -> VID_MODE
@@ -8280,6 +8233,8 @@ LDD88:
     LD A,C
     CP 20H
     DB 16H                                ; = LD D,F6H when run from here, hiding the entry below
+
+LDD93:
     DB F6H                                ; = OR 37H when run from here, hiding the entry below
 
 LDD94:
