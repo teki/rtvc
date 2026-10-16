@@ -2728,6 +2728,139 @@
     },
     {
       "bank": "sys",
+      "address": "0xF82A",
+      "offset": "0x382A",
+      "name": "FMT_FIND_LAST",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF850",
+      "offset": "0x3850",
+      "name": "FMT_FIXED_BIG",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF858",
+      "offset": "0x3858",
+      "name": "FMT_EXPONENT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF859",
+      "offset": "0x3859",
+      "name": "FMT_EXPONENT_POINT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF85B",
+      "offset": "0x385B",
+      "name": "FMT_COUNT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF85C",
+      "offset": "0x385C",
+      "name": "FMT_START",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF85E",
+      "offset": "0x385E",
+      "name": "FMT_POINT_CHECK",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xF864",
       "offset": "0x3864",
       "name": "FORMAT_DIGIT_LOOP",
@@ -2766,9 +2899,256 @@
     },
     {
       "bank": "sys",
+      "address": "0xF889",
+      "offset": "0x3889",
+      "name": "FMT_EXPONENT_TENS",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF897",
+      "offset": "0x3897",
+      "name": "FMT_END_INC",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF898",
+      "offset": "0x3898",
+      "name": "FMT_END",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xF8A1",
       "offset": "0x38A1",
       "name": "STRING_TO_STACK",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF8A7",
+      "offset": "0x38A7",
+      "name": "STRING_SKIP_SPACES",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF8B2",
+      "offset": "0x38B2",
+      "name": "STRING_COUNT_NEXT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF8B4",
+      "offset": "0x38B4",
+      "name": "STRING_COUNT_CHAR",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF8C7",
+      "offset": "0x38C7",
+      "name": "STRING_UNQUOTED",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF8D3",
+      "offset": "0x38D3",
+      "name": "STRING_COUNT_END",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF8DE",
+      "offset": "0x38DE",
+      "name": "STRING_COPY_BACK",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF8EE",
+      "offset": "0x38EE",
+      "name": "STRING_COPY_STORE",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF8F8",
+      "offset": "0x38F8",
+      "name": "STRING_COPY_DONE",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF905",
+      "offset": "0x3905",
+      "name": "PUSH_LITERAL",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF912",
+      "offset": "0x3912",
+      "name": "ERROR_OVERFLOW",
       "alt_names": [],
       "kind": "routine",
       "usage": [],
@@ -2823,6 +3203,44 @@
     },
     {
       "bank": "sys",
+      "address": "0xF936",
+      "offset": "0x3936",
+      "name": "ASCII_NEXT_CHAR",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF938",
+      "offset": "0x3938",
+      "name": "ASCII_CHAR",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xF954",
       "offset": "0x3954",
       "name": "ASCII_DECIMAL_STATE",
@@ -2842,9 +3260,218 @@
     },
     {
       "bank": "sys",
+      "address": "0xF956",
+      "offset": "0x3956",
+      "name": "ASCII_STORE_DIGIT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF959",
+      "offset": "0x3959",
+      "name": "ASCII_STORE_FRACTION",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF963",
+      "offset": "0x3963",
+      "name": "ASCII_RLD",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF969",
+      "offset": "0x3969",
+      "name": "ASCII_POINT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF971",
+      "offset": "0x3971",
+      "name": "ASCII_DIGITS_END",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xF97A",
       "offset": "0x397A",
       "name": "ASCII_SCAN_EXPONENT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF999",
+      "offset": "0x3999",
+      "name": "ASCII_EXP_NEGATIVE",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF99B",
+      "offset": "0x399B",
+      "name": "ASCII_EXP_SIGN_DONE",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF99C",
+      "offset": "0x399C",
+      "name": "ASCII_EXP_DIGITS",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF99F",
+      "offset": "0x399F",
+      "name": "ASCII_EXP_NEXT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF9B7",
+      "offset": "0x39B7",
+      "name": "ASCII_EXP_END",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF9BE",
+      "offset": "0x39BE",
+      "name": "ASCII_EXP_ADD",
       "alt_names": [],
       "kind": "routine",
       "usage": [],
@@ -2899,6 +3526,63 @@
     },
     {
       "bank": "sys",
+      "address": "0xF9E6",
+      "offset": "0x39E6",
+      "name": "FP_TEST_ZERO_NEXT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF9EF",
+      "offset": "0x39EF",
+      "name": "FP_TEST_ZERO_DONE",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xF9F1",
+      "offset": "0x39F1",
+      "name": "FP_PUSH_ZERO",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xF9F4",
       "offset": "0x39F4",
       "name": "FP_ALLOCATE_NUMERIC",
@@ -2921,6 +3605,82 @@
       "address": "0xF9F9",
       "offset": "0x39F9",
       "name": "FP_CLEAR_NUMERIC",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFA01",
+      "offset": "0x3A01",
+      "name": "FP_CLEAR_NEXT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFA08",
+      "offset": "0x3A08",
+      "name": "FP_SET_ONE",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFA14",
+      "offset": "0x3A14",
+      "name": "FP_CLEAR_RETURN_EXT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFA1A",
+      "offset": "0x3A1A",
+      "name": "POP_AF_DISCARD_NUMBER",
       "alt_names": [],
       "kind": "routine",
       "usage": [],
@@ -2994,6 +3754,253 @@
     },
     {
       "bank": "sys",
+      "address": "0xFA3B",
+      "offset": "0x3A3B",
+      "name": "INT_FIND_TOP_BIT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFA43",
+      "offset": "0x3A43",
+      "name": "INT_GROW",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFA46",
+      "offset": "0x3A46",
+      "name": "INT_DOUBLE",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFA47",
+      "offset": "0x3A47",
+      "name": "INT_DOUBLE_BYTE",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFA52",
+      "offset": "0x3A52",
+      "name": "INT_NEXT_BIT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFA63",
+      "offset": "0x3A63",
+      "name": "PUSH_NUMBER_VAR",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFA7C",
+      "offset": "0x3A7C",
+      "name": "PUSH_STRING_VAR",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFA7D",
+      "offset": "0x3A7D",
+      "name": "PUSH_STRING_AT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFA8D",
+      "offset": "0x3A8D",
+      "name": "SET_ELEMENT_TYPE",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFA92",
+      "offset": "0x3A92",
+      "name": "DUP_NUMBER",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFAA6",
+      "offset": "0x3AA6",
+      "name": "DUP_TWO_NUMBERS",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFABA",
+      "offset": "0x3ABA",
+      "name": "EVAL_INTEGER_NEXT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFABF",
+      "offset": "0x3ABF",
+      "name": "POP_TWO_INTEGERS",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xFAC3",
       "offset": "0x3AC3",
       "name": "STACK_NUMBER_TO_INTEGER",
@@ -3013,9 +4020,237 @@
     },
     {
       "bank": "sys",
+      "address": "0xFAC4",
+      "offset": "0x3AC4",
+      "name": "EVAL_INTEGER",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFAC5",
+      "offset": "0x3AC5",
+      "name": "NUMBER_TO_INTEGER",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFADF",
+      "offset": "0x3ADF",
+      "name": "INTEGER_DIGIT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFB06",
+      "offset": "0x3B06",
+      "name": "INTEGER_DONE",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFB14",
+      "offset": "0x3B14",
+      "name": "ERROR_BAD_ARGUMENT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xFB16",
       "offset": "0x3B16",
       "name": "STACK_NUMBER_TO_BYTE",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFB1A",
+      "offset": "0x3B1A",
+      "name": "STACK_TO_BYTE",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFB1B",
+      "offset": "0x3B1B",
+      "name": "EVAL_BYTE",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFB28",
+      "offset": "0x3B28",
+      "name": "STORE_NUMBER_VAR",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFB3B",
+      "offset": "0x3B3B",
+      "name": "STORE_VALUE_VAR",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFB41",
+      "offset": "0x3B41",
+      "name": "STORE_STRING_VAR",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFB4C",
+      "offset": "0x3B4C",
+      "name": "STORE_STRING_FITS",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xFB57",
+      "offset": "0x3B57",
+      "name": "SET_IY_HL",
       "alt_names": [],
       "kind": "routine",
       "usage": [],

@@ -394,14 +394,16 @@ DATA_LINE          EQU 1712H              ; DATA line pointer
 DATA_PTR           EQU 1714H              ; DATA byte pointer
 INPUT_PTR          EQU 1716H              ; INPUT data pointer
 RST18_NEXT         EQU 1718H              ; next RST 18H bytecode byte
-RST18_HL           EQU 171EH              ; HL passed between RST 18H operations
 BASIC_SP           EQU 171AH              ; BASIC stack pointer snapshot
+INT_BCD_PTR        EQU 171CH              ; INTEGER_TO_STACK: start of its BCD accumulator
+RST18_HL           EQU 171EH              ; HL passed between RST 18H operations
 VLOMEM             EQU 1720H              ; low-memory/base boundary
 TEXT_START         EQU 1722H              ; start of the BASIC program
 SYMBOL_END         EQU 1724H              ; end of the chained symbol area
 SYMBOL_TOP         EQU 1726H              ; next free symbol byte
 SOUND_PITCH        EQU 172AH              ; current sound PITCH
 INPUT_BUFFER       EQU 1831H              ; INPUT buffer
+NUMBER_TEXT        EQU 1930H              ; FP_TO_ASCII output: length, then text
 FP_X               EQU 19C0H              ; floating-point work register X
 FP_Y               EQU 19C7H              ; floating-point work register Y
 CAS_HEADER         EQU 19DFH              ; cassette header workspace
@@ -544,8 +546,8 @@ LE0A3:
 
 LE0A9:
     CALL NC,GET_TOKEN
-    CALL LFAC4
-    JP M,LFB14
+    CALL EVAL_INTEGER
+    JP M,ERROR_BAD_ARGUMENT
     INC HL
     EX DE,HL
     LD HL,(SYMBOL_TOP)
@@ -577,7 +579,7 @@ LE0A9:
     INC A
 
 LE0E4:
-    JP Z,LFB14
+    JP Z,ERROR_BAD_ARGUMENT
     DEC A
     LD C,A
 
@@ -617,9 +619,9 @@ LE10E:
 ; EXT routine.
 
 LE117:
-    CALL LFB1B
+    CALL EVAL_BYTE
     CP 07H
-    JP NC,LFB14
+    JP NC,ERROR_BAD_ARGUMENT
     ADD A,A
     PUSH AF
     EXX
@@ -627,15 +629,15 @@ LE117:
     EXX
     CP A4H
     JR NZ,LE13E
-    CALL LFABA
+    CALL EVAL_INTEGER_NEXT
     EX DE,HL
     CP A4H
     JR NZ,LE13E
-    CALL LFABA
+    CALL EVAL_INTEGER_NEXT
     CP A4H
     JR NZ,LE13E
     PUSH HL
-    CALL LFABA
+    CALL EVAL_INTEGER_NEXT
     LD C,L
     LD B,H
     POP HL
@@ -682,7 +684,7 @@ LE167:
     CALL EVAL_NUMERIC_EXPRESSION
     POP HL
     PUSH HL
-    CALL LFB28
+    CALL STORE_NUMBER_VAR
     LD A,B4H
     CALL EXPECT_TOKEN
     CALL EVAL_NUMERIC_EXPRESSION
@@ -895,7 +897,7 @@ LE27C:
     JR NZ,LE294
     CALL STRING_TO_STACK
     EX (SP),HL
-    CALL LFB41
+    CALL STORE_STRING_VAR
     JR LE2B0
 
 LE292:
@@ -910,7 +912,7 @@ LE294:
     EX AF,AF'
     JR NC,LE292
     RLA
-    JP C,LF912
+    JP C,ERROR_OVERFLOW
     JR LE2AC
 
 LE2A6:
@@ -921,7 +923,7 @@ LE2A6:
 
 LE2AC:
     EX (SP),HL
-    CALL LFB28
+    CALL STORE_NUMBER_VAR
 
 LE2B0:
     POP HL
@@ -1029,7 +1031,7 @@ LE320:
 
 LE332:
     SET 0,(IX+02H)
-    CALL LFB1B
+    CALL EVAL_BYTE
     LD B,A
     EXX
     LD A,B
@@ -1074,7 +1076,7 @@ LE370:
     CP F4H
     JR Z,LE30C
     CP FEH
-    JP NC,LFB14
+    JP NC,ERROR_BAD_ARGUMENT
     PUSH HL
     EXX
     POP HL
@@ -1161,7 +1163,7 @@ BASIC_LET:
     PUSH HL
     CALL LE3E8
     POP HL
-    CALL LFB3B
+    CALL STORE_VALUE_VAR
     JP DBB1H
 
 LE3E8:
@@ -1231,9 +1233,9 @@ LE432:
     SBC HL,DE
     INC H
     DEC H
-    JP NZ,LF912
+    JP NZ,ERROR_OVERFLOW
     INC L
-    JP Z,LF912
+    JP Z,ERROR_OVERFLOW
     DEC L
     EX DE,HL
     LD (HL),E
@@ -1251,12 +1253,12 @@ LE44A:
 ; LOMEM routine.
 
 LE452:
-    CALL LFAC4
+    CALL EVAL_INTEGER
     LD DE,(VLOMEM)
     OR A
     SBC HL,DE
     ADD HL,DE
-    JP C,LFB14
+    JP C,ERROR_BAD_ARGUMENT
     LD DE,(TEXT_START)
     SBC HL,DE
     JP Z,DBB4H
@@ -1270,7 +1272,7 @@ LE452:
     PUSH DE
     PUSH HL
     INC D
-    JP Z,LFB14
+    JP Z,ERROR_BAD_ARGUMENT
     CALL CHECK_MEMORY_DE
     POP HL
     PUSH HL
@@ -1375,7 +1377,7 @@ LE4E3:
     EX DE,HL
     LD DE,0022H
     ADD IY,DE
-    CALL LFA63
+    CALL PUSH_NUMBER_VAR
     DEC DE
     LD HL,FFF7H
     ADD HL,DE
@@ -1391,7 +1393,7 @@ LE4E3:
     POP HL
     PUSH AF
     PUSH IY
-    CALL LFB28
+    CALL STORE_NUMBER_VAR
     POP IY
     CALL FP_COMPARE
     POP BC
@@ -1419,11 +1421,11 @@ LE536:
 ; Entry: Port and byte expressions
 ; Effects: Writes a hardware I/O port.
 BASIC_OUT:
-    CALL LFB1B
+    CALL EVAL_BYTE
     LD C,A
     LD A,A4H
     CALL EXPECT_TOKEN
-    CALL LFB1B
+    CALL EVAL_BYTE
     OUT (C),A
     JP DBB1H
 
@@ -1436,7 +1438,7 @@ BASIC_POKE:
     CALL EVAL_WORD
     LD A,A4H
     CALL EXPECT_TOKEN
-    CALL LFB1B
+    CALL EVAL_BYTE
     LD C,A
     CALL VIDEO_ADDRESS_MAP
     JR C,LE567
@@ -1476,7 +1478,7 @@ LE57C:
     LD HL,INPUT_BUFFER
     LD (HL),7FH
     PUSH HL
-    CALL LFB41
+    CALL STORE_STRING_VAR
     POP HL
     INC HL
     LD E,(HL)
@@ -1498,7 +1500,7 @@ LE5A6:
     LD C,A
     LD A,A4H
     CALL EXPECT_TOKEN
-    CALL LFB1B
+    CALL EVAL_BYTE
     LD B,A
     CALL LE68B
 
@@ -1567,7 +1569,7 @@ LE5FE:
     JR NZ,LE617
     LD A,96H
     CALL EXPECT_TOKEN_NEXT
-    CALL LFB1B
+    CALL EVAL_BYTE
     LD B,A
     LD A,95H
     CALL EXPECT_TOKEN
@@ -1778,7 +1780,7 @@ BASIC_RETURN:
 ; Entry: Tokenized graphics parameters
 ; Effects: Calls graphics OS routines.
 BASIC_GRAPHICS:
-    CALL LFB1B
+    CALL EVAL_BYTE
     LD C,00H
     CP 02H
     JR Z,LE747
@@ -1787,7 +1789,7 @@ BASIC_GRAPHICS:
     JR Z,LE747
     INC C
     CP 10H
-    JP NZ,LFB14
+    JP NZ,ERROR_BAD_ARGUMENT
 
 LE747:
     RST 30H
@@ -1824,12 +1826,12 @@ LE75F:
     JR Z,LE74D
     CP A4H
     JR Z,LE784
-    CALL LFAC4
+    CALL EVAL_INTEGER
     LD C,L
     LD B,H
     LD A,A4H
     CALL EXPECT_TOKEN
-    CALL LFAC4
+    CALL EVAL_INTEGER
     EX DE,HL
     PUSH AF
     RST 30H
@@ -1866,7 +1868,7 @@ BASIC_SET:
     LD HL,E7E4H
     CALL TOKEN_TABLE_JUMP
     JR C,LE7DA
-    CALL LFB1B
+    CALL EVAL_BYTE
 
 LE79B:
     LD E,00H
@@ -1893,11 +1895,11 @@ LE7B4:
     CALL EVAL_STRING_EXPRESSION
     LD HL,193FH
     LD (HL),7FH
-    CALL LFB41
+    CALL STORE_STRING_VAR
     JR LE7D2
 
 LE7C5:
-    CALL LFB1B
+    CALL EVAL_BYTE
     LD (HL),A
     INC HL
     DJNZ LE7A6
@@ -1947,7 +1949,7 @@ LE7DA:
 ; SET CHARACTER routine.
     POP HL
     POP HL
-    CALL LFB1B
+    CALL EVAL_BYTE
     LD C,A
     LD A,0BH
     JP LE79B
@@ -1960,7 +1962,7 @@ LE7DA:
     JP LE79D
 
 ; SET BORDER routine.
-    CALL LFB1B
+    CALL EVAL_BYTE
     ADD A,A
     LD (BORDER),A
     JR E812H
@@ -2146,7 +2148,7 @@ LE93F:
     CALL NZ,SYMBOL_CREATE_VALUE
     EXX
     CALL STACK_TO_NUMERIC_REGS
-    CALL LFB41
+    CALL STORE_STRING_VAR
     JP DBB1H
 
 ; LOAD routine.
@@ -2504,7 +2506,7 @@ FN_REC_CHR_STR:
 
 BASIC_CHR_STR:
     CALL EVAL_NUMERIC_ARGUMENT
-    CALL LFB1A
+    CALL STACK_TO_BYTE
     PUSH IY
     POP HL
     DEC HL
@@ -2547,14 +2549,14 @@ LEBB8:
     CP 43H
     JR C,LEBD4
     OR C
-    JP P,LF912
+    JP P,ERROR_OVERFLOW
 
 LEBCE:
     CALL DISCARD_NUMBER
     JP FP_CLEAR_NUMERIC
 
 LEBD4:
-    CALL LFA92
+    CALL DUP_NUMBER
     CALL STACK_NUMBER_TO_INTEGER
     LD E,L
     LD D,H
@@ -2564,7 +2566,7 @@ LEBD4:
     JP M,LEBCE
     SLA C
     SBC HL,BC
-    JP NC,LF912
+    JP NC,ERROR_OVERFLOW
     PUSH DE
     RST 18H
 
@@ -2630,7 +2632,7 @@ FN_REC_IN:
 ; Effects: Reads a hardware I/O port.
 BASIC_IN:
     CALL EVAL_NUMERIC_ARGUMENT
-    CALL LFB1A
+    CALL STACK_TO_BYTE
     LD C,A
     IN L,(C)
     LD H,00H
@@ -2706,7 +2708,7 @@ LECD8:
     LD A,(IY+08H)
     OR A
     JP P,FP_CLEAR_NUMERIC
-    CALL LFA08
+    CALL FP_SET_ONE
     JP FP_NEGATE
 
 FN_REC_IO:
@@ -2715,7 +2717,7 @@ FN_REC_IO:
 
 BASIC_IO:
     CALL EVAL_NUMERIC_ARGUMENT
-    CALL LFB1A
+    CALL STACK_TO_BYTE
     LD L,A
     LD H,00H
     LD DE,1941H
@@ -2759,12 +2761,12 @@ LED21:
     XOR A
     LD D,A
     OR (HL)
-    JP Z,LFB14
+    JP Z,ERROR_BAD_ARGUMENT
     INC HL
     LD E,(HL)
     INC E
     DEC E
-    JP M,LFB14
+    JP M,ERROR_BAD_ARGUMENT
     LD (HL),3FH
     PUSH DE
     PUSH HL
@@ -2798,7 +2800,7 @@ LED49:
     RET
 
 LED8B:
-    CALL LFAA6
+    CALL DUP_TWO_NUMBERS
     CALL LEAD2
     CALL FP_DIV
     CALL LECAF
@@ -2819,7 +2821,7 @@ LEDA9:
     INC HL
     LD A,(HL)
     OR A
-    JP Z,LFB14
+    JP Z,ERROR_BAD_ARGUMENT
     JP LED10
 
 FN_REC_PEEK:
@@ -2873,10 +2875,10 @@ LEE02:
     CALL EVAL_NUMERIC_ARGUMENT
     CALL STACK_NUMBER_TO_INTEGER
     BIT 7,H
-    JP NZ,LFB14
+    JP NZ,ERROR_BAD_ARGUMENT
     LD A,H
     OR L
-    JP Z,LFB14
+    JP Z,ERROR_BAD_ARGUMENT
     PUSH HL
     XOR A
 
@@ -2919,7 +2921,7 @@ BASIC_SGN:
     RET Z
     LD A,(IY+08H)
     PUSH AF
-    CALL LFA08
+    CALL FP_SET_ONE
     POP AF
     AND 80H
     OR (IY+08H)
@@ -2995,7 +2997,7 @@ FN_REC_SQR:
 BASIC_SQR:
     CALL EVAL_NUMERIC_ARGUMENT
     BIT 7,(IY+08H)
-    JP NZ,LFB14
+    JP NZ,ERROR_BAD_ARGUMENT
     LD A,(IY+06H)
     OR A
     RET Z
@@ -3038,7 +3040,7 @@ LEF17:
     OR A
     JR NZ,LEF23
     CALL DISCARD_NUMBER
-    JP LFA08
+    JP FP_SET_ONE
 
 LEF23:
     LD A,(IY+0FH)
@@ -3048,10 +3050,10 @@ LEF23:
     AND 7FH
     CP 43H
     JR NC,LEF7D
-    CALL LFA92
+    CALL DUP_NUMBER
     CALL STACK_NUMBER_TO_INTEGER
     PUSH HL
-    CALL LFA92
+    CALL DUP_NUMBER
     CALL FP_ROUND_BCD
     POP HL
     PUSH HL
@@ -3108,7 +3110,7 @@ BASIC_STR_STR:
     CALL EVAL_NUMERIC_ARGUMENT
     CALL FP_TO_ASCII
     CALL DISCARD_NUMBER
-    JP LFA7D
+    JP PUSH_STRING_AT
 
 FN_REC_STRING_STR:
     DW FN_REC_STR_STR                     ; link to previous function record
@@ -3117,7 +3119,7 @@ FN_REC_STRING_STR:
 BASIC_STRING_STR:
     LD A,96H
     CALL EXPECT_TOKEN
-    CALL LFB1B
+    CALL EVAL_BYTE
     PUSH AF
     LD A,A4H
     CALL EXPECT_TOKEN
@@ -3137,7 +3139,7 @@ LEFCD:
     SCF
 
 LEFD0:
-    CALL NC,LFB1B
+    CALL NC,EVAL_BYTE
     PUSH AF
     CALL LEA70
     POP DE
@@ -3146,7 +3148,7 @@ LEFD0:
     DEC HL
     POP AF
     INC A
-    JP Z,LF912
+    JP Z,ERROR_OVERFLOW
     DEC A
     JR Z,LEFE9
     LD B,A
@@ -3215,7 +3217,7 @@ BASIC_USR:
     JR Z,LF029
     LD A,A4H
     CALL EXPECT_TOKEN
-    CALL LFAC4
+    CALL EVAL_INTEGER
     LD A,95H
 
 LF029:
@@ -3275,7 +3277,7 @@ BASIC_VARPTR:
     CP 01H
 
 LF07C:
-    JP NZ,LFB14
+    JP NZ,ERROR_BAD_ARGUMENT
     EXX
     LD A,C
     AND 7FH
@@ -3362,7 +3364,7 @@ LF0B8:
     PUSH AF
     CALL GET_TOKEN
     CALL EXPR_AND_LAYER
-    CALL LFABF
+    CALL POP_TWO_INTEGERS
     POP AF
     JR C,LF0CC
     LD A,L
@@ -3408,7 +3410,7 @@ LF0DA:
     RET NZ
     CALL GET_TOKEN
     CALL EXPR_NOT_LAYER
-    CALL LFABF
+    CALL POP_TWO_INTEGERS
     LD A,L
     AND E
     LD L,A
@@ -3747,7 +3749,7 @@ PRIMARY_SYMBOL_DISPATCH:
     BIT 3,C
     JP NZ,DBADH
     BIT 2,C
-    JP Z,LFA63
+    JP Z,PUSH_NUMBER_VAR
 
 ; Array and DEF references temporarily reuse global BASIC pointers. The saved current-line, CHAIN,
 ; TOP, and type values are the protection against nested function evaluation corrupting the
@@ -3844,7 +3846,7 @@ DEF_ARGUMENT_FRAME:
     PUSH DE
     EXX
     POP HL
-    CALL LFB3B
+    CALL STORE_VALUE_VAR
     CALL GET_TOKEN
     LD A,95H
     CALL EXPECT_TOKEN
@@ -3970,9 +3972,9 @@ LF2C2:
     POP HL
     ADD A,(HL)
     LD (DE),A
-    JP C,LF912
+    JP C,ERROR_OVERFLOW
     CP FFH
-    JP Z,LF912
+    JP Z,ERROR_OVERFLOW
     LD C,(HL)
     LD E,L
     LD D,H
@@ -4078,7 +4080,7 @@ LF318:
     PUSH HL
     POP IY
     JR LF2E3
-    CALL LFAC4
+    CALL EVAL_INTEGER
     LD D,00H
     INC H
     RET Z
@@ -4137,7 +4139,7 @@ STRING_SYMBOL_DISPATCH:
     JP NZ,DBADH
     BIT 2,C
     JP NZ,ARRAY_OR_DEF_SYMBOL
-    JP LFA7C
+    JP PUSH_STRING_VAR
 
 LF35D:
     RST 08H
@@ -4514,7 +4516,7 @@ STACK_ELEMENT_SCAN:
     PUSH AF
     LD A,A4H
     CALL NZ,EXPECT_TOKEN
-    CALL LFAC4
+    CALL EVAL_INTEGER
     EX DE,HL
     LD C,(HL)
     INC HL
@@ -4773,9 +4775,9 @@ FP_MUL:
     ADD A,L
     SUB 40H
     JR C,LF508
-    JP M,LF912
+    JP M,ERROR_OVERFLOW
     INC A
-    JP M,LF912
+    JP M,ERROR_OVERFLOW
     DEC A
     LD L,A
     PUSH HL
@@ -5017,7 +5019,7 @@ FP_DIV:
     JR Z,LF5F9
     LD A,(IY+0FH)
     OR A
-    JP Z,LFA1A
+    JP Z,POP_AF_DISCARD_NUMBER
     EXX
     PUSH HL
     PUSH DE
@@ -5031,7 +5033,7 @@ FP_DIV:
     LD (171CH),HL
     PUSH HL
     EX (SP),IY
-    CALL LF9F1
+    CALL FP_PUSH_ZERO
     LD B,04H
 
 ; Division prepares a shifted decimal remainder rather than using the CPU divide instruction. The
@@ -5448,7 +5450,7 @@ FP_NORMALIZE:
     LD A,(IY+08H)
     AND 7FH
     CP 7EH
-    JP Z,LF912
+    JP Z,ERROR_OVERFLOW
     INC (IY+08H)
     RET
 
@@ -5683,131 +5685,110 @@ LF7FD:
     LD A,(HL)
     RET
 
-; Number formatting writes the decimal result into the BASIC formatting workspace beginning at
-; 1931H.
+; =============================================================================
+; NUMBERS ON THE BASIC STACK
+; =============================================================================
+; A number is a 10-byte stack element (IY -> its type byte):
+;
+;   IY+0  09H  type
+;   IY+1       guard digits below the mantissa (00H when stored)
+;   IY+2-6     mantissa: ten packed BCD digits, the first two at IY+6
+;   IY+7       overflow byte above the mantissa (00H when stored)
+;   IY+8       bit 7 sign; bits 6-0 exponent, 40H = 10^0
+;
+; The value is d1.d2d3...d10 * 10^(exponent - 40H), so 123.45 is
+; 09 00 00 00 50 34 12 00 42. Zero is all zeros, the exponent included.
+; Exponents run from 01H (1E-63) to 7FH (1E+63). Variables keep 6 bytes:
+; IY+2-6 and IY+8. A string element is 01H, the length, then the characters.
+; (These layouts were checked in the emulator through ASCII_TO_FP.)
+; =============================================================================
 
 ; -----------------------------------------------------------------------------
 ; FORMAT NUMBER AS ASCII
 ; -----------------------------------------------------------------------------
+; Writes the number at IY as counted text to NUMBER_TEXT (1930H), rounded to
+; ten digits, without leading zeros or trailing fraction zeros:
 ;
-; Converts the top BASIC number into the decimal text used by PRINT and error reporting.
+;   1, 123.45, -.25, .0000000015     fixed point
+;   1E+15, 1.5E-10, 9.999999999E+10  E notation, two-digit exponent
 ;
-; The formatter handles zero, sign, exponent, decimal placement, and fixed versus scientific
-; notation. It extracts BCD digits, suppresses insignificant leading/trailing zeros, applies the
-; configured formatting limits, and writes the result into the BASIC output workspace at 1931H.
+; Fixed point is used from 1E-10 up to 9999999999, as long as all significant
+; digits fit within ten places after the point. The number itself is rounded
+; and made positive in place.
 ;
-; Entry:
-;   IY points to a normalized BASIC number.
-;
-; Exit:
-;   ASCII representation and length are stored in the formatting workspace.
-;
-; Effects:
-;   Uses numeric formatting buffers and may round the displayed value.
-;
-; Destroys:
-;   AF, BC, DE, HL, alternate registers.
+; Exit:    HL -> NUMBER_TEXT (length byte, then the text).
 ; -----------------------------------------------------------------------------
 FP_TO_ASCII:
-    LD A,(IY+06H)
+    LD A,(IY+06H)                       ; first two digits
     OR A
-    LD HL,1931H
-    LD (HL),30H
-    JR Z,LF897
+    LD HL,NUMBER_TEXT+1
+    LD (HL),30H                         ; zero prints as "0"
+    JR Z,FMT_END_INC
     BIT 7,(IY+08H)
     JR Z,FORMAT_FIXED_OR_EXPONENT
-    LD (HL),2DH
+    LD (HL),2DH                         ; "-"
     INC HL
-    CALL FP_NEGATE
+    CALL FP_NEGATE                      ; continue with the magnitude
 
-; The number formatter decides fixed versus E notation from exponent and significant-digit
-; placement before writing digits. It therefore knows the final shape and length while emitting
-; the mantissa.
-
-; -----------------------------------------------------------------------------
-; CHOOSE NUMBER DISPLAY FORM
-; -----------------------------------------------------------------------------
-;
-; Chooses fixed-point or scientific notation from the exponent and significant-digit position.
-;
-; The formatter scans decimal positions, decides where the point belongs, and switches to an E
-; suffix when the value cannot be represented compactly in fixed form. The decision occurs before
-; digit emission so the output length byte remains correct.
-; -----------------------------------------------------------------------------
 FORMAT_FIXED_OR_EXPONENT:
-    CALL FP_ROUND_BCD
-    LD B,0EH
+    CALL FP_ROUND_BCD                   ; round to ten digits
+    LD B,0EH                            ; digit numbers 4-13 are d1-d10
 
-LF82A:
-    DEC B
+FMT_FIND_LAST:
+    DEC B                               ; C = the last non-zero digit
     LD A,B
     CP 04H
     CALL NC,FP_GET_BCD_NIBBLE
-    JR Z,LF82A
+    JR Z,FMT_FIND_LAST
     LD C,B
-    LD B,04H
-    LD E,(IY+08H)
+    LD B,04H                            ; B = the digit to print, from d1
+    LD E,(IY+08H)                       ; E = exponent
     LD A,E
     SUB 3BH
-    LD D,A
+    LD D,A                              ; D = where the point goes
     LD A,E
     CP 4AH
-    JR NC,LF858
+    JR NC,FMT_EXPONENT                  ; 1E+10 and up
     CP 40H
-    JR NC,LF850
-    SUB C
-    JR C,LF859
+    JR NC,FMT_FIXED_BIG                 ; 1 to 9999999999
+    SUB C                               ; below 1: do the digits fit
+    JR C,FMT_EXPONENT_POINT             ; after the point?
     CP 32H
-    JR C,LF859
-    LD B,D
-    JR LF85B
+    JR C,FMT_EXPONENT_POINT
+    LD B,D                              ; yes: start at the point, with zeros
+    JR FMT_COUNT
 
-LF850:
+FMT_FIXED_BIG:
     LD A,C
     CP D
-    JR NC,LF85B
-    LD C,D
-    OR A
-    JR LF85C
+    JR NC,FMT_COUNT                     ; digits after the point
+    LD C,D                              ; an integer: digits up to the point
+    OR A                                ; NC: no exponent
+    JR FMT_START
 
-LF858:
-    SCF
+FMT_EXPONENT:
+    SCF                                 ; Cy: print an exponent
 
-LF859:
-    LD D,05H
+FMT_EXPONENT_POINT:
+    LD D,05H                            ; the point after d1
 
-LF85B:
-    INC C
+FMT_COUNT:
+    INC C                               ; C = one past the last digit
 
-LF85C:
-    PUSH AF
+FMT_START:
+    PUSH AF                             ; keep the exponent flag
     LD A,B
 
-LF85E:
+FMT_POINT_CHECK:
     CP D
     JR NZ,FORMAT_DIGIT_LOOP
-    LD (HL),2EH
+    LD (HL),2EH                         ; "."
     INC HL
 
-; Digit emission reads BCD nibbles and adds 30H; the decimal point is inserted when the selected
-; position is reached. Leading zero suppression changes the loop start, not the stored numeric
-; value.
-
-; -----------------------------------------------------------------------------
-; EMIT FORMATTED DIGITS
-; -----------------------------------------------------------------------------
-;
-; Extracts BCD nibbles, inserts the decimal point, and emits ASCII digits into the output
-; workspace.
-;
-; Leading zero suppression and the first significant digit determine the loop bounds. Each
-; selected BCD nibble receives 30H and is written sequentially; a deferred point is inserted at
-; the chosen position.
-; -----------------------------------------------------------------------------
 FORMAT_DIGIT_LOOP:
     LD A,B
     SUB 04H
-    LD A,00H
+    LD A,00H                            ; before d1: a leading zero
     CALL P,FP_GET_BCD_NIBBLE
     ADD A,30H
     LD (HL),A
@@ -5815,160 +5796,136 @@ FORMAT_DIGIT_LOOP:
     INC B
     LD A,B
     CP C
-    JR NZ,LF85E
+    JR NZ,FMT_POINT_CHECK
     POP AF
-    JR NC,LF898
-    LD (HL),45H
+    JR NC,FMT_END                       ; no exponent
+    LD (HL),45H                         ; "E"
     INC HL
-    LD (HL),2BH
+    LD (HL),2BH                         ; "+"
     LD A,E
     SUB 40H
     JR NC,FORMAT_EXPONENT_DIGITS
-    LD (HL),2DH
+    LD (HL),2DH                         ; "-"
     NEG
 
-; The exponent suffix is emitted as a signed decimal magnitude after E. The final count is derived
-; from the workspace pointer, which keeps PRINT and error messages compatible with variable-width
-; exponents.
-
-; -----------------------------------------------------------------------------
-; EMIT EXPONENT SUFFIX
-; -----------------------------------------------------------------------------
-;
-; Appends the signed decimal exponent when scientific notation was selected.
-;
-; The biased exponent is converted to a signed magnitude and emitted after E and its sign. The
-; final length is computed from the workspace base rather than from an assumed fixed width.
-; -----------------------------------------------------------------------------
 FORMAT_EXPONENT_DIGITS:
     INC HL
     LD B,FFH
 
-LF889:
-    INC B
+FMT_EXPONENT_TENS:
+    INC B                               ; B = tens
     LD C,A
     SUB 0AH
-    JR NC,LF889
+    JR NC,FMT_EXPONENT_TENS
     LD A,B
     ADD A,30H
     LD (HL),A
     INC HL
     SUB B
-    ADD A,C
+    ADD A,C                             ; units
     LD (HL),A
 
-LF897:
+FMT_END_INC:
     INC HL
 
-LF898:
-    LD DE,1930H
+FMT_END:
+    LD DE,NUMBER_TEXT
     SCF
-    SBC HL,DE
+    SBC HL,DE                           ; length
     EX DE,HL
     LD (HL),E
     RET
 
 ; -----------------------------------------------------------------------------
-; COPY STRING TO BASIC STACK
+; PUSH A STRING LITERAL
 ; -----------------------------------------------------------------------------
+; Reads a string at HL and pushes it on the BASIC stack. A quoted string ends
+; at its closing quote, the end of the line or FFH; "" inside it is one quote.
+; An unquoted string (DATA, INPUT) ends at ",", "!", ":" or the end of the
+; line. Leading spaces are skipped. Bytes 00H-1FH are stored as 80H-9FH
+; (undoing BASIC_LINE_INPUT).
 ;
-; Copies a length-prefixed source string into newly allocated BASIC-stack space.
-;
-; The routine checks available stack memory, copies string bytes backwards where necessary to
-; avoid overlap, writes the length and string identifier, and advances IY. It is used for literals
-; and for converting input buffers into BASIC values.
-;
-; Entry:
-;   HL = source string buffer.
-;
-; Exit:
-;   A string element is allocated on the BASIC stack.
-;
-; Effects:
-;   Allocates and copies stack memory; can raise Overflow.
-;
-; Destroys:
-;   AF, BC, DE, HL, IY.
+; Exit:    IY -> the new string element; HL -> the byte after the string.
 ; -----------------------------------------------------------------------------
 STRING_TO_STACK:
     PUSH DE
     PUSH BC
-    LD E,FFH
-    LD C,00H
+    LD E,FFH                            ; E = length
+    LD C,00H                            ; C = 1 when quoted
 
-LF8A7:
+STRING_SKIP_SPACES:
     LD A,(HL)
     INC HL
     CP 20H
-    JR Z,LF8A7
+    JR Z,STRING_SKIP_SPACES
     CP 22H
-    JR NZ,LF8B4
-    INC C
+    JR NZ,STRING_COUNT_CHAR
+    INC C                               ; quoted
 
-LF8B2:
+STRING_COUNT_NEXT:
     LD A,(HL)
     INC HL
 
-LF8B4:
+STRING_COUNT_CHAR:
     INC E
     INC C
     DEC C
-    JR Z,LF8C7
+    JR Z,STRING_UNQUOTED
     CP FFH
-    JR Z,LF8D3
+    JR Z,STRING_COUNT_END               ; the end of the line
     CP 22H
-    JR NZ,LF8B2
-    CP (HL)
+    JR NZ,STRING_COUNT_NEXT
+    CP (HL)                             ; "" is one quote
     INC HL
-    JR Z,LF8B2
-    JR LF8D3
+    JR Z,STRING_COUNT_NEXT
+    JR STRING_COUNT_END
 
-LF8C7:
-    CP 2CH
-    JR Z,LF8D3
-    CP 21H
-    JR Z,LF8D3
-    CP FDH
-    JR C,LF8B2
+STRING_UNQUOTED:
+    CP 2CH                              ; ","
+    JR Z,STRING_COUNT_END
+    CP 21H                              ; "!"
+    JR Z,STRING_COUNT_END
+    CP FDH                              ; ":", "!" token, end of line
+    JR C,STRING_COUNT_NEXT
 
-LF8D3:
+STRING_COUNT_END:
     DEC HL
-    PUSH HL
-    PUSH DE
+    PUSH HL                             ; the byte after the string
+    PUSH DE                             ; E = length
     LD B,E
     PUSH IY
     POP DE
     CALL CHECK_MEMORY_256
     INC B
 
-LF8DE:
-    DEC B
-    DEC DE
-    JR Z,LF8F8
+STRING_COPY_BACK:
+    DEC B                               ; copy the characters backwards,
+    DEC DE                              ; below IY
+    JR Z,STRING_COPY_DONE
     DEC HL
     LD A,(HL)
     CP 22H
-    JR NZ,LF8EE
+    JR NZ,STRING_COPY_STORE
     INC C
     DEC C
-    JR Z,LF8EE
-    DEC HL
+    JR Z,STRING_COPY_STORE
+    DEC HL                              ; "": skip one of the pair
     LD A,(HL)
 
-LF8EE:
+STRING_COPY_STORE:
     LD (DE),A
     CP 20H
-    JR NC,LF8DE
-    OR 80H
+    JR NC,STRING_COPY_BACK
+    OR 80H                              ; 00H-1FH back to 80H-9FH
     LD (DE),A
-    JR LF8DE
+    JR STRING_COPY_BACK
 
-LF8F8:
+STRING_COPY_DONE:
     EX DE,HL
     POP DE
-    LD (HL),E
+    LD (HL),E                           ; length
     DEC HL
-    LD (HL),01H
+    LD (HL),01H                         ; type: string
     PUSH HL
     POP IY
     POP HL
@@ -5976,208 +5933,156 @@ LF8F8:
     POP DE
     RET
 
-LF905:
+; Push the string or number literal at HL. Error 01H if it is not a number,
+; 0DH if it overflows.
+
+PUSH_LITERAL:
     LD A,(HL)
     CP 22H
     JR Z,STRING_TO_STACK
     CALL ASCII_TO_FP
-    JP NC,ERROR_NOT_UNDERSTOOD
-    RLA
+    JP NC,ERROR_NOT_UNDERSTOOD          ; no digits
+    RLA                                 ; Cy = overflow
     RET NC
 
-LF912:
+ERROR_OVERFLOW:
     RST 08H
     DB 0DH                                ; error code 0DH: Overflow
-
-; ASCII parsing accepts sign, decimal point, and optional signed E exponent; insignificant
-; underflow becomes zero.
 
 ; -----------------------------------------------------------------------------
 ; PARSE ASCII NUMBER
 ; -----------------------------------------------------------------------------
+; Reads [+|-] digits [. digits] [E [+|-] digits] at HL (spaces before the
+; number skipped; "+"/"-" after E may be the tokens 98H/A2H) and pushes the
+; value. Only the first 11 digits are kept. An exponent above 1E+63 sets
+; overflow; one below 1E-63 gives zero.
 ;
-; Parses decimal digits, a decimal point, and an optional E exponent into BASIC floating-point
-; format.
+; D collects state: bit 0 point seen, 1 negative, 2 a non-zero digit seen,
+; 5 negative exponent, 6 overflow, 7 a digit seen.
 ;
-; The parser skips spaces, records sign, collects significant digits into packed BCD bytes,
-; adjusts the exponent for the decimal point, and accepts an optional signed E exponent. It
-; retains the required precision, rounds/normalizes the result, and turns excessively small values
-; into zero; malformed input and oversized exponents use the standard error status.
-;
-; Entry:
-;   HL = first byte of an ASCII numeric string.
-;
-; Exit:
-;   A normalized numeric element is pushed on the BASIC stack; source pointer/status indicate
-;   success.
-;
-; Effects:
-;   Allocates stack space and uses conversion workspace.
-;
-; Destroys:
-;   AF, BC, DE, HL, IY.
+; Exit:    Cy if a number was read (IY -> it); A bit 7 = overflow.
+;          HL -> the byte after the number.
 ; -----------------------------------------------------------------------------
 ASCII_TO_FP:
     PUSH BC
     PUSH DE
-    CALL FP_ALLOCATE_NUMERIC
+    CALL FP_ALLOCATE_NUMERIC            ; IY -> a zero number
     PUSH HL
     PUSH IY
     POP HL
     LD DE,0007H
     ADD HL,DE
-    EX (SP),HL
-    LD E,3FH
-    LD B,0BH
+    EX (SP),HL                          ; on the stack: digit pointer IY+7
+    LD E,3FH                            ; E = exponent, 3FH before any digit
+    LD B,0BH                            ; B = digits that still fit + 1
 
-; ASCII parsing tracks sign, decimal point, and significant-digit state in flags while packing
-; digits into the numeric workspace. Once the precision limit is reached, later digits still
-; influence rounding/overflow state even if they are not stored.
-
-; -----------------------------------------------------------------------------
-; SCAN INPUT SIGN AND DIGITS
-; -----------------------------------------------------------------------------
-;
-; Consumes leading spaces/sign and packs decimal digits while parsing an ASCII number.
-;
-; The state flags distinguish sign, decimal point, and whether a significant digit has been seen.
-; Each accepted digit is inserted into the seven-byte BCD mantissa until the precision limit is
-; reached.
-; -----------------------------------------------------------------------------
 ASCII_SCAN_SIGN_DIGITS:
     LD A,(HL)
     INC HL
     CP 20H
     JR Z,ASCII_SCAN_SIGN_DIGITS
-    CP 2BH
-    JR Z,LF936
-    CP 2DH
-    JR NZ,LF938
-    SET 1,D
+    CP 2BH                              ; "+"
+    JR Z,ASCII_NEXT_CHAR
+    CP 2DH                              ; "-"
+    JR NZ,ASCII_CHAR
+    SET 1,D                             ; negative
 
-LF936:
+ASCII_NEXT_CHAR:
     LD A,(HL)
     INC HL
 
-LF938:
-    CP 2EH
-    JR Z,LF969
+ASCII_CHAR:
+    CP 2EH                              ; "."
+    JR Z,ASCII_POINT
     SUB 3AH
-    JR NC,LF971
+    JR NC,ASCII_DIGITS_END              ; not a digit
     ADD A,0AH
-    JR NC,LF971
-    LD C,A
-    SET 7,D
+    JR NC,ASCII_DIGITS_END
+    LD C,A                              ; C = digit
+    SET 7,D                             ; a digit was seen
     LD A,D
-    RRCA
-    JR NZ,ASCII_DECIMAL_STATE
-    BIT 2,D
-    JR NZ,LF956
-    JR NC,LF936
-    DEC E
-    JR LF936
+    RRCA                                ; Cy = after the point
+    JR NZ,ASCII_DECIMAL_STATE           ; (Z from the ADD: digit 0)
+    BIT 2,D                             ; a zero: significant already?
+    JR NZ,ASCII_STORE_DIGIT
+    JR NC,ASCII_NEXT_CHAR               ; leading zero before the point
+    DEC E                               ; leading zero after it: 10x smaller
+    JR ASCII_NEXT_CHAR
 
-; The decimal point changes the provisional exponent rather than moving already packed digits. A
-; second point or a nonnumeric terminator exits through the parser's validation state.
-
-; -----------------------------------------------------------------------------
-; TRACK DECIMAL POINT
-; -----------------------------------------------------------------------------
-;
-; Adjusts the provisional exponent as digits are consumed before and after the decimal point.
-;
-; Digits before the point advance the significant position; fractional digits decrease the
-; exponent contribution. The state prevents a second decimal point from being accepted as part of
-; the same number.
-; -----------------------------------------------------------------------------
 ASCII_DECIMAL_STATE:
-    SET 2,D
+    SET 2,D                             ; significant digits start
 
-LF956:
-    JR C,LF959
-    INC E
+ASCII_STORE_DIGIT:
+    JR C,ASCII_STORE_FRACTION
+    INC E                               ; an integer digit: 10x larger
 
-LF959:
+ASCII_STORE_FRACTION:
     LD A,B
     DEC A
-    JR Z,LF936
+    JR Z,ASCII_NEXT_CHAR                ; no room: drop the digit
     LD B,A
-    EX (SP),HL
+    EX (SP),HL                          ; HL = digit pointer
     RRCA
-    JR C,LF963
-    DEC HL
+    JR C,ASCII_RLD
+    DEC HL                              ; every other digit: next byte down
 
-LF963:
+ASCII_RLD:
     LD A,C
-    RLD
+    RLD                                 ; shift the digit in
     EX (SP),HL
-    JR LF936
+    JR ASCII_NEXT_CHAR
 
-LF969:
+ASCII_POINT:
     SET 7,D
     BIT 0,D
     SET 0,D
-    JR Z,LF936
+    JR Z,ASCII_NEXT_CHAR                ; the first point; a second one ends
 
-LF971:
+ASCII_DIGITS_END:
     EX (SP),HL
     DEC B
     BIT 0,B
     JR Z,ASCII_SCAN_EXPONENT
     XOR A
-    RLD
+    RLD                                 ; odd count: move the last digit up
 
-; An optional E exponent is parsed after the mantissa and combined with the decimal-point
-; adjustment. The parser accepts a signed exponent but rejects an exponent marker with no valid
-; digits.
-
-; -----------------------------------------------------------------------------
-; SCAN E EXPONENT
-; -----------------------------------------------------------------------------
-;
-; Recognizes an optional E exponent and folds its signed value into the numeric exponent.
-;
-; The parser accepts an optional exponent sign, accumulates decimal exponent digits, applies the
-; sign, and combines the result with the decimal-point adjustment. Excessive exponent magnitude is
-; flagged before final normalization.
-; -----------------------------------------------------------------------------
 ASCII_SCAN_EXPONENT:
     POP HL
     DEC HL
     LD A,(HL)
     CALL FOLD_CASE
-    CP 45H
+    CP 45H                              ; "E"?
     LD A,E
     JR NZ,ASCII_FP_FINALIZE
     SET 7,D
     INC HL
     LD A,(HL)
-    CP 98H
-    JR Z,LF99B
+    CP 98H                              ; "+" token
+    JR Z,ASCII_EXP_SIGN_DONE
     CP 2BH
-    JR Z,LF99B
-    CP A2H
-    JR Z,LF999
+    JR Z,ASCII_EXP_SIGN_DONE
+    CP A2H                              ; "-" token
+    JR Z,ASCII_EXP_NEGATIVE
     CP 2DH
-    JR NZ,LF99C
+    JR NZ,ASCII_EXP_DIGITS
 
-LF999:
+ASCII_EXP_NEGATIVE:
     SET 5,D
 
-LF99B:
+ASCII_EXP_SIGN_DONE:
     INC HL
 
-LF99C:
-    LD B,00H
+ASCII_EXP_DIGITS:
+    LD B,00H                            ; B = exponent value
     DEC HL
 
-LF99F:
+ASCII_EXP_NEXT:
     INC HL
     LD A,(HL)
     SUB 3AH
-    JR NC,LF9B7
+    JR NC,ASCII_EXP_END
     ADD A,0AH
-    JR NC,LF9B7
+    JR NC,ASCII_EXP_END
     LD C,A
     LD A,B
     ADD A,A
@@ -6185,40 +6090,26 @@ LF99F:
     ADD A,A
     ADD A,A
     ADD A,B
-    ADD A,C
+    ADD A,C                             ; B = 10 * B + digit
     LD B,A
-    JP P,LF99F
-    SET 6,D
+    JP P,ASCII_EXP_NEXT
+    SET 6,D                             ; 128 or more: overflow
 
-LF9B7:
+ASCII_EXP_END:
     LD A,B
     BIT 5,D
-    JR Z,LF9BE
+    JR Z,ASCII_EXP_ADD
     NEG
 
-LF9BE:
+ASCII_EXP_ADD:
     ADD A,E
     CP 7FH
     JR C,ASCII_FP_FINALIZE
-    SET 6,D
+    SET 6,D                             ; out of range
 
-; Parsed values are finalized by writing the biased exponent/sign byte, applying the leading
-; minus, testing zero, and normalizing. This makes tiny underflow results canonical zero and keeps
-; sign handling consistent with arithmetic.
-
-; -----------------------------------------------------------------------------
-; FINALIZE PARSED NUMBER
-; -----------------------------------------------------------------------------
-;
-; Stores sign/exponent state, normalizes the parsed mantissa, and returns parser status.
-;
-; The finalizer writes the biased exponent/sign byte, toggles the sign for a leading minus,
-; detects an all-zero mantissa, and calls the common normalizer. Underflow therefore becomes
-; canonical zero rather than a denormal stack value.
-; -----------------------------------------------------------------------------
 ASCII_FP_FINALIZE:
     PUSH DE
-    LD (IY+08H),A
+    LD (IY+08H),A                       ; exponent
     BIT 1,D
     CALL NZ,FP_NEGATE
     CALL FP_TEST_ZERO
@@ -6226,27 +6117,16 @@ ASCII_FP_FINALIZE:
     LD A,D
     RRA
     AND D
-    AND 20H
-    LD A,D
-    RLA
+    AND 20H                             ; overflow with a negative exponent:
+    LD A,D                              ; too small, make it zero
+    RLA                                 ; Cy = digit seen, A bit 7 = overflow
     CALL NZ,FP_CLEAR_NUMERIC
     POP DE
     POP BC
     RET
 
-; The zero test scans all mantissa bytes and clears the exponent/sign byte when none is nonzero.
-; It is called after cancellation and parsing, so negative zero cannot survive as a distinct BASIC
-; value.
+; Z (A = 00H) if the mantissa at IY is zero; then the exponent is cleared too.
 
-; -----------------------------------------------------------------------------
-; TEST NUMERIC ZERO
-; -----------------------------------------------------------------------------
-;
-; Scans all mantissa bytes and canonicalizes an all-zero value.
-;
-; A zero mantissa forces the exponent/sign byte to zero. This shared check keeps zero signless
-; after parsing, arithmetic cancellation, and conversion.
-; -----------------------------------------------------------------------------
 FP_TEST_ZERO:
     PUSH HL
     PUSH IY
@@ -6254,221 +6134,157 @@ FP_TEST_ZERO:
     LD B,07H
     XOR A
 
-LF9E6:
+FP_TEST_ZERO_NEXT:
     INC HL
     OR (HL)
-    JR NZ,LF9EF
-    DJNZ LF9E6
+    JR NZ,FP_TEST_ZERO_DONE
+    DJNZ FP_TEST_ZERO_NEXT
     LD (IY+08H),A
 
-LF9EF:
+FP_TEST_ZERO_DONE:
     POP HL
     RET
 
-LF9F1:
+; Push a zero number: FP_PUSH_ZERO checks memory first, FP_ALLOCATE_NUMERIC
+; does not. FP_CLEAR_NUMERIC zeroes the number at IY. All return Cy.
+
+FP_PUSH_ZERO:
     CALL CHECK_MEMORY_256
 
-; Numeric allocation advances IY by exactly nine bytes. Every caller must initialize the
-; identifier and all numeric fields before another routine treats the new stack element as valid.
-
-; -----------------------------------------------------------------------------
-; ALLOCATE NUMERIC STACK ELEMENT
-; -----------------------------------------------------------------------------
-;
-; Makes room for a nine-byte numeric element immediately above the current BASIC stack value.
-;
-; The helper moves IY by the fixed numeric element size and is used by ASCII parsing, integer
-; conversion, and arithmetic result construction. The allocation is logical; callers must
-; initialize every byte before exposing the element.
-; -----------------------------------------------------------------------------
 FP_ALLOCATE_NUMERIC:
     LD DE,FFF7H
-    ADD IY,DE
+    ADD IY,DE                           ; IY -= 9
 
-; Clearing a numeric element is a logical constructor: type 09H is written first, then eight data
-; bytes are zeroed. The arithmetic routines depend on this invariant for zero fast paths.
-
-; -----------------------------------------------------------------------------
-; CLEAR NUMERIC ELEMENT
-; -----------------------------------------------------------------------------
-;
-; Initializes a newly allocated numeric element as a zero value.
-;
-; The identifier byte is set to 09H and the eight following bytes are cleared. Later conversion
-; code can fill only the mantissa/exponent fields while retaining a valid type marker.
-; -----------------------------------------------------------------------------
 FP_CLEAR_NUMERIC:
     PUSH IY
     EX (SP),HL
-    LD (HL),09H
+    LD (HL),09H                         ; type
     LD B,08H
     XOR A
 
-LFA01:
+FP_CLEAR_NEXT:
     INC HL
     LD (HL),A
-    DJNZ LFA01
+    DJNZ FP_CLEAR_NEXT
     POP HL
     SCF
     RET
 
-LFA08:
+; The number at IY becomes 1.
+
+FP_SET_ONE:
     CALL FP_CLEAR_NUMERIC
     LD (IY+08H),40H
     LD (IY+06H),10H
     RET
 
-LFA14:
+; Clear the number at IY for the extension ROM, then return to it.
+
+FP_CLEAR_RETURN_EXT:
     LD HL,RETURN_TO_EXT
     PUSH HL
     JR FP_CLEAR_NUMERIC
 
-LFA1A:
+; Drop the top element: a number (DISCARD_NUMBER, POP_AF_DISCARD_NUMBER also
+; pops AF) or a string (DISCARD_STRING).
+
+POP_AF_DISCARD_NUMBER:
     POP AF
 
-; -----------------------------------------------------------------------------
-; DISCARD STACK NUMBER
-; -----------------------------------------------------------------------------
-;
-; Reclaims one nine-byte BASIC numeric element by moving IY backward.
-;
-; Discarding a value only changes the BASIC stack boundary; its bytes are not cleared. This
-; inexpensive primitive is used when integer conversion, failed parsing, or expression evaluation
-; no longer needs the original value.
-;
-; Entry:
-;   IY points above a numeric element.
-;
-; Exit:
-;   IY is moved back by nine bytes.
-;
-; Effects:
-;   Reclaims stack space without memory clearing.
-;
-; Destroys:
-;   IY.
-; -----------------------------------------------------------------------------
 DISCARD_NUMBER:
     LD DE,0009H
     ADD IY,DE
     RET
 
-; -----------------------------------------------------------------------------
-; DISCARD STACK STRING
-; -----------------------------------------------------------------------------
-;
-; Reclaims a length-prefixed BASIC string from the stack.
-;
-; The length byte is read and IY is moved backward over the identifier, length, and payload. As
-; with numeric discard, the data is logically dead but not erased.
-;
-; Entry:
-;   IY points above a string element.
-;
-; Exit:
-;   IY points to the preceding stack element.
-;
-; Effects:
-;   Reclaims variable-sized stack space.
-;
-; Destroys:
-;   AF, IY.
-; -----------------------------------------------------------------------------
 DISCARD_STRING:
-    LD E,(IY+01H)
+    LD E,(IY+01H)                       ; length
     LD D,00H
     INC DE
-    INC DE
+    INC DE                              ; + type and length bytes
     ADD IY,DE
     RET
 
 ; -----------------------------------------------------------------------------
-; PUSH INTEGER ON BASIC STACK
+; PUSH AN INTEGER
 ; -----------------------------------------------------------------------------
-;
-; Converts signed HL into the normalized nine-byte BASIC numeric representation.
-;
-; The integer is shifted into decimal digit positions, with carry becoming an additional digit
-; when required. The routine chooses an exponent, writes the identifier/sign/mantissa bytes, and
-; finishes through normalization.
-;
-; Entry:
-;   HL = signed integer.
-;
-; Exit:
-;   HL's value is pushed as a BASIC number.
-;
-; Effects:
-;   Allocates nine bytes on the BASIC stack.
-;
-; Destroys:
-;   AF, BC, DE, HL, IY.
+; Pushes HL (signed, -32768 to 32767) as a number. The bits of |HL| are
+; shifted into a BCD accumulator from IY+2 upwards, doubling it with DAA for
+; each bit; the result has exponent 49H (an integer in d1-d10) and is then
+; normalized.
 ; -----------------------------------------------------------------------------
 INTEGER_TO_STACK:
-    CALL LF9F1
+    CALL FP_PUSH_ZERO
     INC IY
-    LD (171CH),IY
+    LD (INT_BCD_PTR),IY                 ; the accumulator starts above IY+1
     DEC IY
-    PUSH HL
+    PUSH HL                             ; keep the sign
     CALL ABS_HL
-    SCF
+    SCF                                 ; a marker bit after the value
 
-LFA3B:
-    ADC HL,HL
-    JR NC,LFA3B
-    LD C,01H
-    JR LFA52
+INT_FIND_TOP_BIT:
+    ADC HL,HL                           ; shift until the top 1 bit is in Cy
+    JR NC,INT_FIND_TOP_BIT
+    LD C,01H                            ; C = accumulator bytes in use
+    JR INT_NEXT_BIT
 
-LFA43:
-    INC B
-    INC C
+INT_GROW:
+    INC B                               ; a carry out of the top byte:
+    INC C                               ; use one more byte
     DB 3EH                                ; = LD A,41H when run from here, hiding the entry below
 
-LFA46:
+INT_DOUBLE:
     LD B,C
 
-LFA47:
+INT_DOUBLE_BYTE:
     INC DE
     LD A,(DE)
-    ADC A,A
+    ADC A,A                             ; accumulator * 2 + bit
     DAA
     LD (DE),A
-    DJNZ LFA47
-    JR C,LFA43
-    ADC HL,HL
+    DJNZ INT_DOUBLE_BYTE
+    JR C,INT_GROW
+    ADC HL,HL                           ; next bit into Cy
 
-LFA52:
-    LD DE,(171CH)
-    JR NZ,LFA46
+INT_NEXT_BIT:
+    LD DE,(INT_BCD_PTR)
+    JR NZ,INT_DOUBLE                    ; until only the marker was left
     POP AF
     AND 80H
-    OR 49H
+    OR 49H                              ; sign, exponent 49H
     LD (IY+08H),A
     JP FP_NORMALIZE
 
-LFA63:
+; -----------------------------------------------------------------------------
+; PUSH A VARIABLE / DUPLICATE
+; -----------------------------------------------------------------------------
+; PUSH_NUMBER_VAR: HL -> a numeric variable (5 mantissa bytes, exponent).
+; PUSH_STRING_VAR: HL -> a string variable (capacity, length, characters);
+; PUSH_STRING_AT skips the capacity (HL -> length). DUP_NUMBER pushes a copy
+; of the top number, DUP_TWO_NUMBERS of the top two. All check memory.
+; -----------------------------------------------------------------------------
+PUSH_NUMBER_VAR:
     CALL CHECK_MEMORY_256
     LD BC,0005H
-    ADD HL,BC
+    ADD HL,BC                           ; HL -> exponent
     PUSH IY
     POP DE
     DEC DE
-    LDD
+    LDD                                 ; exponent to IY+8
     XOR A
-    LD (DE),A
+    LD (DE),A                           ; IY+7 = 0
     DEC DE
     INC BC
-    LDDR
-    LD (DE),A
+    LDDR                                ; mantissa to IY+6-2
+    LD (DE),A                           ; IY+1 = 0
     LD A,09H
     DEC DE
-    JR LFA8D
+    JR SET_ELEMENT_TYPE
 
-LFA7C:
-    INC HL
+PUSH_STRING_VAR:
+    INC HL                              ; skip the capacity
 
-LFA7D:
-    LD C,(HL)
+PUSH_STRING_AT:
+    LD C,(HL)                           ; length
     LD B,00H
     CALL CHECK_MEMORY_256
     ADD HL,BC
@@ -6476,16 +6292,16 @@ LFA7D:
     PUSH IY
     POP DE
     DEC DE
-    LDDR
+    LDDR                                ; length and characters
     LD A,01H
 
-LFA8D:
+SET_ELEMENT_TYPE:
     LD (DE),A
     PUSH DE
     POP IY
     RET
 
-LFA92:
+DUP_NUMBER:
     CALL CHECK_MEMORY_256
     PUSH IY
     POP DE
@@ -6494,13 +6310,13 @@ LFA92:
     LD C,L
     LD B,H
     ADD HL,DE
-    LDDR
+    LDDR                                ; 9 bytes
     INC DE
     PUSH DE
     POP IY
     RET
 
-LFAA6:
+DUP_TWO_NUMBERS:
     CALL CHECK_MEMORY_256
     PUSH IY
     POP HL
@@ -6509,191 +6325,169 @@ LFAA6:
     LD D,H
     LD BC,0012H
     ADD HL,BC
-    LDDR
+    LDDR                                ; 18 bytes
     INC DE
     PUSH DE
     POP IY
     RET
 
-LFABA:
+; -----------------------------------------------------------------------------
+; NUMBER TO INTEGER / BYTE
+; -----------------------------------------------------------------------------
+; Converts (and drops) the top number, truncating towards zero. The integer
+; must fit -32768..32767, the byte 0..255, else error 04H (Bad argument).
+;
+;   EVAL_INTEGER_NEXT        GET_TOKEN, evaluate, convert
+;   EVAL_INTEGER             evaluate a numeric expression, convert
+;   STACK_NUMBER_TO_INTEGER  convert the top number
+;   POP_TWO_INTEGERS         DE = top number, HL = the one below
+;   STACK_NUMBER_TO_BYTE     GET_TOKEN, evaluate, A = byte
+;   EVAL_BYTE                evaluate, A = byte
+;   STACK_TO_BYTE            A = the top number as a byte
+;
+; Integer exit: HL = value; Z if H = 0; A = the current token.
+; The byte versions preserve HL.
+; -----------------------------------------------------------------------------
+EVAL_INTEGER_NEXT:
     CALL GET_TOKEN
-    JR LFAC4
+    JR EVAL_INTEGER
 
-LFABF:
+POP_TWO_INTEGERS:
     CALL STACK_NUMBER_TO_INTEGER
     EX DE,HL
 
-; -----------------------------------------------------------------------------
-; CONVERT STACK NUMBER TO INTEGER
-; -----------------------------------------------------------------------------
-;
-; Converts a BASIC number to signed HL with range checking.
-;
-; The exponent determines how many BCD digits participate. The routine repeatedly multiplies the
-; accumulating HL by ten, adds each digit, applies the sign, and discards the original stack
-; number. Values outside the signed integer range raise Bad argument or Overflow through the
-; caller's selected path.
-;
-; Entry:
-;   IY points to a BASIC numeric element.
-;
-; Exit:
-;   HL = signed integer; the source stack element is reclaimed.
-;
-; Effects:
-;   Reads and invalidates stack data.
-;
-; Destroys:
-;   AF, BC, DE, HL, IY.
-; -----------------------------------------------------------------------------
 STACK_NUMBER_TO_INTEGER:
     DB F6H                                ; = OR 37H when run from here, hiding the entry below
 
-LFAC4:
-    SCF
+EVAL_INTEGER:
+    SCF                                 ; Cy: evaluate first
 
-LFAC5:
+NUMBER_TO_INTEGER:
     PUSH BC
     PUSH DE
     CALL C,EVAL_NUMERIC_EXPRESSION
     LD A,(IY+08H)
-    PUSH AF
+    PUSH AF                             ; sign
     AND 7FH
-    SBC HL,HL
+    SBC HL,HL                           ; HL = 0
     CP 45H
-    JR NC,LFB14
+    JR NC,ERROR_BAD_ARGUMENT            ; 100000 or more
     SUB 40H
-    JR C,LFB06
+    JR C,INTEGER_DONE                   ; below 1: 0
     ADD A,05H
-    LD C,A
-    LD B,04H
+    LD C,A                              ; C = one past the last integer digit
+    LD B,04H                            ; from d1
 
-LFADF:
+INTEGER_DIGIT:
     LD A,H
     AND E0H
-    JR NZ,LFB14
+    JR NZ,ERROR_BAD_ARGUMENT            ; * 10 would overflow
     ADD HL,HL
     LD E,L
     LD D,H
     ADD HL,HL
     ADD HL,HL
-    ADD HL,DE
-    JR C,LFB14
+    ADD HL,DE                           ; HL * 10
+    JR C,ERROR_BAD_ARGUMENT
     CALL FP_GET_BCD_NIBBLE
     LD E,A
     LD D,00H
-    ADD HL,DE
-    JR C,LFB14
+    ADD HL,DE                           ; + digit
+    JR C,ERROR_BAD_ARGUMENT
     INC B
     LD A,C
     CP B
-    JR NZ,LFADF
+    JR NZ,INTEGER_DIGIT
     POP AF
     PUSH AF
     OR A
-    CALL M,NEG_HL
+    CALL M,NEG_HL                       ; apply the sign
     POP AF
     XOR H
-    JP M,LFB14
+    JP M,ERROR_BAD_ARGUMENT             ; the sign changed: out of range
     DB 3EH                                ; = LD A,F1H when run from here, hiding the entry below
 
-LFB06:
+INTEGER_DONE:
     POP AF
     LD DE,0009H
-    ADD IY,DE
+    ADD IY,DE                           ; drop the number
     LD A,H
-    OR A
+    OR A                                ; Z if 0-255
     EXX
-    LD A,B
+    LD A,B                              ; A = current token
     EXX
     POP DE
     POP BC
     RET
 
-LFB14:
+ERROR_BAD_ARGUMENT:
     RST 08H
     DB 04H                                ; error code 04H: Bad argument
 
-; -----------------------------------------------------------------------------
-; CONVERT STACK NUMBER TO BYTE
-; -----------------------------------------------------------------------------
-;
-; Converts a BASIC number to A after requiring an integer byte-sized value.
-;
-; The helper delegates to integer conversion, verifies that the high byte is empty or
-; sign-compatible, and returns the low byte. It is used for ports, character codes, and other
-; byte-valued BASIC arguments.
-;
-; Entry:
-;   Numeric element on BASIC stack.
-;
-; Exit:
-;   A = byte value; flags/status indicate validity.
-;
-; Effects:
-;   Reclaims the source numeric element.
-;
-; Destroys:
-;   AF, BC, DE, HL, IY.
-; -----------------------------------------------------------------------------
 STACK_NUMBER_TO_BYTE:
     CALL GET_TOKEN
     DB 3EH                                ; = LD A,F6H when run from here, hiding the entry below
 
-LFB1A:
+STACK_TO_BYTE:
     DB F6H                                ; = OR 37H when run from here, hiding the entry below
 
-LFB1B:
+EVAL_BYTE:
     SCF
     PUSH HL
-    CALL LFAC5
+    CALL NUMBER_TO_INTEGER
     INC H
     DEC H
-    JP NZ,LFB14
+    JP NZ,ERROR_BAD_ARGUMENT            ; not 0-255
     LD A,L
     POP HL
     RET
 
-; Arithmetic routine 13: moves from BASIC Stack to the address in HL; 9 bytes freed from Stack.
-
-LFB28:
-    CALL FP_ROUND_BCD
+; -----------------------------------------------------------------------------
+; STORE THE TOP VALUE IN A VARIABLE
+; -----------------------------------------------------------------------------
+; STORE_VALUE_VAR stores a number or string by VALUE_TYPE bit 1. Both pop the
+; value. A string longer than the variable's capacity gives error 0DH.
+;
+; Entry:   HL -> the variable's data.
+; -----------------------------------------------------------------------------
+STORE_NUMBER_VAR:
+    CALL FP_ROUND_BCD                   ; ten digits
     EX DE,HL
     PUSH IY
     POP HL
     INC HL
     INC HL
     LD BC,0005H
-    LDIR
+    LDIR                                ; mantissa
     INC HL
-    LDI
-    JR LFB57
+    LDI                                 ; exponent
+    JR SET_IY_HL                        ; drop the number
 
-LFB3B:
-    BIT 1,(IX+01H)
-    JR NZ,LFB28
+STORE_VALUE_VAR:
+    BIT 1,(IX+01H)                      ; VALUE_TYPE 03H: a number
+    JR NZ,STORE_NUMBER_VAR
 
-LFB41:
-    LD C,(HL)
+STORE_STRING_VAR:
+    LD C,(HL)                           ; capacity
     INC HL
     PUSH IY
     POP DE
     INC DE
-    LD A,(DE)
+    LD A,(DE)                           ; length
     INC C
-    JR NZ,LFB4C
-    DEC C
+    JR NZ,STORE_STRING_FITS
+    DEC C                               ; capacity 255
 
-LFB4C:
+STORE_STRING_FITS:
     CP C
-    JP NC,LF912
+    JP NC,ERROR_OVERFLOW                ; too long
     LD C,A
     LD B,00H
     INC BC
     EX DE,HL
-    LDIR
+    LDIR                                ; length and characters
 
-LFB57:
+SET_IY_HL:
     PUSH HL
     POP IY
     RET
@@ -6958,7 +6752,7 @@ GET_TOKEN_SKIP:
     LD B,A                              ; B = 01H string, 03H numeric
 
 GET_TOKEN_LITERAL:
-    CALL C,LF905                        ; push the literal
+    CALL C,PUSH_LITERAL                        ; push the literal
 
 GET_TOKEN_TYPE:
     LD A,B
@@ -7190,7 +6984,7 @@ PARSE_RANGE_CLOSE:
 ; above 255, else the value.
 
 CLAMP_BYTE_ARG:
-    CALL LFAC4
+    CALL EVAL_INTEGER
     LD D,00H
     INC H
     RET Z                               ; negative

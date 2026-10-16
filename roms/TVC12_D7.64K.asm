@@ -4856,7 +4856,7 @@ LFF91:
     RET
 
 LFF96:
-    LD HL,FA14H                           ; SYS ROM routine LFA14, entered through the FFF0H gateway
+    LD HL,FA14H                           ; SYS ROM routine FP_CLEAR_RETURN_EXT, entered through the FFF0H gateway
     JP EXT_GATEWAY
 
 LFF9C:

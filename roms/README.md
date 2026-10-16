@@ -69,7 +69,9 @@ listing records the alternate CPU address without emitting extra bytes.
   the chip is annotated: the RST gateway code copied to U0, the RST 18H
   dispatcher, token fetching, channel (`#n`) selection, the memory check, the
   error handler and message table, text output and listing, line input, and
-  STOP.
+  STOP. Below it, number formatting and parsing, the BASIC-stack number and
+  string helpers, integer conversion, and variable load/store are annotated
+  too, with the stack number format (checked in the emulator).
 - The counted device jump tables, `DEVICE_JUMP_TABLE_POINTERS`, the BASIC
   statement table (with each entry's keyword token), the RST 18H operation
   table, and the editor key table are `DW` entries naming their targets.
