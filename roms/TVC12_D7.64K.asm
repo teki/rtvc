@@ -449,7 +449,7 @@ PROTECT            EQU 0B6DH              ; nonzero: cassette writes inhibited
 CAS_EOF            EQU 0B6EH              ; nonzero after the final cassette byte
 MUDDLE             EQU 0B6FH              ; cassette CRC seed / protection word
 SER_OK             EQU 0B71H              ; 00H while the divider is set up for serial
-CAS_BORDER_SAVE    EQU 0BF0H              ; border saved during cassette I/O
+CAS_BORDER_SAVE    EQU 0BF0H              ; tape border flash: 00H off, else the current colour
 VERIFY             EQU 0BF1H              ; nonzero: compare tape data with memory
 CAS_IRQ_SAVE       EQU 0BF2H              ; saved first byte of IRQ_VECTOR
 CAS_IN_STATE       EQU 0BF3H              ; open-read state: 00H none, 01H buffered, 03H unbuffered
@@ -471,11 +471,14 @@ CAS_OUT_BUFFER     EQU 0D26H              ; cassette output buffer
 CAS_OUT_COUNT      EQU 0E26H              ; bytes to store
 CAS_OUT_PTR        EQU 0E28H              ; next output address
 CAS_OUT_ERROR      EQU 0E2AH              ; output error code
+CAS_OUT_LAST       EQU 0E2BH              ; end byte of a block's last sector (FFH: file end)
 CAS_OUT_SOURCE     EQU 0E2CH              ; source start
 CAS_OUT_CHAR       EQU 0E2EH              ; current output character
 CAS_OUT_TYPE       EQU 0E2FH              ; output type: 01H buffered, 03H unbuffered
 CAS_OUT_PROTECT    EQU 0E30H              ; output protection byte
+CAS_OUT_SECTOR     EQU 0E31H              ; number of the next sector to write
 CAS_OUT_PHASE      EQU 0E32H              ; FFH header, 00H data
+CAS_SP_SAVE        EQU 0E33H              ; SP saved by the block read/write routines
 
 ORG E000H, EXTH0, E000H
 
@@ -2300,7 +2303,7 @@ LF3F1:
 ; mapping before returning to SYS.
 ; -----------------------------------------------------------------------------
 EXT_DEVICE_RETURN:
-    LD HL,D9E7H                           ; SYS ROM routine LD9E7, entered through the FFF0H gateway
+    LD HL,D9E7H                           ; SYS ROM routine CAS_INT_NOP, entered through the FFF0H gateway
     JP EXT_GATEWAY
 
 LF3FA:
@@ -2332,7 +2335,7 @@ LF3FA:
 ;   Starts the selected cassette motor and fills 0BF3H-0D14H input state.
 ; -----------------------------------------------------------------------------
 CAS_OPEN_READ:
-    CALL LF762
+    CALL CAS_CHECK_IN_OPEN
     LD A,EBH
     RET NZ
     LD HL,CAS_IN_STATE
@@ -2340,10 +2343,10 @@ CAS_OPEN_READ:
     CALL ZERO_MEMORY
     LD HL,CAS_IN_NAME
     CALL CAS_NORMALIZE_FILENAME
-    CALL LF73C
+    CALL CAS_PRINT_CRLF
     LD HL,F74EH
     CALL CASSETTE_STATUS_STRINGS
-    CALL LF73C
+    CALL CAS_PRINT_CRLF
 
 ; Initialize input-sector pointer, remaining byte count, file type, protection, and next-sector
 ; state.
@@ -2451,7 +2454,7 @@ LF46E:
     LD A,(HL)
     OR A
     CALL NZ,CASSETTE_STATUS_STRINGS
-    CALL LF73C
+    CALL CAS_PRINT_CRLF
     EX AF,AF'
     POP HL
     JR NZ,CAS_OPEN_RETRY_STATE
@@ -2549,7 +2552,7 @@ LF4AF:
 ;   Starts output-file state and reserves the 0D26H cassette buffer.
 ; -----------------------------------------------------------------------------
 CAS_CREATE_WRITE:
-    CALL LF76B
+    CALL CAS_CHECK_OUT_OPEN
     LD A,EBH
     RET NZ
     LD A,(CAS_IN_PROTECT)
@@ -2722,7 +2725,7 @@ ZERO_MEMORY:
 ; -----------------------------------------------------------------------------
 CAS_OUTPUT_PARTIAL_FLUSH:
     JP M,LF585
-    CALL LF76B
+    CALL CAS_CHECK_OUT_OPEN
     JR Z,LF57C
     LD HL,CAS_OUT_BUFFER
     LD (CAS_OUT_SOURCE),HL
@@ -2782,9 +2785,9 @@ LF593:
 ;   Advances 0D07H/0D05H and may invoke CAS_READ_PHYSICAL_BLOCK.
 ; -----------------------------------------------------------------------------
 CAS_CHIN:
-    CALL LF762
+    CALL CAS_CHECK_IN_OPEN
     RET Z
-    CALL LF772
+    CALL CAS_TAKE_IN_ERROR
     RET NZ
 
 ; CAS_CHIN decrements 0D05H after fetching a byte and copies 0D0EH to EOF only when the count
@@ -2927,9 +2930,9 @@ LF5F4:
 ;   Consumes input and uses the cassette sector machinery.
 ; -----------------------------------------------------------------------------
 CAS_VERIFY_DATA:
-    CALL LF762
+    CALL CAS_CHECK_IN_OPEN
     RET Z
-    CALL LF772
+    CALL CAS_TAKE_IN_ERROR
     RET NZ
     LD A,FFH
     LD (VERIFY),A
@@ -3005,9 +3008,9 @@ LF630:
 ;   A=00 on success or cassette/memory/STOP error.
 ; -----------------------------------------------------------------------------
 CAS_BKIN:
-    CALL LF762
+    CALL CAS_CHECK_IN_OPEN
     RET Z
-    CALL LF772
+    CALL CAS_TAKE_IN_ERROR
     RET NZ
     LD A,(CAS_IN_STATE)
     DEC A
@@ -3068,7 +3071,7 @@ CAS_BLOCK_INPUT_MODE:
 ;   Updates 0E26H/0E28H/0E2AH-0E32H output state.
 ; -----------------------------------------------------------------------------
 CAS_CHOUT:
-    CALL LF76B
+    CALL CAS_CHECK_OUT_OPEN
     RET Z
 
 LF657:
@@ -3193,7 +3196,7 @@ LF699:
 ;   Writes headers/data/CRC through CAS_WRITE_PHYSICAL_BLOCK and updates output state.
 ; -----------------------------------------------------------------------------
 CAS_BKOUT:
-    CALL LF76B
+    CALL CAS_CHECK_OUT_OPEN
     RET Z
     LD A,(CAS_OUT_STATE)
     DEC A
@@ -3218,166 +3221,104 @@ CAS_BKOUT:
     LD (CAS_OUT_SOURCE),DE
     JP LF566
 
-; Motor control selects b6/b7 of PORT05 for the left/right cassette connector and preserves other
-; bits.
-
 ; -----------------------------------------------------------------------------
 ; CASSETTE MOTOR CONTROL
 ; -----------------------------------------------------------------------------
+; Port 05H bit 6 drives the left recorder's motor, bit 7 the right one. REMRED
+; picks which recorder reads and which writes:
 ;
-; Selects or stops the left/right cassette motor while preserving unrelated port bits.
+;   REMRED   read    write
+;   00H      left    right
+;   40H      right   right
+;   80H      left    left       (the default set by CAS_WORK_INIT)
+;   C0H      right   left
 ;
-; A selects the read/write side and D distinguishes on from off. The corresponding b6/b7 motor bit
-; is combined with the port-05 mirror, interrupts are masked around the write, and the mirror is
-; updated. CAS_STOP_MOTOR clears both motor bits before restoring the normal interrupt state.
-;
-; Entry:
-;   A=drive selection; D=on/off convention.
-;
-; Exit:
-;   Cassette motor control lines updated.
-;
-; Effects:
-;   Writes port 05H and 0B12H atomically with respect to interrupts.
+; Entry:   A = 00H for the reading recorder, anything else for the writing
+;          one; D = 00H to start the motor, anything else to stop it.
+; Exit:    PORT05_MIRROR and port 05H updated; interrupts enabled.
 ; -----------------------------------------------------------------------------
 CAS_MOTOR_CONTROL:
-    LD L,40H
+    LD L,40H                            ; read: bit 6
     OR A
     JR Z,CAS_MOTOR_SELECT_BITS
-    ADD HL,HL
+    ADD HL,HL                           ; write: L = 80H, bit 7
 
-; REMRED can swap the physical read/write side. CAS_MOTOR_CONTROL masks interrupts while
-; preserving divider, sound, and motor bits not being changed.
-
-; -----------------------------------------------------------------------------
-; SELECT CASSETTE MOTOR ROUTING
-; -----------------------------------------------------------------------------
-;
-; Converts REMRED selection into the left/right motor bit while preserving unrelated port-05
-; state.
-;
-; The drive selector maps to bit 6 or bit 7, then REMRED can swap the chosen side for read/write
-; routing. Interrupts are disabled around the port-05 mirror update.
-;
-; The routine writes the resulting value to both 0B12H and port 05H; sound enable, IRQ, and
-; divider bits remain unchanged.
-;
-; Entry:
-;   A=drive/read-write selection; D=on/off convention; REMRED at 0B6CH.
-;
-; Exit:
-;   Selected motor bit changed atomically.
-;
-; Effects:
-;   Writes port 05H and 0B12H; briefly masks interrupts.
-; -----------------------------------------------------------------------------
 CAS_MOTOR_SELECT_BITS:
     LD A,(REMRED)
-    AND L
-    JR Z,LF6EE
+    AND L                               ; REMRED bit set: use the other motor
+    JR Z,CAS_MOTOR_SET
     LD A,C0H
     XOR L
     LD L,A
 
-LF6EE:
+CAS_MOTOR_SET:
     DI
     LD A,(PORT05_MIRROR)
-    OR L
+    OR L                                ; motor on ...
     INC D
     DEC D
-    JR Z,LF6F8
-    XOR L
+    JR Z,CAS_MOTOR_WRITE
+    XOR L                               ; ... or off
 
-LF6F8:
+CAS_MOTOR_WRITE:
     OUT (05H),A
     LD (PORT05_MIRROR),A
     EI
     RET
 
-; Stop both motors and restore the quiet port-05 state after cassette transfer.
-
 ; -----------------------------------------------------------------------------
 ; STOP BOTH CASSETTE MOTORS
 ; -----------------------------------------------------------------------------
-;
-; Clears motor bits and leaves the normal port-05 state for restoration.
-;
-; The helper masks interrupts, clears bits 7-6 of the port-05 mirror, writes the quiet value to
-; hardware, then returns to the caller's interrupt state.
-;
-; It is used by CLOSE and the physical transfer restore path, not as a substitute for restoring
-; the caller's full port-05 value.
-;
-; Effects:
-;   Stops both cassette motors and updates 0B12H.
+; Exit:    bits 7-6 of PORT05_MIRROR and port 05H clear; interrupts enabled.
 ; -----------------------------------------------------------------------------
 CAS_STOP_MOTORS:
     DI
     LD A,(PORT05_MIRROR)
-    AND 3FH
-    JR LF6F8
-
-; Clear cassette workspace 0BF0H-0E33H, reset CRC/MUDDLE, EOF/protection, and cassette sound
-; state.
-; CAS_WORK_INIT clears 0BF0H-0E33H, resets PROTECT/EOF/MUDDLE, chooses left-side read/write
-; routing (80H), and stops both motors.
+    AND 3FH                             ; both motors off
+    JR CAS_MOTOR_WRITE
 
 ; -----------------------------------------------------------------------------
 ; CASSETTE WORKSPACE INITIALIZATION
 ; -----------------------------------------------------------------------------
-;
-; Clears cassette buffers, flags, CRC seed, and motor state.
-;
-; The initializer clears the 0BF0H-0E33H cassette work area, resets PROTECT and EOF, sets
-; MUDDLE/CRC to zero, selects the default motor-control mask, and silences cassette-related sound
-; bits in PORT05. It is called at startup and when a file is closed or an aborted transfer is
-; unwound.
-;
-; Effects:
-;   Erases cassette input/output buffers and restores quiet hardware state.
+; Clears the cassette work area 0BF0H-0E34H (both file states, names, buffers
+; and counters), PROTECT, CAS_EOF and MUDDLE, sets REMRED to 80H (one recorder
+; on the left motor for both directions) and stops both motors. CAS_INIT calls
+; it at reset.
 ; -----------------------------------------------------------------------------
 CAS_WORK_INIT:
     XOR A
-    LD HL,CAS_BORDER_SAVE
+    LD HL,CAS_BORDER_SAVE               ; 0BF0H ...
     LD DE,VERIFY
-    LD BC,0244H
+    LD BC,0244H                         ; ... through 0E34H
     LD (HL),A
     LDIR
     LD (PROTECT),A
     LD (CAS_EOF),A
     LD HL,0000H
-    LD (MUDDLE),HL
+    LD (MUDDLE),HL                      ; CRC seed 0000H
     LD A,80H
-    LD (REMRED),A
+    LD (REMRED),A                       ; left recorder reads and writes
     LD A,(PORT05_MIRROR)
-    AND 3FH
+    AND 3FH                             ; motors off
     LD (PORT05_MIRROR),A
     OUT (05H),A
     RET
 
-; Display a cassette status string through the selected output device; entries are length-prefixed
-; at F741H.
-
 ; -----------------------------------------------------------------------------
-; CASSETTE STATUS TEXT TABLE
+; CASSETTE STATUS TEXT
 ; -----------------------------------------------------------------------------
+; CAS_PRINT_TEXT prints the counted string at HL through the editor (RST 30H
+; 21H). CAS_PRINT_CRLF prints a new line. OPEN prints "Searching", "Found:"
+; and "Reading:". (CASSETTE_STATUS_STRINGS is an older name for
+; CAS_PRINT_TEXT; the strings follow the code.)
 ;
-; Length-prefixed Searching, Found, and Reading strings used during OPEN.
-;
-; The table contains control prefixes, the text strings, and small formatting fragments used by
-; the cassette open path. OPEN selects a string pointer and sends it through the selected output
-; device.
-;
-; These are data, not executable entry points; the embedded bytes following the text include
-; device-class call fragments used by the ROM's compact formatter.
-;
-; Effects:
-;   Read by cassette status display helpers.
+; Entry:   HL -> length byte, then text.
 ; -----------------------------------------------------------------------------
+CAS_PRINT_TEXT:
 CASSETTE_STATUS_STRINGS:
-    LD B,(HL)
+    LD B,(HL)                           ; B = length
 
-LF731:
+CAS_PRINT_NEXT:
     INC HL
     PUSH BC
     PUSH HL
@@ -3386,38 +3327,44 @@ LF731:
     DB 21H                                ; RST 30H fn 21H: editor 1 -> ED_CHIN_OUT
     POP HL
     POP BC
-    DJNZ LF731
+    DJNZ CAS_PRINT_NEXT
     RET
 
-LF73C:
-    LD HL,F741H
-    JR CASSETTE_STATUS_STRINGS
+CAS_PRINT_CRLF:
+    LD HL,CAS_TEXT_CRLF
+    JR CAS_PRINT_TEXT
 
-; "Reading:" cassette status text.
-; Embedded status text: Reading:, Searching, and Found:.
+CAS_TEXT_CRLF:
+    DB 02H, 0DH, 0AH
+CAS_TEXT_READING:
+    DB 09H, "Reading: "
+CAS_TEXT_SEARCHING:
+    DB 09H, "Searching"
+CAS_TEXT_FOUND:
+    DB 09H, "Found:   "
 
-; "Searching" cassette status text.
+; Is an input (CAS_CHECK_IN_OPEN) or output (CAS_CHECK_OUT_OPEN) file open?
+; Z: no, with A = E9H, the "file not open" error. The input check also clears
+; VERIFY.
 
-; "Found:" cassette status text.
-    DB 02H, 0DH, 0AH, 09H, 52H, 65H, 61H, 64H, 69H, 6EH, 67H, 3AH, 20H, 09H, 53H, 65H ; |....Reading: .Se|
-    DB 61H, 72H, 63H, 68H, 69H, 6EH, 67H, 09H, 46H, 6FH, 75H, 6EH, 64H, 3AH, 20H, 20H ; |arching.Found:  |
-    DB 20H                                                                            ; | |
-
-LF762:
+CAS_CHECK_IN_OPEN:
     XOR A
     LD (VERIFY),A
     LD A,(CAS_IN_STATE)
-    JR LF76E
+    JR CAS_CHECK_OPEN
 
-LF76B:
+CAS_CHECK_OUT_OPEN:
     LD A,(CAS_OUT_STATE)
 
-LF76E:
+CAS_CHECK_OPEN:
     OR A
     LD A,E9H
     RET
 
-LF772:
+; Report a pending input error once: A = 00H and Z if there is none;
+; otherwise A = the error, NZ, and ECH is left in CAS_IN_ERROR.
+
+CAS_TAKE_IN_ERROR:
     LD HL,CAS_IN_ERROR
     LD A,(HL)
     OR A
@@ -3425,119 +3372,133 @@ LF772:
     LD (HL),ECH
     RET
 
-; Physical reader measures pilot/sync timing, validates the 6AH marker and sector metadata, then
-; decodes bytes and CRC.
-; The physical reader starts with pilot timing calibration, then synchronizes before accepting
-; marker 6AH and metadata.
+; =============================================================================
+; CASSETTE RECORDING FORMAT
+; =============================================================================
+; A recording is a header block and a data block. Each block is:
+;
+;   pilot     10240 periods (header) or 5120 periods (data block)
+;   sync      one long period
+;   00H       not checked by the reader
+;   6AH       block marker
+;   type      FFH header block, 00H data block (CAS_IN_PHASE / CAS_OUT_PHASE)
+;   file type 01H buffered, 11H unbuffered (CAS_IN_STATE / CAS_OUT_STATE)
+;   protect   copy-protection byte
+;   count     number of sectors
+;   then per sector:
+;     number  0, 1, 2, ...
+;     length  bytes in this sector, 00H = 256
+;     data
+;     end     00H, except in a block's last sector: CAS_OUT_LAST there,
+;             which is FFH when the file is closed
+;     CRC     two bytes, low first
+;   trailer   5 periods
+;
+; Bytes go least significant bit first, one full period per bit. The CRC is
+; CRC-16 with polynomial 1021H (x^16 + x^12 + x^5 + 1), restarted at MUDDLE
+; for every sector. It covers everything from 6AH, or from the sector number
+; in later sectors, through the end byte.
+;
+; Timing. When writing, every half period ends with a sound-timer interrupt.
+; With the divider's high nibble at FH, the low byte written to port 04H sets
+; the half-period length (CAS_TIMING_CONSTANTS): pilot D6H, 1 bit DEH (shorter), 0 bit CEH
+; (longer), sync BCH (longest). The reader does not use fixed thresholds: it
+; measures the pilot and calls a bit 1 when its period is shorter than the
+; pilot average, 0 when it is longer. For reference, rtvc-cas2wav generates
+; half periods of 638 (pilot), 567 (1), 779 (0) and 1205 (sync) CPU clocks.
+;
+; During a transfer the border flashes between 88H and A0H on every period
+; (CAS_BORDER_SAVE holds the current colour, 00H = no flashing), the frame
+; interrupt is off, and IRQ_VECTOR is a RET so EI; HALT simply waits for the
+; next timer tick. CTRL+ESC is polled through keyboard row 7 and aborts with
+; error F5H.
+;
+; Error codes: E7H data does not fit the expected length, E8H VERIFY found a
+; difference, EAH sector number or CRC wrong, F5H CTRL+ESC.
+; =============================================================================
 
 ; -----------------------------------------------------------------------------
 ; READ PHYSICAL CASSETTE BLOCK
 ; -----------------------------------------------------------------------------
+; Waits for a block whose type matches CAS_IN_PHASE and reads it. While the
+; header is wanted (CAS_IN_PHASE = FFH) data blocks are skipped; while a data
+; block is wanted, a header is an error.
 ;
-; Synchronizes to tape, decodes a sector header/data stream, and verifies its CRC.
+; Each data byte is stored at CAS_IN_DEST; for an unbuffered file (file type
+; other than 01H) with VERIFY set it is compared instead. CAS_IN_REMAIN counts
+; the bytes still expected.
 ;
-; The reader enables cassette timing, measures the pilot and synchronization waveform, and decodes
-; the 6AH marker, block type, file type, protection flag, sector count, and byte count. It reads
-; each data byte while updating the CRC, compares the received CRC, stores the sector-end marker,
-; and updates the next-buffer address and remaining count. Header/name mismatch, invalid sector
-; numbering, short reads, CRC failure, and CTRL+ESC all have distinct error paths.
-;
-; Entry:
-;   Cassette timing state, destination pointer at 0D10H, requested length at 0D09H.
-;
-; Exit:
-;   Decoded block in memory/buffer; A=00 on success or an E7-EAH/STOP error.
-;
-; Effects:
-;   Uses ports 04H, 50H, 58H, 59H, 5BH and temporarily replaces the interrupt vector.
+; Entry:   CAS_IN_PHASE, CAS_IN_DEST, CAS_IN_REMAIN, CAS_IN_SECTOR, MUDDLE, VERIFY.
+; Exit:    Z, A = 00H: block read; CAS_IN_HEADER, CAS_IN_STATE,
+;          CAS_IN_PROTECT, CAS_IN_LAST, CAS_IN_COUNT, CAS_IN_DEST,
+;          CAS_IN_SECTOR and CAS_IN_REMAIN updated.
+;          NZ, A = error code, also stored in CAS_IN_ERROR.
 ; -----------------------------------------------------------------------------
 CAS_READ_PHYSICAL_BLOCK:
-    LD (0E33H),SP
-    XOR A
-    LD D,A
+    LD (CAS_SP_SAVE),SP                 ; error exits restore SP from here
+    XOR A                               ; A = 00H: the reading recorder
+    LD D,A                              ; D = 00H: motor on
     CALL CAS_MOTOR_CONTROL
     CALL CAS_ENABLE_TAPE_INTERRUPT
 
-; Pilot periods are averaged/scaled into D. Unstable measurements restart calibration instead of
-; allowing the header parser to drift.
+; Find a steady pilot: average 32 periods, then demand 1024 periods within
+; 2 counts of that average.
 
-; -----------------------------------------------------------------------------
-; CALIBRATE CASSETTE PILOT
-; -----------------------------------------------------------------------------
-;
-; Measures repeated pilot periods and derives the expected full-wave timing.
-;
-; The reader resets the timing divider, samples a run of pilot periods through CAS_READ_BIT,
-; accumulates them, and scales the result into D. It repeats on unstable measurements until the
-; interval is within the accepted tolerance.
-;
-; The calibrated period is retained for bit classification and is independent of the later
-; header/data byte count.
-;
-; Entry:
-;   Cassette input active; timing interrupt enabled.
-;
-; Exit:
-;   D carries the expected full-wave period or the reader restarts on unstable pilot.
-;
-; Effects:
-;   Reads port 59H and timing counter; updates border/timing state.
-; -----------------------------------------------------------------------------
 CAS_READ_PILOT_CALIBRATION:
     XOR A
-    LD (CAS_BORDER_SAVE),A
+    LD (CAS_BORDER_SAVE),A              ; no border flashing yet
     EXX
-    LD HL,0000H
+    LD HL,0000H                         ; HL':B' = 24-bit sum of 1024 periods
     LD B,00H
     EXX
     LD A,DCH
-    OUT (04H),A
-    LD C,00H
-    CALL CAS_READ_BIT_TRANSITIONS
+    OUT (04H),A                         ; timer for full-period measurement
+    LD C,00H                            ; time from falling edges
+    CALL CAS_READ_BIT_TRANSITIONS       ; align to an edge
     LD HL,0000H
-    LD B,20H
+    LD B,20H                            ; 32 periods
     LD D,H
 
-LF7A1:
-    CALL CAS_READ_BIT
+CAS_PILOT_SUM32:
+    CALL CAS_READ_BIT                   ; E = period count
     ADD HL,DE
-    DJNZ LF7A1
-    ADD HL,HL
+    DJNZ CAS_PILOT_SUM32
+    ADD HL,HL                           ; H = sum / 32, rounded
     ADD HL,HL
     ADD HL,HL
     LD A,H
     RL L
     ADC A,B
-    LD D,A
-    LD HL,0400H
+    LD D,A                              ; D = average period
+    LD HL,0400H                         ; 1024 more periods
 
-LF7B2:
+CAS_PILOT_STEADY:
     CALL CAS_READ_BIT
     EXX
-    ADD A,B
+    ADD A,B                             ; add to the 24-bit sum
     LD B,A
-    JR NC,LF7BB
+    JR NC,CAS_PILOT_NO_CARRY
     INC HL
 
-LF7BB:
+CAS_PILOT_NO_CARRY:
     EXX
     LD A,E
     SUB D
-    JR NC,LF7C2
+    JR NC,CAS_PILOT_ABS
     NEG
 
-LF7C2:
-    CP 03H
-    JR NC,CAS_READ_PILOT_CALIBRATION
+CAS_PILOT_ABS:
+    CP 03H                              ; 3 or more away from the average:
+    JR NC,CAS_READ_PILOT_CALIBRATION    ; not a pilot, start again
     DEC HL
     LD A,H
     OR L
-    JR NZ,LF7B2
+    JR NZ,CAS_PILOT_STEADY
     EXX
-    ADD HL,HL
-    ADD HL,HL
+    ADD HL,HL                           ; average of the 1024: sum / 1024,
+    ADD HL,HL                           ; rounded
 
-LF7CE:
+CAS_PILOT_AVERAGE:
     ADD HL,HL
     ADD HL,HL
     ADD HL,HL
@@ -3546,26 +3507,27 @@ LF7CE:
     RL L
     ADC A,00H
     EXX
-    PUSH AF
+    PUSH AF                             ; the bit threshold, popped into D below
     LD A,88H
-    LD (CAS_BORDER_SAVE),A
+    LD (CAS_BORDER_SAVE),A              ; pilot found: start flashing
+
+; Measure the two half periods of the pilot separately (128 of each).
+
     LD A,E8H
-    OUT (04H),A
+    OUT (04H),A                         ; timer for half-period measurement
     CALL CAS_READ_BIT_TRANSITIONS
     LD HL,0000H
-    PUSH HL
-    LD B,H
+    PUSH HL                             ; second accumulator on the stack
+    LD B,H                              ; 256 half periods
     LD D,H
 
-; Calibrate expected one/zero pulse periods from the pilot waveform before consuming the header.
-
-LF7EB:
-    EX (SP),HL
+CAS_PILOT_HALVES:
+    EX (SP),HL                          ; alternate between the accumulators
     CALL CAS_READ_HALF_BIT
+    ADD HL,DE                           ; add 2 * count
     ADD HL,DE
-    ADD HL,DE
-    DJNZ LF7EB
-    LD A,H
+    DJNZ CAS_PILOT_HALVES
+    LD A,H                              ; averages, rounded
     RL L
     ADC A,B
     LD D,A
@@ -3573,644 +3535,408 @@ LF7EB:
     LD A,H
     RL L
     ADC A,B
-    LD H,A
+    LD H,A                              ; H, L = the two half-period averages
     LD L,D
-    POP DE
+    POP DE                              ; D = bit threshold
     CALL CAS_READ_HALF_BIT
 
-LF803:
-    LD A,L
+; Look for the sync: a half period at least 4 counts longer than the pilot's.
+; A half period more than 2 counts shorter means noise: start again.
+
+CAS_SYNC_SEARCH:
+    LD A,L                              ; the other half's average
     LD L,H
     LD H,A
     CALL CAS_READ_HALF_BIT
     SUB H
-    JR NC,CAS_READ_SYNC_MARKER
+    JR NC,CAS_READ_SYNC_MARKER          ; as long as the pilot or longer
     ADD A,02H
-    JR C,LF803
+    JR C,CAS_SYNC_SEARCH                ; up to 2 shorter: still pilot
     JP CAS_READ_PILOT_CALIBRATION
 
-; Decode marker 6AH, block type, file type, protection, sector number, and sector byte count.
-; The physical stream is accepted only after CAS_READ_BYTE returns marker 6AH. The next bytes
-; define block type, file type, protection, sector number/count, and payload count.
-
-; -----------------------------------------------------------------------------
-; DECODE SYNC AND 6AH MARKER
-; -----------------------------------------------------------------------------
-;
-; Reads the synchronization byte and rejects a stream without marker 6AH.
-;
-; After pilot calibration the reader switches divider timing, calls CAS_READ_BYTE, and compares
-; the returned byte with 6AH. A mismatch restarts pilot acquisition rather than treating arbitrary
-; tape noise as a header.
-;
-; The following bytes are decoded as block type, file type, protection, sector count, and byte
-; count before payload decoding begins.
-;
-; Entry:
-;   D=calibrated period; cassette reader state initialized.
-;
-; Exit:
-;   Metadata decode begins only when the marker is 6AH.
-;
-; Effects:
-;   Advances the physical stream and CRC state.
-; -----------------------------------------------------------------------------
 CAS_READ_SYNC_MARKER:
     CP 04H
-    JR C,LF803
+    JR C,CAS_SYNC_SEARCH                ; less than 4 longer: still pilot
     LD A,DCH
-    OUT (04H),A
-    CALL CAS_READ_HALF_BIT
-    LD IY,0000H
-    LD IX,(CAS_IN_DEST)
-    CALL CAS_READ_BYTE
+    OUT (04H),A                         ; full-period timing for the data
+    CALL CAS_READ_HALF_BIT              ; second half of the sync period
+    LD IY,0000H                         ; IY = bytes stored
+    LD IX,(CAS_IN_DEST)                 ; IX -> destination
+    CALL CAS_READ_BYTE                  ; the 00H byte (not checked)
     EXX
-    LD HL,(MUDDLE)
-    LD DE,(CAS_IN_REMAIN)
+    LD HL,(MUDDLE)                      ; HL' = CRC
+    LD DE,(CAS_IN_REMAIN)               ; DE' = bytes still expected
     EXX
     CALL CAS_READ_BYTE
-    CP 6AH
+    CP 6AH                              ; block marker?
     JP NZ,CAS_READ_PILOT_CALIBRATION
-    CALL CAS_READ_BYTE
+    CALL CAS_READ_BYTE                  ; block type
     LD HL,CAS_IN_PHASE
     CP (HL)
-    JR Z,LF84C
+    JR Z,CAS_READ_BLOCK_HEAD            ; the type we want
     LD A,(HL)
-    CP FFH
-    JP Z,CAS_READ_PILOT_CALIBRATION
-    JP CAS_READ_FAILURE_MAP
+    CP FFH                              ; want a header, found data:
+    JP Z,CAS_READ_PILOT_CALIBRATION     ; skip it
+    JP CAS_READ_FAILURE_MAP             ; want data, found a header: EAH
 
-LF84C:
+CAS_READ_BLOCK_HEAD:
     LD (CAS_IN_HEADER),A
     CALL CAS_READ_BYTE
-    LD (CAS_IN_STATE),A
+    LD (CAS_IN_STATE),A                 ; file type
     CALL CAS_READ_BYTE
     LD (CAS_IN_PROTECT),A
     CALL CAS_READ_BYTE
-    LD B,A
+    LD B,A                              ; B = sectors in the block
     PUSH BC
-    JR LF868
+    JR CAS_READ_SECTOR_HEAD
 
-LF862:
+CAS_READ_NEXT_SECTOR:
     PUSH BC
     EXX
-    LD HL,(MUDDLE)
+    LD HL,(MUDDLE)                      ; restart the CRC
     EXX
 
-LF868:
+CAS_READ_SECTOR_HEAD:
     CALL CAS_READ_BYTE
     LD HL,CAS_IN_SECTOR
-    CP (HL)
-    JP NZ,CAS_READ_FAILURE_MAP
+    CP (HL)                             ; the sector number we expect?
+    JP NZ,CAS_READ_FAILURE_MAP          ; no: EAH
     CALL CAS_READ_BYTE
-    LD B,A
+    LD B,A                              ; B = bytes in this sector (0 = 256)
 
-; For each sector, update CRC while storing or comparing bytes; reject wrong length, sequence, or
-; CRC.
-; Each sector's CRC is checked after its payload and end marker. The reader increments 0D0DH only
-; after the received CRC equals the computed CRC.
-
-; -----------------------------------------------------------------------------
-; DECODE AND CHECK ONE CASSETTE SECTOR
-; -----------------------------------------------------------------------------
-;
-; Stores or compares payload bytes, checks the sector marker and CRC, then advances state.
-;
-; The loop reads the sector byte count, obtains each payload byte through CAS_READ_BYTE, and
-; either stores it at IX or compares it against the caller's memory when VERIFY is set.
-;
-; After payload it reads the sector-end marker and two CRC bytes, compares the received pair with
-; the computed CRC, stores the next buffer address/count, increments the sector number, and
-; repeats when more bytes remain.
-;
-; Entry:
-;   IX=destination/buffer; DE=remaining requested bytes; current CRC in HL'.
-;
-; Exit:
-;   Sector state advanced or E7/E8/EA-style read error.
-;
-; Effects:
-;   Writes input buffers or compares memory; updates 0D05H-0D10H and CRC.
-; -----------------------------------------------------------------------------
 CAS_READ_SECTOR_LOOP:
     CALL CAS_READ_BYTE
     EX AF,AF'
     EXX
     LD A,D
-    OR E
+    OR E                                ; more bytes than expected?
     DEC DE
     EXX
-    JP Z,LF901
+    JP Z,CAS_READ_LENGTH_ERROR
     LD A,(CAS_IN_STATE)
-    DEC A
-    JR Z,LF897
+    DEC A                               ; buffered file: always store
+    JR Z,CAS_READ_STORE
     LD A,(VERIFY)
     OR A
-    JR Z,LF897
-    EX AF,AF'
+    JR Z,CAS_READ_STORE
+    EX AF,AF'                           ; VERIFY: compare
     CP (IX+00H)
-    JR Z,LF89B
-    JP LF909
+    JR Z,CAS_READ_STORED
+    JP CAS_READ_VERIFY_ERROR
 
-LF897:
+CAS_READ_STORE:
     EX AF,AF'
     LD (IX+00H),A
 
-LF89B:
+CAS_READ_STORED:
     INC IX
     INC IY
     DJNZ CAS_READ_SECTOR_LOOP
     CALL CAS_READ_BYTE
-    LD (CAS_IN_LAST),A
+    LD (CAS_IN_LAST),A                  ; end byte: FFH on the last sector
     EXX
-    PUSH HL
+    PUSH HL                             ; the CRC computed so far
     EXX
-    CALL CAS_READ_BYTE
-    CP A
+    CALL CAS_READ_BYTE                  ; received CRC, low byte
+    CP A                                ; clear Cy for the SBC
     EX AF,AF'
     POP HL
     LD B,H
-    CALL CAS_READ_BYTE
-    LD C,L
+    CALL CAS_READ_BYTE                  ; high byte
+    LD C,L                              ; BC = computed CRC
     LD H,A
     EX AF,AF'
-    LD L,A
+    LD L,A                              ; HL = received CRC
     SBC HL,BC
-    POP BC
-    JR NZ,CAS_READ_FAILURE_MAP
+    POP BC                              ; B = sectors left
+    JR NZ,CAS_READ_FAILURE_MAP          ; CRC wrong: EAH
     LD (CAS_IN_COUNT),IY
     LD (CAS_IN_DEST),IX
     LD HL,CAS_IN_SECTOR
-    INC (HL)
+    INC (HL)                            ; next sector number
     EXX
     LD (CAS_IN_REMAIN),DE
     EXX
-    DJNZ LF862
+    DJNZ CAS_READ_NEXT_SECTOR
+
+; Block complete. For the data block of an unbuffered file, exactly the
+; expected number of bytes must have arrived.
+
     LD A,(CAS_IN_STATE)
     DEC A
-    JR Z,LF8E3
+    JR Z,CAS_READ_DONE                  ; buffered file
     LD A,(CAS_IN_PHASE)
     CP FFH
-    JR Z,LF8E3
+    JR Z,CAS_READ_DONE                  ; header block
     EXX
     LD A,D
     OR E
-    JR NZ,LF901
+    JR NZ,CAS_READ_LENGTH_ERROR         ; bytes missing: E7H/E8H
 
-LF8E3:
-    JP CAS_RESTORE_INTERRUPTS
+CAS_READ_DONE:
+    JP CAS_RESTORE_INTERRUPTS           ; returns Z, A = 00H
 
-LF8E6:
+; CTRL+ESC while writing (CAS_ABORT_WRITE) or reading (CAS_ABORT_READ).
+
+CAS_ABORT_WRITE:
     LD A,F5H
     LD (CAS_OUT_ERROR),A
-    JR LF8F2
+    JR CAS_ABORT
 
-LF8ED:
+CAS_ABORT_READ:
     LD A,F5H
     LD (CAS_IN_ERROR),A
 
-LF8F2:
-    LD HL,KB_OLD_PIC+7
-    SET 3,(HL)
+CAS_ABORT:
+    LD HL,KB_OLD_PIC+7                  ; mark ESC (row 7, column 3) as already
+    SET 3,(HL)                          ; seen so the keyboard does not report it
     LD B,00H
 
-LF8F9:
-    DJNZ LF8F9
-    JR LF90E
+CAS_ABORT_DELAY:
+    DJNZ CAS_ABORT_DELAY
+    JR CAS_READ_EXIT
 
-; Map physical-reader failure to EA/EB/E7/E8/E9-style cassette status and restore interrupt state.
-; Physical reader errors are normalized before CAS_RESTORE_INTERRUPTS: EAH for structural/length
-; failure, E7H for read failure, and E8H for VERIFY mismatch.
-
-; -----------------------------------------------------------------------------
-; MAP PHYSICAL READ FAILURE
-; -----------------------------------------------------------------------------
-;
-; Converts sequence, verify, and physical errors into cassette status and restores interrupts.
-;
-; A sector-length/sequence failure becomes EAH; a normal physical read failure becomes E7H; VERIFY
-; mismatch becomes E8H. The chosen code is stored at 0D0BH.
-;
-; The status is saved across CAS_RESTORE_INTERRUPTS, the stack is restored from 0E33H, and the
-; same error reaches OPEN, CHIN, or BKIN without leaking tape interrupt state.
-;
-; Entry:
-;   Reader failure condition and saved stack at 0E33H.
-;
-; Exit:
-;   A=cassette status; normal interrupt configuration restored.
-;
-; Effects:
-;   Writes 0D0BH and invokes the complete restore path.
-; -----------------------------------------------------------------------------
 CAS_READ_FAILURE_MAP:
-    LD A,EAH
-    JR LF90B
+    LD A,EAH                            ; EAH: sector number or CRC wrong
+    JR CAS_READ_SET_ERROR
 
-LF901:
+CAS_READ_LENGTH_ERROR:
     LD A,(VERIFY)
     OR A
-    LD A,E7H
-    JR Z,LF90B
+    LD A,E7H                            ; E7H: wrong length (E8H when verifying)
+    JR Z,CAS_READ_SET_ERROR
 
-LF909:
-    LD A,E8H
+CAS_READ_VERIFY_ERROR:
+    LD A,E8H                            ; E8H: VERIFY found a difference
 
-LF90B:
+CAS_READ_SET_ERROR:
     LD (CAS_IN_ERROR),A
 
-LF90E:
+CAS_READ_EXIT:
     PUSH AF
     CALL CAS_RESTORE_INTERRUPTS
     POP AF
-    OR A
-    LD SP,(0E33H)
-    RET
+    OR A                                ; NZ
+    LD SP,(CAS_SP_SAVE)                 ; unwind to the caller of the block
+    RET                                 ; read or write routine
 
-; Assemble eight measured bits into H; each bit also passes through the CRC update.
+; Read one byte, least significant bit first. A period shorter than the pilot
+; average D is a 1. Each bit also goes through the CRC.
 
-; -----------------------------------------------------------------------------
-; READ ONE CASSETTE BYTE
-; -----------------------------------------------------------------------------
-;
-; Samples eight timed cassette bits and assembles them into a byte.
-;
-; H is initialized as the bit accumulator. For each bit the routine measures a pulse period
-; relative to the calibrated D value, feeds the bit into the CRC helper, rotates it into H, and
-; repeats until all eight bits are collected.
-;
-; Entry:
-;   D=expected full-wave period; cassette input timing active.
-;
-; Exit:
-;   A=decoded byte or an abort status.
-; -----------------------------------------------------------------------------
 CAS_READ_BYTE:
-    LD H,80H
+    LD H,80H                            ; the marker bit shifts out after 8 bits
 
-; CAS_READ_BYTE rotates bits into H in the same order that CAS_WRITE_BYTE emits them; the CRC
-; update happens once per measured bit.
-
-; -----------------------------------------------------------------------------
-; ASSEMBLE EIGHT TAPE BITS
-; -----------------------------------------------------------------------------
-;
-; Classifies eight measured periods and rotates them into a byte.
-;
-; H starts at 80H. Each full-period measurement is compared with D, the resulting bit is passed to
-; CAS_CRC_UPDATE, and RR H shifts the new bit into the accumulator until the high marker exits.
-;
-; The routine returns the assembled byte in A; the physical reader's byte ordering therefore
-; follows the tape serializer's RRC sequence.
-;
-; Entry:
-;   D=expected full-wave period; timing interrupt active.
-;
-; Exit:
-;   A=decoded byte; CRC alternate HL' updated.
-;
-; Effects:
-;   Reads timing counter and updates CRC.
-; -----------------------------------------------------------------------------
 CAS_READ_BYTE_BITS:
     CALL CAS_READ_BIT
-    CP D
+    CP D                                ; Cy = shorter than the pilot = 1
     PUSH AF
-    SBC A,A
+    SBC A,A                             ; NZ for 1
     CALL CAS_CRC_UPDATE
     POP AF
-    RR H
+    RR H                                ; shift the bit in from the top
     JR NC,CAS_READ_BYTE_BITS
     LD A,H
     RET
 
-; Measure one signal transition using port 59H bit 5 and the periodic interrupt counter E.
+; Time one half period: from now until the input level changes.
+; Exit: A = E = count; C = the level after the edge.
 
-; -----------------------------------------------------------------------------
-; MEASURE CASSETTE HALF-BIT
-; -----------------------------------------------------------------------------
-;
-; Waits for one cassette signal transition and returns its elapsed tick count.
-;
-; The routine samples port 59H bit 5, waits for the opposite level, counts periodic interrupts in
-; E, resets the frequency divider/interrupt acknowledgement as needed, and returns the transition
-; interval. It is the low-level timing primitive used by byte and block decoding.
-; -----------------------------------------------------------------------------
 CAS_READ_HALF_BIT:
     IN A,(59H)
     AND 20H
     XOR 20H
-    LD C,A
+    LD C,A                              ; C = the level we are waiting for
     LD E,00H
     EI
-    HALT
-    JR LF947
+    HALT                                ; wait for the timer tick
+    JR CAS_WAIT_LEVEL_CHANGE
 
-; Measure a full square-wave period, periodically check CTRL+ESC, acknowledge timing interrupts,
-; and return E.
+; Time one full period, aligned to the edge type in C.
+; Exit: A = E = count.
 
-; -----------------------------------------------------------------------------
-; MEASURE CASSETTE BIT PERIOD
-; -----------------------------------------------------------------------------
-;
-; Measures a complete cassette square-wave period and detects STOP.
-;
-; The routine waits for the selected input level and then its opposite, counting in E while
-; polling CTRL+ESC. It resets the divider at the transition, acknowledges the interrupt,
-; optionally toggles the border for activity indication, and returns the measured period.
-; -----------------------------------------------------------------------------
 CAS_READ_BIT:
     LD E,00H
     EI
-    HALT
+    HALT                                ; wait for the timer tick
 
-; Full-period measurement waits for the selected level then its complement, counts timing
-; interrupts in E, acknowledges the divider, and watches CTRL+ESC.
+; The count E only covers the time after the timer tick, so small counts
+; distinguish the periods. Every 256 counts CTRL+ESC is checked.
 
-; -----------------------------------------------------------------------------
-; MEASURE ONE FULL TAPE PERIOD
-; -----------------------------------------------------------------------------
-;
-; Waits for both signal transitions and returns the interrupt tick count.
-;
-; The routine waits for the selected port-59 bit level and then its complement, incrementing E on
-; each timing interrupt. At the transition it resets/acknowledges the divider and optionally
-; toggles the border for activity feedback.
-;
-; Port 58 is polled for CTRL+ESC through the timing path; a stop branches to the reader abort code
-; rather than returning a misleading short period.
-;
-; Entry:
-;   C contains the expected cassette input level; E is the counter.
-;
-; Exit:
-;   E=measured full period or STOP/reader failure.
-;
-; Effects:
-;   Reads ports 58H, 59H, 5BH and acknowledges the timing divider.
-; -----------------------------------------------------------------------------
 CAS_READ_BIT_TRANSITIONS:
     INC E
-    CALL Z,LF969
+    CALL Z,CAS_CHECK_STOP
     IN A,(59H)
     XOR C
     AND 20H
-    JR Z,CAS_READ_BIT_TRANSITIONS
+    JR Z,CAS_READ_BIT_TRANSITIONS       ; wait for the level to leave C ...
 
-LF947:
+CAS_WAIT_LEVEL_CHANGE:
     INC E
-    CALL Z,LF969
+    CALL Z,CAS_CHECK_STOP
     IN A,(59H)
     XOR C
     AND 20H
-    JR NZ,LF947
-    IN A,(5BH)
-    OUT (07H),A
+    JR NZ,CAS_WAIT_LEVEL_CHANGE         ; ... and to come back to C
+    IN A,(5BH)                          ; restart the timer at the edge
+    OUT (07H),A                         ; clear the timer interrupt
 
-; Reset the cassette timing divider and optionally toggle the border to show tape activity.
+; Flash the border between 88H and A0H while CAS_BORDER_SAVE is not 00H.
 
-LF956:
+CAS_BORDER_FLASH:
     LD A,(CAS_BORDER_SAVE)
     OR A
-    JR Z,LF969
+    JR Z,CAS_CHECK_STOP
     CP 88H
     LD A,A0H
-    JR Z,LF964
+    JR Z,CAS_BORDER_SET
     LD A,88H
 
-LF964:
+CAS_BORDER_SET:
     LD (CAS_BORDER_SAVE),A
     OUT (00H),A
 
-LF969:
+; Abort on CTRL+ESC. Keyboard row 7 is selected by CAS_ENABLE_TAPE_INTERRUPT.
+; The writer reaches this through CAS_BORDER_FLASH too; a CTRL+ESC caught here
+; while writing is recorded as an input error.
+; Exit: A = E.
+
+CAS_CHECK_STOP:
     IN A,(58H)
-    AND 18H
-    JP Z,LF8ED
+    AND 18H                             ; ESC (bit 3) and CTRL (bit 4), 0 = down
+    JP Z,CAS_ABORT_READ
     LD A,E
     RET
-
-; Physical writer emits pilot, sync, 6AH marker, metadata, sector data, sector terminators, and
-; CRC.
 
 ; -----------------------------------------------------------------------------
 ; WRITE PHYSICAL CASSETTE BLOCK
 ; -----------------------------------------------------------------------------
+; Starts the writing recorder, waits about one second for the tape to reach
+; speed, and writes one block in the format described above: a header block
+; while CAS_OUT_PHASE is FFH, otherwise a data block. CAS_OUT_COUNT bytes
+; are written from CAS_OUT_SOURCE, 256 per sector. The end byte of the last
+; sector is CAS_OUT_LAST (FFH when the file is being closed).
 ;
-; Emits pilot, synchronization, header, data sectors, CRC, and trailer waveform.
-;
-; The writer starts the selected motor and waits for speed stabilization, enables the tape timing
-; interrupt, emits a pilot whose length depends on header/data type, and writes synchronization,
-; marker, block metadata, sector counts, data bytes, sector-end markers, and per-sector CRC. It
-; closes with five trailer periods and restores the system's previous interrupt state.
-;
-; Entry:
-;   DE=source; BC=length; file type/protection and MUDDLE are in cassette work variables.
-;
-; Exit:
-;   Carry/A status indicates completed or aborted physical transfer.
-;
-; Effects:
-;   Drives port 50H and sound/timing hardware; may change border and interrupt vectors.
+; Entry:   CAS_OUT_PHASE, CAS_OUT_STATE, CAS_OUT_PROTECT, CAS_OUT_COUNT,
+;          CAS_OUT_SOURCE, CAS_OUT_SECTOR, CAS_OUT_LAST, MUDDLE.
+; Exit:    Z: written; CAS_OUT_COUNT = 0, CAS_OUT_SOURCE advanced,
+;          CAS_OUT_SECTOR = next number, CAS_OUT_PHASE = 00H (data next).
+;          NZ, A = F5H after CTRL+ESC.
 ; -----------------------------------------------------------------------------
 CAS_WRITE_PHYSICAL_BLOCK:
-    LD (0E33H),SP
+    LD (CAS_SP_SAVE),SP
     XOR A
-    LD D,A
-    DEC A
+    LD D,A                              ; D = 00H: motor on
+    DEC A                               ; A = FFH: the writing recorder
     CALL CAS_MOTOR_CONTROL
-    LD BC,0000H
+    LD BC,0000H                         ; 65536 x 45 clocks: about 0.94 s
 
-; Header pilot length is 40H groups for header blocks and 20H groups for data blocks. Marker 6AH
-; follows two sync periods and an empty sync byte.
-
-; -----------------------------------------------------------------------------
-; EMIT CASSETTE PILOT AND HEADER
-; -----------------------------------------------------------------------------
-;
-; Writes pilot, synchronization, marker, and block metadata before sector payload.
-;
-; The pilot length depends on E32H: header blocks use 40H groups of 256 periods and data blocks
-; use 20H groups. Two sync periods, an empty byte, and marker 6AH follow.
-;
-; The writer then emits block type, file type, protection, sector count, and first sector byte
-; count before entering the payload loop.
-;
-; Entry:
-;   DE=source/buffer; BC=length; output metadata and MUDDLE initialized.
-;
-; Exit:
-;   Tape positioned at the first sector payload.
-;
-; Effects:
-;   Drives port 50H, divider, border, and tape timing interrupt.
-; -----------------------------------------------------------------------------
 CAS_WRITE_HEADER_PREAMBLE:
-    EX (SP),HL
+    EX (SP),HL                          ; (padding; done an even number of times)
     DEC BC
     LD A,B
     OR C
     JR NZ,CAS_WRITE_HEADER_PREAMBLE
     CALL CAS_ENABLE_TAPE_INTERRUPT
     LD A,88H
-    LD (CAS_BORDER_SAVE),A
-    LD BC,0014H
+    LD (CAS_BORDER_SAVE),A              ; flash the border
+    LD BC,0014H                         ; data block: 20 x 256 pilot periods
     LD A,(CAS_OUT_PHASE)
     OR A
-    JR Z,LF999
-    LD BC,USRTAB+7
+    JR Z,CAS_WRITE_PILOT
+    LD BC,0028H                         ; header: 40 x 256
 
-LF999:
+CAS_WRITE_PILOT:
     CALL CAS_WRITE_PERIODS
-    CALL LFA62
-    CALL LFA62
-    CALL CAS_WRITE_BYTE
+    CALL CAS_WRITE_SYNC_HALF            ; one sync period
+    CALL CAS_WRITE_SYNC_HALF
+    CALL CAS_WRITE_BYTE                 ; C = 00H here: the unchecked 00H byte
     LD HL,(MUDDLE)
-    EXX
+    EXX                                 ; HL' = CRC from here on
     LD C,6AH
-    CALL CAS_WRITE_BYTE
-    LD IY,(CAS_OUT_SOURCE)
+    CALL CAS_WRITE_BYTE                 ; block marker
+    LD IY,(CAS_OUT_SOURCE)              ; IY -> data
     LD A,(CAS_OUT_PHASE)
     LD C,A
-    CALL CAS_WRITE_BYTE
+    CALL CAS_WRITE_BYTE                 ; block type
     LD A,(CAS_OUT_STATE)
     LD C,A
-    CALL CAS_WRITE_BYTE
+    CALL CAS_WRITE_BYTE                 ; file type
     LD A,(CAS_OUT_PROTECT)
     LD C,A
-    CALL CAS_WRITE_BYTE
-    LD HL,(CAS_OUT_COUNT)
-    LD C,H
+    CALL CAS_WRITE_BYTE                 ; protection
+    LD HL,(CAS_OUT_COUNT)               ; HL = bytes to write
+    LD C,H                              ; sectors = bytes / 256, rounded up
     LD A,L
     OR A
     JR Z,CAS_WRITE_SECTOR_LOOP
     INC C
 
-; Each sector's byte count is encoded as 00H for a full 256-byte sector or the remaining count for
-; the final sector.
-; Writer emits 00H as the sector byte count for a full 256-byte sector; nonzero count is the final
-; partial sector length. End marker follows payload, then CRC low/high.
-
-; -----------------------------------------------------------------------------
-; EMIT CASSETTE SECTORS
-; -----------------------------------------------------------------------------
-;
-; Writes count, payload, end marker, and CRC for each sector.
-;
-; The sector byte-count field is zero for a full 256-byte payload; a nonzero remaining count
-; denotes the final partial sector. Each payload byte updates the CRC through CAS_WRITE_BYTE.
-;
-; The sector-end marker is 00H until the last sector, then FFH. The CRC low byte precedes the high
-; byte, and the source pointer/remaining count/sector number are advanced before another sector is
-; emitted.
-;
-; Entry:
-;   IY=source; HL=remaining count; E31H=sector number; CRC in HL'.
-;
-; Exit:
-;   All requested sectors serialized or tape error/STOP.
-;
-; Effects:
-;   Updates E26H/E2CH/E31H and writes payload/timing.
-; -----------------------------------------------------------------------------
 CAS_WRITE_SECTOR_LOOP:
-    CALL CAS_WRITE_BYTE
-    JR LF9DA
+    CALL CAS_WRITE_BYTE                 ; sector count
+    JR CAS_WRITE_SECTOR
 
-LF9D5:
+CAS_WRITE_NEXT_SECTOR:
     EXX
-    LD HL,(MUDDLE)
+    LD HL,(MUDDLE)                      ; restart the CRC
     EXX
 
-LF9DA:
-    LD A,(0E31H)
+CAS_WRITE_SECTOR:
+    LD A,(CAS_OUT_SECTOR)
     LD C,A
-    CALL CAS_WRITE_BYTE
-    LD A,H
-    OR A
+    CALL CAS_WRITE_BYTE                 ; sector number
+    LD A,H                              ; D = bytes in this sector:
+    OR A                                ; the rest if under 256,
     LD D,L
-    JR Z,LF9E8
-    XOR A
+    JR Z,CAS_WRITE_SECTOR_LEN
+    XOR A                               ; else 00H = 256
     LD D,A
 
-LF9E8:
+CAS_WRITE_SECTOR_LEN:
     LD C,D
-    CALL CAS_WRITE_BYTE
+    CALL CAS_WRITE_BYTE                 ; sector length
 
-LF9EC:
+CAS_WRITE_DATA:
     LD C,(IY+00H)
     INC IY
     DEC HL
     CALL CAS_WRITE_BYTE
     DEC D
-    JR NZ,LF9EC
+    JR NZ,CAS_WRITE_DATA
     LD A,H
     OR L
-    LD A,(0E2BH)
+    LD A,(CAS_OUT_LAST)                 ; last sector: CAS_OUT_LAST
     JR Z,CAS_WRITE_TRAILER
-    XOR A
+    XOR A                               ; otherwise 00H
 
-; Finish tape output with five periods, mark the data block state, and restore the previous
-; interrupt configuration.
-; The writer emits five trailer periods, clears the data/header phase, and restores the full
-; pre-tape interrupt state.
-
-; -----------------------------------------------------------------------------
-; TERMINATE PHYSICAL CASSETTE BLOCK
-; -----------------------------------------------------------------------------
-;
-; Writes the five-period trailer, marks data phase complete, and restores interrupts.
-;
-; After the final CRC the writer emits five trailer periods, clears the write-phase byte at 0E32H,
-; and enters CAS_RESTORE_INTERRUPTS.
-;
-; The restore call is shared by success and abort paths, so the caller sees a valid carry/status
-; result only after motors, vector byte, page selection, cursor, and interrupt enables are
-; restored.
-;
-; Effects:
-;   Writes tape trailer and restores global system state.
-; -----------------------------------------------------------------------------
 CAS_WRITE_TRAILER:
     LD C,A
-    CALL CAS_WRITE_BYTE
+    CALL CAS_WRITE_BYTE                 ; end byte
     EX DE,HL
     EXX
     LD C,L
-    CALL CAS_WRITE_BYTE
+    CALL CAS_WRITE_BYTE                 ; CRC, low byte first
     LD C,H
     CALL CAS_WRITE_BYTE
     EXX
     EX DE,HL
     LD (CAS_OUT_COUNT),HL
     LD (CAS_OUT_SOURCE),IY
-    LD A,(0E31H)
+    LD A,(CAS_OUT_SECTOR)
     INC A
-    LD (0E31H),A
+    LD (CAS_OUT_SECTOR),A
     LD A,H
     OR L
-    JR NZ,LF9D5
-    LD BC,0501H
+    JR NZ,CAS_WRITE_NEXT_SECTOR
+    LD BC,0501H                         ; trailer: 5 periods
     CALL CAS_WRITE_PERIODS
     EI
-    HALT
+    HALT                                ; let the last half period finish
     XOR A
-    LD (CAS_OUT_PHASE),A
-    JP CAS_RESTORE_INTERRUPTS
+    LD (CAS_OUT_PHASE),A                ; the next block is a data block
+    JP CAS_RESTORE_INTERRUPTS           ; returns Z
 
-; Emit B*C waveform transitions for pilot, sync, and trailer timing.
+; Write C x 256 pilot periods when B = 0, or B periods when C = 1.
 
-; -----------------------------------------------------------------------------
-; WRITE PERIOD COUNT
-; -----------------------------------------------------------------------------
-;
-; Outputs B*C cassette half-period transitions.
-;
-; The nested counters emit one polarity transition B times and repeat that group C times. The
-; helper is used for pilot, synchronization, and trailer waveform generation.
-;
-; Entry:
-;   B and C define the product number of transitions.
-; -----------------------------------------------------------------------------
 CAS_WRITE_PERIODS:
     CALL CAS_SET_TIMING
     CALL CAS_SET_TIMING
@@ -4219,208 +3945,110 @@ CAS_WRITE_PERIODS:
     JR NZ,CAS_WRITE_PERIODS
     RET
 
-; Serialize one byte as eight timed bit pairs and update the running CRC.
+; Write byte C, least significant bit first, one full period per bit.
 
-; -----------------------------------------------------------------------------
-; WRITE ONE CASSETTE BYTE
-; -----------------------------------------------------------------------------
-;
-; Serializes eight bits as timed pairs of tape transitions and updates CRC.
-;
-; Each bit of C selects the one- or zero-bit PITCH timing, a transition is emitted, the CRC is
-; updated, the complementary transition is emitted, and the process repeats eight times.
-;
-; Entry:
-;   C=byte to write.
-;
-; Effects:
-;   Drives the cassette output waveform and updates the running CRC.
-; -----------------------------------------------------------------------------
 CAS_WRITE_BYTE:
     LD B,08H
 
-; Bytes are written LSB first: RRC C selects the bit, one/zero timing is emitted, CRC is updated,
-; and the complementary transition is emitted.
-
-; -----------------------------------------------------------------------------
-; SERIALIZE ONE TAPE BYTE
-; -----------------------------------------------------------------------------
-;
-; Emits eight least-significant-bit-first bit pairs and updates CRC.
-;
-; RRC C exposes the next bit in bit 7. CAS_SET_BIT_TIMING chooses DEH for one or CEH for zero,
-; CAS_CRC_UPDATE consumes the bit, and a complementary transition is emitted before the next bit.
-;
-; The exact two-transition-per-bit pattern is the physical format; changing only the divider value
-; without preserving the complementary transition breaks decoding.
-;
-; Entry:
-;   C=byte to write.
-;
-; Exit:
-;   Eight timed bit pairs emitted; CRC alternate HL' advanced.
-;
-; Effects:
-;   Drives port 50H and the shared divider.
-; -----------------------------------------------------------------------------
 CAS_WRITE_BYTE_BITS:
-    RRC C
-    CALL CAS_SET_BIT_TIMING
-    BIT 7,C
+    RRC C                               ; bit 7 = the next bit
+    CALL CAS_SET_BIT_TIMING             ; first half
+    BIT 7,C                             ; NZ for 1
     CALL CAS_CRC_UPDATE
-    CALL CAS_SET_BIT_TIMING
+    CALL CAS_SET_BIT_TIMING             ; second half
     DJNZ CAS_WRITE_BYTE_BITS
     RET
 
-; PITCH=00DEH represents a one bit; PITCH=00CEH represents a zero bit.
-; Tape timing constants are D6H pilot, DEH one, CEH zero, and BCH sync. They are divider low
-; bytes, not Z80 cycle counts.
+; One half period for bit 7 of C.
 
-; -----------------------------------------------------------------------------
-; SELECT CASSETTE BIT TIMING
-; -----------------------------------------------------------------------------
-;
-; Chooses the 0-bit or 1-bit PITCH divisor and emits one half-bit.
-;
-; The byte's bit value selects PITCH=00CEH for zero or 00DEH for one. The helper then transfers
-; the selected period to the tone divider and creates one output transition.
-; -----------------------------------------------------------------------------
 CAS_SET_BIT_TIMING:
-; -----------------------------------------------------------------------------
-; SELECT ONE/ZERO PULSE PERIOD
-; -----------------------------------------------------------------------------
-;
-; Maps the current bit to DEH or CEH timing and emits one transition.
-;
-; The bit is examined in C bit 7. A one selects the timing byte DEH at FAF4H; a zero selects CEH
-; at FAF5H. The selected divider value is consumed by CAS_SET_TIMING.
-;
-; Pilot and synchronization callers use the same primitive with D6H at FAF3H and BCH at FAF6H.
-;
-; Entry:
-;   C bit 7 contains the bit value; timing interrupt active.
-;
-; Exit:
-;   One half-bit transition emitted.
-;
-; Effects:
-;   Changes port 04H divider value and toggles cassette output.
-; -----------------------------------------------------------------------------
 CAS_WRITE_BIT_TIMING:
     BIT 7,C
-    JR Z,LFA58
-    LD A,(FAF4H)
-    JR LFA65
+    JR Z,CAS_HALF_ZERO
+    LD A,(CAS_TIMING_CONSTANTS+1)       ; 1 bit
+    JR CAS_WRITE_HALF
 
-LFA58:
-    LD A,(FAF5H)
-    JR LFA65
+CAS_HALF_ZERO:
+    LD A,(CAS_TIMING_CONSTANTS+2)       ; 0 bit
+    JR CAS_WRITE_HALF
 
-; Timing primitive uses FAF3H-FAF6H constants: D6H pilot, DEH one, CEH zero, BCH synchronization.
-
-; -----------------------------------------------------------------------------
-; CASSETTE TIMING OUTPUT PRIMITIVE
-; -----------------------------------------------------------------------------
-;
-; Emits one timed transition while servicing the cassette interrupt path.
-;
-; This primitive maps pilot, sync, one-bit, and zero-bit timing to the low-byte constants at
-; FAF3H-FAF6H, waits for the timing interrupt, toggles the tape output at port 50H, acknowledges
-; the divider, and returns the activity count. CTRL+ESC aborts the transfer.
-; -----------------------------------------------------------------------------
 CAS_SET_TIMING:
-    LD A,(CAS_TIMING_CONSTANTS)
-    JR LFA65
+    LD A,(CAS_TIMING_CONSTANTS)         ; pilot
+    JR CAS_WRITE_HALF
 
-LFA62:
-    LD A,(FAF6H)
+CAS_WRITE_SYNC_HALF:
+    LD A,(CAS_TIMING_CONSTANTS+3)       ; sync
 
-; Each timed transition waits for the timing interrupt, toggles port 50H, writes the divider low
-; byte to port 04H, acknowledges the source, and checks stop state.
+; Wait for the timer tick that ends the current half period, toggle the
+; output, then start the next half period with timer value A.
 
-LFA65:
+CAS_WRITE_HALF:
     EX AF,AF'
     IN A,(58H)
-    AND 18H
-    JP Z,LF8E6
+    AND 18H                             ; CTRL+ESC?
+    JP Z,CAS_ABORT_WRITE
     EI
-    HALT
-    OUT (50H),A
+    HALT                                ; wait for the timer tick
+    OUT (50H),A                         ; toggle the cassette output
     EX AF,AF'
-    OUT (04H),A
-    IN A,(5BH)
-    OUT (07H),A
-    CALL LF956
+    OUT (04H),A                         ; next half-period length
+    IN A,(5BH)                          ; restart the timer
+    OUT (07H),A                         ; clear the timer interrupt
+    CALL CAS_BORDER_FLASH
     RET
-
-; Tape timing takes over interrupts: disable cards/cursor/sound, save the old interrupt opcode at
-; 0BF2H, and watch only CTRL+ESC.
-; Tape takeover sets SER-OK to FFH, disables sound/cards/cursor, selects only the CTRL+ESC
-; keyboard row, and replaces the first byte at 0038H with C9H.
 
 ; -----------------------------------------------------------------------------
 ; ENABLE TAPE TIMING INTERRUPT
 ; -----------------------------------------------------------------------------
-;
-; Temporarily disables unrelated interrupts and installs the cassette timing service.
-;
-; The routine disables expansion-card interrupts, silences sound while preserving motor bits,
-; marks the serial clock invalid, restricts keyboard observation to CTRL+ESC, disables the cursor,
-; resets the divider, acknowledges the previous interrupt source, and replaces the first byte of
-; the interrupt routine with RET. The original byte is saved at 0BF2H.
-;
-; Effects:
-;   Changes port mirrors, CRTC cursor state, interrupt vector, and INT-DES.
+; Turns the machine into a tape timer: card interrupts off, the sound timer
+; interrupting with the divider's high nibble at FH and the sound output off,
+; the CRTC cursor (the frame interrupt) off, and the interrupt entry at 0038H
+; turned into a RET. Keyboard row 7 is selected for the CTRL+ESC check.
+; Interrupts stay disabled; the transfer loops use EI; HALT.
 ; -----------------------------------------------------------------------------
 CAS_ENABLE_TAPE_INTERRUPT:
     DI
     XOR A
-    OUT (58H),A
+    OUT (58H),A                         ; disable all four slot interrupts
     OUT (59H),A
     OUT (5AH),A
     OUT (5BH),A
     OUT (04H),A
     DEC A
-    LD (SER_OK),A
+    LD (SER_OK),A                       ; the serial clock is no longer valid
     LD A,(PORT03_MIRROR)
     AND F0H
-    OR 07H
+    OR 07H                              ; keyboard row 7 (CTRL, ESC)
     OUT (03H),A
     LD A,(PORT05_MIRROR)
-    AND EFH
+    AND EFH                             ; sound output off
     LD (PORT05_MIRROR),A
-    AND C0H
-    OR 2FH
+    AND C0H                             ; motors as they are,
+    OR 2FH                              ; timer interrupt on, high nibble FH
     OUT (05H),A
     XOR A
-    LD (SOUND_ACT),A
-    LD A,0AH
-    OUT (70H),A
+    LD (SOUND_ACT),A                    ; no tone is playing
+    LD A,0AH                            ; CRTC R10 = 23H: cursor off, so
+    OUT (70H),A                         ; there is no frame interrupt
     LD A,23H
     OUT (71H),A
-    IN A,(5BH)
-    OUT (07H),A
+    IN A,(5BH)                          ; restart the timer
+    OUT (07H),A                         ; clear any pending interrupt
     LD HL,IRQ_VECTOR
     LD A,(HL)
-    LD (HL),C9H
-    LD (CAS_IRQ_SAVE),A
+    LD (HL),C9H                         ; 0038H: RET
+    LD (CAS_IRQ_SAVE),A                 ; keep its first byte
     RET
-
-; Restore motors, page selection, interrupt enables, cursor service, and the saved interrupt
-; opcode.
 
 ; -----------------------------------------------------------------------------
 ; RESTORE SYSTEM INTERRUPTS AFTER TAPE I/O
 ; -----------------------------------------------------------------------------
+; Undoes CAS_ENABLE_TAPE_INTERRUPT: stops both motors, restores ports 03H and
+; 05H from their mirrors, turns the CRTC cursor back on if IRQ_STAT bit 0
+; enables it, re-enables the slot interrupts that IRQ_STAT bits 2-5 enable,
+; and restores 0038H.
 ;
-; Stops cassette motors and restores the saved interrupt configuration.
-;
-; The routine restores port-03 and port-05 mirrors, re-enables each previously active card
-; interrupt, restores the cursor service, reinstates the saved first byte of the interrupt routine
-; from 0BF2H, and returns carry to the physical transfer caller.
-;
-; Effects:
-;   Restores the pre-tape interrupt, motor, cursor, and page state.
+; Exit:    A = 00H, Z, Cy; interrupts enabled.
 ; -----------------------------------------------------------------------------
 CAS_RESTORE_INTERRUPTS:
     DI
@@ -4431,96 +4059,44 @@ CAS_RESTORE_INTERRUPTS:
     OUT (05H),A
     LD A,(IRQ_STAT)
     LD B,A
-    BIT 0,B
+    BIT 0,B                             ; cursor interrupt wanted?
     JR Z,CAS_RESTORE_IRQ_SOURCES
-    LD A,0AH
+    LD A,0AH                            ; CRTC R10 = 03H: cursor on
     OUT (70H),A
     LD A,03H
     OUT (71H),A
 
-; Restore writes saved port mirrors, re-enables only IRQ-STAT sources that were active, restores
-; CRTC cursor state, and puts the saved 0038H opcode back before EI.
-
-; -----------------------------------------------------------------------------
-; RESTORE SAVED INTERRUPT SOURCES
-; -----------------------------------------------------------------------------
-;
-; Reinstates cursor, card, keyboard, and vector state after tape timing.
-;
-; The path first stops motors and writes the saved port-03/port-05 mirrors. It uses IRQ-STAT to
-; re-enable only the sources that were previously active, restoring the CRTC cursor when bit 0 was
-; set.
-;
-; The original first byte at 0038H is restored from 0BF2H, carry is set for a completed restore,
-; and EI returns to the normal interrupt chain.
-;
-; Entry:
-;   Saved port mirrors, IRQ-STAT, and original vector byte.
-;
-; Exit:
-;   Normal interrupt configuration restored; carry set.
-;
-; Effects:
-;   Writes ports 03H/05H/58H-5BH, CRTC register 0AH, and address 0038H.
-; -----------------------------------------------------------------------------
 CAS_RESTORE_IRQ_SOURCES:
     LD A,B
     RLCA
-    RLCA
+    RLCA                                ; bit 7 = IRQ_STAT bit 5, slot 3
     OUT (5BH),A
-    RLCA
+    RLCA                                ; slot 2
     OUT (5AH),A
-    RLCA
+    RLCA                                ; slot 1
     OUT (59H),A
-    RLCA
+    RLCA                                ; slot 0
     OUT (58H),A
     LD A,(CAS_IRQ_SAVE)
-    LD (IRQ_VECTOR),A
+    LD (IRQ_VECTOR),A                   ; restore 0038H
     XOR A
     SCF
     EI
     RET
 
-; Cassette work bytes used by cassette routines.
-
-; -----------------------------------------------------------------------------
-; CASSETTE TIMING CONSTANTS
-; -----------------------------------------------------------------------------
-;
-; Divider low bytes for pilot, one, zero, and synchronization periods.
-;
-; The four bytes are D6H (pilot), DEH (one), CEH (zero), and BCH (sync). CAS_READ uses the
-; measured periods derived from these values; CAS_WRITE uses them directly.
-;
-; These are low-byte constants for the shared divider, not CPU cycle counts. The high divider
-; nibble is supplied by the port-05 setup.
-;
-; Effects:
-;   Read-only EXTH data used by tape timing primitives.
-; -----------------------------------------------------------------------------
 CAS_TIMING_CONSTANTS:
-    DB D6H, DEH, CEH, BCH                                                             ; |....|
-
-; CRC feedback toggles H bit 3 and L bit 4 when the incoming bit and CRC high bit require it.
-; CRC feedback uses alternate HL: combine the incoming bit with H bit 7, toggle H bit 3/L bit 4
-; when feedback is set, then shift the pair with ADC HL,HL.
+    DB D6H                                ; pilot half period
+    DB DEH                                ; 1 bit half period (shorter)
+    DB CEH                                ; 0 bit half period (longer)
+    DB BCH                                ; sync half period (longest)
 
 ; -----------------------------------------------------------------------------
 ; CASSETTE CRC UPDATE
 ; -----------------------------------------------------------------------------
+; One bit of CRC-16, polynomial 1021H, in HL'. XORing 0810H before the shift
+; that brings in the 1 is the same as XORing 1021H after the shift.
 ;
-; Updates the two-byte cassette CRC for one decoded or emitted bit.
-;
-; The input carry/zero state identifies the bit and HL' contains the current CRC. The routine
-; shifts the CRC and, when the feedback bit is set, toggles H bit 3 and L bit 4. MUDDLE at 0B6FH
-; supplies the initial per-file/sector seed, allowing intentional nonzero seeds as a simple
-; protection value.
-;
-; Entry:
-;   Z=bit value; HL'=current CRC.
-;
-; Exit:
-;   HL' contains the updated CRC.
+; Entry:   NZ for a 1 bit, Z for a 0 bit.
 ; -----------------------------------------------------------------------------
 CAS_CRC_UPDATE:
     EXX
@@ -4528,31 +4104,10 @@ CAS_CRC_UPDATE:
     JR NZ,CAS_CRC_FEEDBACK_STEP
     XOR A
 
-; -----------------------------------------------------------------------------
-; CRC FEEDBACK STEP
-; -----------------------------------------------------------------------------
-;
-; Updates the two-byte tape CRC using the incoming bit and the high CRC bit.
-;
-; The bit state is combined with H bit 7. When feedback is asserted, H bit 3 and L bit 4 are
-; toggled before ADC HL,HL shifts the checksum pair.
-;
-; The routine runs under EXX so the CRC pair can remain in HL' while the caller uses the main
-; register set for payload pointers.
-;
-; Entry:
-;   Z identifies the bit value; HL' contains the current CRC.
-;
-; Exit:
-;   HL' contains the next CRC value.
-;
-; Effects:
-;   Changes alternate HL and flags.
-; -----------------------------------------------------------------------------
 CAS_CRC_FEEDBACK_STEP:
-    XOR H
+    XOR H                               ; Cy = data bit XOR CRC bit 15
     RLA
-    JR NC,LFB0A
+    JR NC,CAS_CRC_SHIFT
     LD A,H
     XOR 08H
     LD H,A
@@ -4561,8 +4116,8 @@ CAS_CRC_FEEDBACK_STEP:
     LD L,A
     SCF
 
-LFB0A:
-    ADC HL,HL
+CAS_CRC_SHIFT:
+    ADC HL,HL                           ; shift left, bringing in the feedback
     EXX
     RET
 
@@ -5288,7 +4843,7 @@ LFF7C:
 
 LFF87:
     PUSH HL
-    LD HL,F7CEH                           ; SYS ROM routine LF7CE, entered through the FFF0H gateway
+    LD HL,F7CEH                           ; SYS ROM routine CAS_PILOT_AVERAGE, entered through the FFF0H gateway
     JR LFF91
 
 LFF8D:

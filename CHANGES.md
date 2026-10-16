@@ -8,9 +8,11 @@ Release notes start here. Older release history is intentionally not backfilled.
   instruction boundaries is now proper instructions, operands use labels and
   named U0 variables, and inline `RST` operands, inline strings, and BASIC
   function records are decoded in comments. The interrupt path, the RST 30H
-  dispatcher, the kernel functions, and the keyboard driver are commented
-  instruction by instruction, and the jump tables name their targets. The
-  debugger gains 90 new BASIC 1.2 symbols.
+  dispatcher, the kernel functions, the keyboard, printer, and sound drivers,
+  and the cassette tape layer are commented instruction by instruction, and
+  the jump tables name their targets. The listings record a ROM bug: the
+  block I/O helpers crash instead of returning error FAH for a block above
+  HI-MEM.
 
 ## v0.8.10 - 2026-10-15
 

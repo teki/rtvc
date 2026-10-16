@@ -1371,7 +1371,7 @@ LE4E3:
     PUSH DE
     INC HL
     EX DE,HL
-    LD DE,USRTAB+1
+    LD DE,0022H
     ADD IY,DE
     CALL LFA63
     DEC DE

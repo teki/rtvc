@@ -1550,6 +1550,44 @@
     },
     {
       "bank": "exth",
+      "address": "0xF6EE",
+      "offset": "0x16EE",
+      "name": "CAS_MOTOR_SET",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF6F8",
+      "offset": "0x16F8",
+      "name": "CAS_MOTOR_WRITE",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
       "address": "0xF6FF",
       "offset": "0x16FF",
       "name": "CAS_STOP_MOTORS",
@@ -1598,6 +1636,198 @@
       "address": "0xF730",
       "offset": "0x1730",
       "name": "CASSETTE_STATUS_STRINGS",
+      "alt_names": [
+        "CAS_PRINT_TEXT"
+      ],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF731",
+      "offset": "0x1731",
+      "name": "CAS_PRINT_NEXT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF73C",
+      "offset": "0x173C",
+      "name": "CAS_PRINT_CRLF",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF741",
+      "offset": "0x1741",
+      "name": "CAS_TEXT_CRLF",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF744",
+      "offset": "0x1744",
+      "name": "CAS_TEXT_READING",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF74E",
+      "offset": "0x174E",
+      "name": "CAS_TEXT_SEARCHING",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF758",
+      "offset": "0x1758",
+      "name": "CAS_TEXT_FOUND",
+      "alt_names": [],
+      "kind": "table",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF762",
+      "offset": "0x1762",
+      "name": "CAS_CHECK_IN_OPEN",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF76B",
+      "offset": "0x176B",
+      "name": "CAS_CHECK_OUT_OPEN",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF76E",
+      "offset": "0x176E",
+      "name": "CAS_CHECK_OPEN",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF772",
+      "offset": "0x1772",
+      "name": "CAS_TAKE_IN_ERROR",
       "alt_names": [],
       "kind": "routine",
       "usage": [],
@@ -1659,9 +1889,199 @@
     },
     {
       "bank": "exth",
+      "address": "0xF7A1",
+      "offset": "0x17A1",
+      "name": "CAS_PILOT_SUM32",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF7B2",
+      "offset": "0x17B2",
+      "name": "CAS_PILOT_STEADY",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF7BB",
+      "offset": "0x17BB",
+      "name": "CAS_PILOT_NO_CARRY",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF7C2",
+      "offset": "0x17C2",
+      "name": "CAS_PILOT_ABS",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF7CE",
+      "offset": "0x17CE",
+      "name": "CAS_PILOT_AVERAGE",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF7EB",
+      "offset": "0x17EB",
+      "name": "CAS_PILOT_HALVES",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF803",
+      "offset": "0x1803",
+      "name": "CAS_SYNC_SEARCH",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
       "address": "0xF813",
       "offset": "0x1813",
       "name": "CAS_READ_SYNC_MARKER",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF84C",
+      "offset": "0x184C",
+      "name": "CAS_READ_BLOCK_HEAD",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF862",
+      "offset": "0x1862",
+      "name": "CAS_READ_NEXT_SECTOR",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF868",
+      "offset": "0x1868",
+      "name": "CAS_READ_SECTOR_HEAD",
       "alt_names": [],
       "kind": "routine",
       "usage": [],
@@ -1697,9 +2117,218 @@
     },
     {
       "bank": "exth",
+      "address": "0xF897",
+      "offset": "0x1897",
+      "name": "CAS_READ_STORE",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF89B",
+      "offset": "0x189B",
+      "name": "CAS_READ_STORED",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF8E3",
+      "offset": "0x18E3",
+      "name": "CAS_READ_DONE",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF8E6",
+      "offset": "0x18E6",
+      "name": "CAS_ABORT_WRITE",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF8ED",
+      "offset": "0x18ED",
+      "name": "CAS_ABORT_READ",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF8F2",
+      "offset": "0x18F2",
+      "name": "CAS_ABORT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF8F9",
+      "offset": "0x18F9",
+      "name": "CAS_ABORT_DELAY",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
       "address": "0xF8FD",
       "offset": "0x18FD",
       "name": "CAS_READ_FAILURE_MAP",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF901",
+      "offset": "0x1901",
+      "name": "CAS_READ_LENGTH_ERROR",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF909",
+      "offset": "0x1909",
+      "name": "CAS_READ_VERIFY_ERROR",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF90B",
+      "offset": "0x190B",
+      "name": "CAS_READ_SET_ERROR",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF90E",
+      "offset": "0x190E",
+      "name": "CAS_READ_EXIT",
       "alt_names": [],
       "kind": "routine",
       "usage": [],
@@ -1825,6 +2454,82 @@
     },
     {
       "bank": "exth",
+      "address": "0xF947",
+      "offset": "0x1947",
+      "name": "CAS_WAIT_LEVEL_CHANGE",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF956",
+      "offset": "0x1956",
+      "name": "CAS_BORDER_FLASH",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF964",
+      "offset": "0x1964",
+      "name": "CAS_BORDER_SET",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF969",
+      "offset": "0x1969",
+      "name": "CAS_CHECK_STOP",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
       "address": "0xF972",
       "offset": "0x1972",
       "name": "CAS_WRITE_PHYSICAL_BLOCK",
@@ -1863,9 +2568,104 @@
     },
     {
       "bank": "exth",
+      "address": "0xF999",
+      "offset": "0x1999",
+      "name": "CAS_WRITE_PILOT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
       "address": "0xF9D0",
       "offset": "0x19D0",
       "name": "CAS_WRITE_SECTOR_LOOP",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF9D5",
+      "offset": "0x19D5",
+      "name": "CAS_WRITE_NEXT_SECTOR",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF9DA",
+      "offset": "0x19DA",
+      "name": "CAS_WRITE_SECTOR",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF9E8",
+      "offset": "0x19E8",
+      "name": "CAS_WRITE_SECTOR_LEN",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xF9EC",
+      "offset": "0x19EC",
+      "name": "CAS_WRITE_DATA",
       "alt_names": [],
       "kind": "routine",
       "usage": [],
@@ -1979,9 +2779,66 @@
     },
     {
       "bank": "exth",
+      "address": "0xFA58",
+      "offset": "0x1A58",
+      "name": "CAS_HALF_ZERO",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
       "address": "0xFA5D",
       "offset": "0x1A5D",
       "name": "CAS_SET_TIMING",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xFA62",
+      "offset": "0x1A62",
+      "name": "CAS_WRITE_SYNC_HALF",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xFA65",
+      "offset": "0x1A65",
+      "name": "CAS_WRITE_HALF",
       "alt_names": [],
       "kind": "routine",
       "usage": [],
@@ -2096,6 +2953,25 @@
       "address": "0xFAFD",
       "offset": "0x1AFD",
       "name": "CAS_CRC_FEEDBACK_STEP",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "exth",
+      "address": "0xFB0A",
+      "offset": "0x1B0A",
+      "name": "CAS_CRC_SHIFT",
       "alt_names": [],
       "kind": "routine",
       "usage": [],

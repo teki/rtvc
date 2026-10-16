@@ -1755,147 +1755,100 @@ DEVICE_JUMP_TABLE_POINTERS:
     DW 0000H                              ; class 6: cards (handled by the extension ROM)
     DW KERNEL_JUMP_TABLE                  ; class 7: kernel
 
-; OUT_CHARS_SAFE checks HI-MEM before invoking the selected device once per source byte.
-
 ; -----------------------------------------------------------------------------
 ; BOUNDED BLOCK OUTPUT HELPER
 ; -----------------------------------------------------------------------------
+; Calls a character-output routine once per byte of a memory block. Before each
+; byte the source address is checked against HI_MEM.
 ;
-; Checks the BASIC high-memory boundary, invokes a device byte-output routine, and advances
-; through a block.
+; ROM bug: when the check fails, the RET C below leaves three words on the
+; stack, so the CPU "returns" to the address held in BC (the remaining count)
+; instead of to the caller with A = FAH. Checked in the emulator: an RST 30H
+; printer block output (42H) with DE = C000H and BC = 6100H ends at 6100H.
 ;
-; The caller supplies BC as the number of bytes, DE as the source address, and HL as the device
-; routine. The helper first verifies the source range against HI-MEM at 0B19H and returns FAH if
-; the requested block would cross it.
-;
-; On each iteration C receives the next byte, DE/HL are exchanged as required by the calling
-; convention, and C58EH performs the indirect CALL (HL). A non-zero device error is returned
-; immediately; otherwise CPI advances HL and decrements BC until the count is exhausted.
-;
-; Entry:
-;   BC = byte count; DE = memory source; HL = device output routine.
-;
-; Exit:
-;   A=00H on completion, FAH on high-memory violation, or the device's non-zero error code.
-;
-; Effects:
-;   Reads the caller's memory block and calls the selected device for every byte.
-;
-; Destroys:
-;   AF, BC, DE, HL and flags.
+; Entry:   HL = character routine (called with C = byte, DE -> byte);
+;          DE -> block; BC = length, 1 or more (0 means 65536).
+; Exit:    A = 00H after the whole block, or the routine's error code.
 ; -----------------------------------------------------------------------------
 OUT_CHARS_SAFE:
-    EX DE,HL
+    EX DE,HL                            ; HL -> block, DE = routine
 
-LC56E:
-    PUSH HL
-    PUSH DE
+OUT_CHARS_NEXT:
+    PUSH HL                             ; saved across the call: source,
+    PUSH DE                             ; routine and count
     PUSH BC
     PUSH HL
     PUSH DE
-    EX DE,HL
+    EX DE,HL                            ; DE -> this byte
     LD HL,(HI_MEM)
     OR A
-    SBC HL,DE
-    LD A,FAH
+    SBC HL,DE                           ; Cy if the byte is above HI_MEM
+    LD A,FAH                            ; error FAH: beyond HI_MEM
     POP DE
     POP HL
-    RET C
-    LD C,(HL)
-    EX DE,HL
-
-; The synthetic stack continuation makes JP (HL) at C58EH behave as an indirect CALL.
-    CALL CALL_HL
+    RET C                               ; BUG: three words still pushed
+    LD C,(HL)                           ; C = the byte
+    EX DE,HL                            ; HL = routine, DE -> byte
+    CALL CALL_HL                        ; output it
     POP BC
     POP DE
     POP HL
     OR A
-    RET NZ
-    CPI
-    RET PO
-    JR LC56E
+    RET NZ                              ; the routine failed
+    CPI                                 ; HL++, BC-- (the compare is unused)
+    RET PO                              ; BC = 0: done, A = 00H
+    JR OUT_CHARS_NEXT
 
 ; -----------------------------------------------------------------------------
 ; INDIRECT CALL PRIMITIVE
 ; -----------------------------------------------------------------------------
-;
-; Transfers control to the address held in HL for the block-I/O helpers.
-;
-; The helper routines cannot use an ordinary CALL with a variable target. C58EH is the shared
-; two-byte primitive that performs JP (HL); the surrounding stack layout makes that non-returning
-; jump behave as a call and resumes at the continuation after the target executes RET.
-;
-; Entry:
-;   HL = target routine address; the stack contains the synthetic return continuation.
-;
-; Exit:
-;   Target routine runs and returns to the helper continuation.
-;
-; Effects:
-;   Transfers control indirectly; no fixed device semantics are imposed here.
+; CALL CALL_HL calls the routine at HL.
 ; -----------------------------------------------------------------------------
 CALL_HL:
     JP (HL)
 
-; IN_CHARS_SAFE mirrors OUT_CHARS_SAFE and writes each successful device byte to the destination
-; block.
-
 ; -----------------------------------------------------------------------------
 ; BOUNDED BLOCK INPUT HELPER
 ; -----------------------------------------------------------------------------
+; Calls a character-input routine once per byte and stores the character it
+; returns in C. The destination address is checked against HI_MEM before each
+; byte. The failed check has the same RET C bug as OUT_CHARS_SAFE. AF' is
+; used as scratch.
 ;
-; Invokes a device byte-input routine repeatedly while protecting the high-memory boundary.
-;
-; BC is the requested byte count, DE the destination address, and HL the device input routine.
-; Before each byte the helper checks DE against HI-MEM and returns FAH if the destination would
-; exceed the usable area.
-;
-; The device result is returned in A. On success the byte is stored at (DE), the destination is
-; advanced, and the count is decremented. A non-zero device error stops the operation and restores
-; the saved caller registers.
-;
-; Entry:
-;   BC = byte count; DE = destination; HL = device input routine.
-;
-; Exit:
-;   A=00H on completion, FAH on boundary violation, or a device error; bytes are stored at DE
-;   onward.
-;
-; Effects:
-;   Writes the input block to caller memory and invokes the selected device for every byte.
-;
-; Destroys:
-;   AF, BC, DE, HL and flags.
+; Entry:   HL = character routine (returns C = character, A = status);
+;          DE -> buffer; BC = length, 1 or more.
+; Exit:    A = 00H after the whole block, or the routine's error code; the
+;          bytes before the failing one are stored.
 ; -----------------------------------------------------------------------------
 IN_CHARS_SAFE:
-    PUSH HL
-    PUSH DE
+    PUSH HL                             ; saved across the call: routine,
+    PUSH DE                             ; destination and count
     PUSH BC
     PUSH HL
     PUSH DE
     LD HL,(HI_MEM)
     OR A
-    SBC HL,DE
-    LD A,FAH
+    SBC HL,DE                           ; Cy if the destination is above HI_MEM
+    LD A,FAH                            ; error FAH: beyond HI_MEM
     POP DE
     POP HL
-    RET C
-    CALL CALL_HL
-    EX AF,AF'
-    LD A,C
+    RET C                               ; BUG: three words still pushed
+    CALL CALL_HL                        ; read one character into C
+    EX AF,AF'                           ; keep the status
+    LD A,C                              ; A = the character
     POP BC
     POP DE
     POP HL
-    EX AF,AF'
+    EX AF,AF'                           ; A = status, A' = character
     OR A
-    RET NZ
+    RET NZ                              ; the routine failed
     EX AF,AF'
-    LD (DE),A
+    LD (DE),A                           ; store the character
     XOR A
     EX DE,HL
-    CPI
+    CPI                                 ; DE++, BC--
     EX DE,HL
-    RET PO
+    RET PO                              ; BC = 0: done, A = 00H
     JR IN_CHARS_SAFE
 
 ; Built-in character matrix table for character codes 32-127, ten bytes per character.
@@ -6834,114 +6787,65 @@ KEY_TABLE_ALT:
     DB A3H, A8H, B5H, B9H, B4H, BBH, B3H, AFH, 05H, E5H  ; C1: 3 8 e i d k c , UP UP2
     DB A5H, CEH, C4H, CDH, B7H, 08H, B2H, 2AH, 16H, 4CH  ; C0: 5 ^ t ] g DEL b ALT INS -
 
-; PRINTER routine jump table.
-; Printer OS service table: reserved function, PR-CHOUT, and PR-BKOUT.
-
 ; -----------------------------------------------------------------------------
 ; PRINTER SERVICE TABLE
 ; -----------------------------------------------------------------------------
-;
-; Counted OS dispatch table for parallel-printer character and block output.
-;
-; The table has three function slots. Function 0 is the uniform-device-interface placeholder,
-; function 1 points to PAR_CHOUT, and function 2 points to PAR_BKOUT. The device logic itself is
-; intentionally small because the printer performs character rendering and reports readiness
-; through ACK.
+; Class 4: the Centronics port. Function 0 is the RET that ends PAR_CHOUT.
 ; -----------------------------------------------------------------------------
 PRINTER_JUMP_TABLE:
     DB 03H                                ; 3 functions
-    DW LD929                              ; 0  interrupt (no work)
+    DW PAR_INT_NOP                        ; 0  interrupt (no work)
     DW PAR_CHOUT                          ; 1  character output
     DW PAR_BKOUT                          ; 2  block output
 
-; Block output delegates each byte to PR-CHOUT through the bounded C56DH helper; DE is source and
-; BC is count.
-
 ; -----------------------------------------------------------------------------
-; PARALLEL PRINTER BLOCK OUTPUT
+; PRINTER 02 - BLOCK OUTPUT
 ; -----------------------------------------------------------------------------
-;
-; Routes a memory block through the printer character-output routine with HI-MEM checking.
-;
-; DE points to the first ASCII character and BC gives the block length. PAR_BKOUT supplies
-; PAR_CHOUT as the per-character worker to the shared bounded block-output helper at C56DH. The
-; helper checks the usable high-memory limit and propagates STOP or memory-limit status.
-;
-; Entry:
-;   DE=source address; BC=character count.
-;
-; Exit:
-;   A=00 success, F5H for CTRL+ESC, or FAH for a high-memory violation.
-;
-; Effects:
-;   Sends each character to the parallel printer and may stop early on user abort.
+; Entry:   DE -> text; BC = length.
+; Exit:    A = 00H, F5H after CTRL+ESC, or FAH (see OUT_CHARS_SAFE).
 ; -----------------------------------------------------------------------------
 PAR_BKOUT:
-    LD HL,PAR_CHOUT
+    LD HL,PAR_CHOUT                     ; one PAR_CHOUT call per byte
     JP OUT_CHARS_SAFE
 
-; PR-CHOUT waits for ACK on port 59H bit 7, writes C to port 01H, and pulses port 06H bit 7 low
-; then high.
-
 ; -----------------------------------------------------------------------------
-; PARALLEL PRINTER CHARACTER OUTPUT
+; PRINTER 01 - CHARACTER OUTPUT
 ; -----------------------------------------------------------------------------
+; Waits until the printer is ready (port 59H bit 7 = 1), puts the character
+; on the data port 01H and pulses STROBE (port 06H bit 7) low. There is no
+; time-out: without a printer this waits until CTRL+ESC. Interrupts are
+; enabled on exit even if they were disabled on entry.
 ;
-; Waits for printer ACK, writes one character, and generates the STROBE pulse.
-;
-; The routine first checks STOP-FLAG so CTRL+ESC can abort output. It polls bit 7 of port 59H
-; until the printer acknowledges readiness. Interrupts are disabled while the character is written
-; to port 01H and the STROBE line on port 06H is driven low then high, preserving all unrelated
-; port-06 bits from PORT06. Interrupts are then restored and A=00 reports success.
-;
-; Entry:
-;   C=character code; port mirrors at 0B13H and 0B16H provide control state.
-;
-; Exit:
-;   A=00 success or F5H after CTRL+ESC.
-;
-; Effects:
-;   Writes printer data and STROBE hardware; briefly masks interrupts.
-;
-; Destroys:
-;   AF; port state is changed only in printer data and STROBE bits.
+; Entry:   C = character.
+; Exit:    A = 00H, or F5H if STOP_FLAG is set.
 ; -----------------------------------------------------------------------------
 PAR_CHOUT:
     LD A,(STOP_FLAG)
-    INC A
-
-; Interrupts are disabled only around the data/STROBE sequence so the printer sees a clean pulse.
+    INC A                               ; Z if STOP_FLAG = FFH
     LD A,F5H
-    RET Z
+    RET Z                               ; CTRL+ESC: give up
     IN A,(59H)
-    RLCA
-    JR NC,PAR_CHOUT
-    DI
+    RLCA                                ; Cy = bit 7, printer ready
+    JR NC,PAR_CHOUT                     ; busy: poll again
+    DI                                  ; keep the strobe pulse short
     LD A,C
-    OUT (01H),A
+    OUT (01H),A                         ; data
     LD A,(PORT06_MIRROR)
     AND 7FH
-    OUT (06H),A
+    OUT (06H),A                         ; STROBE low ...
     OR 80H
-    OUT (06H),A
+    OUT (06H),A                         ; ... and high again
     EI
-    XOR A
+    XOR A                               ; success
 
-LD929:
+PAR_INT_NOP:
     RET
-
-; SOUND routine jump table.
-; Sound service table: SOUND-INT, two reserved NOP functions, and TONE-SET.
 
 ; -----------------------------------------------------------------------------
 ; SOUND SERVICE TABLE
 ; -----------------------------------------------------------------------------
-;
-; Counted OS dispatch table for sound interrupt service and tone setup.
-;
-; The four slots are SOUND-INT, two reserved NOP entries, and TONE-SET. The empty slots preserve
-; the same function numbering discipline used for the other devices, while the interrupt slot is
-; enabled only while a tone is active.
+; Class 3. Functions 1 and 2 are RETs; they return the function byte, which the
+; dispatcher reports as an error.
 ; -----------------------------------------------------------------------------
 SOUND_JUMP_TABLE:
     DB 04H                                ; 4 functions
@@ -6950,318 +6854,159 @@ SOUND_JUMP_TABLE:
     DW TONE_NOP                           ; 2  (no operation)
     DW TONE_SET                           ; 3  start a tone
 
-; SOUND-INT decrements the 20-ms duration counter and turns off sound when it reaches zero or
-; STOP-FLAG is set.
-
 ; -----------------------------------------------------------------------------
-; SOUND INTERRUPT SERVICE
+; SOUND 00 - INTERRUPT SERVICE
 ; -----------------------------------------------------------------------------
-;
-; Counts down the active tone and disables sound when its duration or STOP request expires.
-;
-; SOUND-ACTIVE at 0B14H is FFH while a tone is running. On each periodic interrupt the routine
-; checks STOP-FLAG and decrements the remaining duration at 0BEFH. When the count reaches zero, or
-; CTRL+ESC requests an abort, it clears SOUND-ACTIVE and the duration, removes SOUND from INT-DES,
-; and clears the sound-enable and sound-interrupt bits in the port-05 mirror.
-;
-; Entry:
-;   Periodic interrupt context; duration and port mirrors are maintained by TONE_SET.
-;
-; Exit:
-;   Sound remains active while duration is nonzero; otherwise the hardware is silenced.
-;
-; Effects:
-;   Updates 0B14H, 0BEFH, INT-DES at 0B10H, and port-05 mirror at 0B12H.
-;
-; Destroys:
-;   AF and temporary registers.
+; Called every tick while INT_DES bit 3 is clear, which TONE_SET arranges.
+; Counts TONE_DURATION down and stops the tone at zero or on CTRL+ESC.
+; The interrupt routine ignores the status this returns.
 ; -----------------------------------------------------------------------------
 TONE_INT:
     LD A,(SOUND_ACT)
-    INC A
+    INC A                               ; tone playing (FFH)?
     RET NZ
     LD A,(STOP_FLAG)
-    INC A
-    JR Z,LD946
-    LD A,(TONE_DURATION)
+    INC A                               ; CTRL+ESC: stop now (A = 00H)
+    JR Z,TONE_STOP
+    LD A,(TONE_DURATION)                ; one tick less
     DEC A
     LD (TONE_DURATION),A
+    RET NZ                              ; still playing
 
-; Disable SOUND in INT-DES and clear port-05 sound and sound-interrupt bits while preserving
-; unrelated port state.
-    RET NZ
+; Stop the tone. Enter with A = 00H. Returns A = F5H.
 
-LD946:
-    LD (SOUND_ACT),A
+TONE_STOP:
+    LD (SOUND_ACT),A                    ; no tone
     LD (TONE_DURATION),A
     LD A,(INT_DES)
-    OR 08H
+    OR 08H                              ; no more sound ticks
     LD (INT_DES),A
     LD A,(PORT05_MIRROR)
-    AND CFH
-    LD (PORT05_MIRROR),A
+    AND CFH                             ; clear sound enable (bit 4) and
+    LD (PORT05_MIRROR),A                ; the sound interrupt (bit 5)
     OUT (05H),A
     LD A,F5H
 
-; Reserved sound functions are a single RET; the slots exist for uniform function numbering.
-
-; -----------------------------------------------------------------------------
-; SOUND RESERVED FUNCTION
-; -----------------------------------------------------------------------------
-;
-; Empty sound-device entry used for reserved function slots.
-;
-; Both sound functions 1 and 2 point here. The single RET keeps the service table uniform without
-; introducing an operation that the BASIC 1.2 ROM does not implement.
-; -----------------------------------------------------------------------------
 TONE_NOP:
     RET
 
-; TONE-SET input: B duration in 20-ms units, C volume 0..15, DE 12-bit PITCH divider.
-
 ; -----------------------------------------------------------------------------
-; PROGRAM AND START A TONE
+; SOUND 03 - START A TONE
 ; -----------------------------------------------------------------------------
+; Unless TONE_REPLACE is FFH, first waits for the current tone to come down
+; to its last tick. (This wait needs the interrupt running.) B = 0 just stops
+; any tone. The divider is shared with the serial cards, so SER_OK is set to
+; FFH: their clock is no longer valid.
 ;
-; Programs pitch, volume, duration, and interrupt participation for a new tone.
-;
-; B supplies duration in 20-ms units, C supplies a 0-15 volume, and DE supplies the 12-bit PITCH
-; divider. If the previous tone is not marked interruptible, the routine waits until it is nearly
-; complete; otherwise it replaces it. It records the new duration in the sound work area and
-; translates the four-bit volume into the port-06 bit positions b5-b2.
-;
-; The high PITCH nibble is written through the port-05 mirror with the sound-enable bit set, and
-; the low PITCH byte is sent to port 04H. SOUND-ACTIVE is asserted and the sound bit is enabled in
-; INT-DES. Because the same divider supplies serial timing, SER-OK at 0B71H is cleared to indicate
-; that the serial clock is no longer trustworthy while sound is active. A zero duration disables
-; the tone instead of enabling the interrupt service.
-;
-; Entry:
-;   B=duration in 20-ms ticks; C=volume 0..15; DE=PITCH (0..4095; 4095 denotes no audible tone).
-;
-; Exit:
-;   A=00 on successful setup, or F5H after CTRL+ESC.
-;
-; Effects:
-;   Programs ports 04H-06H and sound work variables; may replace an active tone and alter
-;   serial-clock validity.
-;
-; Destroys:
-;   AF, BC, DE, HL.
+; Entry:   B = duration in 20 ms ticks; C = volume 0-15 (bits 3-0);
+;          DE = 12-bit PITCH divider (tone = 195312.5 / (4096 - PITCH) Hz).
+; Exit:    A = 00H, or F5H if STOP_FLAG is set.
 ; -----------------------------------------------------------------------------
 TONE_SET:
     LD A,(TONE_REPLACE)
-    INC A
-    JR Z,LD96E
+    INC A                               ; FFH: replace the tone at once
+    JR Z,TONE_SET_NOW
     LD A,(TONE_DURATION)
-    SUB 02H
+    SUB 02H                             ; wait while 2 or more ticks remain
     JR NC,TONE_SET
 
-LD96E:
+TONE_SET_NOW:
     XOR A
-    LD (SOUND_ACT),A
-
-; Map volume bits b3..b0 into port-06 bits b5..b2 and preserve the remaining PORT06 mirror bits.
+    LD (SOUND_ACT),A                    ; the interrupt stops counting
     LD A,(STOP_FLAG)
     INC A
-    JR Z,LD946
+    JR Z,TONE_STOP                      ; CTRL+ESC: silence, A = F5H
     LD A,B
     OR A
-    JR NZ,LD981
-    CALL LD946
-    XOR A
+    JR NZ,TONE_SET_PLAY
+    CALL TONE_STOP                      ; duration 0: silence,
+    XOR A                               ; A = 00H
     RET
 
-LD981:
+TONE_SET_PLAY:
     LD (TONE_DURATION),A
     LD A,C
     AND 0FH
     RLCA
     RLCA
-    LD C,A
-
-; Enable the tone with PITCH high nibble through port 05H and write the low PITCH byte to port
-; 04H.
+    LD C,A                              ; volume in bits 5-2
     LD A,(PORT06_MIRROR)
-    AND C3H
+    AND C3H                             ; keep STROBE, bit 6 and colour mode
     OR C
     LD (PORT06_MIRROR),A
     OUT (06H),A
     LD A,D
-    AND 0FH
-    OR 10H
+    AND 0FH                             ; PITCH bits 11-8
+    OR 10H                              ; + sound enable
     LD D,A
     LD A,(PORT05_MIRROR)
-    AND C0H
+    AND C0H                             ; keep the motor bits; sound IRQ off
     OR D
     LD (PORT05_MIRROR),A
     OUT (05H),A
     LD A,E
-    OUT (04H),A
-
-; Mark SOUND-ACTIVE and route sound interrupts through INT-DES; SER-OK is cleared because the
-; divider no longer supplies serial timing.
+    OUT (04H),A                         ; PITCH bits 7-0
     LD A,FFH
-    LD (SOUND_ACT),A
-    LD (SER_OK),A
+    LD (SOUND_ACT),A                    ; tone playing
+    LD (SER_OK),A                       ; serial clock no longer valid
     LD A,(INT_DES)
-    AND F7H
+    AND F7H                             ; call TONE_INT every tick
     LD (INT_DES),A
     XOR A
     RET
 
-; CASSETTE routine jump table.
-; Cassette service table: reserved, character I/O, block I/O, open/create, close, and verify.
-
 ; -----------------------------------------------------------------------------
 ; CASSETTE SERVICE TABLE
 ; -----------------------------------------------------------------------------
-;
-; Counted dispatch table for cassette operations whose implementations live in EXTH.
-;
-; The six slots cover the reserved function, character I/O, block I/O, open/create, close, and
-; verify. D4 contains only small forwarding stubs; the actual cassette protocol, buffering, CRC,
-; and motor handling are implemented in the extension ROM.
+; Class 5. Everything except function 0 is implemented in the extension ROM.
+; Each forwarder below loads an EXT address and jumps through the FFF0H
+; gateway. The flags from the dispatcher (S = input, from the function byte's
+; bit 7) survive the trip, and the EXT stubs pick the input or output routine
+; with JP P / JP M. They return through EXT_DEVICE_RETURN to CAS_INT_NOP,
+; whose RET goes back to the dispatcher.
 ; -----------------------------------------------------------------------------
 CASSETTE_JUMP_TABLE:
     DB 06H                                ; 6 functions
-    DW LD9E7                              ; 0  interrupt
+    DW CAS_INT_NOP                        ; 0  interrupt (no work)
     DW CAS_CHIN_OUT                       ; 1  character in/out
     DW CAS_BKIN_OUT                       ; 2  block in/out
     DW CAS_OPEN_CREATE                    ; 3  open/create
     DW CAS_CLOSE                          ; 4  close
     DW CAS_VERIFY                         ; 5  verify
 
-; Cassette operations are forwarding stubs; the selected EXTH routine is entered through the
-; common FFF0H gateway.
-
-; -----------------------------------------------------------------------------
-; CASSETTE OPEN OR CREATE FORWARDER
-; -----------------------------------------------------------------------------
-;
-; Forwards cassette open/create to EXTH through the common bank-switch gateway.
-;
-; Entry:
-;   OS cassette calling convention.
-;
-; Exit:
-;   Status returned by EXTH cassette code.
-;
-; Effects:
-;   Selects the extension-ROM implementation through the FFF0H gateway.
-; -----------------------------------------------------------------------------
 CAS_OPEN_CREATE:
-    LD HL,F3E2H                           ; EXT ROM routine LF3E2, entered through the FFF0H gateway
-    JR LD9DF
+    LD HL,F3E2H                           ; EXT: CAS_CREATE_WRITE (output) or
+    JR CAS_TO_EXT                         ; CAS_OPEN_READ (input)
 
-; -----------------------------------------------------------------------------
-; CASSETTE CLOSE FORWARDER
-; -----------------------------------------------------------------------------
-;
-; Forwards cassette close to EXTH through the common bank-switch gateway.
-;
-; Entry:
-;   OS cassette calling convention.
-;
-; Exit:
-;   Status returned by EXTH cassette code.
-;
-; Effects:
-;   Selects the extension-ROM implementation through the FFF0H gateway.
-; -----------------------------------------------------------------------------
 CAS_CLOSE:
-    LD HL,F3E7H                           ; EXT ROM routine LF3E7, entered through the FFF0H gateway
-    JR LD9DF
+    LD HL,F3E7H                           ; EXT: close the output file (flushing
+    JR CAS_TO_EXT                         ; it) or the input file
 
-; -----------------------------------------------------------------------------
-; CASSETTE CHARACTER I/O FORWARDER
-; -----------------------------------------------------------------------------
-;
-; Forwards cassette character input/output to EXTH.
-;
-; Entry:
-;   OS cassette character-I/O calling convention.
-;
-; Exit:
-;   Character or status returned by EXTH.
-;
-; Effects:
-;   Selects the extension-ROM implementation through the FFF0H gateway.
-; -----------------------------------------------------------------------------
 CAS_CHIN_OUT:
-    LD HL,F3D8H                           ; EXT ROM routine EXT_CAS_CHIN_OUT, entered through the FFF0H gateway
-    JR LD9DF
+    LD HL,F3D8H                           ; EXT: CAS_CHOUT or CAS_CHIN
+    JR CAS_TO_EXT
 
-; -----------------------------------------------------------------------------
-; CASSETTE BLOCK I/O FORWARDER
-; -----------------------------------------------------------------------------
-;
-; Forwards cassette block input/output to EXTH.
-;
-; Entry:
-;   OS cassette block-I/O calling convention.
-;
-; Exit:
-;   Status returned by EXTH.
-;
-; Effects:
-;   Selects the extension-ROM implementation through the FFF0H gateway.
-; -----------------------------------------------------------------------------
 CAS_BKIN_OUT:
-    LD HL,F3DDH                           ; EXT ROM routine EXT_CAS_BKIN_OUT, entered through the FFF0H gateway
-    JR LD9DF
+    LD HL,F3DDH                           ; EXT: CAS_BKOUT or CAS_BKIN
+    JR CAS_TO_EXT
 
-; CAS VERIFY routine (CAS 05); verifies cassette data.
-
-; -----------------------------------------------------------------------------
-; CASSETTE VERIFY FORWARDER
-; -----------------------------------------------------------------------------
-;
-; Forwards cassette verification to EXTH.
-;
-; Entry:
-;   OS cassette calling convention.
-;
-; Exit:
-;   Verification status returned by EXTH.
-;
-; Effects:
-;   Selects the extension-ROM implementation through the FFF0H gateway.
-; -----------------------------------------------------------------------------
 CAS_VERIFY:
-    LD HL,F3ECH                           ; EXT ROM routine LF3EC, entered through the FFF0H gateway
+    LD HL,F3ECH                           ; EXT: CAS_VERIFY_DATA
 
-LD9DF:
+CAS_TO_EXT:
     JP CALL_EXTENSION_HL
 
-; CAS_INIT forwards cassette work-area initialization to EXTH.
+; Called once at reset (STARTUP_DEVICE_INIT_TABLE), not through RST 30H.
 
-; -----------------------------------------------------------------------------
-; CASSETTE INITIALIZATION FORWARDER
-; -----------------------------------------------------------------------------
-;
-; Forwards cassette initialization to EXTH.
-;
-; Entry:
-;   No device-specific input.
-;
-; Exit:
-;   Status returned by EXTH.
-;
-; Effects:
-;   Selects the extension-ROM implementation through the FFF0H gateway.
-; -----------------------------------------------------------------------------
 CAS_INIT:
-    LD HL,F3F1H                           ; EXT ROM routine LF3F1, entered through the FFF0H gateway
-    JR LD9DF
+    LD HL,F3F1H                           ; EXT: CAS_WORK_INIT
+    JR CAS_TO_EXT
 
-LD9E7:
-    RET
-    JR Z,DA4DH
-    ADD HL,HL
-    JR NZ,DA36H
-    LD D,E
-    LD C,H
+CAS_INT_NOP:
+    RET                                   ; also the SYS return point of every
+                                          ; EXT cassette call
+
+    DB "(c) ISL"                          ; Intelligent Software Ltd. signature
 
 ; BASIC workspace begins here; IX is based at 1700H and cold start clears the workspace through
 ; 19EFH.
@@ -7321,7 +7066,7 @@ LD9FF:
     LD (TEXT_START),HL
     LD HL,FB5BH
     LD DE,0008H
-    LD BC,USRTAB+6
+    LD BC,0027H                         ; 39 bytes: 0008H-002EH
     LDIR
     CALL LDE10
 
@@ -7376,14 +7121,14 @@ LDA2C:
     INC C
     SUB 02H
     JR NC,LDA2C
-    LD BC,CAS_OUT_NAME
+    LD BC,0D15H
     RST 30H
     DB 03H                                ; RST 30H fn 03H: video 3 -> CH_POS
 
     CALL LDBF2
 
 LDA4F:
-    LD BC,PORT05_MIRROR
+    LD BC,0B12H
     RST 30H
     DB 03H                                ; RST 30H fn 03H: video 3 -> CH_POS
     LD HL,DBFFH

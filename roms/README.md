@@ -57,8 +57,12 @@ listing records the alternate CPU address without emitting extra bytes.
   dispatcher (`RST30_DISPATCH` through `DEVICE_EXIT`, with the U0 bridge code
   in its header), the interrupt path (`IRQ_HANDLER` through
   `INTERNAL_IRQ_EXIT`), the kernel functions (`KERNEL_JUMP_TABLE` through
-  `SLOT_NUM`), and the keyboard driver (`KEYBOARD_JUMP_TABLE` through the
-  four code tables).
+  `SLOT_NUM`), the keyboard driver (`KEYBOARD_JUMP_TABLE` through the four
+  code tables), the block I/O helpers (`OUT_CHARS_SAFE`, `IN_CHARS_SAFE`),
+  and the printer, sound, and cassette-forwarding drivers. In
+  `TVC12_D7.64K.asm`, the cassette motor, text, physical block read/write,
+  timing, and CRC routines (`CAS_MOTOR_CONTROL` through `CAS_CRC_UPDATE`)
+  are annotated the same way, with a summary of the recording format.
 - The counted device jump tables, `DEVICE_JUMP_TABLE_POINTERS`, the BASIC
   statement table (with each entry's keyword token), the RST 18H operation
   table, and the editor key table are `DW` entries naming their targets.

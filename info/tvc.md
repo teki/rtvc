@@ -962,6 +962,14 @@ conversion at a 3.125 MHz CPU time base:
 A nominal second of silence in the historical converter is 22,052 samples,
 which is slightly different from exactly 44,100 samples.
 
+The BASIC 1.2 ROM reader adapts to the recording speed instead of using fixed
+thresholds. It requires 1,024 consecutive pilot periods within a few counts of
+their own average and uses that average as the bit threshold: a period shorter
+than the pilot is a 1, a longer one is a 0. It then measures the two pilot
+half periods separately and treats a half period clearly longer than the
+pilot's as the sync. A signal with consistent timing therefore still loads when
+it is somewhat faster or slower than the table above.
+
 ### CRC
 
 The tape format uses a bitwise 16-bit CRC:

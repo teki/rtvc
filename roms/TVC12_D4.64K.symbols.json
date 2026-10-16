@@ -1252,6 +1252,25 @@
     },
     {
       "bank": "sys",
+      "address": "0xC56E",
+      "offset": "0x056E",
+      "name": "OUT_CHARS_NEXT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xC58E",
       "offset": "0x058E",
       "name": "CALL_HL",
@@ -3763,6 +3782,25 @@
     },
     {
       "bank": "sys",
+      "address": "0xD929",
+      "offset": "0x1929",
+      "name": "PAR_INT_NOP",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xD92A",
       "offset": "0x192A",
       "name": "SOUND_JUMP_TABLE",
@@ -3817,6 +3855,25 @@
     },
     {
       "bank": "sys",
+      "address": "0xD946",
+      "offset": "0x1946",
+      "name": "TONE_STOP",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xD960",
       "offset": "0x1960",
       "name": "TONE_NOP",
@@ -3860,6 +3917,44 @@
         "ROM"
       ],
       "confidence": "high"
+    },
+    {
+      "bank": "sys",
+      "address": "0xD96E",
+      "offset": "0x196E",
+      "name": "TONE_SET_NOW",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
+      "address": "0xD981",
+      "offset": "0x1981",
+      "name": "TONE_SET_PLAY",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
     },
     {
       "bank": "sys",
@@ -4026,6 +4121,25 @@
     },
     {
       "bank": "sys",
+      "address": "0xD9DF",
+      "offset": "0x19DF",
+      "name": "CAS_TO_EXT",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xD9E2",
       "offset": "0x19E2",
       "name": "CAS_INIT",
@@ -4048,6 +4162,25 @@
         "ROM"
       ],
       "confidence": "high"
+    },
+    {
+      "bank": "sys",
+      "address": "0xD9E7",
+      "offset": "0x19E7",
+      "name": "CAS_INT_NOP",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
     },
     {
       "bank": "sys",
