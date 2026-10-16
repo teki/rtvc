@@ -21,6 +21,7 @@ Refer to the following resources for detailed documentation on the system:
 - [Development and Testing Skill](.agents/skills/development/SKILL.md) — Essential commands for compiling, running, testing, and benchmarking the emulator.
 - [Release Skill](.agents/skills/release/SKILL.md) — Release workflow for version bumps, concise `CHANGES.md` updates, manual review, commits, tags, and pushes.
 - [OpenCode Orchestrator Skill](.agents/skills/opencode-orchestrator/SKILL.md) — Optional local task-spec handoff to the OpenCode implementation agent.
+- [ROM Annotation Skill](.agents/skills/rom-annotation/SKILL.md) — Workflow, style, emulator checks, pitfalls, and progress for annotating the `roms/` listings (TVC BASIC 1.2, VT-DOS).
 - [info.hu](info.hu/) — Hungarian-language technical references, translated and adapted from [info/](info/). See [info.hu/README.md](info.hu/README.md) for the file index and the `L10N.md` policy.
 
 ## Documentation Maintenance Policy

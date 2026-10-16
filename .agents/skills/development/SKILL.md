@@ -311,6 +311,13 @@ This skill provides step-by-step instructions and references for compiling, exec
   - Stacked labels from the symbol database (`alt_names`) render as bare `NAME:` lines under the primary entry without repeating its comment block.
   - Pass repeated `--data-range START-END` options for known tables or text regions that should remain `DB` data.
 
+- **Check the annotated ROM listings against the ROM images:**
+  ```bash
+  python3 scripts/check_rom_listings.py
+  ```
+  - Assembles the TVC12 and VT-DOS listings with `target/release/rtvc-asm` and reports the first differing byte. Use it after every listing edit; see the [ROM annotation skill](../rom-annotation/SKILL.md).
+  - [scripts/rtvc_probe.py](../../../scripts/rtvc_probe.py) is a scripted TCP debugger client for checking ROM behaviour: run a test program, read registers at breakpoints, type BASIC, take screenshots.
+
 - **Regenerate the ROM symbol database from the ASM listings:**
   ```bash
   cargo xtask rom-symbols
