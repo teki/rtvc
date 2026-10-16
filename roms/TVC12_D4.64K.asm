@@ -2892,14 +2892,19 @@ VID_LINE_FEED:
 ;
 ;   address  video address of the run's first byte (pushed first)
 ;   mask     C = PIXEL_MASK of the first pixel; B = bytes to the right edge
-;   width    pixel count in bits 13-0; bits 15-14 are flags (popped first)
+;   width    pixel count in bits 13-0, flags in bits 15-14 (popped first):
+;              00  the run reaches beyond its parent run (left of the scan
+;                  start or past the parent's end): scan both rows
+;              01  inside the parent, found in the row below it
+;              11  inside the parent, found in the row above it
 ;
 ; A zero word under the first record ends the work. Each popped run is
 ; scanned in the row below and the row above (PAINT_DIR' = 2, 1) for target
-; pixels, which are filled and pushed in turn. The flags are set from whether
-; a run grew left of its scan start and from the pass it was found in;
-; PAINT_SCAN_PASS uses them to skip rescanning a run's source row. (The exact
-; rule is only described by the code below.)
+; pixels, which are filled and pushed in turn. For a run inside its parent,
+; the row towards the parent is the parent itself, already filled, so
+; PAINT_SCAN_PASS skips it and scans only the row away from the parent.
+; (Checked in the emulator: filling a rectangle gives one 00 run, the seed;
+; the others are 01 below and 11 above it.)
 ;
 ; Pixels are written with the XOR writer and INK_PATTERN = INK XOR target, so
 ; a target pixel becomes INK under any L_MODE. The stack may grow down to
@@ -2970,14 +2975,14 @@ PAINT_SCAN_PASS:
     RES 6,H
     LD (PAINT_WIDTH),HL                 ; the parent run's width
     EX DE,HL
-    BIT 6,A                             ; flag bit 14 set: compare flag
-    JR Z,PAINT_SCAN_START               ; bit 15 with this pass and maybe
-    RLCA                                ; skip the row
+    BIT 6,A                             ; run inside its parent?
+    JR Z,PAINT_SCAN_START               ; no (00): scan this row
+    RLCA                                ; A bit 0 = found above (bit 15)
     EXX
-    XOR B
+    XOR B                               ; B' bit 0 = 1 in the "above" pass
     EXX
     AND 01H
-    JP NZ,PAINT_NEXT_PASS
+    JP NZ,PAINT_NEXT_PASS               ; this is the parent's row: skip it
 
 PAINT_SCAN_START:
     LD HL,(PAINT_ADDR)
@@ -3035,26 +3040,27 @@ PAINT_RUN_WIDTH:
     EX (SP),HL
 
 ; Subtract the run from the parent's remaining width and set the record's
-; flags (bit 15 toggled, or bits 15-14 set by pass), then continue with the
-; rest of the parent.
+; flags: 00 if the run grew left (bit 15 cleared again) or passed the
+; parent's end; otherwise 01 (below pass) or 11 (above pass). Then continue
+; with the rest of the parent.
 
 PAINT_RUN_CHECK:
     PUSH HL
     LD HL,(PAINT_WIDTH)
     OR A
     SBC HL,DE                           ; parent width left - pixels filled
-    POP DE
-    EX (SP),HL
-    PUSH AF
+    POP DE                              ; DE = end address
+    EX (SP),HL                          ; HL = the run's width word
+    PUSH AF                             ; Cy: the run passed the parent's end
     LD A,80H
-    BIT 7,H
-    JR NZ,PAINT_FLAG_SET
-    JR C,PAINT_FLAG_DONE
+    BIT 7,H                             ; grew left?
+    JR NZ,PAINT_FLAG_SET                ; yes: clear bit 15, flags 00
+    JR C,PAINT_FLAG_DONE                ; passed the end: flags stay 00
     EXX
-    RRC B
+    RRC B                               ; Cy = B' bit 0: 1 in the above pass
     RLC B
     EXX
-    RRA
+    RRA                                 ; A = C0H above, 40H below
 
 PAINT_FLAG_SET:
     XOR H
@@ -3062,7 +3068,7 @@ PAINT_FLAG_SET:
 
 PAINT_FLAG_DONE:
     POP AF
-    EX (SP),HL
+    EX (SP),HL                          ; the width word back in the record
     JR C,PAINT_NEXT_PASS                ; parent width used up
     JR Z,PAINT_NEXT_PASS
     EX DE,HL
