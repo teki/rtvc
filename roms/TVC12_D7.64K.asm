@@ -4848,7 +4848,7 @@ LFF87:
 
 LFF8D:
     PUSH HL
-    LD HL,FEB3H                           ; SYS ROM routine LFEB3, entered through the FFF0H gateway
+    LD HL,FEB3H                           ; SYS ROM routine PRINT_CHAR_RETURN_EXT, entered through the FFF0H gateway
 
 LFF91:
     CALL EXT_GATEWAY

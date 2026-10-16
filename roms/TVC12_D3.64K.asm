@@ -394,6 +394,7 @@ DATA_LINE          EQU 1712H              ; DATA line pointer
 DATA_PTR           EQU 1714H              ; DATA byte pointer
 INPUT_PTR          EQU 1716H              ; INPUT data pointer
 RST18_NEXT         EQU 1718H              ; next RST 18H bytecode byte
+RST18_HL           EQU 171EH              ; HL passed between RST 18H operations
 BASIC_SP           EQU 171AH              ; BASIC stack pointer snapshot
 VLOMEM             EQU 1720H              ; low-memory/base boundary
 TEXT_START         EQU 1722H              ; start of the BASIC program
@@ -409,6 +410,7 @@ BASIC_RAM_START    EQU 19EFH              ; first byte after the ROM workspace
 ; SYS ROM routines and tables defined in TVC12_D4.64K.asm; both halves of the SYS bank are
 ; visible together whenever SYS is mapped.
 NUMBERED_FP_CONSTANTS          EQU C111H
+BASIC_READY                    EQU DADAH
 BASIC_REM_ENTRY                EQU DBBBH
 BASIC_FREE_SPACE               EQU DCC9H
 BASIC_WORKSPACE_INIT           EQU DCFCH
@@ -424,7 +426,7 @@ ORG E000H, SYS0, 2000H
 LE002:
     AND 81H
     CP 01H
-    JP NZ,LFD5A
+    JP NZ,ERROR_NOT_UNDERSTOOD
     BIT 2,(IX+00H)
     JR Z,LE02E
     EXX
@@ -484,15 +486,15 @@ LE04E:
     DB 0FH                                ; error code 0FH: Variable declared twice
 
 LE050:
-    CALL LFC43
+    CALL GET_TOKEN
 
 ; DIM routine.
 
 LE053:
     OR A
-    JP M,LFD5A
+    JP M,ERROR_NOT_UNDERSTOOD
     BIT 0,A
-    JP Z,LFD5A
+    JP Z,ERROR_NOT_UNDERSTOOD
     EXX
     LD A,C
     AND 88H
@@ -511,7 +513,7 @@ LE053:
     INC DE
     LD (SYMBOL_TOP),DE
     EXX
-    CALL LFC43
+    CALL GET_TOKEN
     BIT 1,(IX+01H)
     JR NZ,LE0A3
     CP A8H
@@ -537,11 +539,11 @@ LE099:
 
 LE0A3:
     LD A,96H
-    CALL LFD54
+    CALL EXPECT_TOKEN
     SCF
 
 LE0A9:
-    CALL NC,LFC43
+    CALL NC,GET_TOKEN
     CALL LFAC4
     JP M,LFB14
     INC HL
@@ -564,7 +566,7 @@ LE0A9:
     CP A4H
     JR Z,LE0A9
     LD A,95H
-    CALL LFD54
+    CALL EXPECT_TOKEN
     POP HL
     INC (HL)
     BIT 1,(IX+01H)
@@ -584,7 +586,7 @@ LE0E9:
     RST 18H
     DB 0CH, 85H, 26H                      ; RST 18H: op0C, CONST 38
     CALL FP_COMPARE
-    JP P,LFCB1
+    JP P,ERROR_NO_MEMORY
     CALL STACK_NUMBER_TO_INTEGER
     POP BC
 
@@ -602,7 +604,7 @@ LE0F8:
 
 LE104:
     BIT 0,(IX+02H)
-    JP Z,LFD5A
+    JP Z,ERROR_NOT_UNDERSTOOD
     JP BASIC_REM_ENTRY
 
 ; END routine.
@@ -610,7 +612,7 @@ LE104:
 LE10E:
     LD HL,0000H
     LD (NEXT_LINE),HL
-    JP DADAH
+    JP BASIC_READY
 
 ; EXT routine.
 
@@ -667,22 +669,22 @@ BASIC_FOR:
     CP 03H
     JR Z,LE167
     AND 82H
-    JP NZ,LFD5A
+    JP NZ,ERROR_NOT_UNDERSTOOD
     RST 08H
     DB 0EH                                ; error code 0EH: Type mismatch
 
 LE167:
     CALL STACK_TO_NUMERIC_REGS
     LD A,9AH
-    CALL LFD54
-    CALL LFC8E
+    CALL EXPECT_TOKEN
+    CALL CHECK_MEMORY_256
     PUSH HL
     CALL EVAL_NUMERIC_EXPRESSION
     POP HL
     PUSH HL
     CALL LFB28
     LD A,B4H
-    CALL LFD54
+    CALL EXPECT_TOKEN
     CALL EVAL_NUMERIC_EXPRESSION
     LD DE,FFEEH
     ADD IY,DE
@@ -697,7 +699,7 @@ LE167:
 LE195:
     CALL NC,LF0A4
     CP FDH
-    JP C,LFD5A
+    JP C,ERROR_NOT_UNDERSTOOD
     PUSH IY
     POP HL
     POP DE
@@ -734,7 +736,7 @@ LE1C2:
     LD A,(HL)
     CP ECH
     JR NZ,LE1C2
-    JP LFFA4
+    JP STOP_STATEMENT
 
 ; INPUT routine.
 
@@ -750,12 +752,12 @@ BASIC_INPUT:
     SCF
 
 LE1D6:
-    CALL NC,LFC43
+    CALL NC,GET_TOKEN
     CP BAH
     JR NZ,LE1FC
 
 ; INPUT PROMPT routine.
-    CALL LFC43
+    CALL GET_TOKEN
     CALL EVAL_STRING_EXPRESSION
     PUSH IY
     CALL DISCARD_STRING
@@ -780,13 +782,13 @@ LE1FA:
     DB 01H                                ; error code 01H: Not understood
 
 LE1FC:
-    CALL LFBFB
+    CALL CHANNEL_DEFAULT_ED
     JR Z,LE1ED
     EX AF,AF'
     JR NC,LE1FA
 
 LE204:
-    CALL NC,LFC43
+    CALL NC,GET_TOKEN
 
 LE207:
     LD A,(FUNC_CLASS)
@@ -811,12 +813,12 @@ LE21B:
     SCF
 
 LE221:
-    CALL NC,LFC43
+    CALL NC,GET_TOKEN
     CP FDH
     JP NC,DBB4H
     AND 81H
     CP 01H
-    JP NZ,LFD5A
+    JP NZ,ERROR_NOT_UNDERSTOOD
     EX AF,AF'
     JR NC,LE27C
     LD HL,(DATA_PTR)
@@ -840,7 +842,7 @@ LE249:
     PUSH HL
     PUSH DE
     PUSH BC
-    CALL LFCC5
+    CALL FIND_STATEMENT_KEYWORD
     EXX
     POP BC
     POP DE
@@ -901,7 +903,7 @@ LE292:
     DB 0CH                                ; error code 0CH: Cannot READ
 
 LE294:
-    CALL LFC8E
+    CALL CHECK_MEMORY_256
     CALL ASCII_TO_FP
     EX AF,AF'
     JR NC,LE2A6
@@ -989,7 +991,7 @@ BASIC_IF:
     EXX
     POP HL
     LD A,B5H
-    CALL LFD54
+    CALL EXPECT_TOKEN
     EX AF,AF'
     JR Z,LE31C
     EX AF,AF'
@@ -1001,7 +1003,7 @@ LE30C:
     EXX
     POP HL
     EXX
-    CALL LFC43
+    CALL GET_TOKEN
 
 LE314:
     CP 02H
@@ -1012,7 +1014,7 @@ LE31C:
     LD IY,(BASIC_SP)
 
 LE320:
-    CALL LFCC5
+    CALL FIND_STATEMENT_KEYWORD
     CP F4H
     JR Z,LE30C
     CP FEH
@@ -1037,23 +1039,23 @@ LE332:
     CP F0H
     JR NZ,LE369
     CALL LE357
-    CALL LFBDE
+    CALL POP_LINE_NUMBER_FIND
     LD IY,(BASIC_SP)
     PUSH HL
-    CALL LFCD1
+    CALL NEXT_STATEMENT_HL
     EX DE,HL
     POP HL
     JR LE38E
 
 LE357:
-    CALL LFC43
+    CALL GET_TOKEN
     DEC B
     RET Z
     EXX
     PUSH HL
     EXX
     POP HL
-    CALL LFC43
+    CALL GET_TOKEN
     JR NC,LE36B
     CP A4H
     JR Z,LE357
@@ -1068,7 +1070,7 @@ LE36B:
 
 LE370:
     EXX
-    CALL LFCC5
+    CALL FIND_STATEMENT_KEYWORD
     CP F4H
     JR Z,LE30C
     CP FEH
@@ -1084,8 +1086,8 @@ LE370:
 ; Entry: Target line from tokenized statement
 ; Effects: Pushes a return frame and branches to a BASIC line.
 BASIC_GOSUB:
-    CALL LFBDE
-    CALL LFC43
+    CALL POP_LINE_NUMBER_FIND
+    CALL GET_TOKEN
     JR C,LE369
     EXX
     PUSH HL
@@ -1094,7 +1096,7 @@ BASIC_GOSUB:
 
 LE38E:
     PUSH HL
-    CALL LFC8E
+    CALL CHECK_MEMORY_256
     PUSH IY
     POP HL
     DEC HL
@@ -1125,7 +1127,7 @@ LE3AF:
 ; Entry: Target line from tokenized statement
 ; Effects: Branches to a BASIC line.
 BASIC_GOTO:
-    CALL LFBDE
+    CALL POP_LINE_NUMBER_FIND
     LD IY,(BASIC_SP)
 
 LE3B9:
@@ -1134,7 +1136,7 @@ LE3B9:
 LE3BC:
     DEC HL
     EXX
-    CALL LFC43
+    CALL GET_TOKEN
 
 ; LET routine.
 
@@ -1144,10 +1146,10 @@ LE3BC:
 BASIC_LET:
     AND FDH
     CP 01H
-    JP NZ,LFD5A
+    JP NZ,ERROR_NOT_UNDERSTOOD
     EXX
     BIT 2,C
-    JP NZ,LFD5A
+    JP NZ,ERROR_NOT_UNDERSTOOD
     BIT 3,C
     CALL NZ,SYMBOL_CREATE_VALUE
     LD (IX+01H),C
@@ -1166,12 +1168,12 @@ LE3E8:
     SUB 96H
     JR NZ,LE44A
     BIT 1,C
-    JP NZ,LFD5A
+    JP NZ,ERROR_NOT_UNDERSTOOD
     INC HL
     PUSH HL
     LD C,(HL)
     LD B,A
-    CALL LFD27
+    CALL PARSE_SUBSTRING_RANGE
     LD A,D
     CP E
     JR NC,LE3FE
@@ -1243,7 +1245,7 @@ LE432:
 
 LE44A:
     LD A,9AH
-    CALL LFD54
+    CALL EXPECT_TOKEN
     JP NUMERIC_STRING_GATE
 
 ; LOMEM routine.
@@ -1259,7 +1261,7 @@ LE452:
     SBC HL,DE
     JP Z,DBB4H
     PUSH HL
-    CALL C,LFC86
+    CALL C,NEG_HL
     LD C,L
     LD B,H
     EX DE,HL
@@ -1269,7 +1271,7 @@ LE452:
     PUSH HL
     INC D
     JP Z,LFB14
-    CALL LFC99
+    CALL CHECK_MEMORY_DE
     POP HL
     PUSH HL
     CALL BASIC_FREE_SPACE
@@ -1312,7 +1314,7 @@ LE4AB:
     EXX
     CP A4H
     JP NZ,DBB4H
-    CALL LFC43
+    CALL GET_TOKEN
 
 ; NEXT routine.
 
@@ -1325,7 +1327,7 @@ BASIC_NEXT:
     CP 03H
     JR Z,LE4C7
     AND 82H
-    JP NZ,LFD5A
+    JP NZ,ERROR_NOT_UNDERSTOOD
     RST 08H
     DB 0EH                                ; error code 0EH: Type mismatch
 
@@ -1337,7 +1339,7 @@ LE4C7:
 LE4CC:
     ADD IY,BC
     LD A,2BH
-    CALL LFCE7
+    CALL FIND_STACK_ELEMENT
     JR C,LE4A9
     LD C,05H
     ADD HL,BC
@@ -1352,7 +1354,7 @@ LE4CC:
 
 LE4E3:
     LD A,2BH
-    CALL LFCE7
+    CALL FIND_STACK_ELEMENT
     JR C,LE4A9
     INC HL
     LD E,(HL)
@@ -1420,7 +1422,7 @@ BASIC_OUT:
     CALL LFB1B
     LD C,A
     LD A,A4H
-    CALL LFD54
+    CALL EXPECT_TOKEN
     CALL LFB1B
     OUT (C),A
     JP DBB1H
@@ -1431,12 +1433,12 @@ BASIC_OUT:
 ; Entry: Address and byte expressions
 ; Effects: Writes memory, including video-memory address translation.
 BASIC_POKE:
-    CALL LFCFF
+    CALL EVAL_WORD
     LD A,A4H
-    CALL LFD54
+    CALL EXPECT_TOKEN
     CALL LFB1B
     LD C,A
-    CALL LFFE7
+    CALL VIDEO_ADDRESS_MAP
     JR C,LE567
     DI
     OUT (02H),A
@@ -1466,10 +1468,10 @@ BASIC_PRINT:
     SCF
 
 LE57C:
-    CALL NC,LFC43
+    CALL NC,GET_TOKEN
     CP AFH
     JR NZ,LE5A6
-    CALL LFC43
+    CALL GET_TOKEN
     CALL EVAL_STRING_EXPRESSION
     LD HL,INPUT_BUFFER
     LD (HL),7FH
@@ -1495,7 +1497,7 @@ LE5A6:
     CALL STACK_NUMBER_TO_BYTE
     LD C,A
     LD A,A4H
-    CALL LFD54
+    CALL EXPECT_TOKEN
     CALL LFB1B
     LD B,A
     CALL LE68B
@@ -1521,7 +1523,7 @@ LE5CA:
     DB 01H                                ; error code 01H: Not understood
 
 LE5CC:
-    CALL LFC00
+    CALL PARSE_CHANNEL
     JR Z,LE5BD
     EX AF,AF'
     JR C,LE5CA
@@ -1529,7 +1531,7 @@ LE5CC:
     SCF
 
 LE5D6:
-    CALL NC,LFC43
+    CALL NC,GET_TOKEN
 
 LE5D9:
     EX AF,AF'
@@ -1549,13 +1551,13 @@ LE5DC:
     CP A4H
     JR NZ,LE5F2
     LD A,09H
-    CALL LFE9A
+    CALL PRINT_CHAR
     DB C2H                                ; = JP NZ,A0FEH when run from here, hiding the entry below
 
 LE5F2:
     CP A0H
     JR NZ,LE5FE
-    CALL LFC43
+    CALL GET_TOKEN
     EX AF,AF'
     OR A
     JP LE67F
@@ -1564,11 +1566,11 @@ LE5FE:
     CP B6H
     JR NZ,LE617
     LD A,96H
-    CALL LFD51
+    CALL EXPECT_TOKEN_NEXT
     CALL LFB1B
     LD B,A
     LD A,95H
-    CALL LFD54
+    CALL EXPECT_TOKEN
     LD C,00H
     CALL LE68B
     JR LE67D
@@ -1621,7 +1623,7 @@ LE65A:
     DEC A
     JP M,LE67D
     PUSH AF
-    CALL LFEC7
+    CALL PRINT_SPACE
     JR LE65A
 
 LE665:
@@ -1629,14 +1631,14 @@ LE665:
     RLA
 
 LE669:
-    JP NC,LFD5A
+    JP NC,ERROR_NOT_UNDERSTOOD
     POP AF
     LD HL,FCB5H                           ; EXT ROM routine LFCB5, entered through the FFF0H gateway
     JP NZ,CALL_EXTENSION_HL
     PUSH IY
     POP HL
     INC HL
-    CALL LFEBA
+    CALL PRINT_STACK_NUMBER
 
 LE67A:
     CALL DISCARD_NUMBER
@@ -1651,7 +1653,7 @@ LE67F:
 
 LE683:
     EX AF,AF'
-    CALL C,LFE93
+    CALL C,PRINT_CRLF
     EX AF,AF'
     JP DBB4H
 
@@ -1684,7 +1686,7 @@ LE6A3:
     CPIR
     POP HL
     RET Z
-    CALL LFE9A
+    CALL PRINT_CHAR
     INC HL
     LD (172EH),HL
     JR LE6A3
@@ -1729,8 +1731,8 @@ LE6F4:
     LD HL,(TEXT_START)
     CP 02H
     JR NZ,LE701
-    CALL LFBDE
-    CALL LFC43
+    CALL POP_LINE_NUMBER_FIND
+    CALL GET_TOKEN
 
 LE701:
     LD (DATA_LINE),HL
@@ -1749,7 +1751,7 @@ LE70D:
 ; Effects: Restores BASIC execution position.
 BASIC_RETURN:
     LD A,06H
-    CALL LFCE7
+    CALL FIND_STACK_ELEMENT
     JR C,LE70D
     SET 2,(IX+00H)
     INC HL
@@ -1798,7 +1800,7 @@ LE74D:
     DB 08H                                ; RST 30H fn 08H: video 8 -> B_ON
 
 LE74F:
-    CALL LFC43
+    CALL GET_TOKEN
     JR NC,LE78D
 
 ; PLOT routine.
@@ -1826,7 +1828,7 @@ LE75F:
     LD C,L
     LD B,H
     LD A,A4H
-    CALL LFD54
+    CALL EXPECT_TOKEN
     CALL LFAC4
     EX DE,HL
     PUSH AF
@@ -1862,7 +1864,7 @@ LE78D:
 ; Effects: Updates video, editor, or keyboard settings.
 BASIC_SET:
     LD HL,E7E4H
-    CALL LFD12
+    CALL TOKEN_TABLE_JUMP
     JR C,LE7DA
     CALL LFB1B
 
@@ -1883,7 +1885,7 @@ LE7A6:
     EXX
     CP A4H
     JR NZ,LE7CD
-    CALL LFC43
+    CALL GET_TOKEN
 
 LE7B4:
     CP 02H
@@ -1917,7 +1919,7 @@ LE7D2:
 LE7DA:
     CP A0H
     JP NZ,DBB4H
-    CALL LFC43
+    CALL GET_TOKEN
     JR BASIC_SET
 
 ; SET subcommand dispatch table; token plus relative routine selector.
@@ -1978,11 +1980,11 @@ BASIC_SOUND:
     SCF
 
 LE845:
-    CALL NC,LFC43
+    CALL NC,GET_TOKEN
     CP A0H
     JR Z,LE86F
     LD HL,E87BH
-    CALL LFD12
+    CALL TOKEN_TABLE_JUMP
     CP A4H
     JR Z,LE845
     PUSH AF
@@ -1996,12 +1998,12 @@ LE845:
     CP FDH
     JR NC,LE878
     CP A0H
-    JP NZ,LFD5A
+    JP NZ,ERROR_NOT_UNDERSTOOD
 
 LE86F:
     XOR A
     LD (TONE_REPLACE),A
-    CALL LFC43
+    CALL GET_TOKEN
     JR C,LE845
 
 LE878:
@@ -2020,17 +2022,17 @@ LE878:
 
 LE89B:
     LD C,50H
-    CALL LFBEE
+    CALL CHANNEL_ONLY_C
     CP E1H
     JR Z,LE8AF
     SET 7,C
     CP FDH
     JR NC,LE8B2
     CP ECH
-    JP NZ,LFD5A
+    JP NZ,ERROR_NOT_UNDERSTOOD
 
 LE8AF:
-    CALL LFC43
+    CALL GET_TOKEN
 
 LE8B2:
     LD A,C
@@ -2058,7 +2060,7 @@ LE8C7:
 ; Effects: Opens a file through the selected OS device.
 BASIC_OPEN:
     LD C,50H
-    CALL LFBEE
+    CALL CHANNEL_ONLY_C
     EX AF,AF'
     LD A,C
     CP 50H
@@ -2079,10 +2081,10 @@ LE8D8:
     CP FDH
     JR NC,LE905
     CP ECH
-    JP NZ,LFD5A
+    JP NZ,ERROR_NOT_UNDERSTOOD
 
 LE8F2:
-    CALL LFC43
+    CALL GET_TOKEN
     CP 02H
     JR NC,LE905
 
@@ -2106,7 +2108,7 @@ LE905:
 
 LE910:
     LD C,10H
-    CALL LFBEE
+    CALL CHANNEL_ONLY_C
     EX AF,AF'
     LD A,C
     OR 81H
@@ -2139,7 +2141,7 @@ LE929:
     BIT 2,C
 
 LE93F:
-    JP NZ,LFD5A
+    JP NZ,ERROR_NOT_UNDERSTOOD
     BIT 3,C
     CALL NZ,SYMBOL_CREATE_VALUE
     EXX
@@ -2158,7 +2160,7 @@ BASIC_LOAD:
     PUSH HL
     LD DE,(CAS_HEADER+2)
     PUSH DE
-    CALL LFC99
+    CALL CHECK_MEMORY_DE
     POP BC
     POP DE
     PUSH DE
@@ -2174,7 +2176,7 @@ BASIC_LOAD:
     POP HL
     LD A,(CAS_HEADER+4)
     OR A
-    JP Z,DADAH
+    JP Z,BASIC_READY
     JP DE23H
 
 ; SAVE routine.
@@ -2255,7 +2257,7 @@ LE9FB:
     SET 3,(IX+00H)
     PUSH AF
     LD C,50H
-    CALL LFBEE
+    CALL CHANNEL_ONLY_C
     EX AF,AF'
     LD A,C
     CP 50H
@@ -2330,19 +2332,19 @@ LEA5A:
 ; Effects: Consumes source tokens and grows the BASIC stack.
 EVAL_NUMERIC_ARGUMENT:
     LD A,96H
-    CALL LFD54
+    CALL EXPECT_TOKEN
     CALL EVAL_NUMERIC_EXPRESSION
 
 LEA70:
     LD A,95H
-    JP LFD54
+    JP EXPECT_TOKEN
 
 LEA75:
     LD A,96H
-    CALL LFD54
+    CALL EXPECT_TOKEN
     CALL EVAL_STRING_EXPRESSION
     LD A,95H
-    JP LFD54
+    JP EXPECT_TOKEN
 
 LEA82:
     LD HL,(RST18_NEXT)
@@ -2371,7 +2373,7 @@ LEA9F:
     LD HL,FP_X
 
 LEAA2:
-    CALL LFC8E
+    CALL CHECK_MEMORY_256
     LD DE,0006H
     ADD HL,DE
     PUSH IY
@@ -2432,7 +2434,7 @@ BASIC_ABS:
     RET
 
 LEAF1:
-    CALL LFC43
+    CALL GET_TOKEN
     CALL EVAL_NUMERIC_ARGUMENT
     LD BC,0000H
     LD A,(IY+08H)
@@ -2644,7 +2646,7 @@ LEC7F:
     RET
 
 LEC89:
-    CALL LFC43
+    CALL GET_TOKEN
     RST 30H
     DB 93H                                ; RST 30H fn 93H: keyboard 3, input -> KB_STATUS
     RST 10H
@@ -2809,7 +2811,7 @@ LED8B:
     JP FP_CLEAR_NUMERIC
 
 LEDA9:
-    CALL LFC43
+    CALL GET_TOKEN
     CALL LEA75
     PUSH IY
     CALL DISCARD_STRING
@@ -2830,8 +2832,8 @@ FN_REC_PEEK:
 ; Effects: Reads memory, including video-memory address translation.
 BASIC_PEEK:
     CALL EVAL_NUMERIC_ARGUMENT
-    CALL LFD02
-    CALL LFFE7
+    CALL STACK_NUMBER_TO_WORD
+    CALL VIDEO_ADDRESS_MAP
     JR C,LEDD4
     DI
 
@@ -3059,7 +3061,7 @@ LEF23:
     JR NZ,LEF7D
     BIT 7,H
     PUSH AF
-    CALL NZ,LFC86
+    CALL NZ,NEG_HL
     PUSH HL
     RST 18H
     DB 0AH, 0AH, 85H, 01H                 ; RST 18H: op0A, op0A, CONST 1
@@ -3114,11 +3116,11 @@ FN_REC_STRING_STR:
 
 BASIC_STRING_STR:
     LD A,96H
-    CALL LFD54
+    CALL EXPECT_TOKEN
     CALL LFB1B
     PUSH AF
     LD A,A4H
-    CALL LFD54
+    CALL EXPECT_TOKEN
     CP 02H
     JR NC,LEFD0
     CALL EVAL_STRING_EXPRESSION
@@ -3207,21 +3209,21 @@ FN_REC_USR:
 ; -----------------------------------------------------------------------------
 BASIC_USR:
     LD A,96H
-    CALL LFD54
+    CALL EXPECT_TOKEN
     CALL EVAL_NUMERIC_EXPRESSION
     CP 95H
     JR Z,LF029
     LD A,A4H
-    CALL LFD54
+    CALL EXPECT_TOKEN
     CALL LFAC4
     LD A,95H
 
 LF029:
-    CALL LFD54
+    CALL EXPECT_TOKEN
     LD DE,INTEGER_TO_STACK
     PUSH DE
     PUSH HL
-    CALL LFD02
+    CALL STACK_NUMBER_TO_WORD
     EX (SP),HL
     RET
 
@@ -3268,7 +3270,7 @@ FN_REC_VARPTR:
 
 BASIC_VARPTR:
     LD A,96H
-    CALL LFD54
+    CALL EXPECT_TOKEN
     AND FDH
     CP 01H
 
@@ -3294,7 +3296,7 @@ BASIC_VERNUM:
     JP INTEGER_TO_STACK
 
 LF0A4:
-    CALL LFC43
+    CALL GET_TOKEN
 
 ; Numeric expression precedence is implemented as nested layers: relations, +/-, */,
 ; exponentiation, functions, parentheses, and variables.
@@ -3358,7 +3360,7 @@ EXPR_OR_XOR_LOOP:
 
 LF0B8:
     PUSH AF
-    CALL LFC43
+    CALL GET_TOKEN
     CALL EXPR_AND_LAYER
     CALL LFABF
     POP AF
@@ -3404,7 +3406,7 @@ LF0DA:
     EXX
     CP C9H
     RET NZ
-    CALL LFC43
+    CALL GET_TOKEN
     CALL EXPR_NOT_LAYER
     CALL LFABF
     LD A,L
@@ -3433,7 +3435,7 @@ LF0DA:
 EXPR_NOT_LAYER:
     CP C2H
     JR NZ,EXPR_RELATION_LAYER
-    CALL LFC43
+    CALL GET_TOKEN
     CALL EXPR_NOT_LAYER
     CALL STACK_NUMBER_TO_INTEGER
     LD A,L
@@ -3467,7 +3469,7 @@ EXPR_RELATION_LAYER:
     CP 9FH
     RET NC
     PUSH AF
-    CALL LFC43
+    CALL GET_TOKEN
     CALL EVAL_ADD_SUB
     CALL FP_COMPARE
     JR LF13A
@@ -3491,7 +3493,7 @@ EXPR_STRING_RELATION:
     CP 9FH
     JP NC,LF35D
     PUSH AF
-    CALL LFC43
+    CALL GET_TOKEN
     CALL EVAL_STRING_EXPRESSION
     CALL STRING_COMPARE
 
@@ -3596,7 +3598,7 @@ EXPR_ADD_SUB_OPERATOR:
     INC E
 
 LF179:
-    CALL LFC43
+    CALL GET_TOKEN
     CALL EVAL_MUL_DIV
     XOR A
     RET
@@ -3638,7 +3640,7 @@ LF184:
 
 LF18E:
     LD D,A
-    CALL LFC43
+    CALL GET_TOKEN
     CALL EXPR_POWER_LAYER
     PUSH DE
     LD A,D
@@ -3673,7 +3675,7 @@ LF1A6:
     CP 9FH
     RET NZ
     PUSH DE
-    CALL LFC43
+    CALL GET_TOKEN
     CALL EVAL_PRIMARY
     CALL LEF17
     JR LF1A6
@@ -3707,7 +3709,7 @@ LF1B9:
 ; -----------------------------------------------------------------------------
 EVAL_PRIMARY:
     PUSH AF
-    CALL LFC8E
+    CALL CHECK_MEMORY_256
     POP AF
     CP C0H
     JP Z,LEDA9
@@ -3715,14 +3717,14 @@ EVAL_PRIMARY:
     JP Z,LEAF1
     CP 02H
     JP C,LF35D
-    JP Z,LFC43
+    JP Z,GET_TOKEN
     CP FDH
     JR NC,LF1B9
     CP 96H
     JR NZ,PRIMARY_SYMBOL_DISPATCH
     CALL LF0A4
     CP 95H
-    JP Z,LFC43
+    JP Z,GET_TOKEN
 
 ; A primary token is either converted as a literal, resolved through the symbol chain, or
 ; dispatched to a built-in/user function. Terminators are rejected here so a missing expression
@@ -3740,7 +3742,7 @@ EVAL_PRIMARY:
 ; -----------------------------------------------------------------------------
 PRIMARY_SYMBOL_DISPATCH:
     CP 03H
-    JP NZ,LFD5A
+    JP NZ,ERROR_NOT_UNDERSTOOD
     CALL STACK_TO_NUMERIC_REGS
     BIT 3,C
     JP NZ,DBADH
@@ -3772,13 +3774,13 @@ ARRAY_OR_DEF_SYMBOL:
     LD A,C
     JR Z,DEF_ARGUMENT_FRAME
     EX AF,AF'
-    CALL LFC43
+    CALL GET_TOKEN
     OR A
-    JP M,LFD5A
+    JP M,ERROR_NOT_UNDERSTOOD
     LD (IX+01H),A
     CALL NUMERIC_STRING_GATE
     LD A,95H
-    CALL LFD54
+    CALL EXPECT_TOKEN
     EX AF,AF'
 
 ; A DEF call records the caller's BASIC execution context before it evaluates formal arguments and
@@ -3820,18 +3822,18 @@ DEF_ARGUMENT_FRAME:
     EX DE,HL
     EXX
     LD C,A
-    CALL LFC43
+    CALL GET_TOKEN
     SUB 96H
     SUB 01H
     SBC A,A
     XOR C
-    JP NZ,LFD5A
+    JP NZ,ERROR_NOT_UNDERSTOOD
     XOR C
     JR Z,RESTORE_DEF_CONTEXT
-    CALL LFC43
+    CALL GET_TOKEN
     AND 81H
     CP 01H
-    JP NZ,LFD5A
+    JP NZ,ERROR_NOT_UNDERSTOOD
     EXX
     BIT 7,C
     CALL Z,SYMBOL_CREATE_VALUE
@@ -3843,9 +3845,9 @@ DEF_ARGUMENT_FRAME:
     EXX
     POP HL
     CALL LFB3B
-    CALL LFC43
+    CALL GET_TOKEN
     LD A,95H
-    CALL LFD54
+    CALL EXPECT_TOKEN
 
 ; Restoring the saved context is part of the function ABI: leaving the temporary DEF symbol or
 ; changed TOP visible would make later variable lookup depend on call history.
@@ -3862,7 +3864,7 @@ DEF_ARGUMENT_FRAME:
 ; -----------------------------------------------------------------------------
 RESTORE_DEF_CONTEXT:
     LD A,9AH
-    CALL LFD54
+    CALL EXPECT_TOKEN
     EX AF,AF'
     LD (IX+01H),A
     CALL NUMERIC_STRING_GATE
@@ -3940,7 +3942,7 @@ STRING_CONCAT_LOOP:
     EXX
     CP 97H
     RET NZ
-    CALL LFC43
+    CALL GET_TOKEN
     CALL STRING_TERM_LAYER
     PUSH IY
     POP HL
@@ -3955,7 +3957,7 @@ STRING_CONCAT_LOOP:
     POP IY
     INC HL
     LD C,(HL)
-    CALL LFC8E
+    CALL CHECK_MEMORY_256
     PUSH HL
     ADD HL,BC
     LD A,C
@@ -4010,7 +4012,7 @@ LF2E3:
     EXX
     CP 96H
     RET NZ
-    CALL LFD27
+    CALL PARSE_SUBSTRING_RANGE
     PUSH IY
     POP HL
     INC HL
@@ -4101,19 +4103,19 @@ LF318:
 ; before string storage is allocated.
 ; -----------------------------------------------------------------------------
 STRING_PRIMARY_DISPATCH:
-    CALL LFC8E
+    CALL CHECK_MEMORY_256
     EXX
     PUSH BC
     EXX
     POP BC
     LD A,B
     CP 01H
-    JP C,LFC43
+    JP C,GET_TOKEN
     JR Z,STRING_SYMBOL_DISPATCH
     CP 04H
     JR C,LF35D
     CP FDH
-    JP C,LFD5A
+    JP C,ERROR_NOT_UNDERSTOOD
     RST 08H
     DB 03H                                ; error code 03H: Argument missing
 
@@ -4165,7 +4167,7 @@ LF35D:
 ;   AF, BC, DE, HL, IY.
 ; -----------------------------------------------------------------------------
 SYMBOL_CREATE:
-    CALL LFC8E
+    CALL CHECK_MEMORY_256
     LD DE,(SYMBOL_END)
     LD HL,(SYMBOL_TOP)
     LD (SYMBOL_END),HL
@@ -4241,7 +4243,7 @@ LF3A3:
 ; Clearing is deliberate: an undefined scalar reads as numeric zero rather than stale RAM.
 ; -----------------------------------------------------------------------------
 INIT_NUMERIC_SYMBOL:
-    CALL LFC8E
+    CALL CHECK_MEMORY_256
     LD HL,(SYMBOL_TOP)
     LD B,06H
     XOR A
@@ -4267,7 +4269,7 @@ INIT_STRING_OR_ARRAY_SYMBOL:
     JR NZ,INIT_NUMERIC_SYMBOL
 
 LF3C1:
-    CALL LFC8E
+    CALL CHECK_MEMORY_256
     LD HL,(SYMBOL_TOP)
     LD (HL),C
     INC HL
@@ -4481,9 +4483,9 @@ STACK_OPERAND_WALK:
     EXX
     POP HL
     LD C,A
-    JP Z,LFC43
+    JP Z,GET_TOKEN
     LD A,96H
-    CALL LFD51
+    CALL EXPECT_TOKEN_NEXT
     XOR A
     LD E,A
     LD D,A
@@ -4511,7 +4513,7 @@ STACK_ELEMENT_SCAN:
     PUSH HL
     PUSH AF
     LD A,A4H
-    CALL NZ,LFD54
+    CALL NZ,EXPECT_TOKEN
     CALL LFAC4
     EX DE,HL
     LD C,(HL)
@@ -4537,7 +4539,7 @@ LF45E:
     INC HL
     PUSH HL
     PUSH AF
-    CALL LFCB3
+    CALL MUL16
     POP AF
     POP DE
     JR LF45E
@@ -4550,7 +4552,7 @@ LF46F:
     DEC A
     JR NZ,STACK_ELEMENT_SCAN
     LD A,95H
-    CALL LFD54
+    CALL EXPECT_TOKEN
     EX DE,HL
     POP BC
     BIT 1,C
@@ -4562,7 +4564,7 @@ LF46F:
 
 LF487:
     PUSH HL
-    CALL LFCB3
+    CALL MUL16
     POP DE
     ADD HL,DE
     RET
@@ -5607,7 +5609,7 @@ LF7C4:
     RET
 
 LF7CE:
-    LD HL,LFEB6
+    LD HL,RETURN_TO_EXT
     PUSH HL
 
 ; -----------------------------------------------------------------------------
@@ -5936,7 +5938,7 @@ LF8D3:
     LD B,E
     PUSH IY
     POP DE
-    CALL LFC8E
+    CALL CHECK_MEMORY_256
     INC B
 
 LF8DE:
@@ -5979,7 +5981,7 @@ LF905:
     CP 22H
     JR Z,STRING_TO_STACK
     CALL ASCII_TO_FP
-    JP NC,LFD5A
+    JP NC,ERROR_NOT_UNDERSTOOD
     RLA
     RET NC
 
@@ -6143,7 +6145,7 @@ ASCII_SCAN_EXPONENT:
     POP HL
     DEC HL
     LD A,(HL)
-    CALL LFBC8
+    CALL FOLD_CASE
     CP 45H
     LD A,E
     JR NZ,ASCII_FP_FINALIZE
@@ -6264,7 +6266,7 @@ LF9EF:
     RET
 
 LF9F1:
-    CALL LFC8E
+    CALL CHECK_MEMORY_256
 
 ; Numeric allocation advances IY by exactly nine bytes. Every caller must initialize the
 ; identifier and all numeric fields before another routine treats the new stack element as valid.
@@ -6317,7 +6319,7 @@ LFA08:
     RET
 
 LFA14:
-    LD HL,LFEB6
+    LD HL,RETURN_TO_EXT
     PUSH HL
     JR FP_CLEAR_NUMERIC
 
@@ -6408,7 +6410,7 @@ INTEGER_TO_STACK:
     LD (171CH),IY
     DEC IY
     PUSH HL
-    CALL LFC83
+    CALL ABS_HL
     SCF
 
 LFA3B:
@@ -6445,7 +6447,7 @@ LFA52:
     JP FP_NORMALIZE
 
 LFA63:
-    CALL LFC8E
+    CALL CHECK_MEMORY_256
     LD BC,0005H
     ADD HL,BC
     PUSH IY
@@ -6468,7 +6470,7 @@ LFA7C:
 LFA7D:
     LD C,(HL)
     LD B,00H
-    CALL LFC8E
+    CALL CHECK_MEMORY_256
     ADD HL,BC
     INC BC
     PUSH IY
@@ -6484,7 +6486,7 @@ LFA8D:
     RET
 
 LFA92:
-    CALL LFC8E
+    CALL CHECK_MEMORY_256
     PUSH IY
     POP DE
     DEC DE
@@ -6499,7 +6501,7 @@ LFA92:
     RET
 
 LFAA6:
-    CALL LFC8E
+    CALL CHECK_MEMORY_256
     PUSH IY
     POP HL
     DEC HL
@@ -6514,7 +6516,7 @@ LFAA6:
     RET
 
 LFABA:
-    CALL LFC43
+    CALL GET_TOKEN
     JR LFAC4
 
 LFABF:
@@ -6589,7 +6591,7 @@ LFADF:
     POP AF
     PUSH AF
     OR A
-    CALL M,LFC86
+    CALL M,NEG_HL
     POP AF
     XOR H
     JP M,LFB14
@@ -6635,7 +6637,7 @@ LFB14:
 ;   AF, BC, DE, HL, IY.
 ; -----------------------------------------------------------------------------
 STACK_NUMBER_TO_BYTE:
-    CALL LFC43
+    CALL GET_TOKEN
     DB 3EH                                ; = LD A,F6H when run from here, hiding the entry below
 
 LFB1A:
@@ -6696,162 +6698,188 @@ LFB57:
     POP IY
     RET
 
-; Bytes copied into RAM at initialization (addresses 0008H-002FH): error handlers, RST 18H entry,
-; and function call dispatcher.
-
-; Character matrix table for character codes 128-160, ten bytes per character.
-    DB E1H, 7EH, B7H, E5H, 00H, 00H, 00H, 00H, C8H, E1H, C3H, 5CH, FDH, C3H, 00H, 00H ; |.~.........\....|
-    DB C3H, 82H, FBH, 32H, 1FH, 00H, F7H, 00H, C9H, 00H, 00H, 00H, 00H, 00H, 00H, 00H ; |...2............|
-    DB 00H, 00H, 00H, 00H, 00H, 00H, 00H                                              ; |.......|
-
-; RST 18 operation bytes are threaded through the jump table and advance the next-byte pointer at
-; 1718H-1719H.
-; RST18 dispatch saves the continuation pointer in 1718H-1719H and executes a sequence of
-; operation bytes. The high bit marks the final byte; intermediate operations may push, copy,
-; delete, or combine typed stack values.
+; -----------------------------------------------------------------------------
+; U0 RST GATEWAY TEMPLATE
+; -----------------------------------------------------------------------------
+; BASIC_INIT copies these 39 bytes to U0 0008H-002EH. The code only uses
+; absolute addresses, so it is shown decoded here; the comments give the RAM
+; address each instruction runs at.
+;
+;   RST 08H + code byte  raise BASIC error "code" (code 00H: no error, carry on
+;                        after the code byte, which runs as a NOP)
+;   RST 10H              raise BASIC error A if NZ, return if Z
+;   RST 18H              BASIC-stack bytecode (RST18_DISPATCH)
+;   CALL 001BH           RST 30H with the function code in A
+; -----------------------------------------------------------------------------
+U0_RST_TEMPLATE:
+    POP HL                              ; 0008H RST 08H: HL -> the code byte
+    LD A,(HL)                           ; 0009H A = error code
+    OR A                                ; 000AH
+    PUSH HL                             ; 000BH return to the code byte
+    NOP                                 ; 000CH
+    NOP                                 ; 000DH
+    NOP                                 ; 000EH
+    NOP                                 ; 000FH
+    RET Z                               ; 0010H RST 10H: no error, return
+    POP HL                              ; 0011H drop the return address
+    JP BASIC_ERROR                      ; 0012H report error A
+    JP 0000H                            ; 0015H RST18_OP_JP: patched per operation
+    JP RST18_DISPATCH                   ; 0018H RST 18H
+    LD (RST30_A_FN),A                   ; 001BH RST30_A_ENTRY: patch the
+    RST 30H                             ; 001EH function byte below
+    DB 00H                              ; 001FH RST30_A_FN
+    RET                                 ; 0020H
+    DS 14, 00H                          ; 0021H-002EH USRTAB, all zero
 
 ; -----------------------------------------------------------------------------
 ; RST 18H BASIC STACK DISPATCH
 ; -----------------------------------------------------------------------------
-;
-; Executes the compact arithmetic and stack-operation bytecode following an RST 18H instruction.
-;
-; RST 18H is a threaded helper language used throughout BASIC. The dispatcher saves the
-; return/source pointer, fetches each operation byte, and uses a jump table to perform stack
-; arithmetic, conversions, duplication, deletion, symbol copies, and control helpers. The
-; operation stream may contain several bytes, so the dispatcher advances 1718H-1719H until the
-; terminating operation returns to the interpreter.
-;
-; The mechanism lets math-heavy BASIC routines express repeated stack transformations in a few
-; bytes while keeping the actual algorithms in reusable subroutines.
-;
-; Entry:
-;   The byte following RST 18H selects the operation; 1718H/1719H tracks the next byte.
-;
-; Exit:
-;   Operation-specific values and stack pointer updates.
-;
-; Effects:
-;   Manipulates BASIC stack elements, IY, and interpreter workspace.
-;
-; Destroys:
-;   AF, BC, DE, HL, alternate registers, IY.
-;
-; Note:
-;   The first 48 bytes copied to U0 RAM include the RST 18H entry and the ordinary error/call
-;   stubs.
+; Runs the bytecode after the RST 18H. Each byte selects an operation from
+; RST18_JUMP_TABLE by its bits 6-0 (operation 5, CONST, reads one more byte
+; through RST18_NEXT); bit 7 marks the last byte. Every operation is called
+; with the caller's HL and A and passes its HL and A on to the next one; the
+; final values are returned. RST18_NEXT is saved on the Z80 stack, so
+; operations may themselves use RST 18H.
 ; -----------------------------------------------------------------------------
 RST18_DISPATCH:
-    LD (171EH),HL
+    LD (RST18_HL),HL                    ; keep the caller's HL and A
     LD (RST18_ARG),A
-    LD HL,(RST18_NEXT)
-    EX (SP),HL
+    LD HL,(RST18_NEXT)                  ; save the outer bytecode pointer;
+    EX (SP),HL                          ; HL -> our bytecode
 
-LFB8C:
-    LD A,(HL)
+RST18_NEXT_OP:
+    LD A,(HL)                           ; operation byte
     INC HL
     LD (RST18_NEXT),HL
-    ADD A,A
+    ADD A,A                             ; Cy = last operation
     PUSH AF
-    ADD A,C7H
+    ADD A,C7H                           ; HL -> RST18_JUMP_TABLE + 2 * op
     LD L,A
     LD H,C0H
     LD A,(HL)
     INC HL
     LD H,(HL)
     LD L,A
-    LD (RST18_OP_JP+1),HL
-    LD HL,(171EH)
+    LD (RST18_OP_JP+1),HL               ; patch JP 0015H
+    LD HL,(RST18_HL)
     LD A,(RST18_ARG)
-    CALL RST18_OP_JP
+    CALL RST18_OP_JP                    ; run the operation
     LD (RST18_ARG),A
-    LD (171EH),HL
-    LD HL,(RST18_NEXT)
+    LD (RST18_HL),HL
+    LD HL,(RST18_NEXT)                  ; (CONST may have advanced it)
     POP AF
-    JR NC,LFB8C
-    EX (SP),HL
-    LD (RST18_NEXT),HL
-    LD HL,(171EH)
+    JR NC,RST18_NEXT_OP
+    EX (SP),HL                          ; return past the bytecode,
+    LD (RST18_NEXT),HL                  ; restore the outer pointer
+    LD HL,(RST18_HL)
     LD A,(RST18_ARG)
     RET
 
-LFBBF:
+; -----------------------------------------------------------------------------
+; CASE FOLDING FOR NAME COMPARISONS
+; -----------------------------------------------------------------------------
+; FOLD_CASE_DE: A = (DE); if B is 0 the byte is folded as below, except FFH.
+; FOLD_CASE: a-z becomes A-Z; the accented letters 80H-88H and 90H-98H (and
+; their 00H-08H / 10H-18H forms) become 00H-08H. Other bytes are unchanged.
+; -----------------------------------------------------------------------------
+FOLD_CASE_DE:
     LD A,(DE)
     INC B
     DEC B
-    RET NZ
+    RET NZ                              ; B not 0: no folding
     CP FFH
-    RET Z
+    RET Z                               ; the terminator
     AND 7FH
 
-LFBC8:
+FOLD_CASE:
     CP 20H
-    JR C,LFBD5
+    JR C,FOLD_CASE_ACCENT
     CP 61H
     RET C
     CP 7BH
     RET NC
-    AND DFH
+    AND DFH                             ; a-z -> A-Z
     RET
 
-LFBD5:
+FOLD_CASE_ACCENT:
     CP 10H
     RET C
     CP 19H
     RET NC
-    AND EFH
+    AND EFH                             ; 10H-18H -> 00H-08H
     RET
 
-LFBDE:
+; Pop a line number from the BASIC stack and find that line. A must be 02H
+; (a number was evaluated), else error 01H. Exit: as FIND_BASIC_LINE, error
+; 02H if there is no such line.
+
+POP_LINE_NUMBER_FIND:
     CP 02H
-    JP NZ,LFD5A
-    CALL STACK_NUMBER_TO_INTEGER
-    CALL DD44H
+    JP NZ,ERROR_NOT_UNDERSTOOD
+    CALL STACK_NUMBER_TO_INTEGER        ; HL = line number
+    CALL DD44H                          ; look it up (D4 FIND_BASIC_LINE - 1)
     RET NC
     RST 08H
     DB 02H                                ; error code 02H: Line missing
 
-LFBEC:
-    LD C,20H
+; -----------------------------------------------------------------------------
+; CHANNEL SELECTION (#n)
+; -----------------------------------------------------------------------------
+; Statements that do character I/O take an optional "#n". The channel is the
+; RST 30H device class: FUNC_CLASS = (n AND 7) * 10H, so #0 is video, #1
+; keyboard, #2 editor (the default), #4 printer, #5 cassette.
+;
+;   CHANNEL_ONLY       [#n], then end of statement (":" is skipped); else
+;                      error 01H. Default class 20H.
+;   CHANNEL_DEFAULT_ED SET_CHANNEL with C = 20H.
+;   SET_CHANNEL        FUNC_CLASS = C, then PARSE_CHANNEL.
+;   PARSE_CHANNEL      if the current token is "#": read n, set FUNC_CLASS
+;                      and C, return Z; otherwise NZ. A = the current token.
+; -----------------------------------------------------------------------------
+CHANNEL_ONLY:
+    LD C,20H                            ; editor
 
-LFBEE:
-    CALL LFBFD
-    RET NZ
-    CP FDH
-    JR Z,LFC43
-    CP FEH
+CHANNEL_ONLY_C:
+    CALL SET_CHANNEL
+    RET NZ                              ; no "#": done
+    CP FDH                              ; ":" follows: skip it
+    JR Z,GET_TOKEN
+    CP FEH                              ; end of statement or line
     RET NC
     RST 08H
     DB 01H                                ; error code 01H: Not understood
 
-LFBFB:
-    LD C,20H
+CHANNEL_DEFAULT_ED:
+    LD C,20H                            ; editor
 
-LFBFD:
-    LD (IX+05H),C
+SET_CHANNEL:
+    LD (IX+05H),C                       ; FUNC_CLASS = default
 
-LFC00:
+PARSE_CHANNEL:
     EXX
-    LD A,B
+    LD A,B                              ; current token
     EXX
-    CP A7H
+    CP A7H                              ; "#"?
     RET NZ
-    CALL STACK_NUMBER_TO_BYTE
+    CALL STACK_NUMBER_TO_BYTE           ; the channel number
     AND 07H
     ADD A,A
     ADD A,A
     ADD A,A
     ADD A,A
-    LD (FUNC_CLASS),A
+    LD (FUNC_CLASS),A                   ; class = n * 10H
     LD C,A
-    XOR A
+    XOR A                               ; Z
     EXX
-    LD A,B
+    LD A,B                              ; A = the token after the number
     EXX
     RET
 
-LFC18:
-    LD (IX+05H),20H
+; Make messages visible: output to the editor, and if INK equals PAPER, use
+; another INK (PAPER + 1, or NOT PAPER in 16-colour mode).
+
+MESSAGE_COLOURS:
+    LD (IX+05H),20H                     ; FUNC_CLASS = editor
     LD A,(PAPER)
     LD C,A
     LD A,(INK)
@@ -6860,79 +6888,98 @@ LFC18:
     INC A
     LD (INK),A
     LD A,(PORT06_MIRROR)
-    BIT 1,A
+    BIT 1,A                             ; 16-colour mode?
     RET Z
     LD A,C
     CPL
     LD (INK),A
     RET
 
-LFC35:
+; Close an open cassette file (BASIC_FLAGS bit 3); CLOSE_TAPE_FILES closes
+; both directions unconditionally.
+
+CLOSE_OPEN_FILE:
     BIT 3,(IX+00H)
     RET Z
     RES 3,(IX+00H)
 
-LFC3E:
+CLOSE_TAPE_FILES:
     RST 30H
     DB 54H                                ; RST 30H fn 54H: cassette 4 -> CAS_CLOSE
     RST 30H
     DB D4H                                ; RST 30H fn D4H: cassette 4, input -> CAS_CLOSE
     RET
 
-LFC43:
+; -----------------------------------------------------------------------------
+; GET TOKEN
+; -----------------------------------------------------------------------------
+; Reads the next item of the tokenized statement at HL' and returns its kind
+; in A and B', skipping spaces:
+;
+;   80H-FDH  a keyword or operator token, consumed (INKEY$, C5H, gives 01H)
+;   FEH/FFH  "!" comment or end of line, not consumed
+;   00H      a quoted string, pushed on the BASIC stack
+;   02H      a number, pushed on the BASIC stack
+;   01H/03H  a string / numeric variable (found or created); C = its type
+;
+; Exit:    Z if the token is ":" (FDH). HL' advanced past the item.
+; -----------------------------------------------------------------------------
+GET_TOKEN:
     EXX
 
-LFC44:
+GET_TOKEN_SKIP:
     LD A,(HL)
     LD B,A
     CP FEH
-    JR NC,LFC7A
+    JR NC,GET_TOKEN_DONE                ; "!" or end of line: stay on it
     INC HL
-    CP C5H
-    JR Z,LFC7E
+    CP C5H                              ; INKEY$: a string function
+    JR Z,GET_TOKEN_INKEY
     CP 80H
-    JR NC,LFC7A
+    JR NC,GET_TOKEN_DONE                ; other tokens
     CP 20H
-    JR Z,LFC44
-    DEC HL
+    JR Z,GET_TOKEN_SKIP                 ; skip spaces
+    DEC HL                              ; an operand: read it from its start
     LD B,00H
     CP 22H
     SCF
-    JR Z,LFC76
-    SET 1,B
+    JR Z,GET_TOKEN_LITERAL              ; quoted string: B = 00H
+    SET 1,B                             ; B = 02H
     CP 41H
-    JR C,LFC76
+    JR C,GET_TOKEN_LITERAL              ; below "A": a number
     CP 5BH
     CCF
-    JR C,LFC76
-    CALL SYMBOL_LOOKUP
-    CALL NC,SYMBOL_CREATE_VALUE
+    JR C,GET_TOKEN_LITERAL              ; above "Z": a number (error later)
+    CALL SYMBOL_LOOKUP                  ; a name
+    CALL NC,SYMBOL_CREATE_VALUE         ; new: create it
     LD A,C
     AND 02H
     OR 01H
-    LD B,A
+    LD B,A                              ; B = 01H string, 03H numeric
 
-LFC76:
-    CALL C,LF905
+GET_TOKEN_LITERAL:
+    CALL C,LF905                        ; push the literal
 
-LFC79:
+GET_TOKEN_TYPE:
     LD A,B
 
-LFC7A:
+GET_TOKEN_DONE:
     EXX
-    CP FDH
+    CP FDH                              ; Z for ":"
     RET
 
-LFC7E:
+GET_TOKEN_INKEY:
     LD C,A
-    LD B,01H
-    JR LFC79
+    LD B,01H                            ; a string
+    JR GET_TOKEN_TYPE
 
-LFC83:
+; HL = |HL| (ABS_HL) or -HL (NEG_HL).
+
+ABS_HL:
     BIT 7,H
     RET Z
 
-LFC86:
+NEG_HL:
     DEC HL
     LD A,L
     CPL
@@ -6942,371 +6989,336 @@ LFC86:
     LD H,A
     RET
 
-LFC8E:
+; -----------------------------------------------------------------------------
+; MEMORY CHECK
+; -----------------------------------------------------------------------------
+; CHECK_MEMORY_DE: error 06H unless SYMBOL_TOP + DE stays below the BASIC
+; stack (IY) and the Z80 stack is above PAINT_STACK_MIN. CHECK_MEMORY_256
+; asks for 256 bytes and preserves HL and DE.
+; -----------------------------------------------------------------------------
+CHECK_MEMORY_256:
     PUSH HL
     PUSH DE
     LD DE,0100H
-    CALL LFC99
+    CALL CHECK_MEMORY_DE
     POP DE
     POP HL
     RET
 
-LFC99:
+CHECK_MEMORY_DE:
     LD HL,(SYMBOL_TOP)
     ADD HL,DE
-    JR C,LFCB1
+    JR C,ERROR_NO_MEMORY                ; past FFFFH
     EX DE,HL
     PUSH IY
     POP HL
-    SBC HL,DE
-    JR C,LFCB1
-    SBC HL,HL
+    SBC HL,DE                           ; into the BASIC stack?
+    JR C,ERROR_NO_MEMORY
+    SBC HL,HL                           ; HL = 0 (Cy is clear)
     ADD HL,SP
     LD DE,(PAINT_STACK_MIN)
-    SBC HL,DE
+    SBC HL,DE                           ; Z80 stack too deep?
     RET NC
 
-LFCB1:
+ERROR_NO_MEMORY:
     RST 08H
     DB 06H                                ; error code 06H: No memory
 
-LFCB3:
+; HL = BC * DE, low 16 bits (MUL16). MUL16_A starts with H = A instead of
+; 00H; the extension ROM calls it through the gateway.
+
+MUL16:
     XOR A
     LD L,A
 
-LFCB5:
+MUL16_A:
     LD H,A
-    LD A,10H
+    LD A,10H                            ; 16 bits of BC
 
-LFCB8:
+MUL16_BIT:
     DEC A
     RET M
     ADC HL,HL
     SLA C
     RL B
-    JR NC,LFCB8
+    JR NC,MUL16_BIT
     ADD HL,DE
-    JR LFCB8
+    JR MUL16_BIT
 
-LFCC5:
-    CALL LFCD1
+; -----------------------------------------------------------------------------
+; STATEMENT SKIPPING
+; -----------------------------------------------------------------------------
+; NEXT_STATEMENT_HL: from HL' (copied to HL), or SKIP_STATEMENT from HL, skip
+; to the next statement of the line: Cy and HL -> its first non-space byte,
+; or NC at the end of the line (A = FEH or FFH). FIND_STATEMENT_KEYWORD keeps
+; skipping until a statement starts with a token below CAH (an ordinary
+; statement keyword).
+; -----------------------------------------------------------------------------
+FIND_STATEMENT_KEYWORD:
+    CALL NEXT_STATEMENT_HL
 
-LFCC8:
-    RET NC
+FIND_STATEMENT_LOOP:
+    RET NC                              ; end of line
     CP CAH
     RET NC
-    CALL LFCD5
-    JR LFCC8
+    CALL SKIP_STATEMENT
+    JR FIND_STATEMENT_LOOP
 
-LFCD1:
+NEXT_STATEMENT_HL:
     EXX
     PUSH HL
     EXX
     POP HL
 
-LFCD5:
+SKIP_STATEMENT:
     LD A,(HL)
     CP FEH
-    RET NC
+    RET NC                              ; "!" or end of line
     INC HL
     CP FDH
-    JR NZ,LFCD5
+    JR NZ,SKIP_STATEMENT                ; until ":"
 
-LFCDE:
+SKIP_SPACES:
     LD A,(HL)
     INC HL
     CP 20H
-    JR Z,LFCDE
+    JR Z,SKIP_SPACES
     DEC HL
     SCF
     RET
 
-LFCE7:
+; -----------------------------------------------------------------------------
+; FIND A BASIC STACK ELEMENT
+; -----------------------------------------------------------------------------
+; Discards BASIC stack elements from IY until one with type byte A. An element
+; is a type byte n followed by n bytes; type 01H (a string) is followed by a
+; length byte and that many characters. Type 00H marks the bottom.
+;
+; Exit:    Z, IY -> the element; or Cy if the bottom was reached.
+; -----------------------------------------------------------------------------
+FIND_STACK_ELEMENT:
     LD B,00H
     PUSH IY
     POP HL
 
-LFCEC:
-    LD C,(HL)
+FIND_STACK_ELEMENT_NEXT:
+    LD C,(HL)                           ; type
     CP C
-    RET Z
+    RET Z                               ; found
     INC C
     DEC C
     SCF
-    RET Z
+    RET Z                               ; the bottom
     DEC C
-    JR NZ,LFCF8
-    INC HL
+    JR NZ,FIND_STACK_SKIP
+    INC HL                              ; a string: its length
     LD C,(HL)
 
-LFCF8:
+FIND_STACK_SKIP:
     INC C
-    ADD HL,BC
+    ADD HL,BC                           ; past the element
     PUSH HL
     POP IY
-    JR LFCEC
+    JR FIND_STACK_ELEMENT_NEXT
 
-LFCFF:
+; Evaluate a numeric expression (EVAL_WORD) or take the stack number
+; (STACK_NUMBER_TO_WORD) as an unsigned 16-bit value 0-65535: offset by
+; -32768 for the signed converter, then add 8000H back.
+
+EVAL_WORD:
     CALL EVAL_NUMERIC_EXPRESSION
 
-LFD02:
+STACK_NUMBER_TO_WORD:
     LD HL,8000H
     PUSH HL
-    CALL INTEGER_TO_STACK
+    CALL INTEGER_TO_STACK               ; push -32768
     CALL FP_ADD
     CALL STACK_NUMBER_TO_INTEGER
     POP DE
     ADD HL,DE
     RET
 
-LFD12:
+; Look up byte A in a table of (key, offset) pairs ending with 00H. On a
+; match: HL += offset, read the next token and jump to HL (D4 DBADH:
+; JP (HL)); NC (A unchanged) if A is not in the table.
+
+TOKEN_TABLE_JUMP:
     LD C,A
 
-LFD13:
+TOKEN_TABLE_NEXT:
     LD A,(HL)
     OR A
     LD A,C
-    RET Z
+    RET Z                               ; end of the table
     SUB (HL)
     INC HL
-    LD E,(HL)
+    LD E,(HL)                           ; offset
     INC HL
-    JR NZ,LFD13
-    LD D,A
+    JR NZ,TOKEN_TABLE_NEXT
+    LD D,A                              ; D = 00H
     ADD HL,DE
-    CALL LFC43
-    CALL DBADH
+    CALL GET_TOKEN
+    CALL DBADH                          ; JP (HL)
     SCF
     RET
 
-LFD27:
-    CALL LFC43
+; Parse a substring range after "(": A$(a), A$(a:b), A$(a:), A$(:b), then
+; ")". (In the emulator, with A$ = "HELLO": A$(2:3) = "EL", A$(2) = "E",
+; A$(:2) = "HE".) E = a (default 1); D = b, or FFH when b is left out after ":", or a
+; when there is no ":". Values are clamped to 00H-FFH.
+
+PARSE_SUBSTRING_RANGE:
+    CALL GET_TOKEN
     LD E,01H
-    JR Z,LFD36
-    CALL LFD45
-    LD E,D
+    JR Z,PARSE_RANGE_END_VALUE          ; "(:" : start at 1
+    CALL CLAMP_BYTE_ARG
+    LD E,D                              ; E = a (and D = a)
     CP FDH
-    JR NZ,LFD40
+    JR NZ,PARSE_RANGE_CLOSE             ; no ":": a single character
 
-LFD36:
-    CALL LFC43
-    LD D,FFH
-    CP 95H
-    CALL NZ,LFD45
+PARSE_RANGE_END_VALUE:
+    CALL GET_TOKEN
+    LD D,FFH                            ; ":)" : to the end
+    CP 95H                              ; ")"?
+    CALL NZ,CLAMP_BYTE_ARG
 
-LFD40:
-    LD A,95H
-    JP LFD54
+PARSE_RANGE_CLOSE:
+    LD A,95H                            ; expect ")"
+    JP EXPECT_TOKEN
 
-LFD45:
+; Evaluate a number and clamp it to a byte: D = 00H if negative, FFH if
+; above 255, else the value.
+
+CLAMP_BYTE_ARG:
     CALL LFAC4
     LD D,00H
     INC H
-    RET Z
+    RET Z                               ; negative
     DEC D
     DEC H
-    RET NZ
+    RET NZ                              ; above 255
     LD D,L
     RET
 
-LFD51:
-    CALL LFC43
+; EXPECT_TOKEN_NEXT: read a token, then EXPECT_TOKEN: the current token must
+; be A (error 01H otherwise); read the next one.
 
-LFD54:
+EXPECT_TOKEN_NEXT:
+    CALL GET_TOKEN
+
+EXPECT_TOKEN:
     EXX
     CP B
     EXX
-    JP Z,LFC43
+    JP Z,GET_TOKEN
 
-LFD5A:
-    LD A,01H
-
-; BASIC_ERROR receives the numeric error code in A, unwinds interpreter state, prints a matching
-; message, and returns to the command loop.
+ERROR_NOT_UNDERSTOOD:
+    LD A,01H                            ; error 01H: Not understood
 
 ; -----------------------------------------------------------------------------
 ; BASIC ERROR HANDLER
 ; -----------------------------------------------------------------------------
-;
-; Unwinds the current BASIC operation, selects an error message, and returns to the command loop.
-;
-; A contains the error code. The handler saves the interpreter context, recognizes STOP and
-; special system errors, frees or resets transient stack state, and selects the matching
-; length-prefixed message from the error table. It prints the message and current line context,
-; restores the command environment, and resumes BASIC in its normal ready/error state.
-;
-; Entry:
-;   A = BASIC error code; interpreter context and current line are active.
-;
-; Exit:
-;   Control returns to the BASIC command loop after reporting the error.
-;
-; Effects:
-;   Unwinds stack/interpreter state and writes screen output.
-;
-; Destroys:
-;   AF, BC, DE, HL, IY and transient interpreter state.
+; Reached through RST 08H / RST 10H with A = error code. Resets the BASIC
+; stack, closes open files, prints "*** <message>." on the editor and lists
+; the current line, then ends the program (LE10E: END). Error 06H (No memory)
+; first clears the variables. F5H (CTRL+ESC) is handled as STOP. Codes 80H
+; and up print "System error <code>". Unknown codes below 80H print the
+; table's last message, "BASIC corrupted".
 ; -----------------------------------------------------------------------------
 BASIC_ERROR:
-    LD IY,(BASIC_SP)
+    LD IY,(BASIC_SP)                    ; empty the BASIC stack
     CP F5H
-
-; Error dispatch preserves enough current-line and command context to distinguish an immediate
-; error from a program error. It unwinds transient stack state before emitting the message so
-; stale expression values do not become live after recovery.
-    JP Z,LFFA3
+    JP Z,STOP_FROM_ERROR
     PUSH AF
     CP 06H
-    CALL Z,BASIC_WORKSPACE_INIT
-    CALL LFC35
-    CALL LFC18
+    CALL Z,BASIC_WORKSPACE_INIT         ; No memory: drop the variables
+    CALL CLOSE_OPEN_FILE
+    CALL MESSAGE_COLOURS
     CALL PRINT_INLINE_TEXT
-
-; " " text prefix for BASIC error messages.
     DB 06H, 0DH, 0AH, "*** "              ; inline text, 6 bytes
     POP AF
     BIT 7,A
-    JR NZ,LFD98
-    LD HL,FDC6H
+    JR NZ,BASIC_SYSTEM_ERROR
+    LD HL,BASIC_ERROR_MESSAGES
     LD BC,FFFFH
 
-LFD86:
-    INC BC
+BASIC_ERROR_FIND:
+    INC BC                              ; skip the previous message
     ADD HL,BC
-    LD C,(HL)
+    LD C,(HL)                           ; code
     INC HL
     INC C
     DEC C
-    JR Z,LFD92
+    JR Z,BASIC_ERROR_FOUND              ; 00H: the last entry
     CP C
-    LD C,(HL)
-    JR NZ,LFD86
+    LD C,(HL)                           ; length
+    JR NZ,BASIC_ERROR_FIND
 
-LFD92:
+BASIC_ERROR_FOUND:
     INC HL
-    CALL LFEDD
-    JR LFDB0
+    CALL LIST_TEXT                      ; tokens expand to their keywords
+    JR BASIC_ERROR_LINE
 
-LFD98:
+BASIC_SYSTEM_ERROR:
     LD L,A
     CALL PRINT_INLINE_TEXT
-
-; "System error" text.
     DB 0DH, "System error "               ; inline text, 13 bytes
     XOR A
     LD H,A
     LD B,A
-    CALL LFF1B
+    CALL PRINT_INTEGER_B                ; the code in decimal
 
-LFDB0:
+BASIC_ERROR_LINE:
     CALL PRINT_INLINE_TEXT
     DB 04H, ".", 0BH, 0DH, 0AH            ; inline text, 4 bytes
-    SET 1,(IX+00H)
+    SET 1,(IX+00H)                      ; no "Ok" after this
     LD HL,(CUR_LINE)
     XOR A
-    CALL BASIC_PRINT_LINE
-    JP LE10E
+    CALL BASIC_PRINT_LINE               ; list the line in error
+    JP LE10E                            ; END
 
-; BASIC error message table; entries contain code, length, text, and FFH terminator.
-    DB 01H, 0FH, 4EH, 6FH, 74H, 20H, 75H, 6EH, 64H, 65H, 72H, 73H, 74H, 6FH, 6FH, 64H ; |..Not understood|
-    DB FFH, 02H, 06H, 4CH, 69H, 6EH                                                   ; |...Lin|
+; Error messages: code, length (text + FFH), text, FFH. Bytes 8FH-93H in
+; the text are keyword tokens used as fragments ("Cannot ", "No ", "Bad ",
+; "rgument", " missing"), and FBH, F2H, F0H, F8H, DBH are DATA, FOR, GOSUB,
+; CONTINUE, READ. Code 00H ends the table.
 
-; Error-message records are code/length/text entries terminated by FFH; TVC token codes may appear
-; inside the text.
-
-; -----------------------------------------------------------------------------
-; BASIC ERROR MESSAGE DATA
-; -----------------------------------------------------------------------------
-;
-; Length-prefixed error texts indexed by BASIC error code.
-;
-; Entries contain an error code, a length, encoded text, and an FFH terminator. Messages include
-; Not understood, Line, Argument missing, Bad argument, Subscript, Out of memory, Syntax,
-; Overflow, Type mismatch, Variable declared twice, File, BASIC corrupted, and Cannot divide by 0.
-; Some characters use TVC token/character codes rather than plain ASCII.
-;
-; Entry:
-;   Selected by BASIC_ERROR.
-;
-; Exit:
-;   Text span consumed by PRINT_LENGTH_TEXT.
-;
-; Effects:
-;   Read-only ROM data.
-;
-; Destroys:
-;   None.
-; -----------------------------------------------------------------------------
 BASIC_ERROR_MESSAGES:
-
-; The message table is compact code/length/text data, not a null-terminated string array. Shared
-; token-coded fragments are expanded by the print helper, which is why raw ROM bytes may not read
-; as ordinary ASCII.
-    DB 65H, 93H, FFH, 03H, 04H, 41H, 92H, 93H, FFH, 04H, 04H, 91H, 61H, 92H, FFH, 05H ; |e....A......a...|
-    DB 0BH, 91H, 73H, 75H, 62H, 73H, 63H, 72H, 69H, 70H, 74H, FFH, 06H, 08H, 90H, 6DH ; |..subscript....m|
-    DB 65H, 6DH, 6FH, 72H, 79H, FFH, 07H, 03H, 90H, FBH, FFH, 08H, 03H, 90H, F2H, FFH ; |emory...........|
-    DB 09H, 03H, 90H, F0H, FFH, 0AH, 03H, 8FH, F8H, FFH, 0BH, 0DH, 8FH, 64H, 69H, 76H ; |.............div|
-    DB 69H, 64H, 65H, 20H, 62H, 79H, 20H, 30H, FFH, 0CH, 03H, 8FH, DBH, FFH, 0DH, 09H ; |ide by 0........|
-    DB 4FH, 76H, 65H, 72H, 66H, 6CH, 6FH, 77H, FFH, 0EH, 0EH, 54H, 79H, 70H, 65H, 20H ; |Overflow...Type |
-    DB 6DH, 69H, 73H, 6DH, 61H, 74H, 63H, 68H, FFH, 0FH, 18H, 56H, 61H, 72H, 69H, 61H ; |mismatch...Varia|
-    DB 62H, 6CH, 65H, 20H, 64H, 65H, 63H, 6CH, 61H, 72H, 65H, 64H, 20H, 74H, 77H, 69H ; |ble declared twi|
-    DB 63H, 65H, FFH, 10H, 06H, 91H, 66H, 69H, 6CH, 65H, FFH, 00H, 0FH, 42H, 41H, 53H ; |ce....file...BAS|
-    DB 49H, 43H, 20H, 63H, 6FH, 72H, 72H, 75H, 70H, 74H, 65H, 64H, FFH                ; |IC corrupted.|
-
-; Inline strings begin at the return address with a length byte; the helper skips the embedded
-; bytes before returning.
+    DB 01H, 0FH, "Not understood", FFH
+    DB 02H, 06H, "Line", 93H, FFH         ; Line missing
+    DB 03H, 04H, "A", 92H, 93H, FFH       ; Argument missing
+    DB 04H, 04H, 91H, "a", 92H, FFH       ; Bad argument
+    DB 05H, 0BH, 91H, "subscript", FFH
+    DB 06H, 08H, 90H, "memory", FFH       ; No memory
+    DB 07H, 03H, 90H, FBH, FFH            ; No DATA
+    DB 08H, 03H, 90H, F2H, FFH            ; No FOR
+    DB 09H, 03H, 90H, F0H, FFH            ; No GOSUB
+    DB 0AH, 03H, 8FH, F8H, FFH            ; Cannot CONTINUE
+    DB 0BH, 0DH, 8FH, "divide by 0", FFH
+    DB 0CH, 03H, 8FH, DBH, FFH            ; Cannot READ
+    DB 0DH, 09H, "Overflow", FFH
+    DB 0EH, 0EH, "Type mismatch", FFH
+    DB 0FH, 18H, "Variable declared twice", FFH
+    DB 10H, 06H, 91H, "file", FFH         ; Bad file
+    DB 00H, 0FH, "BASIC corrupted", FFH
 
 ; -----------------------------------------------------------------------------
-; PRINT INLINE TEXT
+; TEXT OUTPUT
 ; -----------------------------------------------------------------------------
+; Output goes to the current channel (FUNC_CLASS) through RST 30H function 1.
+; PRINT_CHAR raises the device's error if it fails and preserves AF, BC, DE.
 ;
-; Prints a length-prefixed string embedded immediately after the call site.
-;
-; The routine takes the return address as a pointer to a length byte, prints that many characters
-; through the video device, advances past the inline bytes, and returns using the adjusted
-; address. It is the compact mechanism used by error and status messages embedded in ROM code.
-;
-; Entry:
-;   Return address points to a one-byte length followed by text.
-;
-; Exit:
-;   Text is displayed; return address skips the embedded string.
-;
-; Effects:
-;   Writes screen output and changes the effective return address.
-;
-; Destroys:
-;   AF, BC, DE, HL.
+;   PRINT_INLINE_TEXT  counted string after the CALL
+;   PRINT_LENGTH_TEXT  counted string at HL (length 0: nothing)
+;   PRINT_NEWLINE_CLR  Z: clear to end of line (0BH) first; then CR, LF
+;   PRINT_CRLF         CR, LF
+;   PRINT_CHAR         character A
 ; -----------------------------------------------------------------------------
 PRINT_INLINE_TEXT:
-    EX (SP),HL
+    EX (SP),HL                          ; HL -> the text after the CALL
     CALL PRINT_LENGTH_TEXT
-    EX (SP),HL
+    EX (SP),HL                          ; return after it
     RET
 
-; -----------------------------------------------------------------------------
-; PRINT LENGTH-PREFIXED TEXT
-; -----------------------------------------------------------------------------
-;
-; Outputs a counted string, interpreting PRINT control characters and special formatting codes.
-;
-; HL points to a length byte followed by characters. The routine loops through the string, sends
-; ordinary characters to the video output, handles CR/LF and special codes, and can format numeric
-; values encountered by PRINT's inline control stream. It is shared by error messages, STOP
-; reporting, and BASIC PRINT.
-;
-; Entry:
-;   HL = length-prefixed text.
-;
-; Exit:
-;   Text and formatting effects appear on the active output device.
-;
-; Effects:
-;   Calls video/printer output paths and advances HL through the source.
-;
-; Destroys:
-;   AF, BC, DE, HL, alternate registers.
-; -----------------------------------------------------------------------------
 PRINT_LENGTH_TEXT:
     LD A,(HL)
     INC HL
@@ -7315,356 +7327,292 @@ PRINT_LENGTH_TEXT:
     PUSH BC
     LD B,A
 
-LFE85:
+PRINT_TEXT_NEXT:
     LD A,(HL)
     INC HL
-    CALL LFE9A
-    DJNZ LFE85
+    CALL PRINT_CHAR
+    DJNZ PRINT_TEXT_NEXT
     POP BC
     RET
 
-LFE8E:
-    LD A,0BH
-    CALL Z,LFE9A
+PRINT_NEWLINE_CLR:
+    LD A,0BH                            ; clear to the end of the line
+    CALL Z,PRINT_CHAR
 
-LFE93:
+PRINT_CRLF:
     LD A,0DH
-    CALL LFE9A
+    CALL PRINT_CHAR
     LD A,0AH
 
-LFE9A:
+PRINT_CHAR:
     PUSH AF
     PUSH BC
     PUSH DE
     LD C,A
-    CALL LFEA6
-    RST 10H
+    CALL CHANNEL_CHAR_OUT
+    RST 10H                             ; device error: report it
     POP DE
     POP BC
     POP AF
     RET
 
-LFEA6:
+; Character I/O on the current channel: RST 30H with function
+; (FUNC_CLASS OR 01H OR D) AND E. CHANNEL_CHAR_OUT clears bit 7 (output);
+; BASIC_LINE_INPUT uses D = 80H for input. C = the character.
+
+CHANNEL_CHAR_OUT:
     LD DE,007FH
 
-; -----------------------------------------------------------------------------
-; PRINT FORMAT DISPATCH
-; -----------------------------------------------------------------------------
-;
-; Handles numeric formatting, separators, and PRINT special-character cases.
-;
-; This continuation recognizes the PRINT control stream, chooses numeric or string output, inserts
-; spaces and line breaks, and routes special tokens through the compact table near FF11H. Decimal
-; constants at FF19H support integer column formatting.
-;
-; Entry:
-;   PRINT state and current token/value.
-;
-; Exit:
-;   Formatted output is emitted; flags report line/field status.
-;
-; Effects:
-;   Uses formatting workspace and output device routines.
-;
-; Destroys:
-;   AF, BC, DE, HL.
-; -----------------------------------------------------------------------------
+CHANNEL_CHAR_IO:
 PRINT_NUMBER_OR_SPECIAL:
     LD A,(FUNC_CLASS)
-    OR 01H
+    OR 01H                              ; function 1: character I/O
     OR D
     AND E
-
-; PRINT's continuation chooses numeric, string, separator, and special-token paths while
-; preserving the USING cursor between values. A trailing separator changes whether the common
-; line-ending path runs.
     JP RST30_A_ENTRY
 
-LFEB3:
-    CALL LFE9A
+; Print A, then continue in the extension ROM at the address on the stack.
+; The extension ROM calls this through the gateway.
 
-LFEB6:
+PRINT_CHAR_RETURN_EXT:
+    CALL PRINT_CHAR
+
+RETURN_TO_EXT:
     POP HL
     JP CALL_EXTENSION_HL
 
-LFEBA:
-    BIT 7,(IY+08H)
-    CALL Z,LFEC7
+; Print the number at IY with a leading space if it is not negative, and a
+; trailing space (PRINT_STACK_NUMBER). PRINT_NUMBER_TEXT has no leading space;
+; PRINT_SPACE prints one space.
 
-LFEC1:
+PRINT_STACK_NUMBER:
+    BIT 7,(IY+08H)                      ; sign
+    CALL Z,PRINT_SPACE
+
+PRINT_NUMBER_TEXT:
     CALL FP_TO_ASCII
     CALL PRINT_LENGTH_TEXT
 
-LFEC7:
+PRINT_SPACE:
     LD A,20H
-    JR LFE9A
+    JR PRINT_CHAR
 
-LFECB:
+; -----------------------------------------------------------------------------
+; LIST TOKENIZED TEXT
+; -----------------------------------------------------------------------------
+; Prints tokenized text from HL up to its FFH, expanding keyword tokens from
+; BASIC_KEYWORD_TABLE. Bytes 00H-1FH print as 80H-9FH (the accented letters,
+; stored shifted down by BASIC_LINE_INPUT). Inside quotes, and after REM,
+; DATA or "!" until the next ":", bytes 80H and up print as characters, not
+; keywords. C is the state: 00H normal, 22H in quotes, FFH after REM/DATA.
+; -----------------------------------------------------------------------------
+LIST_CHARACTER:
     ADD A,A
-    CP 40H
-    RRA
-    CALL LFE9A
+    CP 40H                              ; Cy for 00H-1FH
+    RRA                                 ; ... which get bit 7
+    CALL PRINT_CHAR
     CP 22H
-    JR NZ,LFEDF
-    CP C
-    JR Z,LFEDB
+    JR NZ,LIST_NEXT
+    CP C                                ; a quote: leave or enter quotes
+    JR Z,LIST_QUOTE_END
     LD B,C
     DB 0EH                                ; = LD C,78H when run from here, hiding the entry below
 
-LFEDB:
-    LD A,B
+LIST_QUOTE_END:
+    LD A,B                              ; back to the state before the quote
     DB 0EH                                ; = LD C,AFH when run from here, hiding the entry below
 
-LFEDD:
+LIST_TEXT:
     XOR A
-    LD C,A
+    LD C,A                              ; C = 22H in quotes, else as before
 
-LFEDF:
+LIST_NEXT:
     LD A,(HL)
     INC HL
     INC A
-    RET Z
+    RET Z                               ; FFH: end
     DEC A
-    JP P,LFECB
+    JP P,LIST_CHARACTER                 ; below 80H
     PUSH HL
     INC C
     DEC C
-    PUSH AF
-    CP FBH
-    JR Z,LFEF3
+    PUSH AF                             ; Z: not quoted
+    CP FBH                              ; DATA, REM, "!" start raw text
+    JR Z,LIST_RAW_START
     CP FCH
-    JR C,LFEF5
+    JR C,LIST_NOT_RAW
 
-LFEF3:
+LIST_RAW_START:
     LD C,FFH
 
-LFEF5:
-    CP FDH
-    JR NZ,LFEFC
+LIST_NOT_RAW:
+    CP FDH                              ; ":" ends it
+    JR NZ,LIST_TOKEN
     POP AF
     INC C
     PUSH AF
 
-LFEFC:
+LIST_TOKEN:
     POP AF
-    JR NZ,LFF11
-    CPL
+    JR NZ,LIST_TOKEN_CHAR               ; quoted or raw: print the byte itself
+    CPL                                 ; A = FFH - token: the keyword number
     LD HL,BASIC_KEYWORD_TABLE
 
-LFF03:
-    BIT 7,(HL)
+LIST_FIND_KEYWORD:
+    BIT 7,(HL)                          ; skip that many keywords
     INC HL
-    JR Z,LFF03
+    JR Z,LIST_FIND_KEYWORD
     DEC A
-    JR NZ,LFF03
+    JR NZ,LIST_FIND_KEYWORD
 
-LFF0B:
+LIST_KEYWORD_CHAR:
     LD A,(HL)
     INC HL
-    BIT 7,A
+    BIT 7,A                             ; NZ on the last letter
     RES 7,A
 
-LFF11:
-    CALL LFE9A
-    JR Z,LFF0B
+LIST_TOKEN_CHAR:
+    CALL PRINT_CHAR
+    JR Z,LIST_KEYWORD_CHAR
     POP HL
-    JR LFEDF
-
-; Decimal place constants 1000, 100, 10, and 1 support compact integer output.
+    JR LIST_NEXT
 
 ; -----------------------------------------------------------------------------
 ; PRINT INTEGER IN HL
 ; -----------------------------------------------------------------------------
-;
-; Formats a signed integer in HL as decimal text.
-;
-; The routine repeatedly subtracts decimal place constants 1000, 100, 10, and 1, suppresses
-; leading zeroes, and emits the resulting digits through the text output helper. It is used for
-; line numbers and compact integer portions of PRINT output.
-;
-; Entry:
-;   HL = signed integer.
-;
-; Exit:
-;   Decimal digits are emitted.
-;
-; Effects:
-;   Writes output through PRINT_LENGTH_TEXT/VID_CHOUT.
-;
-; Destroys:
-;   AF, BC, DE, HL.
+; Prints HL (0-9999; the digit table starts at 1000) in decimal without
+; leading zeros. That covers line numbers: BASIC rejects a line numbered
+; 12345 with "Not understood" (checked in the emulator). PRINT_INTEGER_HL adds a trailing space; PRINT_INTEGER_B with
+; B = 00H does not. On entry Cy set pads leading zeros with spaces instead.
 ; -----------------------------------------------------------------------------
 PRINT_INTEGER_HL:
-    LD B,FFH
+    LD B,FFH                            ; trailing space
 
-LFF1B:
+PRINT_INTEGER_B:
     SBC A,A
     AND 20H
-    LD C,A
-
-; Integer output uses decimal place constants and suppresses leading zeroes before emitting
-; digits. This helper is also used for line numbers, so its sign/width behavior affects
-; diagnostics as well as PRINT.
+    LD C,A                              ; C = fill: space or nothing
     PUSH HL
-    LD HL,FF47H
+    LD HL,DECIMAL_POWERS
 
-LFF23:
+PRINT_INTEGER_DIGIT:
     LD E,(HL)
     INC HL
     LD D,(HL)
     INC HL
-    EX (SP),HL
+    EX (SP),HL                          ; HL = value
     XOR A
 
-LFF29:
+PRINT_INTEGER_SUB:
     SBC HL,DE
     INC A
-    JR NC,LFF29
+    JR NC,PRINT_INTEGER_SUB
     ADD HL,DE
-    DEC A
-    JR Z,LFF39
-    LD C,30H
+    DEC A                               ; A = digit
+    JR Z,PRINT_INTEGER_ZERO
+    LD C,30H                            ; from now on zeros are printed
     ADD A,C
-    CALL LFE9A
+    CALL PRINT_CHAR
     LD A,C
 
-LFF39:
-    XOR C
-    CALL NZ,LFE9A
+PRINT_INTEGER_ZERO:
+    XOR C                               ; leading zero: the fill, if any
+    CALL NZ,PRINT_CHAR
     EX (SP),HL
-    DEC E
-
-; PRINT special-character dispatch table.
-    JR NZ,LFF23
+    DEC E                               ; the last power is 1
+    JR NZ,PRINT_INTEGER_DIGIT
     POP HL
     LD A,C
     AND B
-    JR NZ,LFEC7
+    JR NZ,PRINT_SPACE                   ; trailing space if wanted
     RET
 
-; Binary constants 1000, 100, 10, and 1 for decimal conversion.
-    DB E8H, 03H, 64H, 00H, 0AH, 00H, 01H, 00H                                         ; |..d.....|
-
-; The edited BASIC line is accumulated at 1831H, translated to input/token codes, and terminated
-; with FFH.
+DECIMAL_POWERS:
+    DW 1000, 100, 10, 1
 
 ; -----------------------------------------------------------------------------
-; READ AND TOKENIZE BASIC LINE
+; READ AND TOKENIZE A BASIC LINE
 ; -----------------------------------------------------------------------------
+; Reads characters from the current channel (input function) into
+; INPUT_BUFFER as a length byte, the characters and FFH, until CR. Control
+; characters are ignored; 80H-9FH are stored as 00H-1FH (see LIST_TEXT);
+; after 251 characters further ones are dropped.
 ;
-; Invokes the editor to read a command/program line and stores its compact representation in the
-; BASIC input buffer.
-;
-; The routine supplies the editor with the 1831H input buffer, loops for edited characters,
-; handles ESC/CTRL+ESC and STOP, translates accepted screen codes into BASIC token/input codes,
-; enforces the maximum line length, and terminates the buffer with FFH. The resulting count byte
-; and data are ready for the tokenizer and command interpreter.
-;
-; Entry:
-;   Editor and keyboard state; destination buffer at 1831H.
-;
-; Exit:
-;   BASIC input buffer contains length-prefixed tokenizable line; A=00H on success.
-;
-; Effects:
-;   Uses the editor, writes the BASIC input buffer, and may return STOP/error status.
-;
-; Destroys:
-;   AF, BC, DE, HL.
+; Exit:    Z, A = 00H: line read. NZ, A = F5H (CTRL+ESC) or ECH (a pending
+;          tape error) with an empty buffer. Other device errors are raised.
 ; -----------------------------------------------------------------------------
 BASIC_LINE_INPUT:
     LD HL,INPUT_BUFFER
     PUSH HL
-    LD B,00H
+    LD B,00H                            ; B = length
 
-LFF55:
+BASIC_INPUT_CHAR:
     PUSH BC
-    LD DE,80FFH
-
-; Line input stores editor results in the 1831H buffer, translates accepted character codes,
-; bounds the count, and appends FFH. CTRL+ESC and editor end/error status must terminate the
-; acquisition before tokenization.
-    CALL PRINT_NUMBER_OR_SPECIAL
+    LD DE,80FFH                         ; input
+    CALL CHANNEL_CHAR_IO                ; C = character
     POP DE
     LD B,D
-    JR Z,LFF72
+    JR Z,BASIC_INPUT_GOT
 
-LFF60:
+BASIC_INPUT_FAIL:
     POP HL
     LD B,00H
-    LD (HL),B
+    LD (HL),B                           ; empty line
     INC HL
     LD (HL),FFH
     DEC HL
     CP F5H
-    JR Z,LFF9B
+    JR Z,BASIC_INPUT_EXIT
     CP ECH
-    JR Z,LFF9B
+    JR Z,BASIC_INPUT_EXIT
     OR A
-    RST 10H
+    RST 10H                             ; other errors: report
 
-LFF72:
+BASIC_INPUT_GOT:
     LD A,(STOP_FLAG)
     OR A
     LD A,F5H
-    JR NZ,LFF60
+    JR NZ,BASIC_INPUT_FAIL              ; CTRL+ESC
     LD A,C
     CP 0DH
-    JR Z,LFF92
+    JR Z,BASIC_INPUT_STORE              ; CR ends the line
     CP 20H
-    JR C,LFF55
+    JR C,BASIC_INPUT_CHAR               ; other control characters: ignored
     SUB 80H
-    JR C,LFF8C
+    JR C,BASIC_INPUT_ROOM
     CP 20H
-    JR NC,LFF8C
-    LD C,A
+    JR NC,BASIC_INPUT_ROOM
+    LD C,A                              ; 80H-9FH -> 00H-1FH
 
-LFF8C:
+BASIC_INPUT_ROOM:
     LD A,B
     CP FBH
-    JR NC,LFF55
+    JR NC,BASIC_INPUT_CHAR              ; full: drop it
     INC B
 
-LFF92:
+BASIC_INPUT_STORE:
     INC HL
     LD (HL),C
-    JR NZ,LFF55
-    LD (HL),FFH
+    JR NZ,BASIC_INPUT_CHAR              ; (Z only for CR)
+    LD (HL),FFH                         ; CR becomes the terminator
     XOR A
     POP HL
-    LD (HL),B
+    LD (HL),B                           ; length
 
-LFF9B:
+BASIC_INPUT_EXIT:
     OR A
 
 LFF9C:
     RET
 
-; STOP-FLAG at 0B16H is polled by long-running routines; CTRL+ESC clears it and enters STOP
-; reporting.
-
 ; -----------------------------------------------------------------------------
-; STOP AND CTRL-ESC HANDLER
+; STOP AND CTRL+ESC
 ; -----------------------------------------------------------------------------
-;
-; Checks STOP-FLAG and reports STOP with the current BASIC line context.
-;
-; A zero STOP-FLAG returns immediately. When CTRL+ESC has set 0B16H, the routine clears the flag,
-; restores the interpreter/output state, prints STOP and the current line information, and returns
-; to the command loop. The same path is used by long-running numeric, I/O, and tape operations
-; that poll for user interruption.
-;
-; Entry:
-;   STOP-FLAG at 0B16H and current BASIC interpreter context.
-;
-; Exit:
-;   Returns when no stop is pending; otherwise resumes BASIC after STOP handling.
-;
-; Effects:
-;   Clears STOP-FLAG and emits STOP/line output.
-;
-; Destroys:
-;   AF, BC, DE, HL, interpreter temporaries.
+; CHECK_STOP_FLAG returns if STOP_FLAG is clear. Otherwise, and for the STOP
+; statement and error F5H: clear the flag, close files, print "STOP", and in
+; a running program " at line n", recording the resume point for CONTINUE
+; (NEXT_STMT = HL after the EXX, NEXT_LINE = CUR_LINE). Then back to the
+; command loop (D4 BASIC_READY).
 ; -----------------------------------------------------------------------------
 CHECK_STOP_FLAG:
     LD A,(STOP_FLAG)
@@ -7672,48 +7620,42 @@ CHECK_STOP_FLAG:
     RET Z
     EXX
 
-; STOP routine.
+STOP_FROM_ERROR:
+    EXX                                 ; HL = the token pointer
 
-LFFA3:
-    EXX
-
-; STOP polling is intentionally cheap: a zero byte returns immediately. When set, it is cleared
-; before STOP text and line context are printed, preventing an old CTRL+ESC event from
-; retriggering after CONTINUE.
-
-LFFA4:
+STOP_STATEMENT:
     XOR A
     LD (STOP_FLAG),A
-    CALL LFC35
-    CALL LFC18
+    CALL CLOSE_OPEN_FILE
+    CALL MESSAGE_COLOURS
     CALL PRINT_INLINE_TEXT
-
-; "STOP" message text.
     DB 06H, 0DH, 0AH, "STOP"              ; inline text, 6 bytes
-    BIT 2,(IX+00H)
-    JR Z,LFFE0
-    LD (NEXT_STMT),HL
+    BIT 2,(IX+00H)                      ; running a program?
+    JR Z,STOP_DONE
+    LD (NEXT_STMT),HL                   ; CONTINUE resumes here
     LD HL,(CUR_LINE)
     LD (NEXT_LINE),HL
     CALL PRINT_INLINE_TEXT
-
-; " at line " message text.
     DB 09H, " at line "                   ; inline text, 9 bytes
     LD HL,(CUR_LINE)
     INC HL
-    LD E,(HL)
+    LD E,(HL)                           ; the line number
     INC HL
     LD D,(HL)
     EX DE,HL
     OR A
     CALL PRINT_INTEGER_HL
 
-LFFE0:
+STOP_DONE:
     XOR A
-    CALL LFE8E
-    JP DADAH
+    CALL PRINT_NEWLINE_CLR
+    JP BASIC_READY                            ; command loop
 
-LFFE7:
+; PEEK/POKE addresses C000H-FFFFH reach video RAM: Cy for addresses below
+; C000H (normal memory); otherwise HL -= 4000H and A = 50H, the page map
+; with video RAM in page 2.
+
+VIDEO_ADDRESS_MAP:
     LD A,H
     CP C0H
     RET C
@@ -7721,33 +7663,11 @@ LFFE7:
     LD A,50H
     RET
 
-; Extension gateway mapping: EXTH occupies page 3 and SYS is restored in page 0 before JP (HL).
-; The extension bridge changes the page map before JP (HL): EXTH is selected in the high extension
-; window while SYS remains available in page 0. Callers must treat the target's mapping and return
-; convention as part of the ABI.
-
 ; -----------------------------------------------------------------------------
 ; BRIDGE TO EXTENSION ROM
 ; -----------------------------------------------------------------------------
-;
-; Switches the memory map and jumps to an EXTH routine addressed by HL.
-;
-; This fixed gateway saves AF, maps EXTH into page 3 and SYS into page 0 through port 02H,
-; restores AF, and performs JP (HL). It is the standard bridge for BASIC and system code that
-; needs extension-ROM services while preserving the U0-resident call convention.
-;
-; Entry:
-;   HL = target address in the extension ROM mapping.
-;
-; Exit:
-;   Control transfers to HL with EXTH selected in page 3 and SYS in page 0.
-;
-; Effects:
-;   Changes memory paging; does not return unless the extension target returns through its own
-;   convention.
-;
-; Destroys:
-;   Memory mapping and normal return assumptions; AF is restored before the jump.
+; Maps U0 U1 U2 EXT (port 02H = F0H, recorded in P_SAVE) and jumps to HL.
+; Flags and A are preserved.
 ; -----------------------------------------------------------------------------
 CALL_EXTENSION_HL:
     PUSH AF
@@ -7756,4 +7676,5 @@ CALL_EXTENSION_HL:
     OUT (02H),A
     POP AF
     JP (HL)
-    DB 79H, FEH, 0DH, 28H, 13H, FEH                                                   ; |y..(..|
+
+    DB 79H, FEH, 0DH, 28H, 13H, FEH       ; unused

@@ -505,11 +505,28 @@ DISCARD_NUMBER                 EQU FA1BH
 LFA92                          EQU FA92H
 STACK_NUMBER_TO_INTEGER        EQU FAC3H
 LFB28                          EQU FB28H
+FOLD_CASE_DE                   EQU FBBFH
+POP_LINE_NUMBER_FIND           EQU FBDEH
+CHANNEL_ONLY                   EQU FBECH
+CHANNEL_ONLY_C                 EQU FBEEH
+MESSAGE_COLOURS                EQU FC18H
+CLOSE_TAPE_FILES               EQU FC3EH
+GET_TOKEN                      EQU FC43H
+CHECK_MEMORY_256               EQU FC8EH
+ERROR_NOT_UNDERSTOOD           EQU FD5AH
 PRINT_INLINE_TEXT              EQU FE79H
+PRINT_NEWLINE_CLR              EQU FE8EH
+PRINT_CRLF                     EQU FE93H
+PRINT_CHAR                     EQU FE9AH
+PRINT_NUMBER_TEXT              EQU FEC1H
+PRINT_SPACE                    EQU FEC7H
+LIST_TEXT                      EQU FEDDH
 PRINT_INTEGER_HL               EQU FF19H
+PRINT_INTEGER_B                EQU FF1BH
 BASIC_LINE_INPUT               EQU FF4FH
 CHECK_STOP_FLAG                EQU FF9DH
 LFFA3                          EQU FFA3H
+STOP_FROM_ERROR                EQU FFA3H
 CALL_EXTENSION_HL              EQU FFF0H
 
 ORG C000H, SYS0, 0000H
@@ -6409,7 +6426,7 @@ LDA2C:
 
     CALL LDC0C
     CALL LDBF2
-    CALL FE93H
+    CALL PRINT_CRLF
     POP AF
     POP BC
     INC B
@@ -6433,7 +6450,7 @@ LDA4F:
 LDA58:
     INC HL
     LD A,(HL)
-    CALL FE9AH
+    CALL PRINT_CHAR
     PUSH HL
     PUSH BC
 
@@ -6459,14 +6476,14 @@ LDA6B:
     RST 30H
     DB 04H                                ; RST 30H fn 04H: video 4 -> VID_MODE
     LD (BORDER),A
-    CALL FC18H
+    CALL MESSAGE_COLOURS
     CALL PRINT_INLINE_TEXT
 
 ; TVC BASIC 1.2 copyright sign-on text.
 ; Embedded BASIC 1.2 sign-on text: TV COMPUTER BASIC 1.2 and Copyright 1985 VIDEOTON.
     DB "2TV COMPUTER BASIC 1.2", 0DH, 0AH, "Copyright 1985 VIDEOTON", 0DH, 0AH, 0DH, 0AH ; inline text, 50 bytes
     CALL BASIC_FREE
-    CALL FEC1H
+    CALL PRINT_NUMBER_TEXT
     CALL DISCARD_NUMBER
     CALL PRINT_INLINE_TEXT
 
@@ -6479,7 +6496,7 @@ LDAD3:
     LD (WARM_FLAG),A
     CALL BASIC_WORKSPACE_INIT
 
-LDADA:
+BASIC_READY:
     LD SP,STACK_TOP
     LD HL,1703H
     LD A,(HL)
@@ -6492,7 +6509,7 @@ LDADA:
     JR NZ,LDAFF
 
 LDAF5:
-    CALL FC18H
+    CALL MESSAGE_COLOURS
     CALL PRINT_INLINE_TEXT
 
 ; "ok" text followed by clear-to-end-of-line control character.
@@ -6501,7 +6518,7 @@ LDAF5:
 
 LDAFF:
     RES 1,(IX+00H)
-    CALL FE93H
+    CALL PRINT_CRLF
 
 ; Read a complete editor paragraph into INPUT at 1831H, tokenize it into COMMAND, and classify
 ; line-numbered versus immediate input.
@@ -6537,7 +6554,7 @@ LDAFF:
 BASIC_COMMAND_LOOP:
     CALL BASIC_LINE_INPUT
     CP F5H
-    JP Z,FFA3H
+    JP Z,STOP_FROM_ERROR
     CP ECH
     JR Z,LDAF5
     CALL TOKENIZE_BASIC_LINE
@@ -6673,14 +6690,14 @@ LDB88:
     LD L,A
     POP AF
     CP FBH
-    CALL C,FC43H
+    CALL C,GET_TOKEN
     LD SP,STACK_TOP
 
 LDBAD:
     JP (HL)
 
 LDBAE:
-    CALL FC43H
+    CALL GET_TOKEN
 
 LDBB1:
     EXX
@@ -6690,7 +6707,7 @@ LDBB1:
 LDBB4:
     CP FDH
     JR Z,BASIC_NEXT_STATEMENT
-    JP C,FD5AH
+    JP C,ERROR_NOT_UNDERSTOOD
 
 ; REM routine.
 ; REM handling skips to the next colon, exclamation/REM boundary, or line terminator without
@@ -6726,7 +6743,7 @@ LDBC5:
 
 LDBD0:
     BIT 2,(IX+00H)
-    JP Z,LDADA
+    JP Z,BASIC_READY
     JP E10EH
 
 LDBDA:
@@ -6755,7 +6772,7 @@ LDC0C:
     DEC A
     RET M
     PUSH AF
-    CALL FEC7H
+    CALL PRINT_SPACE
     POP AF
     JR LDC0C
 
@@ -6810,7 +6827,7 @@ LDC24:
 LDC2A:
     INC IY
     LD (171CH),DE
-    CALL FBBFH
+    CALL FOLD_CASE_DE
     LD (IY+00H),A
     INC A
     JR Z,LDC9F
@@ -6830,7 +6847,7 @@ LDC41:
     JR LDC2A
 
 LDC4B:
-    CALL FBBFH
+    CALL FOLD_CASE_DE
     INC DE
     OR A
     JR Z,LDC60
@@ -6974,7 +6991,7 @@ BASIC_INSERT_LINE:
 ; -----------------------------------------------------------------------------
 BASIC_FREE_SPACE:
     CALL BASIC_WORKSPACE_INIT
-    CALL FC8EH
+    CALL CHECK_MEMORY_256
     PUSH BC
     PUSH HL
     CALL LDD41
@@ -7111,10 +7128,10 @@ BASIC_PRINT_LINE:
     EX DE,HL
     CALL PRINT_INTEGER_HL
     POP HL
-    CALL FEDDH
+    CALL LIST_TEXT
     POP AF
     RET NC
-    JP FE8EH
+    JP PRINT_NEWLINE_CLR
 
 ; Any program edit invalidates user symbols and resets the BASIC stack through the common
 ; workspace initializer.
@@ -7268,7 +7285,7 @@ BASIC_LIST:
 
 LDD88:
     PUSH AF
-    CALL FBEEH
+    CALL CHANNEL_ONLY_C
     POP AF
     JR NZ,LDD94
     LD A,C
@@ -7298,17 +7315,17 @@ LDDA5:
     JR Z,LDDB3
     EX AF,AF'
     JP C,LDBB1
-    JP LDADA
+    JP BASIC_READY
 
 LDDB3:
-    CALL FC43H
+    CALL GET_TOKEN
 
 LDDB6:
     CALL BASIC_LIST_RANGE_PARAM
     INC D
     JR NZ,LDDC4
     CP A2H
-    JP NZ,FD5AH
+    JP NZ,ERROR_NOT_UNDERSTOOD
     LD DE,0100H
 
 LDDC4:
@@ -7316,7 +7333,7 @@ LDDC4:
     PUSH DE
     CP A2H
     JR NZ,LDDD0
-    CALL FC43H
+    CALL GET_TOKEN
     CALL BASIC_LIST_RANGE_PARAM
 
 LDDD0:
@@ -7384,7 +7401,7 @@ BASIC_LIST_RANGE_PARAM:
     RET NZ
     CALL STACK_NUMBER_TO_INTEGER
     EX DE,HL
-    JP FC43H
+    JP GET_TOKEN
 
 ; NEW routine.
 ; NEW marks the current program empty at TEXT, clears TRACE, and enters common BASIC workspace
@@ -7405,7 +7422,7 @@ BASIC_LIST_RANGE_PARAM:
 ;   Clears the current program logically, BASIC stack, DATA pointers, and user symbol chain.
 ; -----------------------------------------------------------------------------
 BASIC_NEW:
-    LD HL,LDADA
+    LD HL,BASIC_READY
     PUSH HL
     RES 0,(IX+00H)
 
@@ -7441,11 +7458,11 @@ LDE10:
 BASIC_RUN:
     LD HL,(TEXT_START)
     CP 02H
-    CALL Z,FBDEH
+    CALL Z,POP_LINE_NUMBER_FIND
 
 LDE23:
     CALL BASIC_WORKSPACE_INIT
-    CALL FC3EH
+    CALL CLOSE_TAPE_FILES
 
 LDE29:
     SET 2,(IX+00H)
@@ -7470,12 +7487,12 @@ LDE29:
 ;   Updates trace-enable state and trace output class.
 ; -----------------------------------------------------------------------------
 BASIC_TRACE:
-    CALL FBECH
+    CALL CHANNEL_ONLY
     LD (IX+06H),C
     CP E3H
     JR Z,LDE46
     CP C1H
-    JP NZ,FD5AH
+    JP NZ,ERROR_NOT_UNDERSTOOD
 
 ; TRACE OFF routine.
     RES 0,(IX+00H)
@@ -7522,12 +7539,12 @@ BASIC_TRACE_LINE:
     LD D,(HL)
     EX DE,HL
     LD A,3CH
-    CALL FE9AH
+    CALL PRINT_CHAR
     LD B,00H
-    CALL FF1BH
+    CALL PRINT_INTEGER_B
     POP HL
     LD A,3EH
-    JP FE9AH
+    JP PRINT_CHAR
 
 ; BASIC keyword table ordered by descending token value; the high bit marks the last byte of each
 ; keyword.

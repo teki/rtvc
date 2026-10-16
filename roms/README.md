@@ -64,7 +64,12 @@ listing records the alternate CPU address without emitting extra bytes.
   coordinates, video RAM layout, and colour patterns). In
   `TVC12_D7.64K.asm`, the cassette motor, text, physical block read/write,
   timing, and CRC routines (`CAS_MOTOR_CONTROL` through `CAS_CRC_UPDATE`)
-  are annotated the same way, with a summary of the recording format.
+  are annotated the same way, with a summary of the recording format. In
+  `TVC12_D3.64K.asm`, the runtime core from `U0_RST_TEMPLATE` to the end of
+  the chip is annotated: the RST gateway code copied to U0, the RST 18H
+  dispatcher, token fetching, channel (`#n`) selection, the memory check, the
+  error handler and message table, text output and listing, line input, and
+  STOP.
 - The counted device jump tables, `DEVICE_JUMP_TABLE_POINTERS`, the BASIC
   statement table (with each entry's keyword token), the RST 18H operation
   table, and the editor key table are `DW` entries naming their targets.

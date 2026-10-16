@@ -9,8 +9,8 @@ Release notes start here. Older release history is intentionally not backfilled.
   named U0 variables, and inline `RST` operands, inline strings, and BASIC
   function records are decoded in comments. The interrupt path, the RST 30H
   dispatcher, the kernel functions, the keyboard, printer, sound, and video
-  drivers, and the cassette tape layer are commented instruction by
-  instruction, and
+  drivers, the cassette tape layer, and the BASIC runtime core are commented
+  instruction by instruction, and
   the jump tables name their targets. The listings record a ROM bug: the
   block I/O helpers crash instead of returning error FAH for a block above
   HI-MEM.

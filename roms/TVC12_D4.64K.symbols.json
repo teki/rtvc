@@ -5983,6 +5983,25 @@
     },
     {
       "bank": "sys",
+      "address": "0xDADA",
+      "offset": "0x1ADA",
+      "name": "BASIC_READY",
+      "alt_names": [],
+      "kind": "routine",
+      "usage": [],
+      "call_type": "internal",
+      "summary": "",
+      "input": "",
+      "output": "",
+      "effects": "",
+      "tags": [],
+      "sources": [
+        "ASM"
+      ],
+      "confidence": "low"
+    },
+    {
+      "bank": "sys",
       "address": "0xDB06",
       "offset": "0x1B06",
       "name": "BASIC_COMMAND_LOOP",
