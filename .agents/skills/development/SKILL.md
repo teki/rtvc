@@ -89,6 +89,14 @@ This skill provides step-by-step instructions and references for compiling, exec
     the active config.
   - PAL 4:3 display aspect ratio is applied to the framebuffer.
 
+- **Fast optimized build for edit-run iteration:**
+  ```bash
+  cargo build --profile fast
+  ./target/fast/rtvc
+  ```
+  - The `fast` profile inherits release but drops LTO and uses 16 codegen units, so incremental rebuilds take seconds instead of ~70s; the emulator runs roughly 45% slower than `--release`.
+  - Use `--release` for benchmarks, releases, and tools whose `target/release/` path scripts depend on (e.g. `rtvc-asm` in the ROM listing checks). Add `--bin <name>` to skip linking the other binaries.
+
 - **Profile the native emulator with samply:**
   ```bash
   cargo build --profile profiling --bin rtvc
