@@ -109,7 +109,7 @@ fn main() -> eframe::Result<()> {
                 println!("  --zx82                 Boot the Zx82 (ZX Spectrum 48K)");
                 println!("  -H, --headless         Enable headless execution mode");
                 println!(
-                    "  -p, --port <port>      TCP port for the debugger socket (default: 8080)"
+                    "  -p, --port <port>      First TCP port to try for the debugger socket (default: 8080; bumped if busy)"
                 );
                 println!("  -h, --help             Display this help message");
                 std::process::exit(0);
@@ -199,8 +199,8 @@ fn main() -> eframe::Result<()> {
         return Ok(());
     }
 
-    let debugger = match rtvc_core::debugger::start_debugger_server(port) {
-        Ok(debugger) => Some(debugger),
+    let debugger = match rtvc_core::debugger::start_debugger_server_from(port) {
+        Ok((debugger, _port)) => Some(debugger),
         Err(err) => {
             eprintln!("Error: failed to bind debugger port {port}: {err}");
             std::process::exit(1);

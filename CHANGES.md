@@ -4,6 +4,8 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+- Several emulator instances can run at once: if the debugger port is busy,
+  the next free port is used and printed.
 - BASIC 1.2 ROM listings: code hidden in `DB` lines or decoded off its real
   instruction boundaries is now proper instructions, operands use labels and
   named U0 variables, and inline `RST` operands, inline strings, and BASIC

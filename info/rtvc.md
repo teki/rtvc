@@ -769,9 +769,11 @@ cargo run --bin rtvc -- --headless --port 8080
 ```
 
 The debugger listener is bound before the GUI or headless emulation loop
-starts. If the requested port is already in use, `rtvc` prints the bind error
-and exits with a nonzero status instead of leaving an emulator instance running
-without its debugger socket.
+starts. If the requested port is already in use, `rtvc` tries the next ports
+upward until one is free and prints the port it bound
+(`Debugger server listening on 127.0.0.1:<port>`), so several instances can run
+side by side. Other bind errors exit with a nonzero status instead of leaving
+an emulator instance running without its debugger socket.
 
 | Command | Purpose |
 | --- | --- |

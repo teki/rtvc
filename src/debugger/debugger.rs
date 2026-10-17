@@ -198,6 +198,26 @@ impl FrameStats {
 
 pub fn start_debugger_server(port: u16) -> std::io::Result<DebuggerInterface> {
     let listener = TcpListener::bind(("127.0.0.1", port))?;
+    start_debugger_on_listener(listener)
+}
+
+/// Binds the first free port at or above `port`, so several emulators can run
+/// side by side. Returns the interface and the port actually bound.
+pub fn start_debugger_server_from(port: u16) -> std::io::Result<(DebuggerInterface, u16)> {
+    let mut candidate = port;
+    loop {
+        match TcpListener::bind(("127.0.0.1", candidate)) {
+            Ok(listener) => return Ok((start_debugger_on_listener(listener)?, candidate)),
+            Err(err) if err.kind() == std::io::ErrorKind::AddrInUse && candidate < u16::MAX => {
+                candidate += 1;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+fn start_debugger_on_listener(listener: TcpListener) -> std::io::Result<DebuggerInterface> {
+    let port = listener.local_addr()?.port();
     listener.set_nonblocking(true)?;
     let (cmd_tx, cmd_rx) = channel::<DebuggerMessage>();
     let (event_tx, event_rx) = channel::<DebuggerEvent>();
@@ -301,7 +321,7 @@ pub fn start_debugger_server(port: u16) -> std::io::Result<DebuggerInterface> {
 const HEADLESS_WARP_BUDGET: Duration = Duration::from_millis(15);
 
 pub fn run_headless(mut emu: Emu, port: u16) -> std::io::Result<()> {
-    let debugger = start_debugger_server(port)?;
+    let (debugger, _port) = start_debugger_server_from(port)?;
     let mut last_frame_time = Instant::now();
 
     loop {

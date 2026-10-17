@@ -191,3 +191,13 @@ fn tcp_debugger_sets_and_reports_warp() {
     assert_eq!(response["warp"], false);
     assert_eq!(command(&mut emu, r#"{"cmd":"warp"}"#)["warp"], false);
 }
+
+#[test]
+fn tcp_debugger_bumps_past_an_occupied_port() {
+    let occupied = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = occupied.local_addr().unwrap().port();
+
+    let (_debugger, bound) = super::start_debugger_server_from(port).unwrap();
+
+    assert!(bound > port);
+}
