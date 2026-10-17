@@ -27,6 +27,9 @@ const TYPED_KEY_HOLD_FRAMES: u32 = 3;
 const TYPED_KEY_GAP_FRAMES: u32 = 1;
 /// Two drives for each of up to four HBF cards.
 pub const MAX_DISK_UNITS: usize = 8;
+/// Recent-list length per media kind. TVC, Zx82, and CPC tapes share one
+/// list, which each Tape menu filters by extension.
+pub const MAX_RECENT_MEDIA: usize = 10;
 
 #[derive(Clone, Copy)]
 pub struct DiskGeometry {
@@ -1212,7 +1215,9 @@ impl Emu {
             let name = path
                 .file_name()
                 .map_or_else(|| path.to_string_lossy(), |name| name.to_string_lossy());
-            return Ok(self.insert_machine_tape(&name, &bytes)?);
+            self.insert_machine_tape(&name, &bytes)?;
+            self.add_recent_tape(path.to_string_lossy().to_string());
+            return Ok(());
         }
         let (display_name, buf) = read_cas_data(path)?;
         let generator = TapeBitstreamGenerator::new(&buf, &display_name)?;
@@ -1386,8 +1391,9 @@ impl Emu {
         errors
     }
 
-    /// Inserts a TZX, CDT, or TAP image into the Zx82 or CPC. These tapes
-    /// are not added to the TVC's recent-tape list or restored at startup.
+    /// Inserts a TZX, CDT, or TAP image into the Zx82 or CPC. Callers that
+    /// load from a file add it to the recent-tape list; it is not restored
+    /// at startup.
     pub fn insert_machine_tape(&mut self, name: &str, bytes: &[u8]) -> Result<(), String> {
         let tape = Tape::parse(bytes).map_err(|error| format!("{name}: {error}"))?;
         if !self.machine.insert_tape(tape) {
@@ -1435,7 +1441,7 @@ impl Emu {
         self.recent_tapes
             .retain(|existing| recent_media_key(existing) != key);
         self.recent_tapes.insert(0, path_str);
-        self.recent_tapes.truncate(5);
+        self.recent_tapes.truncate(MAX_RECENT_MEDIA);
     }
 
     pub fn add_recent_disk(&mut self, path_str: String) {
@@ -1443,7 +1449,7 @@ impl Emu {
         self.recent_disks
             .retain(|existing| recent_media_key(existing) != key);
         self.recent_disks.insert(0, path_str);
-        self.recent_disks.truncate(5);
+        self.recent_disks.truncate(MAX_RECENT_MEDIA);
     }
 
     pub fn get_screenshot_png(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
@@ -1490,7 +1496,10 @@ impl Emu {
         bytes: &[u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
         if self.system() != System::Tvc {
-            return Ok(self.insert_machine_tape(name, bytes)?);
+            self.insert_machine_tape(name, bytes)?;
+            #[cfg(target_arch = "wasm32")]
+            self.add_recent_tape_wasm(name.to_string(), bytes.to_vec());
+            return Ok(());
         }
         let (display_name, buf) = unpack_cas_bytes(name, bytes)?;
         let generator = TapeBitstreamGenerator::new(&buf, &display_name)?;
@@ -1683,7 +1692,7 @@ impl Emu {
         self.recent_tapes_wasm.retain(|x| x.name != name);
         self.recent_tapes_wasm
             .insert(0, WasmRecentFile { name, bytes });
-        self.recent_tapes_wasm.truncate(5);
+        self.recent_tapes_wasm.truncate(MAX_RECENT_MEDIA);
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -1691,7 +1700,7 @@ impl Emu {
         self.recent_disks_wasm.retain(|x| x.name != name);
         self.recent_disks_wasm
             .insert(0, WasmRecentFile { name, bytes });
-        self.recent_disks_wasm.truncate(5);
+        self.recent_disks_wasm.truncate(MAX_RECENT_MEDIA);
     }
 
     pub fn read_raw_bank(&self, bank: &str, addr: usize, len: usize) -> Option<Vec<u8>> {
@@ -1805,6 +1814,27 @@ pub fn classify_dropped_media(
         }
     }
     Err(format!("{name} contains no .rtvcsnap, .cas, or .dsk file").into())
+}
+
+/// Tape image extensions the given system loads.
+pub fn tape_extensions(system: System) -> &'static [&'static str] {
+    match system {
+        System::Tvc => &["cas", "zip"],
+        System::Zx82 => &["tzx", "tap"],
+        System::Cpc => &["tzx", "cdt"],
+    }
+}
+
+/// Whether a recent-tape entry can be loaded on the given system.
+pub fn is_tape_for_system(name: &str, system: System) -> bool {
+    std::path::Path::new(name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            tape_extensions(system)
+                .iter()
+                .any(|known| ext.eq_ignore_ascii_case(known))
+        })
 }
 
 fn recent_media_key(path: &str) -> String {

@@ -712,7 +712,7 @@ const WEB_FULL_APP_JS: &str = r#"import init, { WebHandle } from "./rtvc.js";
 const DB_NAME = "rtvc";
 const DB_VERSION = 1;
 const MEDIA_STORE = "recent-media";
-const MAX_RECENT_PER_KIND = 5;
+const MAX_RECENT_PER_KIND = 10;
 const keyboardEvents = [];
 const activeKeyCodes = new Map();
 let audioSink;

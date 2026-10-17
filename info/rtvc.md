@@ -213,10 +213,13 @@ pauses.
   loaders start and stop it. 0x2A is ignored. A load counts as active once the
   motor has run for 0.25 s, since games may pulse the relay after loading.
 
-These tapes go through `Emu::insert_machine_tape`. Unlike TVC CAS files they
-are not added to the recent-tape list or restored at startup. Native `--tape`
-mounts them after `--cpc` or `--zx82`, and the Tape menu offers Open, Play,
-Stop, Rewind, and Eject. Tape progress is reported as playing time, not as
+These tapes go through `Emu::insert_machine_tape`. Tapes opened from the
+Tape menu join the recent-tape list that TVC CAS files use; each machine's
+Tape menu lists only the entries it can load (`.cas`/`.zip` on the TVC,
+`.tzx`/`.tap` on the Zx82, `.tzx`/`.cdt` on the CPC). Unlike CAS files they
+are not restored at startup. Native `--tape` mounts them after `--cpc` or
+`--zx82`, and the Tape menu offers Open, the recent tapes, Play, Stop,
+Rewind, and Eject. Tape progress is reported as playing time, not as
 a share of blocks, so long pauses and pilot tones count by their length.
 
 ### Warp While Loading

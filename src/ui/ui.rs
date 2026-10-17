@@ -15,6 +15,7 @@ use crate::audio::NativeAudioSink;
 use crate::debug_ui::DebuggerUi;
 use crate::emu::{
     CartId, DiskGeometry, Emu, ExpansionCard, MachineType, ProgEntry, RomVersion, cartridge_stems,
+    is_tape_for_system, tape_extensions,
 };
 use crate::machine::System;
 use crate::machine::VidModel;
@@ -732,7 +733,7 @@ impl EmuApp {
 
     fn load_tape_dialog(&mut self, _ctx: egui::Context) {
         let extensions: &'static [&'static str] = if self.emu.system() == System::Tvc {
-            &["cas", "zip"]
+            tape_extensions(System::Tvc)
         } else {
             &["tzx", "cdt", "tap"]
         };
@@ -1573,54 +1574,7 @@ impl EmuApp {
                 ui.close_menu();
             }
 
-            #[cfg(target_arch = "wasm32")]
-            {
-                if !self.emu.recent_tapes_wasm.is_empty() {
-                    ui.separator();
-                    ui.label("Recent Tapes:");
-                    for recent in self.emu.recent_tapes_wasm.clone() {
-                        if ui.button(&recent.name).clicked() {
-                            if let Err(err) = self.emu.play_tape_bytes(&recent.name, &recent.bytes)
-                            {
-                                self.file_status = Some(format!("Tape load failed: {}", err));
-                            } else {
-                                self.persist_wasm_recent("tape", recent, ui.ctx().clone());
-                            }
-                            ui.close_menu();
-                        }
-                    }
-                }
-                if !self.emu.recent_tapes_wasm.is_empty() {
-                    if ui.button("Clear Recent Tapes").clicked() {
-                        self.clear_wasm_recents("tape", ui.ctx().clone());
-                        ui.close_menu();
-                    }
-                }
-            }
-
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                if !self.emu.recent_tapes.is_empty() {
-                    ui.separator();
-                    ui.label("Recent Tapes:");
-                    for path_str in self.emu.recent_tapes.clone() {
-                        let display_name = std::path::Path::new(&path_str)
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_else(|| path_str.clone());
-
-                        if ui.button(display_name).clicked() {
-                            let path = std::path::Path::new(&path_str);
-                            if let Err(err) = self.emu.play_tape_file_path(path) {
-                                self.file_status = Some(format!("Tape load failed: {}", err));
-                            } else {
-                                self.save_app_state();
-                            }
-                            ui.close_menu();
-                        }
-                    }
-                }
-            }
+            self.draw_recent_tapes(ui);
 
             ui.separator();
 
@@ -1681,13 +1635,80 @@ impl EmuApp {
         });
     }
 
+    /// Recent tapes that the current system can load.
+    fn draw_recent_tapes(&mut self, ui: &mut egui::Ui) {
+        let system = self.emu.system();
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            let recents: Vec<_> = self
+                .emu
+                .recent_tapes_wasm
+                .iter()
+                .filter(|recent| is_tape_for_system(&recent.name, system))
+                .cloned()
+                .collect();
+            if !recents.is_empty() {
+                ui.separator();
+                ui.label("Recent Tapes:");
+                for recent in recents {
+                    if ui.button(&recent.name).clicked() {
+                        if let Err(err) = self.emu.play_tape_bytes(&recent.name, &recent.bytes) {
+                            self.file_status = Some(format!("Tape load failed: {}", err));
+                        } else {
+                            self.persist_wasm_recent("tape", recent, ui.ctx().clone());
+                        }
+                        ui.close_menu();
+                    }
+                }
+                if ui.button("Clear Recent Tapes").clicked() {
+                    self.clear_wasm_recents("tape", ui.ctx().clone());
+                    ui.close_menu();
+                }
+            }
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let recents: Vec<_> = self
+                .emu
+                .recent_tapes
+                .iter()
+                .filter(|path| is_tape_for_system(path, system))
+                .cloned()
+                .collect();
+            if !recents.is_empty() {
+                ui.separator();
+                ui.label("Recent Tapes:");
+                for path_str in recents {
+                    let display_name = std::path::Path::new(&path_str)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| path_str.clone());
+
+                    if ui.button(display_name).clicked() {
+                        let path = std::path::Path::new(&path_str);
+                        if let Err(err) = self.emu.play_tape_file_path(path) {
+                            self.file_status = Some(format!("Tape load failed: {}", err));
+                        } else {
+                            self.save_app_state();
+                        }
+                        ui.close_menu();
+                    }
+                }
+            }
+        }
+    }
+
     /// Tape menu for the Zx82 and CPC, which play TZX/CDT/TAP images.
     fn draw_machine_tape_menu(&mut self, ui: &mut egui::Ui) {
         if ui.button("Open Tape File...").clicked() {
             self.load_tape_dialog(ui.ctx().clone());
             ui.close_menu();
         }
+        self.draw_recent_tapes(ui);
         let Some(player) = self.emu.tape_player() else {
+            ui.separator();
             ui.add_enabled(false, egui::Label::new("No tape inserted"));
             return;
         };
@@ -2697,9 +2718,7 @@ impl eframe::App for EmuApp {
                 PendingFile::Tape { name, bytes } => {
                     match self.emu.play_tape_bytes(&name, &bytes) {
                         Ok(()) => {
-                            if self.emu.system() == System::Tvc
-                                && let Some(recent) = self.emu.recent_tapes_wasm.first().cloned()
-                            {
+                            if let Some(recent) = self.emu.recent_tapes_wasm.first().cloned() {
                                 self.persist_wasm_recent("tape", recent, ctx.clone());
                             }
                             self.file_status = Some(format!("Loaded tape: {name}"));

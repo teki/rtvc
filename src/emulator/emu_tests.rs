@@ -207,6 +207,21 @@ fn recent_media_replaces_same_display_name() {
 }
 
 #[test]
+fn recent_tapes_are_filtered_by_system() {
+    use crate::emu::is_tape_for_system;
+    use crate::machine::System;
+
+    assert!(is_tape_for_system("progs/TVBALL.CAS", System::Tvc));
+    assert!(!is_tape_for_system("progs/TVBALL.CAS", System::Cpc));
+    assert!(is_tape_for_system("tapes/Manic.TAP", System::Zx82));
+    assert!(!is_tape_for_system("tapes/Manic.TAP", System::Cpc));
+    assert!(is_tape_for_system("tapes/Laser Squad.cdt", System::Cpc));
+    assert!(is_tape_for_system("tapes/Game.tzx", System::Cpc));
+    assert!(is_tape_for_system("tapes/Game.tzx", System::Zx82));
+    assert!(!is_tape_for_system("tapes/README", System::Zx82));
+}
+
+#[test]
 fn gamebase_cas_starts_from_clean_boot_and_queues_run() {
     let mut emu = Emu::new(MachineType::standard(false, RomVersion::V2_2, false));
     let mut cas = vec![0; 145];

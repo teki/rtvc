@@ -4,6 +4,8 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+- The Zx82 and CPC Tape menus list recently opened tapes, filtered to the
+  images each machine can load. Recent lists now keep 10 entries.
 - Several emulator instances can run at once: if the debugger port is busy,
   the next free port is used and printed.
 - BASIC 1.2 ROM listings: code hidden in `DB` lines or decoded off its real
