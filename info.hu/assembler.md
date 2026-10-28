@@ -192,7 +192,18 @@ Az encoder többek között az alábbi alakokat támogatja:
 - `BIT`, `RES`, `SET`, `RLC`, `RRC`, `RL`, `RR`, `SLA`, `SRA`, `SLL`, `SRL`;
 - rögzített alakok, például `NOP`, `HALT`, `DI`, `EI`, `NEG`, `RETN`,
   `RETI`, `RRD`, `RLD`, `LDI`, `LDIR`, `LDD`, `LDDR`, `CPI`, `CPIR`, `CPD`,
-  `CPDR`, `INI`, `INIR`, `IND`, `INDR`, `OUTI`, `OTIR`, `OUTD`, `OTDR`.
+  `CPDR`, `INI`, `INIR`, `IND`, `INDR`, `OUTI`, `OTIR`, `OUTD`, `OTDR`;
+- a disassembler által kiírt nem dokumentált alakok: `SLL`, `IN F,(C)`,
+  `OUT (C),0`, az IX/IY regiszterfelek (`IXH`, `IXL`, `IYH`, `IYL`) az `LD`,
+  `INC`, `DEC` és a 8 bites aritmetikai-logikai utasításokban (például
+  `LD IXH,12H`, `ADD A,IYL`), valamint az indexelt forgató/léptető, `RES` és
+  `SET` utasítások, amelyek az eredményt egy regiszterbe is bemásolják
+  (például `RLC (IX+5),B`, `SET 3,(IY-1),A`).
+
+Minden utasítás, amelyet a disassembler visszafejt, ugyanarra az utasításra
+fordul vissza. Indexregiszter-fél nem kombinálható a `H`, `L`, `(HL)`
+operandussal vagy a másik indexregiszter felével, mert az előtag
+megváltoztatná a jelentésüket.
 
 A nem támogatott mnemonikok és operandusalakok hibát adnak. Nincsenek makrók,
 include-ok, feltételes fordítás, lokális címketartományok, relokációs rekordok,

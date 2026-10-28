@@ -716,6 +716,10 @@ fn is_fixed_operand(operand: &str) -> bool {
             | "SP"
             | "IX"
             | "IY"
+            | "IXH"
+            | "IXL"
+            | "IYH"
+            | "IYL"
             | "NZ"
             | "Z"
             | "NC"
@@ -958,6 +962,9 @@ fn assemble_ld(op: &[&str]) -> Result<Vec<u8>, AsmError> {
         }
     }
 
+    if let Some(out) = assemble_ld_index_half(dst, src)? {
+        return Ok(out);
+    }
     if let Some(d) = reg8(dst) {
         return Ok(vec![0x06 | (d << 3), byte(src)?]);
     }
@@ -975,11 +982,46 @@ fn assemble_ld(op: &[&str]) -> Result<Vec<u8>, AsmError> {
     Err(form_error("LD", op))
 }
 
+/// Undocumented `LD` forms that use the IX/IY high or low byte.
+///
+/// A DD/FD prefix turns H/L into the index half, so the other operand may not
+/// be H, L, (HL), or a half of the other index register.
+fn assemble_ld_index_half(dst: &str, src: &str) -> Result<Option<Vec<u8>>, AsmError> {
+    let dst_half = index_half(dst);
+    let src_half = index_half(src);
+    let prefix = match (dst_half, src_half) {
+        (None, None) => return Ok(None),
+        (Some((a, _)), Some((b, _))) if a != b => {
+            return Err(AsmError::new("cannot mix IX and IY halves"));
+        }
+        (Some((prefix, _)), _) | (_, Some((prefix, _))) => prefix,
+    };
+    let operand = |value: &str, half: Option<(u8, u8)>| match half {
+        Some((_, r)) => Ok(r),
+        None => match reg8(value) {
+            Some(r) if r != 4 && r != 5 && r != 6 => Ok(r),
+            _ => Err(form_error("LD", &[dst, src])),
+        },
+    };
+    let d = operand(dst, dst_half)?;
+    if src_half.is_none() && reg8(src).is_none() {
+        if dst_half.is_none() {
+            return Err(form_error("LD", &[dst, src]));
+        }
+        return Ok(Some(vec![prefix, 0x06 | (d << 3), byte(src)?]));
+    }
+    let s = operand(src, src_half)?;
+    Ok(Some(vec![prefix, 0x40 | (d << 3) | s]))
+}
+
 fn assemble_inc_dec(op: &[&str], decrement: bool) -> Result<Vec<u8>, AsmError> {
     expect_count(op, 1)?;
     let base = if decrement { 0x05 } else { 0x04 };
     if let Some(r) = reg8(op[0]) {
         return Ok(vec![base | (r << 3)]);
+    }
+    if let Some((prefix, r)) = index_half(op[0]) {
+        return Ok(vec![prefix, base | (r << 3)]);
     }
     if let Some(p) = reg16(op[0]) {
         return Ok(vec![(if decrement { 0x0B } else { 0x03 }) | (p << 4)]);
@@ -1034,6 +1076,9 @@ fn assemble_alu(op: &[&str], operation: u8) -> Result<Vec<u8>, AsmError> {
     expect_count(op, 1)?;
     if let Some(r) = reg8(op[0]) {
         return Ok(vec![0x80 | (operation << 3) | r]);
+    }
+    if let Some((prefix, r)) = index_half(op[0]) {
+        return Ok(vec![prefix, 0x80 | (operation << 3) | r]);
     }
     if let Some((prefix, d)) = indexed(op[0])? {
         return Ok(vec![prefix, 0x80 | (operation << 3) | 6, d as u8]);
@@ -1200,6 +1245,22 @@ fn assemble_im(op: &[&str]) -> Result<Vec<u8>, AsmError> {
 }
 
 fn assemble_bit(op: &[&str], group: u8) -> Result<Vec<u8>, AsmError> {
+    // RES/SET b,(IX+d),r also copy the result into r (undocumented).
+    if group != 1 && op.len() == 3 {
+        let bit = number(op[0])?;
+        if !(0..=7).contains(&bit) {
+            return Err(AsmError::new("bit number must be between 0 and 7"));
+        }
+        if let (Some((prefix, d)), Some(r)) = (indexed(op[1])?, copy_reg8(op[2])) {
+            return Ok(vec![
+                prefix,
+                0xCB,
+                d as u8,
+                (group << 6) | ((bit as u8) << 3) | r,
+            ]);
+        }
+        return Err(form_error(if group == 2 { "RES" } else { "SET" }, op));
+    }
     expect_count(op, 2)?;
     let bit = number(op[0])?;
     if !(0..=7).contains(&bit) {
@@ -1223,6 +1284,16 @@ fn assemble_bit(op: &[&str], group: u8) -> Result<Vec<u8>, AsmError> {
 }
 
 fn assemble_rotate(op: &[&str], operation: u8) -> Result<Vec<u8>, AsmError> {
+    // Rotate/shift (IX+d),r also copies the result into r (undocumented).
+    if op.len() == 2 {
+        if let (Some((prefix, d)), Some(r)) = (indexed(op[0])?, copy_reg8(op[1])) {
+            return Ok(vec![prefix, 0xCB, d as u8, (operation << 3) | r]);
+        }
+        return Err(AsmError::new(format!(
+            "invalid rotate/shift operands '{},{}'",
+            op[0], op[1]
+        )));
+    }
     expect_count(op, 1)?;
     if let Some(r) = reg8(op[0]) {
         return Ok(vec![0xCB, (operation << 3) | r]);
@@ -1288,6 +1359,22 @@ fn reg8(value: &str) -> Option<u8> {
         "L" => Some(5),
         "(HL)" => Some(6),
         "A" => Some(7),
+        _ => None,
+    }
+}
+
+/// Register target for the undocumented DD/FD CB result copy (no (HL)).
+fn copy_reg8(value: &str) -> Option<u8> {
+    reg8(value).filter(|&r| r != 6)
+}
+
+/// Undocumented IX/IY byte halves as (prefix, H/L register code).
+fn index_half(value: &str) -> Option<(u8, u8)> {
+    match value {
+        "IXH" => Some((0xDD, 4)),
+        "IXL" => Some((0xDD, 5)),
+        "IYH" => Some((0xFD, 4)),
+        "IYL" => Some((0xFD, 5)),
         _ => None,
     }
 }

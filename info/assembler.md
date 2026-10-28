@@ -212,7 +212,18 @@ The instruction encoder supports the Z80 forms currently implemented by
 - `BIT`, `RES`, `SET`, `RLC`, `RRC`, `RL`, `RR`, `SLA`, `SRA`, `SLL`, `SRL`;
 - fixed forms such as `NOP`, `HALT`, `DI`, `EI`, `NEG`, `RETN`, `RETI`,
   `RRD`, `RLD`, `LDI`, `LDIR`, `LDD`, `LDDR`, `CPI`, `CPIR`, `CPD`, `CPDR`,
-  `INI`, `INIR`, `IND`, `INDR`, `OUTI`, `OTIR`, `OUTD`, and `OTDR`.
+  `INI`, `INIR`, `IND`, `INDR`, `OUTI`, `OTIR`, `OUTD`, and `OTDR`;
+- the undocumented forms the disassembler prints: `SLL`, `IN F,(C)`,
+  `OUT (C),0`, the IX/IY halves `IXH`, `IXL`, `IYH`, `IYL` in `LD`, `INC`,
+  `DEC`, and 8-bit ALU instructions (for example `LD IXH,12H`,
+  `ADD A,IYL`), and indexed rotate/shift, `RES`, and `SET` forms that also
+  copy the result to a register (for example `RLC (IX+5),B`,
+  `SET 3,(IY-1),A`).
+
+Every instruction the disassembler decodes assembles back to the same
+instruction. An index half cannot be combined with `H`, `L`, `(HL)`, or a
+half of the other index register, because the prefix would change their
+meaning.
 
 Unsupported mnemonics or unsupported operand forms are errors. The assembler
 does not implement macros, includes, conditional assembly, local-scope rules,

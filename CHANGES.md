@@ -4,6 +4,9 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+- The assembler accepts the undocumented Z80 forms the disassembler prints:
+  `IXH`/`IXL`/`IYH`/`IYL` operands and indexed rotate, shift, `RES`, and `SET`
+  instructions that copy the result to a register.
 - The Zx82 and CPC Tape menus list recently opened tapes, filtered to the
   images each machine can load. Recent lists now keep 10 entries.
 - Several emulator instances can run at once: if the debugger port is busy,

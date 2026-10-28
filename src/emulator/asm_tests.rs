@@ -308,3 +308,88 @@ fn reports_program_errors_with_line_numbers() {
     let err = assemble_program("again: NOP\nagain: RET", 0).unwrap_err();
     assert_eq!(err.to_string(), "line 2: duplicate label 'AGAIN'");
 }
+
+#[test]
+fn assembles_index_halves_and_cb_result_copies() {
+    round_trip("LD IXH,12H", 0, &[0xDD, 0x26, 0x12], "LD IXH,12H");
+    round_trip("ld a,iyl", 0, &[0xFD, 0x7D], "LD A,IYL");
+    round_trip("LD IXL,IXH", 0, &[0xDD, 0x6C], "LD IXL,IXH");
+    round_trip("LD IYH,B", 0, &[0xFD, 0x60], "LD IYH,B");
+    round_trip("INC IXL", 0, &[0xDD, 0x2C], "INC IXL");
+    round_trip("DEC IYH", 0, &[0xFD, 0x25], "DEC IYH");
+    round_trip("ADD A,IXH", 0, &[0xDD, 0x84], "ADD A,IXH");
+    round_trip("CP IYL", 0, &[0xFD, 0xBD], "CP IYL");
+    round_trip(
+        "RLC (IX+5),B",
+        0,
+        &[0xDD, 0xCB, 0x05, 0x00],
+        "RLC (IX+05H),B",
+    );
+    round_trip(
+        "SET 3,(IY-1),A",
+        0,
+        &[0xFD, 0xCB, 0xFF, 0xDF],
+        "SET 3,(IY-01H),A",
+    );
+    for bad in [
+        "LD IXH,IYL",
+        "LD IXH,H",
+        "LD L,IYH",
+        "LD IXL,(HL)",
+        "RLC (IX+1),(HL)",
+        "RES 1,(HL),A",
+    ] {
+        assert!(assemble_line(bad, 0).is_err(), "{bad} should not assemble");
+    }
+
+    let program = assemble_program("ld ixh,a\ninc iyl\n", 0x4000).unwrap();
+    assert_eq!(program.bytes, vec![0xDD, 0x67, 0xFD, 0x2C]);
+}
+
+#[test]
+fn reassembles_every_disassembled_opcode() {
+    const PREFIXES: [u8; 4] = [0xCB, 0xDD, 0xED, 0xFD];
+    let mut sequences: Vec<Vec<u8>> = Vec::new();
+    for op in 0..=255u8 {
+        if !PREFIXES.contains(&op) {
+            sequences.push(vec![op, 0x05, 0x12]);
+        }
+        sequences.push(vec![0xCB, op]);
+        sequences.push(vec![0xED, op, 0x34, 0x12]);
+        for prefix in [0xDD, 0xFD] {
+            if !PREFIXES.contains(&op) {
+                sequences.push(vec![prefix, op, 0x05, 0x12]);
+            }
+            sequences.push(vec![prefix, 0xCB, 0x05, op]);
+        }
+    }
+
+    let pc = 0x1000;
+    let mut failures = Vec::new();
+    for sequence in sequences {
+        let mut bus = FakeBus::new();
+        for (offset, byte) in sequence.iter().enumerate() {
+            bus.mem[pc as usize + offset] = *byte;
+        }
+        let original = disassemble_at(&mut bus, pc);
+        if original.text.starts_with("DB ") {
+            continue;
+        }
+        // Redundant DD/FD prefixes reassemble to the unprefixed form, so
+        // compare the reassembled instruction text rather than the bytes.
+        match assemble_line(&original.text, pc) {
+            Ok(bytes) => {
+                let mut bus = FakeBus::new();
+                for (offset, byte) in bytes.iter().enumerate() {
+                    bus.mem[pc as usize + offset] = *byte;
+                }
+                let text = disassemble_at(&mut bus, pc).text;
+                if text != original.text {
+                    failures.push(format!("{} -> {}", original.text, text));
+                }
+            }
+            Err(err) => failures.push(format!("{}: {}", original.text, err.message)),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
