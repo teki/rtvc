@@ -414,7 +414,10 @@ The TVC hardware documentation permits CPU reads of the start-address pair
 R12-R13. R14-R15 are readable/writable cursor address registers; R16-R17 are
 read-only light-pen latches. Reads of write-only registers should return an
 open-bus value such as `0xFF`. High address-register values are not valid CRTC
-register selections.
+register selections. A genuine MC6845 differs from this description. It
+cannot read R12-R13, it returns `0x00` for non-readable registers, and it
+aliases selections 32-255 onto 0-31. See
+[MC6845 variant behavior relevant to TVC](#mc6845-variant-behavior-relevant-to-tvc).
 
 ### Normal firmware CRTC programming
 
@@ -428,7 +431,7 @@ constants.
 | R0 | 99 | Horizontal total, in character clocks, minus one | 100 character clocks per line |
 | R1 | 64 | Horizontal displayed character count | 64 displayed bytes, 512 source pixels |
 | R2 | 75 | Horizontal sync position | Places TVC horizontal timing relative to the displayed area |
-| R3 | `0x32` | Sync width register | TVC uses the horizontal field for blanking/sync timing; vertical sync width is not taken directly from the CRTC |
+| R3 | `0x32` | Sync width register | Horizontal sync width 2 character clocks; on an MC6845 the high nibble is ignored and VS is always 16 lines, and TVC reshapes both pulses externally |
 | R4 | 77 | Vertical total, in character rows, minus one | 78 character rows per generated frame before vertical adjust |
 | R5 | 2 | Vertical total adjust, in scanlines | Adds 2 scanlines to the frame |
 | R6 | 60 | Vertical displayed character-row count | 60 displayed character rows, 240 active scanlines |
@@ -586,6 +589,39 @@ blanking latch and permits video again. This makes blanking a property of the
 TVC circuitry driven by CRTC signals, rather than a palette color or an
 implicit range of normal firmware register values.
 
+The hardware book (page 73) describes the latch as the R-S
+flip-flop in unit 8 of figure 28. VS sets it, which drives NVRCL low and clears
+the final video register. "A suitably chosen CRTC address line (MA9)" resets
+it. MA9 is therefore a timer that happens to fit the firmware geometry, not a
+frame-structure signal.
+
+MA counts through the whole line, border and retrace included, so MA9 is low
+for 512 addresses (8 rows of 64) and then high for 512. Where the release
+falls therefore depends on the start address S in R12-R13. With normal
+firmware timing, VS starts at row 66 (scanline 264):
+
+| S | MA9 when VS starts | Blanking after VS start |
+| --- | --- | ---: |
+| `0x0000` (firmware) | low; rises at row 71, C0=64 | about 21 scanlines |
+| `0x0200` | already high | none |
+| `0x0380` | just went low | about 29 scanlines (maximum) |
+
+In general, vertical blanking lasts from 0 to about 29 scanlines and changes
+when software scrolls with R12-R13. The 16-scanline VS pulse and the paper area
+are not affected: the next paper area still starts 50 scanlines after VS
+begins. The extra blanking falls in the television's vertical retrace and top
+overscan, so it is probably not visible on a real set. An emulator that shows
+a larger top border can show it, as up to about 7 black lines or as border
+color where blanking is normally expected.
+
+Two details are not settled by the text. The book describes an R-S latch,
+which responds to levels, not edges. The block diagram does not show whether
+the latch is set by the raw VS level or by a short pulse. If the VS level sets
+it, MA9 can fall while VS is still high, for example with `S = 0x0200`.
+Blanking would then start again and last until MA9's next rise, about 8 rows
+later. The book also gives VS as starting on TV line 268, and how that number
+counts lines is not stated. Both details need the schematic or a measurement.
+
 Software may reprogram the CRTC. The counters and address generator continue
 to run even when a programmed sync-position comparison is unreachable; that
 output simply produces no pulse. A television-facing emulator must therefore
@@ -610,12 +646,201 @@ An emulator that only raises an interrupt at a fixed host-frame boundary will
 miss programs that change CRTC geometry or time raster work from the cursor
 pulse.
 
+### MC6845 variant behavior relevant to TVC
+
+The 6845 family is not uniform, and raster-timed or register-rewriting
+software can see the differences. The points below describe component behavior
+of the Motorola MC6845 and close relatives. People measured it on real IBM
+CGA, BBC Micro, and Amstrad CPC hardware. The most detailed source is the
+Amstrad CPC CRTC Compendium, which treats the MC6845 as CPC "CRTC type 2".
+None of this has been confirmed on a TVC yet, so treat it as the expected
+model, not verified TVC fact. Sources are listed under
+[External Component References](#external-component-references).
+
+The text uses the compendium's counter names:
+
+- C0: horizontal character counter, 0 to R0;
+- C9: raster counter within a row, 5 bits;
+- C4: row counter, 7 bits;
+- C5: vertical-adjust line counter.
+
+Which part is fitted matters:
+
+| Part | CPC type | Differences that matter to TVC software |
+| --- | ---: | --- |
+| Motorola MC6845; Hitachi HD6845R (HD46505R) | 2 | Fixed 16-line VSYNC; R3=0 gives a 16-character HSYNC; no skew bits in R8; R12-R13 write-only; ghost VSYNC during HSYNC; R7 rewrite glitch |
+| Hitachi HD6845S, UMC UM6845 | 0 | Programmable VSYNC width (R3 bits 4-7, 0 means 16); R3=0 gives no HSYNC; R8 skew bits; readable R12-R13 |
+| UMC UM6845R | 1 | Fixed 16-line VSYNC; R3=0 gives no HSYNC; status register; reloads the start address throughout row 0 |
+| MC6845-1 | — | Programmable VSYNC width and R8 skew bits, per the compendium's comparison tables |
+
+The HD6845R appears in this row because the CGA research found it matches the
+MC6845's R7 behavior. The compendium did not test it. The CGA research also
+says the HD6845S has a programmable VSYNC width, and the compendium agrees,
+but another CPC reference (Grim) says only the ASIC-based types 3 and 4 do.
+
+**Register access.** The compendium measured these on a CPC with an MC6845:
+
+- The address register uses only its low 5 bits, so selections 32-255 alias
+  registers 0-31.
+- Only the cursor registers R14-R15 and the light-pen registers R16-R17 read
+  back. Its identification chapter lists only R16-R17.
+- Reads of any other register, R12-R13 included, return `0x00`.
+- The MC6845 has no status register.
+
+Two points in [CRTC ports](#crtc-ports) differ from this: TVC documentation
+permits R12-R13 reads, and `0xFF` is suggested for write-only registers.
+Either TVC used a different part, or the TVC bus reads differently from the
+CPC. Which CRTC part each TVC board revision carries is still open, so
+software should not rely on reading R12-R13.
+
+**Sync widths.** On the MC6845, VS always lasts 16 scanlines, whatever R3 bits
+4-7 hold. So the TVC's R3 value of `0x32` sets only the 2-character horizontal
+sync. An R3 low nibble of 0 gives a 16-character HSYNC; the MC6845 cannot
+suppress HSYNC. While VS is active, further R7 matches are ignored, and
+moving R7 does not cut the pulse short. On TVC the raw HS and VS pulses are
+reshaped by external monostables, so their widths reach the television only
+indirectly (see [Output pipeline, blanking, and sync](#output-pipeline-blanking-and-sync)).
+
+**When VSYNC starts.** The MC6845 checks C4 against R7 on every character
+clock, not only at the start of a row:
+
+- VS starts as soon as C4 reaches R7.
+- VS also starts if R7 is rewritten to the current C4. It then counts as if it
+  had begun at the start of that scanline, so the pulse ends early by the
+  part of the line already gone.
+- A row reached during vertical adjust can also match R7.
+
+**Ghost VSYNC during HSYNC.** If the R7 match happens while HSYNC is active
+(from C0=R2 through C0=R2+R3), the MC6845 makes a "ghost" VSYNC. It runs the
+16-line VSYNC timer, so a real VSYNC cannot start, but it never drives the VS
+pin. So with `R2 + R3 > R0` (HSYNC still active at the end of the line),
+there is no VSYNC at all. Normal TVC values (R2=75, R3=2, R0=99) are far from
+this. Raster code that moves R2 or R3 toward the end of the line can lose
+the TVC's vertical sync and the VS-triggered blanking latch. R2=0 is a
+documented exception: VSYNC still happens there.
+
+**Other effects of HSYNC on the MC6845:**
+
+- If HSYNC covers C0=0, display enable is not turned back on at the line
+  start.
+- If HSYNC covers C0=0, the end-of-frame check is skipped, so C4 runs past R4
+  instead of returning to 0.
+- An R4 or R9 write during HSYNC cannot arm the end-of-frame state.
+
+**End-of-frame decision.** At C0=0 the MC6845 sets a "last line" state when
+C4=R4 and C9=R9. Once set, it cannot be undone: the next line restarts at
+C4=C9=0, even if R4 or R9 is rewritten during the rest of that line. Outside
+HSYNC, a write to R4 or R9 during a line can also set the state, except on
+the frame's first line. BBC Micro research on Hitachi parts found a similar
+window: the decision is latched about two character clocks into the last
+scanline.
+
+**Counter wraparound.** The compendium documents C9 wrapping. If R9 is
+lowered below the current C9, C9 does not stop. It keeps counting to 31,
+wraps to 0, and then counts up to the new R9. C4 behaves the same way as a
+7-bit counter. So lowering R4 below the current row makes the frame run past
+row 127 before it wraps. VSYNC still starts on any reached row that matches
+R7. These are run-on frames, not short ones. A
+television-facing model must let them break vertical lock, not clamp them.
+
+**Vertical adjust.** The MC6845 counts adjust lines with a separate C5
+counter, and C4 keeps advancing. With the TVC values (R4=77, R9=3, R5=2), the
+two adjust lines have C4=78 and C9=0-1. A row that matches R7 or R6 during
+adjust works like any other row. Rewriting R5 during adjust to C5+1 ends the
+adjust at once. A smaller value makes C5 wrap.
+
+**Start address and row addresses.** On TVC, a new start address takes effect
+only at the start of the next video frame. The TVC hardware book says so, and
+it matches TVC behavior. A write to R12-R13 never changes the frame being
+displayed. TVC software can therefore write the start address at any time
+during the frame and expect it to apply from the next frame's first row.
+
+The compendium shows how this happens inside the MC6845. The chip keeps a
+row-start pointer (VMA') separate from the running address (MA):
+
+- On the last raster of each row, the pointer takes the current MA when C0
+  reaches R1. Every raster line of the next row starts from it.
+- On the frame's last line, the pointer is loaded from R12-R13 at C0=R1
+  instead. The next frame starts from it.
+- With normal TVC values, that last line is the second vertical-adjust line,
+  which is not displayed. A write after its C0=R1 point (the last 36
+  character clocks of the frame) is too late, so the new address appears one
+  frame later.
+- If R1 > R0, C0 never meets R1. The pointer never advances and R12-R13 are
+  never loaded, so every row repeats the same address.
+- Other parts reload directly from R12-R13 at C4=C9=C0=0. The UM6845R does
+  this throughout row 0, which TVC hardware does not do.
+
+**Display enable (R1, R6, R8).**
+
+- R1=0 blanks the whole line.
+- The R1 and R6 matches are checked on every character clock, so rewriting
+  them takes effect within the current line.
+- C4=R6 turns paper off until the next frame and overrides R1. Exception: the
+  frame's first line, where R6=0 makes display enable alternate within each
+  character.
+- With R1 > R0, the MC6845 still drops display enable for half a character
+  before C0 returns to 0. On CPC that is one border byte.
+- R8 has only the interlace bits on the MC6845. Display and cursor skew do
+  not exist, so this border fragment cannot be avoided.
+
+**R0 values.** The compendium says the MC6845 accepts any R0 value, down to
+0, without upsetting its other counters. A new R0 value is used at once, and
+C0 never runs past it. This differs from Hitachi parts. BBC and CPC research
+found their counter handling fragile below R0=2-3: R0=1 tricks need writes
+inside a two-character-clock window.
+
+**Phantom VSYNC when writing R7.** Writing R7 on an MC6845 or HD6845R can
+produce a spurious vertical sync for one frame, even when the current row
+matches neither the old nor the new R7 value. Measured on IBM CGA cards, the
+glitch produced a 16-scanline black bar that started mid-scanline. The new
+R7 value still applies, and the next real VSYNC falls on the programmed row.
+The glitch depends on when the CPU write lands relative to the character
+clock, so it is intermittent and sensitive to temperature. The suspected
+cause is that the comparator sees a partly updated R7. For the MC6845, all
+glitching cases fitted these conditions, with `r` = current row counter,
+`f` = old R7, `t` = new R7 (all 7-bit):
+
+```text
+(r & 7) == (f & 7)
+(r & ~f & 0x78) == 0
+(f & (t ^ r) & 0x78) == 0
+(r & ~t & 0x0F) == 0
+```
+
+For a given `(f, t)` pair, only one row can glitch:
+
+```text
+r_glitch = (f & t & 0x78) | (f & 7)
+```
+
+Rows above R4 are never reached in a normal frame, so a pair whose `r_glitch`
+is greater than R4 (77 with normal firmware values) is safe. Row 0 is the
+worst case. The HD6845R glitches on a strict superset of the MC6845's cases.
+Other clones vary, and at least one does not glitch at all. Hitachi's later
+datasheets describe register rewrites during operation as outside their
+guarantee.
+
+On TVC, a phantom VS would set the vertical blanking latch until MA9 resets
+it, and it would trigger the vertical sync monostable. The likely effect is a
+blanked band and a disturbed vertical lock for one frame. This consequence is
+an inference from the TVC circuitry, not an observation. Software that changes
+R7 should write it while the current row cannot be `r_glitch`, or should accept
+a one-frame disturbance.
+
+**Unresolved variant cases.** The same CGA research saw oddities when
+rewriting R6 and suspects the same cause. BBC tests show that R6=0, R1=0, and
+R1=255 behave differently between Hitachi and VLSI parts. Some Hitachi parts
+never display the last character of a row; a VL68C45 does. These cases are
+not characterized for the MC6845 beyond what is written above.
+
 ### Interlace, skew, and light pen
 
-Normal TVC output is non-interlaced. CRTC interlace and skew behavior is
-component-variant-sensitive and uncommon in TVC software. The light-pen strobe
-is routed to the expansion connector and should latch the current refresh
-address into R16-R17 when implemented.
+Normal TVC output is non-interlaced. A genuine MC6845 has no display or cursor
+skew bits in R8; only the interlace bits exist. Interlace behavior differs by
+CRTC type and is uncommon in TVC software. The light-pen strobe is routed to
+the expansion connector and should latch the current refresh address into
+R16-R17 when implemented.
 
 ## Keyboard
 
@@ -1127,6 +1352,11 @@ cursor-interrupt timing require interleaved CRTC advancement.
 - Reading `0x5B`/`0x5F` changes sound timer phase.
 - Any read or write in `0x50-0x57` toggles cassette output.
 - The EXT page is split: card memory below `0xE000`, EXTH ROM above it.
+- On a genuine MC6845: VSYNC is a fixed 16 lines; R12-R13 are write-only; an
+  R7 match during HSYNC gives a ghost VSYNC with no VS pulse; and writing R7
+  during operation can produce a phantom VSYNC.
+- A new start address (R12-R13) takes effect only at the start of the next
+  frame, never mid-frame.
 - Unknown or unimplemented hardware behavior should remain visibly marked as
   uncertain instead of being inferred from a single emulator.
 
@@ -1135,6 +1365,21 @@ cursor-interrupt timing require interleaved CRTC advancement.
 - [Zilog Z80 CPU User Manual](https://www.zilog.com/docs/z80/um0080.pdf)
 - Motorola/compatible MC6845 datasheet for generic CRTC counter and register
   behavior
+- VileR, [CGA: the 6845 CRTC phantom VSYNC glitch](https://int10h.org/blog/2023/03/cga-6845-crtc-phantom-vsync-glitch/)
+  and [More CRTC glitching: HD6845 vs. MC6845](https://int10h.org/blog/2023/04/more-crtc-glitching-hd6845-vs-mc6845/):
+  measurements of R7 rewrites on IBM CGA cards, plus variant notes
+- Stardot forum, [6845 Quirks (and FPGA implementation)](https://stardot.org.uk/forums/viewtopic.php?f=3&t=22008):
+  BBC Micro findings on frame-end latching, small R0 values, R1/R6 edge
+  cases; related tests in [tom-seddon/6845-tests](https://github.com/tom-seddon/6845-tests)
+  and [beebjit display tests](https://github.com/scarybeasts/beebjit/tree/master/test/display)
+- Longshot / Logon System, *The Amstrad CPC CRTC Compendium* (v1.3, November
+  2022; [archived PDF](https://web.archive.org/web/20230220193942/http://logonsystem.fr/down/ACCC1.3-EN.pdf)):
+  measured per-type CRTC behavior, with the MC6845 as type 2. Chapters 10-21
+  cover counters, sync, display enable, and register reads. v1.5 is
+  [also archived](https://web.archive.org/web/20230531002502/http://logonsystem.fr/down/ACCC1.5-EN.pdf),
+  but the archived copy is truncated.
+- Grim, [The Mighty CRTC 6845](https://cpcrulez.fr/coding_grimware-the_mighty_crtc_6845.htm):
+  Amstrad CPC CRTC types 0-4, register readability, MA reload, VSYNC width
 - Western Digital FD1793 datasheet for generic floppy-controller commands,
   timing, and status semantics
 - Original TVC hardware manuals and schematics for electrical details and

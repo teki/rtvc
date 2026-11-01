@@ -277,8 +277,12 @@ The external SN74LS123 sync widths are currently isolated approximations (eight
 character clocks for horizontal sync and four lines for vertical sync) because
 the available textual hardware description establishes the shaping circuit but
 does not provide verified board-variant RC durations. Edge timing, receiver
-lock, NVRCL vertical blanking set by VS, and MA9 video re-enable are modeled;
-the pulse-width constants should be replaced after schematic-component or
+lock, NVRCL vertical blanking set by VS, and MA9 video re-enable are modeled.
+The blanking latch is set on the rising edge of raw VS and cleared whenever
+MA9 is high. That follows the R-S latch on page 73 of the hardware book. The
+start-address-dependent blanking length that results is described in
+[tvc.md](tvc.md#output-pipeline-blanking-and-sync). Whether the latch is set by
+the VS level or by a pulse is unverified. The pulse-width constants should be replaced after schematic-component or
 oscilloscope verification. If valid sync is absent for several host ticks,
 rtvc displays its lost-sync surface while continuing emulation.
 
