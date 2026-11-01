@@ -40,4 +40,5 @@ implementation order, limitations, and focused validation.
 - [Focused Execution Trace](instruction-trace.md)
   ([existing implementation progress](instruction-trace-progress.md))
 - [Multi-System Architecture](multi-system-architecture.md)
+- [rtvc-asm Repetition and Cycle Timing](rtvc-asm-repetition-and-timing.md)
 - [TVC Video Signal Pipeline and Television Sync](tvc-video-signal-pipeline.md)
