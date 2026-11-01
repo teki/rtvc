@@ -154,9 +154,60 @@ Supported directives:
 | `DB`, `DEFB` | `DB expr[, expr...]` | Emits bytes. String literals are also accepted. |
 | `DW`, `DEFW` | `DW expr[, expr...]` | Emits little-endian 16-bit words. |
 | `DS`, `DEFS` | `DS count[, fill]` | Emits `count` bytes, filled with zero or `fill`. |
+| `REPT`, `ENDR` | `REPT count[, counter]` … `ENDR` | Assembles the enclosed lines `count` times. See [Repetition](#repetition). |
+| `ASSERT` | `ASSERT condition[, "message"]` | Fails assembly when the condition is false. See [Assertions](#assertions). |
 
 String literals in `DB`/`DEFB` must be ASCII. Supported escapes are `\0`, `\n`,
 `\r`, `\t`, `\\`, `\"`, and `\'`.
+
+## Repetition
+
+`REPT count` … `ENDR` assembles the enclosed lines `count` times:
+
+```asm
+        REPT 20
+        NOP
+        ENDR
+```
+
+- The count is an expression. It is evaluated when assembly reaches the
+  `REPT` line, so it may use `$`, `EQU` symbols, and labels defined above it,
+  including a label on the `REPT` line itself. Symbols defined later are an
+  error.
+- A count of zero skips the block. Blocks may be nested.
+- An optional counter name, `REPT count, NAME`, is replaced in each copy by
+  the copy number, `0` to `count - 1`, in decimal. The replacement matches
+  whole words, ignores case, and skips double-quoted strings. The counter is
+  not a symbol and does not appear in the output.
+- A label on the `REPT` line marks the first copy; a label on the `ENDR` line
+  marks the address after the last copy. A label inside the block is defined
+  once per copy, so it is a duplicate-label error when the count is more than
+  one.
+- Each copy keeps the source line number of the original line, both in error
+  messages and in the TOML `[[lines]]` table.
+- Expansion is limited to 1,048,576 lines in total.
+
+## Assertions
+
+`ASSERT condition[, "message"]` stops assembly with an error when the
+condition is false:
+
+```asm
+LINE_START:
+        ...
+LINE_END:
+        ASSERT LINE_END-LINE_START = 12, "copy loop changed size"
+```
+
+- The condition is either one comparison between two expressions or a single
+  expression that must be nonzero. Comparisons are `=` or `==`, `!=` or `<>`,
+  `<`, `<=`, `>`, and `>=`.
+- Assertions are checked in the second pass, after every symbol is defined, so
+  they may refer to labels later in the source. `$` is the address of the
+  `ASSERT` line.
+- The error names the line, the message (or the condition when there is no
+  message), and the values compared, for example
+  `line 9: assertion failed: copy loop changed size (left is 13, right is 12)`.
 
 ## Expressions
 

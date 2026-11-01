@@ -393,3 +393,120 @@ fn reassembles_every_disassembled_opcode() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+#[test]
+fn rept_repeats_blocks_with_nesting_counters_and_zero_counts() {
+    let program = assemble_program(
+        r#"
+                PADDING EQU 2
+        START:  REPT PADDING+1
+                NOP
+        BODY_END: ENDR
+                REPT 2, ROW
+                REPT 2, col
+                DB ROW, COL, "row"
+                ENDR
+                ENDR
+                REPT 0
+                HALT
+                ENDR
+            "#,
+        0x8000,
+    )
+    .unwrap();
+
+    assert_eq!(
+        program.bytes,
+        vec![
+            0x00, 0x00, 0x00, //
+            0, 0, b'r', b'o', b'w', //
+            0, 1, b'r', b'o', b'w', //
+            1, 0, b'r', b'o', b'w', //
+            1, 1, b'r', b'o', b'w',
+        ]
+    );
+    assert_eq!(program.symbols["START"], 0x8000);
+    assert_eq!(program.symbols["BODY_END"], 0x8003);
+    assert!(!program.symbols.contains_key("ROW"));
+    let nop_lines: Vec<_> = program.lines.iter().filter(|line| line.line == 4).collect();
+    assert_eq!(nop_lines.len(), 3);
+    assert_eq!(nop_lines[2].addr, 0x8002);
+    assert!(
+        program
+            .lines
+            .iter()
+            .any(|line| line.source.contains("DB 1, 0, \"row\""))
+    );
+}
+
+#[test]
+fn rept_counts_can_use_labels_defined_above() {
+    let program = assemble_program(
+        "START: NOP\n NOP\nEND: REPT END-START\n RET\n ENDR\n",
+        0x4000,
+    )
+    .unwrap();
+    assert_eq!(program.bytes, vec![0x00, 0x00, 0xC9, 0xC9]);
+}
+
+#[test]
+fn rept_reports_structure_errors() {
+    let err = assemble_program("NOP\nREPT 2\nNOP\n", 0).unwrap_err();
+    assert_eq!(err.to_string(), "line 2: REPT without ENDR");
+
+    let err = assemble_program("NOP\nENDR\n", 0).unwrap_err();
+    assert_eq!(err.to_string(), "line 2: ENDR without REPT");
+
+    let err = assemble_program("REPT LATER\nNOP\nENDR\nLATER EQU 2\n", 0).unwrap_err();
+    assert_eq!(err.to_string(), "line 1: unknown symbol 'LATER'");
+
+    let err = assemble_program("REPT 2\nLOOP: NOP\nENDR\n", 0).unwrap_err();
+    assert_eq!(err.to_string(), "line 2: duplicate label 'LOOP'");
+
+    let err = assemble_program("REPT 2048\nREPT 1024\nNOP\nENDR\nENDR\n", 0).unwrap_err();
+    assert!(err.to_string().contains("expand to more than"));
+}
+
+#[test]
+fn assert_checks_comparisons_and_values_after_all_symbols_are_known() {
+    let program = assemble_program(
+        r#"
+                ASSERT DONE-START = 3
+        START:  LD A,1
+                NOP
+        DONE:
+                ASSERT $ == DONE
+                ASSERT DONE <> START
+                ASSERT DONE-START >= 3, "block is too short"
+                ASSERT DONE > START
+                ASSERT START <= DONE
+                ASSERT START < DONE
+                ASSERT DONE != 0
+                ASSERT DONE
+            "#,
+        0x1000,
+    )
+    .unwrap();
+    assert_eq!(program.bytes, vec![0x3E, 0x01, 0x00]);
+
+    let err = assemble_program("A: NOP\nB: ASSERT B-A = 2\n", 0).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "line 2: assertion failed: B-A = 2 (left is 1, right is 2)"
+    );
+
+    let err = assemble_program("ASSERT $+3 < 2, \"too far\"\n", 0).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "line 1: assertion failed: too far (left is 3, right is 2)"
+    );
+
+    let err = assemble_program("ASSERT 0\n", 0).unwrap_err();
+    assert_eq!(err.to_string(), "line 1: assertion failed: 0 (value is 0)");
+
+    let err = assemble_program("ASSERT 1 < 2 < 3\n", 0).unwrap_err();
+    assert!(err.to_string().contains("more than one comparison"));
+
+    let err = assemble_program("ASSERT 1, 2\n", 0).unwrap_err();
+    assert!(err.to_string().contains("optional quoted message"));
+}

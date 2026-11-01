@@ -2,6 +2,8 @@ use std::{collections::BTreeMap, fmt};
 
 const TVC_BASIC_LOAD_ADDR: u16 = 0x19EF;
 const TVC_BASIC_USR_ENTRY: u16 = 0x1A30;
+/// Upper bound on the source lines `REPT` blocks may expand to.
+const MAX_REPT_LINES: usize = 1 << 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AsmError {
@@ -84,6 +86,15 @@ enum Statement {
         fill: Option<String>,
     },
     Instruction(String),
+    Rept {
+        count: String,
+        counter: Option<String>,
+    },
+    Endr,
+    Assert {
+        condition: String,
+        message: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -158,11 +169,11 @@ pub fn assemble_line(source: &str, pc: u16) -> Result<Vec<u8>, AsmError> {
 ///
 /// This two-pass layer is intended for debugger helper code and porting shims,
 /// not as a full macro assembler. It supports labels, `ORG` with named address
-/// mappings, `EQU`, `DB`/`DEFB`, `DW`/`DEFW`, `DS`/`DEFS`, simple `+`/`-`
-/// expressions, and `$` as the current address. Instruction encoding is
-/// delegated to [`assemble_line`].
+/// mappings, `EQU`, `DB`/`DEFB`, `DW`/`DEFW`, `DS`/`DEFS`, `REPT`/`ENDR`,
+/// `ASSERT`, simple `+`/`-` expressions, and `$` as the current address.
+/// Instruction encoding is delegated to [`assemble_line`].
 pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, AsmError> {
-    let parsed: Vec<_> = source
+    let mut parsed: Vec<_> = source
         .lines()
         .enumerate()
         .map(|(index, line)| parse_program_line(index + 1, line))
@@ -172,8 +183,49 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
     let mut mappings = Vec::new();
     let mut mappings_by_name = BTreeMap::new();
     let mut pc = origin;
+    let mut index = 0;
+    let mut repeated_lines = 0usize;
 
-    for line in &parsed {
+    while index < parsed.len() {
+        // A REPT block is expanded when pass 1 reaches it, so its count may use
+        // any symbol defined above it. The copies are then assembled in turn.
+        if let Statement::Rept { count, counter } = &parsed[index].statement {
+            for label in &parsed[index].labels {
+                insert_symbol(&mut symbols, label, pc, parsed[index].line_no)?;
+            }
+            let count = eval_nonnegative(count, pc, &symbols, &mappings_by_name, false, 0)
+                .map_err(|err| line_error(parsed[index].line_no, err))?;
+            let counter = counter.clone();
+            let end = matching_endr(&parsed, index)?;
+            let body = &parsed[index + 1..end];
+            repeated_lines = repeated_lines.saturating_add(count.saturating_mul(body.len()));
+            if repeated_lines > MAX_REPT_LINES {
+                return Err(line_error(
+                    parsed[index].line_no,
+                    AsmError::new(format!(
+                        "REPT blocks expand to more than {MAX_REPT_LINES} lines"
+                    )),
+                ));
+            }
+            let mut expansion = Vec::with_capacity(count * body.len() + 1);
+            for copy in 0..count {
+                for line in body {
+                    expansion.push(match &counter {
+                        Some(name) => parse_program_line(
+                            line.line_no,
+                            &substitute_symbol(&line.source, name, copy),
+                        )?,
+                        None => line.clone(),
+                    });
+                }
+            }
+            expansion.push(labels_only(&parsed[end]));
+            parsed.splice(index..=end, expansion);
+            continue;
+        }
+
+        let line = &parsed[index];
+        index += 1;
         if !matches!(line.statement, Statement::Equ { .. }) {
             for label in &line.labels {
                 insert_symbol(&mut symbols, label, pc, line.line_no)?;
@@ -239,6 +291,11 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
                     assemble_line(&rendered, pc).map_err(|err| line_error(line.line_no, err))?;
                 pc = pc.wrapping_add(bytes.len() as u16);
             }
+            Statement::Assert { .. } => {}
+            Statement::Endr => {
+                return Err(line_error(line.line_no, AsmError::new("ENDR without REPT")));
+            }
+            Statement::Rept { .. } => unreachable!("REPT blocks are expanded above"),
         }
     }
 
@@ -287,6 +344,20 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
                     render_instruction(statement, pc, &symbols, &mappings_by_name, false)
                         .map_err(|err| line_error(line.line_no, err))?;
                 assemble_line(&rendered, pc).map_err(|err| line_error(line.line_no, err))?
+            }
+            Statement::Assert { condition, message } => {
+                check_assert(
+                    condition,
+                    message.as_deref(),
+                    pc,
+                    &symbols,
+                    &mappings_by_name,
+                )
+                .map_err(|err| line_error(line.line_no, err))?;
+                Vec::new()
+            }
+            Statement::Rept { .. } | Statement::Endr => {
+                unreachable!("REPT blocks are expanded in pass 1")
             }
         };
 
@@ -407,8 +478,192 @@ fn parse_statement(source: &str, labels: &[String]) -> Result<Statement, AsmErro
                 _ => Err(AsmError::new("DS requires count and optional fill byte")),
             }
         }
+        "REPT" => {
+            let operands = split_operands(rest)?;
+            match operands.as_slice() {
+                [count] => Ok(Statement::Rept {
+                    count: count.clone(),
+                    counter: None,
+                }),
+                [count, counter] => {
+                    validate_label(counter)?;
+                    Ok(Statement::Rept {
+                        count: count.clone(),
+                        counter: Some(counter.to_ascii_uppercase()),
+                    })
+                }
+                _ => Err(AsmError::new(
+                    "REPT requires a count and optional counter name",
+                )),
+            }
+        }
+        "ENDR" => {
+            if !rest.trim().is_empty() {
+                return Err(AsmError::new("ENDR takes no operands"));
+            }
+            Ok(Statement::Endr)
+        }
+        "ASSERT" => {
+            let operands = split_operands(rest)?;
+            match operands.as_slice() {
+                [condition] => Ok(Statement::Assert {
+                    condition: condition.clone(),
+                    message: None,
+                }),
+                [condition, message] if is_quoted(message) => {
+                    let message = String::from_utf8(parse_string_literal(message)?)
+                        .expect("ASCII string literal");
+                    Ok(Statement::Assert {
+                        condition: condition.clone(),
+                        message: Some(message),
+                    })
+                }
+                _ => Err(AsmError::new(
+                    "ASSERT requires a condition and optional quoted message",
+                )),
+            }
+        }
         _ => Ok(Statement::Instruction(source.to_string())),
     }
+}
+
+/// Index of the `ENDR` that closes the `REPT` at `start`, counting nested blocks.
+fn matching_endr(lines: &[ParsedLine], start: usize) -> Result<usize, AsmError> {
+    let mut depth = 0usize;
+    for (index, line) in lines.iter().enumerate().skip(start) {
+        match line.statement {
+            Statement::Rept { .. } => depth += 1,
+            Statement::Endr => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    Err(line_error(
+        lines[start].line_no,
+        AsmError::new("REPT without ENDR"),
+    ))
+}
+
+/// Keep an `ENDR` line's labels, which mark the address after the block.
+fn labels_only(line: &ParsedLine) -> ParsedLine {
+    ParsedLine {
+        line_no: line.line_no,
+        source: line.source.clone(),
+        labels: line.labels.clone(),
+        statement: Statement::Empty,
+    }
+}
+
+/// Replace whole-word, case-insensitive uses of `name` outside string literals
+/// with `value`, for a `REPT` counter.
+fn substitute_symbol(source: &str, name: &str, value: usize) -> String {
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.';
+    let mut out = String::with_capacity(source.len());
+    let mut quote = None;
+    let mut rest = source;
+    while let Some(ch) = rest.chars().next() {
+        if let Some(quote_ch) = quote {
+            out.push(ch);
+            rest = &rest[ch.len_utf8()..];
+            if ch == '\\' {
+                if let Some(escaped) = rest.chars().next() {
+                    out.push(escaped);
+                    rest = &rest[escaped.len_utf8()..];
+                }
+            } else if ch == quote_ch {
+                quote = None;
+            }
+            continue;
+        }
+        if ch == '"' {
+            quote = Some(ch);
+        }
+        if is_word(ch) {
+            let len = rest.find(|ch: char| !is_word(ch)).unwrap_or(rest.len());
+            let word = &rest[..len];
+            if word.eq_ignore_ascii_case(name) {
+                out.push_str(&value.to_string());
+            } else {
+                out.push_str(word);
+            }
+            rest = &rest[len..];
+            continue;
+        }
+        out.push(ch);
+        rest = &rest[ch.len_utf8()..];
+    }
+    out
+}
+
+const COMPARISONS: [&str; 8] = ["==", "!=", "<>", "<=", ">=", "=", "<", ">"];
+
+/// Split an `ASSERT` condition at its single comparison operator, if any.
+fn split_comparison(condition: &str) -> Result<Option<(&str, &str, &str)>, AsmError> {
+    let mut found = None;
+    let mut quote = None;
+    let mut index = 0;
+    while index < condition.len() {
+        let rest = &condition[index..];
+        let ch = rest.chars().next().unwrap();
+        if let Some(quote_ch) = quote {
+            if ch == quote_ch {
+                quote = None;
+            }
+        } else if ch == '"' || ch == '\'' {
+            quote = Some(ch);
+        } else if let Some(op) = COMPARISONS.iter().find(|op| rest.starts_with(**op)) {
+            if found.is_some() {
+                return Err(AsmError::new(format!(
+                    "ASSERT condition '{condition}' has more than one comparison"
+                )));
+            }
+            found = Some((&condition[..index], *op, &condition[index + op.len()..]));
+            index += op.len();
+            continue;
+        }
+        index += ch.len_utf8();
+    }
+    Ok(found)
+}
+
+fn check_assert(
+    condition: &str,
+    message: Option<&str>,
+    pc: u16,
+    symbols: &BTreeMap<String, u16>,
+    mappings: &BTreeMap<String, AsmMapping>,
+) -> Result<(), AsmError> {
+    let eval = |expr: &str| eval_expr(expr, pc, symbols, mappings, false, 0);
+    let (holds, values) = match split_comparison(condition)? {
+        Some((left, op, right)) => {
+            let (left, right) = (eval(left)?, eval(right)?);
+            let holds = match op {
+                "=" | "==" => left == right,
+                "!=" | "<>" => left != right,
+                "<" => left < right,
+                "<=" => left <= right,
+                ">" => left > right,
+                ">=" => left >= right,
+                _ => unreachable!("COMPARISONS lists every operator"),
+            };
+            (holds, format!("left is {left}, right is {right}"))
+        }
+        None => {
+            let value = eval(condition)?;
+            (value != 0, format!("value is {value}"))
+        }
+    };
+    if holds {
+        return Ok(());
+    }
+    let what = message.unwrap_or(condition.trim());
+    Err(AsmError::new(format!(
+        "assertion failed: {what} ({values})"
+    )))
 }
 
 fn parse_org(source: &str) -> Result<Statement, AsmError> {
