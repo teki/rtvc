@@ -696,6 +696,14 @@ Built-in Disks. A ZIP is classified by the `.cas` / `.dsk` entries inside it, so
 large images can be committed compressed. Rerun the bundle command after adding
 or removing a file.
 
+The `?run=<file>` URL parameter launches media at startup, for linking
+testable games. `<file>` is a bundled media name, a path relative to the page,
+or an absolute URL (other origins must allow CORS). `app.js` fetches it and
+`EmuApp::queue_media_launch` opens it on the first frame through the same path
+as a dropped file: CAS, DSK, and ZIP start from the clean TVC 1.2 VT-DOS
+snapshot; snapshots and `.z80` files load directly. A failed fetch is shown in
+the status bar.
+
 ## Native and Web UI
 
 ### Modes and panes

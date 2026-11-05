@@ -309,6 +309,11 @@ impl WebHandle {
         if let Some(error) = storage_error {
             app.set_file_status(format!("Browser storage unavailable: {error}"));
         }
+        match load_startup_launch() {
+            Ok(Some(file)) => app.queue_media_launch(file.name, file.bytes),
+            Ok(None) => {}
+            Err(error) => app.set_file_status(error),
+        }
 
         let runner = self.runner.clone();
         wasm_bindgen_futures::spawn_local(async move {
@@ -341,6 +346,29 @@ extern "C" {
 
     #[wasm_bindgen(js_namespace = globalThis, js_name = rtvcGetStartupBundledMedia)]
     fn web_startup_bundled_media() -> JsValue;
+
+    #[wasm_bindgen(js_namespace = globalThis, js_name = rtvcGetStartupLaunch)]
+    fn web_startup_launch() -> JsValue;
+}
+
+/// Media named by the page URL's `?run=` parameter, fetched by app.js.
+/// app.js reports a failed fetch as `{ error }`.
+#[cfg(feature = "wasm-full")]
+fn load_startup_launch() -> Result<Option<crate::emu::WasmRecentFile>, String> {
+    let record = web_startup_launch();
+    if record.is_undefined() || record.is_null() {
+        return Ok(None);
+    }
+    let get = |key: &str| js_sys::Reflect::get(&record, &JsValue::from_str(key)).ok();
+    if let Some(error) = get("error").and_then(|value| value.as_string()) {
+        return Err(error);
+    }
+    let name = get("name").and_then(|value| value.as_string()).unwrap_or_default();
+    let bytes = get("bytes")
+        .filter(|value| value.is_object())
+        .map(|value| js_sys::Uint8Array::new(&value).to_vec())
+        .ok_or("run URL returned no data")?;
+    Ok(Some(crate::emu::WasmRecentFile { name, bytes }))
 }
 
 /// Media files from the bundle's `bundled/` directory, fetched by app.js.

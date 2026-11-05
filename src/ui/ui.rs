@@ -354,6 +354,8 @@ where
 
 pub struct EmuApp {
     pub emu: Emu,
+    /// Media to launch on the next frame (web `?run=` URL parameter).
+    pending_launch: Option<(String, Vec<u8>)>,
     screen_texture: Option<TextureHandle>,
     last_frame_time: Instant,
     last_repaint_time: Instant,
@@ -405,6 +407,7 @@ impl EmuApp {
             last_frame_time: Instant::now(),
             last_repaint_time: Instant::now(),
             emu_frame_accumulator: 0.0,
+            pending_launch: None,
             frame_count: 0,
             fps: 0,
             prev_shift: false,
@@ -604,6 +607,21 @@ impl EmuApp {
 
     pub fn set_file_status(&mut self, status: String) {
         self.file_status = Some(status);
+    }
+
+    /// Opens media on the next frame exactly as if it had been dropped on the
+    /// window: CAS/DSK/ZIP start on TVC 1.2 VT-DOS, snapshots load directly.
+    pub fn queue_media_launch(&mut self, name: String, bytes: Vec<u8>) {
+        self.pending_launch = Some((name, bytes));
+    }
+
+    fn run_pending_launch(&mut self, ctx: &egui::Context) {
+        if let Some((name, bytes)) = self.pending_launch.take() {
+            self.file_status = Some(match self.open_media_bytes(&name, &bytes, ctx) {
+                Ok(status) => status,
+                Err(err) => format!("Open failed for {name}: {err}"),
+            });
+        }
     }
 
     fn sync_selection_from_emu(&mut self) {
@@ -1305,7 +1323,16 @@ impl EmuApp {
             (None, Some(path)) => std::fs::read(path)?,
             (None, None) => return Err("dropped file has no data".into()),
         };
-        match crate::emu::classify_dropped_media(name, &bytes)? {
+        self.open_media_bytes(name, &bytes, ctx)
+    }
+
+    fn open_media_bytes(
+        &mut self,
+        name: &str,
+        bytes: &[u8],
+        ctx: &egui::Context,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        match crate::emu::classify_dropped_media(name, bytes)? {
             crate::emu::DroppedMedia::Z80(data) => {
                 self.emu.load_z80_bytes(&data)?;
                 self.sync_selection_from_emu();
@@ -2814,6 +2841,7 @@ impl eframe::App for EmuApp {
         }
 
         self.handle_game_events(ctx);
+        self.run_pending_launch(ctx);
         self.handle_dropped_files(ctx);
 
         #[cfg(not(target_arch = "wasm32"))]

@@ -779,6 +779,8 @@ globalThis.rtvcGetStartupStorageError = () => globalThis.rtvcStartupStorageError
 globalThis.rtvcGetStartupRecentMedia = () => globalThis.rtvcStartupRecentMedia;
 globalThis.rtvcStartupBundledMedia = [];
 globalThis.rtvcGetStartupBundledMedia = () => globalThis.rtvcStartupBundledMedia;
+globalThis.rtvcStartupLaunch = null;
+globalThis.rtvcGetStartupLaunch = () => globalThis.rtvcStartupLaunch;
 
 globalThis.rtvcAudioInit = async (sampleRate) => {
   const AudioContext = globalThis.AudioContext || globalThis.webkitAudioContext;
@@ -1102,11 +1104,34 @@ async function loadBundledMedia() {
   return files.filter((file) => file !== null);
 }
 
+// `?run=<file>` opens a game at startup as if it were dropped on the page.
+// <file> is a bundled media name, a path relative to this page, or a URL
+// (other origins must allow CORS).
+async function loadStartupLaunch(bundledMedia) {
+  const target = new URLSearchParams(location.search).get("run");
+  if (!target) {
+    return null;
+  }
+  const bundled = (await bundledMedia).find((file) => file.name === target);
+  if (bundled) {
+    return bundled;
+  }
+  try {
+    const url = new URL(target, location.href);
+    const name = decodeURIComponent(url.pathname.split("/").pop() || "") || target;
+    return { name, bytes: await globalThis.rtvcFetchBytes(url.href) };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { error: `Could not open ${target}: ${message}` };
+  }
+}
+
 async function run() {
   const bundledMedia = loadBundledMedia().catch((error) => {
     console.warn("Failed to load bundled media", error);
     return [];
   });
+  const startupLaunch = loadStartupLaunch(bundledMedia);
   await init();
   const canvas = document.getElementById("tvc_canvas");
   globalThis.rtvcStartupAudioError = await globalThis.rtvcAudioInit(44100);
@@ -1119,6 +1144,7 @@ async function run() {
       error instanceof Error ? error.message : String(error);
   }
   globalThis.rtvcStartupBundledMedia = await bundledMedia;
+  globalThis.rtvcStartupLaunch = await startupLaunch;
   installKeyboard(canvas);
   const handle = new WebHandle();
   globalThis.rtvcHandle = handle;
@@ -1145,6 +1171,7 @@ mod tests {
             "[\n  \"a.dsk\",\n  \"b\\\"c.zip\"\n]\n"
         );
         assert!(WEB_FULL_APP_JS.contains("./bundled/index.json"));
+        assert!(WEB_FULL_APP_JS.contains(r#"get("run")"#));
     }
 
     #[test]

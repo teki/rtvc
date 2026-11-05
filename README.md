@@ -237,7 +237,10 @@ equivalents; press Escape to close the dialog. The web emulator can also open
 local CAS, DSK, ZIP, and snapshot files. CAS, DSK, or ZIP files placed in
 `docs/bundled/` before running `cargo xtask bundle-web-full docs` are shipped
 with the web build and listed in its Tape and Disk menus; prefer ZIP so large
-disk images are committed compressed. Small web preferences use
+disk images are committed compressed. Add `?run=<file>` to the page URL to
+start a game straight away, for example `index.html?run=lasersqd_tvc.zip`;
+`<file>` can be a bundled name, a path relative to the page, or a URL on a
+server that allows cross-origin requests. Small web preferences use
 `localStorage`; recent tape and disk bytes use IndexedDB. Native Gamebase media
 is cached under `rtvc-media/` beside the active `rtvc.toml`. Loading a Gamebase
 title automatically starts from the clean, embedded TVC 1.2 VT-DOS snapshot,

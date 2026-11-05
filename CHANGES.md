@@ -7,6 +7,8 @@ Release notes start here. Older release history is intentionally not backfilled.
 - The web build can ship tapes and disks: CAS, DSK, or ZIP files in
   `docs/bundled/` appear in the web Tape and Disk menus. Laser Squad is the
   first bundled disk.
+- Web links can start a game: `?run=<file>` opens a bundled name, relative
+  path, or URL the same way as dropping the file on the page.
 - The assembler accepts the undocumented Z80 forms the disassembler prints:
   `IXH`/`IXL`/`IYH`/`IYL` operands and indexed rotate, shift, `RES`, and `SET`
   instructions that copy the result to a register.
