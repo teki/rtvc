@@ -158,9 +158,61 @@ fn bundle_web_full(out_dir: Option<&Path>) -> Result<(), String> {
         .map_err(|err| format!("failed to write app.js: {err}"))?;
     fs::write(bundle_dir.join("audio-worklet.js"), AUDIO_WORKLET_JS)
         .map_err(|err| format!("failed to write audio-worklet.js: {err}"))?;
+    write_bundled_media_index(&bundle_dir)?;
 
     println!("web full bundle written to {}", bundle_dir.display());
     Ok(())
+}
+
+/// Lists the CAS/DSK/ZIP files in `<bundle>/bundled/` into
+/// `bundled/index.json`, which app.js fetches at startup so they show up in
+/// the Tape and Disk menus. Static hosts cannot list directories.
+fn write_bundled_media_index(bundle_dir: &Path) -> Result<(), String> {
+    let dir = bundle_dir.join("bundled");
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    let mut names: Vec<String> = fs::read_dir(&dir)
+        .map_err(|err| format!("failed to read {}: {err}", dir.display()))?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().is_file())
+        .map(|entry| entry.file_name().to_string_lossy().to_string())
+        .filter(|name| is_bundled_media_name(name))
+        .collect();
+    names.sort();
+    fs::write(dir.join("index.json"), bundled_media_index_json(&names))
+        .map_err(|err| format!("failed to write bundled/index.json: {err}"))?;
+    println!("bundled media: {}", if names.is_empty() { "(none)".to_string() } else { names.join(", ") });
+    Ok(())
+}
+
+fn is_bundled_media_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    [".cas", ".dsk", ".zip"].iter().any(|ext| lower.ends_with(ext))
+}
+
+fn bundled_media_index_json(names: &[String]) -> String {
+    let items: Vec<String> = names
+        .iter()
+        .map(|name| {
+            let mut quoted = String::from("\"");
+            for ch in name.chars() {
+                match ch {
+                    '"' => quoted.push_str("\\\""),
+                    '\\' => quoted.push_str("\\\\"),
+                    c if (c as u32) < 0x20 => quoted.push_str(&format!("\\u{:04x}", c as u32)),
+                    c => quoted.push(c),
+                }
+            }
+            quoted.push('"');
+            format!("  {quoted}")
+        })
+        .collect();
+    if items.is_empty() {
+        "[]\n".to_string()
+    } else {
+        format!("[\n{}\n]\n", items.join(",\n"))
+    }
 }
 
 fn write_web_bundle(workspace: &Path, bundle_dir: &Path) -> Result<(), String> {
@@ -725,6 +777,8 @@ globalThis.rtvcStartupRecentMedia = [];
 globalThis.rtvcGetStartupAudioError = () => globalThis.rtvcStartupAudioError;
 globalThis.rtvcGetStartupStorageError = () => globalThis.rtvcStartupStorageError;
 globalThis.rtvcGetStartupRecentMedia = () => globalThis.rtvcStartupRecentMedia;
+globalThis.rtvcStartupBundledMedia = [];
+globalThis.rtvcGetStartupBundledMedia = () => globalThis.rtvcStartupBundledMedia;
 
 globalThis.rtvcAudioInit = async (sampleRate) => {
   const AudioContext = globalThis.AudioContext || globalThis.webkitAudioContext;
@@ -1026,7 +1080,33 @@ function legacyKeyCode(event) {
   }[event.code] ?? 0;
 }
 
+async function loadBundledMedia() {
+  const response = await fetch("./bundled/index.json", { cache: "no-cache" });
+  if (!response.ok) {
+    return [];
+  }
+  const names = await response.json();
+  const files = await Promise.all(
+    names.map(async (name) => {
+      try {
+        const bytes = await globalThis.rtvcFetchBytes(
+          `./bundled/${encodeURIComponent(name)}`
+        );
+        return { name, bytes };
+      } catch (error) {
+        console.warn(`Failed to load bundled media ${name}`, error);
+        return null;
+      }
+    })
+  );
+  return files.filter((file) => file !== null);
+}
+
 async function run() {
+  const bundledMedia = loadBundledMedia().catch((error) => {
+    console.warn("Failed to load bundled media", error);
+    return [];
+  });
   await init();
   const canvas = document.getElementById("tvc_canvas");
   globalThis.rtvcStartupAudioError = await globalThis.rtvcAudioInit(44100);
@@ -1038,6 +1118,7 @@ async function run() {
     globalThis.rtvcStartupStorageError =
       error instanceof Error ? error.message : String(error);
   }
+  globalThis.rtvcStartupBundledMedia = await bundledMedia;
   installKeyboard(canvas);
   const handle = new WebHandle();
   globalThis.rtvcHandle = handle;
@@ -1052,6 +1133,19 @@ run().catch((err) => {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bundled_media_index_lists_media_as_json() {
+        assert!(is_bundled_media_name("LASERSQD.ZIP"));
+        assert!(is_bundled_media_name("game.cas"));
+        assert!(!is_bundled_media_name("index.json"));
+        assert_eq!(bundled_media_index_json(&[]), "[]\n");
+        assert_eq!(
+            bundled_media_index_json(&["a.dsk".to_string(), "b\"c.zip".to_string()]),
+            "[\n  \"a.dsk\",\n  \"b\\\"c.zip\"\n]\n"
+        );
+        assert!(WEB_FULL_APP_JS.contains("./bundled/index.json"));
+    }
 
     #[test]
     fn web_keyboard_filters_held_physical_key_repeats() {

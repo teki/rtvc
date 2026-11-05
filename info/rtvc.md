@@ -686,6 +686,16 @@ post-boot fixture and the Gamebase launch base.
 `cargo xtask bundle-web-skeleton` builds the player without an embedded
 snapshot. `cargo xtask bundle-web-full` builds the complete web UI.
 
+Full web bundles can ship media: CAS, DSK, and ZIP files placed in
+`<out-dir>/bundled/` (for the published build, `docs/bundled/`) are listed into
+`bundled/index.json` by `bundle-web-full`, because static hosts cannot list
+directories. `app.js` fetches the index and every listed file at startup, and
+`Emu::set_bundled_media` turns them into the `progs` entries that native builds
+scan from `progs/`, so they appear under the Tape menu and the Disk menu's
+Built-in Disks. A ZIP is classified by the `.cas` / `.dsk` entries inside it, so
+large images can be committed compressed. Rerun the bundle command after adding
+or removing a file.
+
 ## Native and Web UI
 
 ### Modes and panes

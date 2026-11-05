@@ -234,7 +234,10 @@ The native and web File menus provide a TVC Gamebase browser whose catalog,
 screenshots, and selected game archive are fetched on demand. Its name filter is
 case-insensitive and treats Hungarian accented vowels as their unaccented
 equivalents; press Escape to close the dialog. The web emulator can also open
-local CAS, DSK, ZIP, and snapshot files. Small web preferences use
+local CAS, DSK, ZIP, and snapshot files. CAS, DSK, or ZIP files placed in
+`docs/bundled/` before running `cargo xtask bundle-web-full docs` are shipped
+with the web build and listed in its Tape and Disk menus; prefer ZIP so large
+disk images are committed compressed. Small web preferences use
 `localStorage`; recent tape and disk bytes use IndexedDB. Native Gamebase media
 is cached under `rtvc-media/` beside the active `rtvc.toml`. Loading a Gamebase
 title automatically starts from the clean, embedded TVC 1.2 VT-DOS snapshot,

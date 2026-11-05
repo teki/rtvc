@@ -1,7 +1,9 @@
 use std::collections::{HashMap, VecDeque};
 use std::io::Read;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::cas::TapeBitstreamGenerator;
@@ -112,6 +114,9 @@ pub struct Emu {
     loaded_disk_wasm: [Option<WasmRecentFile>; MAX_DISK_UNITS],
     #[cfg(target_arch = "wasm32")]
     loaded_tape_was_injected: bool,
+    /// Media shipped with the web bundle (`bundled/`), listed in `progs`.
+    #[cfg(target_arch = "wasm32")]
+    bundled_media: Vec<WasmRecentFile>,
     typed_text: VecDeque<char>,
     typed_key: Option<u32>,
     typed_key_frames: u32,
@@ -160,6 +165,8 @@ impl Emu {
             loaded_disk_wasm: Default::default(),
             #[cfg(target_arch = "wasm32")]
             loaded_tape_was_injected: false,
+            #[cfg(target_arch = "wasm32")]
+            bundled_media: Vec::new(),
             typed_text: VecDeque::new(),
             typed_key: None,
             typed_key_frames: 0,
@@ -982,84 +989,60 @@ impl Emu {
     pub fn scan_progs(&mut self) {
         #[cfg(target_arch = "wasm32")]
         {
-            self.progs.clear();
-            self.selected_prog = 0;
+            let files: Vec<(String, &[u8])> = self
+                .bundled_media
+                .iter()
+                .map(|media| (media.name.clone(), media.bytes.as_slice()))
+                .collect();
+            self.progs = prog_entries(files);
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.progs.clear();
             let dir = data_dir("progs");
-            if !dir.exists() {
+            let Ok(rd) = std::fs::read_dir(&dir) else {
                 return;
-            }
-            let mut entries: Vec<_> = match std::fs::read_dir(&dir) {
-                Ok(rd) => rd
-                    .filter_map(|e| e.ok())
-                    .filter(|e| {
-                        let path = e.path();
-                        let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-                        ext.eq_ignore_ascii_case("zip")
-                            || ext.eq_ignore_ascii_case("cas")
-                            || ext.eq_ignore_ascii_case("dsk")
-                    })
-                    .collect(),
-                Err(_) => return,
             };
-            entries.sort_by_key(|e| e.file_name());
-            for entry in entries {
-                let file_name = entry.file_name().to_string_lossy().to_string();
-                let name = if file_name.to_lowercase().ends_with(".zip") {
-                    file_name
-                        .strip_suffix(".zip")
-                        .unwrap_or(&file_name)
-                        .to_string()
-                } else {
-                    file_name
-                        .strip_suffix(".cas")
-                        .or_else(|| file_name.strip_suffix(".dsk"))
-                        .unwrap_or(&file_name)
-                        .to_string()
-                };
-
-                let path = dir.join(&file_name);
-                let mut is_cas = false;
-                let mut is_disk = false;
-                if file_name.to_lowercase().ends_with(".cas") {
-                    is_cas = true;
-                } else if file_name.to_lowercase().ends_with(".dsk") {
-                    is_disk = true;
-                } else if file_name.to_lowercase().ends_with(".zip") {
-                    if let Ok(data) = std::fs::read(&path) {
-                        let reader = std::io::Cursor::new(data);
-                        if let Ok(mut archive) = zip::ZipArchive::new(reader) {
-                            for i in 0..archive.len() {
-                                if let Ok(file) = archive.by_index(i) {
-                                    let entry_name = file.name().to_lowercase();
-                                    if entry_name.ends_with(".cas") {
-                                        is_cas = true;
-                                    } else if entry_name.ends_with(".dsk") {
-                                        is_disk = true;
-                                    }
-                                    if is_cas && is_disk {
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                self.progs.push(ProgEntry {
-                    name,
-                    file_name,
-                    is_cas,
-                    is_disk,
-                });
-            }
-            if self.selected_prog >= self.progs.len() {
-                self.selected_prog = 0;
-            }
+            let files: Vec<(String, Vec<u8>)> = rd
+                .filter_map(|e| e.ok())
+                .filter_map(|e| {
+                    let file_name = e.file_name().to_string_lossy().to_string();
+                    let ext = media_extension(&file_name)?;
+                    // Only ZIP classification needs the contents.
+                    let bytes = if ext == "zip" {
+                        std::fs::read(e.path()).unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    };
+                    Some((file_name, bytes))
+                })
+                .collect();
+            self.progs = prog_entries(
+                files
+                    .iter()
+                    .map(|(name, bytes)| (name.clone(), bytes.as_slice())),
+            );
         }
+        if self.selected_prog >= self.progs.len() {
+            self.selected_prog = 0;
+        }
+    }
+
+    /// Replaces the media shipped with the web bundle and rebuilds `progs`.
+    #[cfg(target_arch = "wasm32")]
+    pub fn set_bundled_media(&mut self, files: Vec<WasmRecentFile>) {
+        self.bundled_media = files;
+        self.scan_progs();
+    }
+
+    /// Bytes of the selected bundled entry (web builds have no `progs/` dir).
+    #[cfg(target_arch = "wasm32")]
+    fn selected_bundled_media(&self) -> Option<WasmRecentFile> {
+        let entry = self.progs.get(self.selected_prog)?;
+        self.bundled_media
+            .iter()
+            .find(|media| media.name == entry.file_name)
+            .cloned()
     }
 
     pub fn load_selected_prog(&mut self) {
@@ -1083,8 +1066,17 @@ impl Emu {
         if !entry.is_cas {
             return;
         }
-        let path = data_dir("progs").join(&entry.file_name);
-        if let Err(err) = self.inject_tape_file_path(&path) {
+        #[cfg(target_arch = "wasm32")]
+        let result = match self.selected_bundled_media() {
+            Some(media) => self.inject_tape_bytes(&media.name, &media.bytes),
+            None => return,
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let result = {
+            let path = data_dir("progs").join(&entry.file_name);
+            self.inject_tape_file_path(&path)
+        };
+        if let Err(err) = result {
             eprintln!("failed to inject selected tape: {err}");
         }
     }
@@ -1122,8 +1114,19 @@ impl Emu {
             .get(self.selected_prog)
             .filter(|entry| entry.is_cas)
             .ok_or("No cassette tape is selected")?;
-        let path = data_dir("progs").join(&entry.file_name);
-        self.inject_tape_file_path(&path)
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = entry;
+            let media = self
+                .selected_bundled_media()
+                .ok_or("Selected tape is not available")?;
+            self.inject_tape_bytes(&media.name, &media.bytes)
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let path = data_dir("progs").join(&entry.file_name);
+            self.inject_tape_file_path(&path)
+        }
     }
 
     pub fn insert_selected_disk(&mut self) {
@@ -1134,8 +1137,17 @@ impl Emu {
         if !entry.is_disk {
             return;
         }
-        let path = data_dir("progs").join(&entry.file_name);
-        if let Err(err) = self.insert_disk_file_path_drive(0, &path) {
+        #[cfg(target_arch = "wasm32")]
+        let result = match self.selected_bundled_media() {
+            Some(media) => self.insert_disk_bytes_drive(0, &media.name, &media.bytes),
+            None => return,
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let result = {
+            let path = data_dir("progs").join(&entry.file_name);
+            self.insert_disk_file_path_drive(0, &path)
+        };
+        if let Err(err) = result {
             eprintln!("failed to insert selected disk: {err}");
         }
     }
@@ -1203,8 +1215,17 @@ impl Emu {
         if !entry.is_cas {
             return;
         }
-        let path = data_dir("progs").join(&entry.file_name);
-        if let Err(err) = self.play_tape_file_path(&path) {
+        #[cfg(target_arch = "wasm32")]
+        let result = match self.selected_bundled_media() {
+            Some(media) => self.play_tape_bytes(&media.name, &media.bytes),
+            None => return,
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let result = {
+            let path = data_dir("progs").join(&entry.file_name);
+            self.play_tape_file_path(&path)
+        };
+        if let Err(err) = result {
             eprintln!("failed to play selected tape: {err}");
         }
     }
@@ -1905,6 +1926,7 @@ fn default_host_file_dir() -> PathBuf {
         .map_or(dir, |parent| parent.join("files"))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn data_dir(name: &str) -> PathBuf {
     let cwd_dir = PathBuf::from(name);
     if cwd_dir.exists() {
@@ -1982,6 +2004,52 @@ fn read_dsk_data(path: &Path) -> Result<(String, Vec<u8>), Box<dyn std::error::E
         .to_string();
     let data = std::fs::read(path)?;
     unpack_dsk_bytes(&file_name, &data)
+}
+
+/// Lower-case extension of a supported media file name (`cas`, `dsk`, `zip`).
+fn media_extension(file_name: &str) -> Option<&'static str> {
+    let lower = file_name.to_ascii_lowercase();
+    ["cas", "dsk", "zip"]
+        .into_iter()
+        .find(|ext| lower.ends_with(&format!(".{ext}")))
+}
+
+/// Builds sorted media-menu entries; ZIP archives are classified by the
+/// `.cas` / `.dsk` files they contain.
+fn prog_entries<'a>(files: impl IntoIterator<Item = (String, &'a [u8])>) -> Vec<ProgEntry> {
+    let mut progs: Vec<ProgEntry> = files
+        .into_iter()
+        .filter_map(|(file_name, bytes)| {
+            let ext = media_extension(&file_name)?;
+            let (is_cas, is_disk) = match ext {
+                "cas" => (true, false),
+                "dsk" => (false, true),
+                _ => zip_media_kinds(bytes),
+            };
+            let name = file_name[..file_name.len() - ext.len() - 1].to_string();
+            Some(ProgEntry {
+                name,
+                file_name,
+                is_cas,
+                is_disk,
+            })
+        })
+        .collect();
+    progs.sort_by(|a, b| a.file_name.cmp(&b.file_name));
+    progs
+}
+
+fn zip_media_kinds(bytes: &[u8]) -> (bool, bool) {
+    let (mut is_cas, mut is_disk) = (false, false);
+    let Ok(archive) = zip::ZipArchive::new(std::io::Cursor::new(bytes)) else {
+        return (false, false);
+    };
+    for entry_name in archive.file_names() {
+        let entry_name = entry_name.to_ascii_lowercase();
+        is_cas |= entry_name.ends_with(".cas");
+        is_disk |= entry_name.ends_with(".dsk");
+    }
+    (is_cas, is_disk)
 }
 
 pub fn unpack_cas_bytes(

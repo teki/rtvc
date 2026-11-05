@@ -3,7 +3,7 @@ import init, { WebHandle } from "./rtvc.js";
 const DB_NAME = "rtvc";
 const DB_VERSION = 1;
 const MEDIA_STORE = "recent-media";
-const MAX_RECENT_PER_KIND = 5;
+const MAX_RECENT_PER_KIND = 10;
 const keyboardEvents = [];
 const activeKeyCodes = new Map();
 let audioSink;
@@ -16,6 +16,8 @@ globalThis.rtvcStartupRecentMedia = [];
 globalThis.rtvcGetStartupAudioError = () => globalThis.rtvcStartupAudioError;
 globalThis.rtvcGetStartupStorageError = () => globalThis.rtvcStartupStorageError;
 globalThis.rtvcGetStartupRecentMedia = () => globalThis.rtvcStartupRecentMedia;
+globalThis.rtvcStartupBundledMedia = [];
+globalThis.rtvcGetStartupBundledMedia = () => globalThis.rtvcStartupBundledMedia;
 
 globalThis.rtvcAudioInit = async (sampleRate) => {
   const AudioContext = globalThis.AudioContext || globalThis.webkitAudioContext;
@@ -317,7 +319,33 @@ function legacyKeyCode(event) {
   }[event.code] ?? 0;
 }
 
+async function loadBundledMedia() {
+  const response = await fetch("./bundled/index.json", { cache: "no-cache" });
+  if (!response.ok) {
+    return [];
+  }
+  const names = await response.json();
+  const files = await Promise.all(
+    names.map(async (name) => {
+      try {
+        const bytes = await globalThis.rtvcFetchBytes(
+          `./bundled/${encodeURIComponent(name)}`
+        );
+        return { name, bytes };
+      } catch (error) {
+        console.warn(`Failed to load bundled media ${name}`, error);
+        return null;
+      }
+    })
+  );
+  return files.filter((file) => file !== null);
+}
+
 async function run() {
+  const bundledMedia = loadBundledMedia().catch((error) => {
+    console.warn("Failed to load bundled media", error);
+    return [];
+  });
   await init();
   const canvas = document.getElementById("tvc_canvas");
   globalThis.rtvcStartupAudioError = await globalThis.rtvcAudioInit(44100);
@@ -329,6 +357,7 @@ async function run() {
     globalThis.rtvcStartupStorageError =
       error instanceof Error ? error.message : String(error);
   }
+  globalThis.rtvcStartupBundledMedia = await bundledMedia;
   installKeyboard(canvas);
   const handle = new WebHandle();
   globalThis.rtvcHandle = handle;

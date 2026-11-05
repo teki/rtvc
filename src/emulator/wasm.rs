@@ -297,6 +297,7 @@ impl WebHandle {
         let (recent_tapes, recent_disks, host_files) = load_recent_media()?;
         emu.recent_tapes_wasm = recent_tapes;
         emu.recent_disks_wasm = recent_disks;
+        emu.set_bundled_media(load_bundled_media()?);
         for file in host_files {
             let _ = emu.host_file_memory().insert(&file.name, file.bytes);
         }
@@ -337,6 +338,32 @@ extern "C" {
 
     #[wasm_bindgen(js_namespace = globalThis, js_name = rtvcGetStartupRecentMedia)]
     fn web_startup_recent_media() -> JsValue;
+
+    #[wasm_bindgen(js_namespace = globalThis, js_name = rtvcGetStartupBundledMedia)]
+    fn web_startup_bundled_media() -> JsValue;
+}
+
+/// Media files from the bundle's `bundled/` directory, fetched by app.js.
+#[cfg(feature = "wasm-full")]
+fn load_bundled_media() -> Result<Vec<crate::emu::WasmRecentFile>, JsValue> {
+    let records = web_startup_bundled_media();
+    if records.is_undefined() || records.is_null() {
+        return Ok(Vec::new());
+    }
+    let records = records
+        .dyn_into::<js_sys::Array>()
+        .map_err(|_| JsValue::from_str("bundled media result is not an array"))?;
+    let mut files = Vec::new();
+    for record in records.iter() {
+        let name = js_sys::Reflect::get(&record, &JsValue::from_str("name"))?
+            .as_string()
+            .unwrap_or_default();
+        let bytes =
+            js_sys::Uint8Array::new(&js_sys::Reflect::get(&record, &JsValue::from_str("bytes"))?)
+                .to_vec();
+        files.push(crate::emu::WasmRecentFile { name, bytes });
+    }
+    Ok(files)
 }
 
 #[cfg(feature = "wasm-full")]

@@ -762,3 +762,32 @@ fn zx82_and_cpc_snapshots_reopen_on_their_machine() {
     target.load_snapshot(&tvc).unwrap();
     assert_eq!(target.system(), System::Tvc);
 }
+
+#[test]
+fn prog_entries_classify_bundled_media_including_zip_contents() {
+    let mut zip_bytes = Vec::new();
+    {
+        let mut writer = zip::ZipWriter::new(Cursor::new(&mut zip_bytes));
+        writer
+            .start_file("game/GAME.DSK", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        std::io::Write::write_all(&mut writer, b"disk").unwrap();
+        writer.finish().unwrap();
+    }
+    let progs = prog_entries([
+        ("lasersqd_tvc.zip".to_string(), zip_bytes.as_slice()),
+        ("TVBALL.CAS".to_string(), &[][..]),
+        ("notes.txt".to_string(), &[][..]),
+    ]);
+    let summary: Vec<_> = progs
+        .iter()
+        .map(|p| (p.name.as_str(), p.file_name.as_str(), p.is_cas, p.is_disk))
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("TVBALL", "TVBALL.CAS", true, false),
+            ("lasersqd_tvc", "lasersqd_tvc.zip", false, true),
+        ]
+    );
+}
