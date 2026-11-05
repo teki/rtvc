@@ -1399,49 +1399,49 @@ function __wbg_get_imports() {
             const ret = getObject(arg0).right;
             return ret;
         },
-        __wbg_rtvcAudioPush_2b10a35b52f33de9: function(arg0) {
+        __wbg_rtvcAudioPush_d8d8b9dc0b9ac40e: function(arg0) {
             globalThis.rtvcAudioPush(getObject(arg0));
         },
-        __wbg_rtvcAudioResume_460ce231f2289613: function() { return handleError(function () {
+        __wbg_rtvcAudioResume_5e2e1d2769312b5f: function() { return handleError(function () {
             globalThis.rtvcAudioResume();
         }, arguments); },
-        __wbg_rtvcClearRecentMedia_ab93d8be2f2f908f: function(arg0, arg1) {
+        __wbg_rtvcClearRecentMedia_065645aa372eabea: function(arg0, arg1) {
             const ret = globalThis.rtvcClearRecentMedia(getStringFromWasm0(arg0, arg1));
             return addHeapObject(ret);
         },
-        __wbg_rtvcFetchBytes_407b5e2001476f5b: function(arg0, arg1) {
+        __wbg_rtvcFetchBytes_2b2d85529548a03b: function(arg0, arg1) {
             const ret = globalThis.rtvcFetchBytes(getStringFromWasm0(arg0, arg1));
             return addHeapObject(ret);
         },
-        __wbg_rtvcFetchText_1999450d250c1900: function(arg0, arg1) {
+        __wbg_rtvcFetchText_06dc3d85b3291b64: function(arg0, arg1) {
             const ret = globalThis.rtvcFetchText(getStringFromWasm0(arg0, arg1));
             return addHeapObject(ret);
         },
-        __wbg_rtvcGetStartupAudioError_a9e06c55d217c22c: function() {
+        __wbg_rtvcGetStartupAudioError_9996ac24a50f66b2: function() {
             const ret = globalThis.rtvcGetStartupAudioError();
             return addHeapObject(ret);
         },
-        __wbg_rtvcGetStartupBundledMedia_ad6f0226f76e3401: function() {
+        __wbg_rtvcGetStartupBundledMedia_78ce9e0a64881531: function() {
             const ret = globalThis.rtvcGetStartupBundledMedia();
             return addHeapObject(ret);
         },
-        __wbg_rtvcGetStartupLaunch_aeb798f82ecb2929: function() {
+        __wbg_rtvcGetStartupLaunch_5ee1241138bb8cc2: function() {
             const ret = globalThis.rtvcGetStartupLaunch();
             return addHeapObject(ret);
         },
-        __wbg_rtvcGetStartupRecentMedia_2416076e3d2afd1d: function() {
+        __wbg_rtvcGetStartupRecentMedia_602fedfda677abd3: function() {
             const ret = globalThis.rtvcGetStartupRecentMedia();
             return addHeapObject(ret);
         },
-        __wbg_rtvcGetStartupStorageError_e3ececc804cc22ba: function() {
+        __wbg_rtvcGetStartupStorageError_a1cbfa17071fc9e9: function() {
             const ret = globalThis.rtvcGetStartupStorageError();
             return addHeapObject(ret);
         },
-        __wbg_rtvcStoreRecentMedia_8f32dea3cb56b6cd: function(arg0, arg1, arg2, arg3, arg4) {
+        __wbg_rtvcStoreRecentMedia_caa3ada0468dad4d: function(arg0, arg1, arg2, arg3, arg4) {
             const ret = globalThis.rtvcStoreRecentMedia(getStringFromWasm0(arg0, arg1), getStringFromWasm0(arg2, arg3), getObject(arg4));
             return addHeapObject(ret);
         },
-        __wbg_rtvcTakeKeyboardEvents_efc38756041e8a4a: function() {
+        __wbg_rtvcTakeKeyboardEvents_9985dce57ec37a47: function() {
             const ret = globalThis.rtvcTakeKeyboardEvents();
             return addHeapObject(ret);
         },

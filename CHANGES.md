@@ -4,16 +4,19 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+## v0.8.11 - 2026-11-05
+
 - The web build can ship tapes and disks: CAS, DSK, or ZIP files in
   `docs/bundled/` appear in the web Tape and Disk menus. Laser Squad is the
   first bundled disk.
 - Web links can start a game: `?run=<file>` opens a bundled name, relative
   path, or URL the same way as dropping the file on the page.
+- The assembler repeats blocks with `REPT count[, counter]` … `ENDR`
+  (nestable, counts may use symbols defined above) and checks layout with
+  `ASSERT condition[, "message"]`, which reports both sides on failure.
 - The assembler accepts the undocumented Z80 forms the disassembler prints:
   `IXH`/`IXL`/`IYH`/`IYL` operands and indexed rotate, shift, `RES`, and `SET`
   instructions that copy the result to a register.
-- The Zx82 and CPC Tape menus list recently opened tapes, filtered to the
-  images each machine can load. Recent lists now keep 10 entries.
 - Several emulator instances can run at once: if the debugger port is busy,
   the next free port is used and printed.
 - BASIC 1.2 ROM listings: code hidden in `DB` lines or decoded off its real
