@@ -161,7 +161,7 @@ tape loading stripes show; colour changes within a line are not resolved. Plain 
 and 3 are supported; expanded-machine and peripheral-dependent states are
 rejected.
 
-`Cpc` is an experimental Amstrad CPC 464 without audio, cassette output, disk,
+`Cpc` is an experimental Amstrad CPC 464 (hardware reference: [arnold.md](arnold.md)) without audio, cassette output, disk,
 or expansion ROMs. It loads `roms/CPC_OS_464.ROM` (lower ROM) and
 `roms/CPC_BASIC_1.0.ROM` (upper ROM) over 64 KiB RAM; Gate Array mode/ROM
 writes enable or disable each ROM, and writes always reach RAM. The CPU runs at
