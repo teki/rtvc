@@ -384,6 +384,20 @@ impl Machine {
         }
     }
 
+    /// Presses the key that types `ch` without a host key and returns the
+    /// code that releases it through [`Machine::key_up`].
+    pub fn press_char(&mut self, ch: char) -> u32 {
+        if let Self::Tvc(tvc) = self {
+            return tvc.press_char(ch);
+        }
+        let code = ch as u32;
+        self.key_down(code);
+        if ch != '\r' {
+            self.key_press(ch);
+        }
+        code
+    }
+
     pub fn focus_change(&mut self, has_focus: bool) {
         match self {
             Self::Tvc(tvc) => tvc.focus_change(has_focus),

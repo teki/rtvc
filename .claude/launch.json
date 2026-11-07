@@ -4,8 +4,36 @@
     {
       "name": "web-docs",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8765", "--directory", "docs"],
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8765",
+        "--directory",
+        "docs"
+      ],
       "port": 8765
+    },
+    {
+      "name": "web-player",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-c",
+        "import functools,http.server,sys;H=type('H',(http.server.SimpleHTTPRequestHandler,),{'end_headers':lambda s:(s.send_header('Cache-Control','no-store'),http.server.SimpleHTTPRequestHandler.end_headers(s))[1]});http.server.ThreadingHTTPServer(('0.0.0.0',int(sys.argv[1])),functools.partial(H,directory=sys.argv[2])).serve_forever()",
+        "8766",
+        "dist/rtvc-web-skeleton"
+      ],
+      "port": 8766
+    },
+    {
+      "name": "web-full",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-c",
+        "import functools,http.server,sys;H=type('H',(http.server.SimpleHTTPRequestHandler,),{'end_headers':lambda s:(s.send_header('Cache-Control','no-store'),http.server.SimpleHTTPRequestHandler.end_headers(s))[1]});http.server.ThreadingHTTPServer(('0.0.0.0',int(sys.argv[1])),functools.partial(H,directory=sys.argv[2])).serve_forever()",
+        "8767",
+        "dist/rtvc-web-full"
+      ],
+      "port": 8767
     }
   ]
 }

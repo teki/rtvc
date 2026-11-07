@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::io::Read;
 use std::io::Write;
 use std::path::Path;
@@ -15,6 +15,7 @@ use crate::host_file::HostFileStore;
 #[cfg(target_arch = "wasm32")]
 use crate::host_file::MemoryStore;
 use crate::instruction_trace::{InstructionTrace, InstructionTraceEntry};
+use crate::key::{KeyTyper, TypedKeyStep};
 use crate::machine::VidModel;
 use crate::machine::{DebugRunToIrqResult, FramebufferRef, Machine, System};
 use crate::mmu::RomBank;
@@ -25,8 +26,6 @@ use crate::z80::Z80State;
 use crate::zx82::Zx82;
 
 const GAMEBASE_BOOT_SNAPSHOT: &[u8] = include_bytes!("../../snapshots/boot12dos.rtvcsnap.zip");
-const TYPED_KEY_HOLD_FRAMES: u32 = 3;
-const TYPED_KEY_GAP_FRAMES: u32 = 1;
 /// Two drives for each of up to four HBF cards.
 pub const MAX_DISK_UNITS: usize = 8;
 /// Recent-list length per media kind. TVC, Zx82, and CPC tapes share one
@@ -117,10 +116,7 @@ pub struct Emu {
     /// Media shipped with the web bundle (`bundled/`), listed in `progs`.
     #[cfg(target_arch = "wasm32")]
     bundled_media: Vec<WasmRecentFile>,
-    typed_text: VecDeque<char>,
-    typed_key: Option<u32>,
-    typed_key_frames: u32,
-    typed_gap_frames: u32,
+    typer: KeyTyper,
     timed_keys: HashMap<u32, u32>,
     tvc_fast_boot: bool,
     warp_loading: bool,
@@ -167,10 +163,7 @@ impl Emu {
             loaded_tape_was_injected: false,
             #[cfg(target_arch = "wasm32")]
             bundled_media: Vec::new(),
-            typed_text: VecDeque::new(),
-            typed_key: None,
-            typed_key_frames: 0,
-            typed_gap_frames: 0,
+            typer: KeyTyper::default(),
             timed_keys: HashMap::new(),
             tvc_fast_boot: false,
             warp_loading: false,
@@ -334,6 +327,12 @@ impl Emu {
 
     pub fn type_text(&mut self, text: &str) {
         self.queue_typed_text(text);
+    }
+
+    /// Queues text after anything still being typed, for keyboards that
+    /// deliver characters without a usable key code (phone soft keyboards).
+    pub fn append_typed_text(&mut self, text: &str) {
+        self.typer.push_str(text);
     }
 
     pub fn focus_change(&mut self, has_focus: bool) {
@@ -526,45 +525,25 @@ impl Emu {
     }
 
     fn clear_typed_text(&mut self) {
-        if let Some(code) = self.typed_key.take() {
+        if let Some(code) = self.typer.clear() {
             self.machine.key_up(code);
         }
-        self.typed_key_frames = 0;
-        self.typed_gap_frames = 0;
-        self.typed_text.clear();
     }
 
     fn queue_typed_text(&mut self, text: &str) {
         self.clear_typed_text();
-        self.typed_text.extend(text.chars());
+        self.typer.push_str(text);
     }
 
     fn advance_typed_text(&mut self) {
-        if let Some(code) = self.typed_key {
-            if self.typed_key_frames > 1 {
-                self.typed_key_frames -= 1;
-                return;
+        match self.typer.step() {
+            TypedKeyStep::Idle => {}
+            TypedKeyStep::Release(code) => self.machine.key_up(code),
+            TypedKeyStep::Press(ch) => {
+                let code = self.machine.press_char(ch);
+                self.typer.pressed(code);
             }
-            self.machine.key_up(code);
-            self.typed_key = None;
-            self.typed_key_frames = 0;
-            self.typed_gap_frames = TYPED_KEY_GAP_FRAMES;
-            return;
         }
-        if self.typed_gap_frames != 0 {
-            self.typed_gap_frames -= 1;
-            return;
-        }
-        let Some(ch) = self.typed_text.pop_front() else {
-            return;
-        };
-        let code = ch as u32;
-        self.machine.key_down(code);
-        if ch != '\r' {
-            self.machine.key_press(ch);
-        }
-        self.typed_key = Some(code);
-        self.typed_key_frames = TYPED_KEY_HOLD_FRAMES;
     }
 
     fn advance_timed_keys(&mut self) {

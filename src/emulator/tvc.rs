@@ -925,6 +925,11 @@ impl Tvc {
         self.bus.key.key_press(ch);
     }
 
+    /// Presses the key that types `ch` and returns the code that releases it.
+    pub fn press_char(&mut self, ch: char) -> u32 {
+        self.bus.key.press_char(ch)
+    }
+
     pub fn log_entries(&self) -> &[LogEntry] {
         &self.bus.log.entries
     }

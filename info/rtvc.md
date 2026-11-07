@@ -144,8 +144,10 @@ not just CPU registers.
 
 The native UI requests repaints continuously while running but generates TVC
 frames on a 50 Hz real-time gate. Faster host refreshes reuse the current
-texture. When emulation falls behind, the UI drops backlog rather than running
-multiple catch-up frames in one repaint.
+texture. A late or uneven repaint runs every frame that is due, up to five
+(0.1 s), within the 15 ms frame budget, and shows only the last one. Older
+backlog is dropped. Without catch-up, phone browsers with uneven repaint timing
+lost about one TVC frame in ten.
 
 `Zx82` executes the Spectrum ROM against a fixed 16 KiB ROM and 48 KiB RAM
 map, offers one interrupt every 69,888 T-states, and draws a 352 x 296
@@ -224,7 +226,7 @@ a share of blocks, so long pauses and pilot tones count by their length.
 
 ### Warp While Loading
 
-The status bar's **Warp** checkbox, after the tape status, is enabled only
+The status bar's **Warp** checkbox, after the tape name, is enabled only
 while `Machine::tape_loading()` is true: a TVC tape that is playing with the
 motor on, or the Zx82/CPC conditions above. While it is checked and a load is
 active, each repaint runs frames back to back for up to 15 ms of host time
@@ -294,7 +296,10 @@ The CPU runs for the host frame budget, then `Vid::draw_frame()` renders the
 whole 608 x 288 framebuffer from the current VRAM, palette, and CRTC state.
 
 This is faster and simpler but cannot reproduce raster changes made during the
-frame. Lightweight WASM constructors default to Fast frame. JavaScript can call
+frame. Lightweight WASM constructors default to Fast frame. The full web build
+also starts in Fast frame on touch devices (`(pointer: coarse)`) when no video
+model has been saved; phone browsers, especially iOS Safari without its JIT,
+cannot run Interleaved at full speed. JavaScript can call
 `setVidModel("interleaved")`; `simple` and `realistic` remain accepted aliases.
 
 ### Current CRTC policy
@@ -362,6 +367,46 @@ accelerator (row 8/9, C4) and the row 9 joystick port have no host key.
 In Developer mode, the user must click the Screen pane to capture TVC input.
 Escape, focus loss, hiding the pane, or clicking another pane releases capture.
 Simple mode routes keyboard input directly.
+
+### Typed text and phone keyboards
+
+`Key::press_char` presses the matrix key for a character without a host key.
+It uses a synthetic release code above the Unicode range, so it is unaffected
+by mappings cached for physical keys. `KeyTyper` queues characters and holds
+each for three emulated frames, then leaves one frame free so repeated
+characters register. `Emu::type_text` (debugger), `Emu::append_typed_text`
+(full web `text` events), and the lightweight `WasmTvc.typeText` all use it.
+`\r` is Return and `\x08` is Backspace.
+
+Both web bundles load `soft-keyboard.js`. On touch screens
+(`pointer: coarse`) it shows a keyboard button that focuses a hidden
+textarea, because a canvas cannot open a phone's on-screen keyboard. Typed
+text is recovered by diffing the textarea's value against a two-character
+sentinel. This also handles Android keyboards that compose whole words and
+report keydown as `Unidentified` (keyCode 229). Key events with an empty
+`event.code`, keyCode 229, or `isComposing` are left to that diff. Physical
+keyboards still use the key handlers, which are attached to both the canvas
+and the textarea. In full web, moving focus between the two releases held
+keys but keeps Developer-mode screen capture.
+
+The lightweight player emulates whole 50 Hz frames against elapsed
+`requestAnimationFrame` time, with at most 0.1 s of catch-up. It no longer
+runs one frame per display refresh, which ran games too fast on 60, 90, and
+120 Hz screens. Its letter and punctuation keys go through
+`keyPressText` when `keyDown` has no fixed mapping.
+
+iOS shrinks only the visual viewport when the on-screen keyboard opens.
+`soft-keyboard.js` therefore copies `visualViewport.height` into the
+`--view-height` CSS variable, and both pages size their body from it. In full
+web the canvas shrinks, eframe's `ResizeObserver` resizes egui, and the TVC
+screen is centered above the keyboard. The keyboard button follows the same
+height. The hidden textarea sits at the top of the page so iOS never pans to
+reveal it.
+
+Bundled pages load `app.js`, `rtvc.js`, `soft-keyboard.js`, `rtvc_bg.wasm`, and
+`audio-worklet.js` with a `?v=<build id>` query (a hex timestamp set when the
+bundle is written), because iOS Safari otherwise keeps running cached scripts
+after a new build is deployed.
 
 ## Media Handling
 
@@ -710,6 +755,12 @@ the status bar.
 
 Simple mode shows the 4:3 TVC screen. Developer mode uses `egui_dock`; its
 default layout places Screen above IO Log.
+
+The status bar starts with the controls and speed so they stay visible on a
+portrait phone: Reset, a Run/Pause button, and `FPS: <emulated frames/s>
+(<repaints/s> Hz, <ms emulation per TVC frame>)`. Then come the tape LED with
+the loaded tape's name and its progress while it plays, the Warp checkbox,
+disks, the machine, and audio or file messages.
 
 rtvc is a TVC emulator; the Zx82 and CPC 464 are aids for converting games.
 The Machine menu's System selector (TVC, Zx82, CPC 464) therefore appears

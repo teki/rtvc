@@ -150,12 +150,14 @@ fn bundle_web_full(out_dir: Option<&Path>) -> Result<(), String> {
     )
     .map_err(|err| format!("{err}\ninstall wasm-bindgen-cli with: cargo install wasm-bindgen-cli"))?;
 
-    fs::write(bundle_dir.join("index.html"), WEB_FULL_INDEX_HTML)
+    fs::write(bundle_dir.join("index.html"), versioned(WEB_FULL_INDEX_HTML))
         .map_err(|err| format!("failed to write index.html: {err}"))?;
     fs::write(bundle_dir.join("favicon.ico"), FAVICON_ICO)
         .map_err(|err| format!("failed to write favicon.ico: {err}"))?;
-    fs::write(bundle_dir.join("app.js"), WEB_FULL_APP_JS)
+    fs::write(bundle_dir.join("app.js"), versioned(WEB_FULL_APP_JS))
         .map_err(|err| format!("failed to write app.js: {err}"))?;
+    fs::write(bundle_dir.join("soft-keyboard.js"), SOFT_KEYBOARD_JS)
+        .map_err(|err| format!("failed to write soft-keyboard.js: {err}"))?;
     fs::write(bundle_dir.join("audio-worklet.js"), AUDIO_WORKLET_JS)
         .map_err(|err| format!("failed to write audio-worklet.js: {err}"))?;
     write_bundled_media_index(&bundle_dir)?;
@@ -256,12 +258,14 @@ fn write_web_bundle(workspace: &Path, bundle_dir: &Path) -> Result<(), String> {
     )
     .map_err(|err| format!("{err}\ninstall wasm-bindgen-cli with: cargo install wasm-bindgen-cli"))?;
 
-    fs::write(bundle_dir.join("index.html"), INDEX_HTML)
+    fs::write(bundle_dir.join("index.html"), versioned(INDEX_HTML))
         .map_err(|err| format!("failed to write index.html: {err}"))?;
     fs::write(bundle_dir.join("favicon.ico"), FAVICON_ICO)
         .map_err(|err| format!("failed to write favicon.ico: {err}"))?;
-    fs::write(bundle_dir.join("app.js"), APP_JS)
+    fs::write(bundle_dir.join("app.js"), versioned(APP_JS))
         .map_err(|err| format!("failed to write app.js: {err}"))?;
+    fs::write(bundle_dir.join("soft-keyboard.js"), SOFT_KEYBOARD_JS)
+        .map_err(|err| format!("failed to write soft-keyboard.js: {err}"))?;
     fs::write(bundle_dir.join("audio-worklet.js"), AUDIO_WORKLET_JS)
         .map_err(|err| format!("failed to write audio-worklet.js: {err}"))?;
 
@@ -378,20 +382,27 @@ const INDEX_HTML: &str = r#"<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <title>rtvc snapshot</title>
   <link rel="icon" href="./favicon.ico" sizes="any">
   <style>
+    :root {
+      /* Visible height; app.js tracks the on-screen keyboard through it. */
+      --view-height: 100dvh;
+    }
     html, body {
       margin: 0;
       min-height: 100%;
       background: #111;
       color: #eee;
       font: 14px system-ui, sans-serif;
+      overscroll-behavior: none;
     }
     body {
       display: grid;
       place-items: center;
+      height: var(--view-height);
+      overflow: hidden;
     }
     #status {
       position: fixed;
@@ -403,21 +414,39 @@ const INDEX_HTML: &str = r#"<!doctype html>
       display: none;
     }
     canvas {
-      width: min(100vw, calc(100vh * 4 / 3));
-      height: min(100vh, calc(100vw * 3 / 4));
+      width: min(100vw, calc(var(--view-height) * 4 / 3));
+      height: min(var(--view-height), calc(100vw * 3 / 4));
       image-rendering: pixelated;
       background: #000;
       outline: none;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
     }
   </style>
 </head>
 <body>
   <canvas id="screen" tabindex="0"></canvas>
   <div id="status"></div>
-  <script type="module" src="./app.js"></script>
+  <script type="module" src="./app.js?v=__RTVC_BUILD__"></script>
 </body>
 </html>
 "#;
+
+/// Bundle files reference each other with `?v=<build id>` so browsers (iOS
+/// Safari in particular) fetch a new build instead of reusing cached scripts.
+fn versioned(text: &str) -> String {
+    use std::sync::OnceLock;
+    static BUILD_ID: OnceLock<String> = OnceLock::new();
+    let id = BUILD_ID.get_or_init(|| {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs())
+            .unwrap_or(0);
+        format!("{secs:x}")
+    });
+    text.replace("__RTVC_BUILD__", id)
+}
 
 const FAVICON_ICO: &[u8] = include_bytes!("../../assets/rtvc-app-icon.ico");
 
@@ -437,12 +466,13 @@ Then open:
 Raw snapshots named snapshot.rtvcsnap are also supported.
 "#;
 
-const APP_JS: &str = r#"import init, { WasmTvc } from "./rtvc.js";
+const APP_JS: &str = r#"import init, { WasmTvc } from "./rtvc.js?v=__RTVC_BUILD__";
+import { installSoftKeyboard, isSoftKeyEvent } from "./soft-keyboard.js?v=__RTVC_BUILD__";
 
 const canvas = document.getElementById("screen");
 const status = document.getElementById("status");
 
-const wasm = await init();
+const wasm = await init({ module_or_path: "./rtvc_bg.wasm?v=__RTVC_BUILD__" });
 const emu = new WasmTvc(true);
 let snapshot;
 try {
@@ -560,7 +590,7 @@ async function createAudioSink(sampleRate) {
     if (!context.audioWorklet) {
       throw new Error("audioWorklet is undefined");
     }
-    await context.audioWorklet.addModule("./audio-worklet.js");
+    await context.audioWorklet.addModule("./audio-worklet.js?v=__RTVC_BUILD__");
     const node = new AudioWorkletNode(context, "rtvc-audio", {
       numberOfInputs: 0,
       numberOfOutputs: 1,
@@ -625,7 +655,10 @@ function keyCode(event) {
 
 const activeKeyCodes = new Map();
 
-canvas.addEventListener("keydown", (event) => {
+function onKeyDown(event) {
+  if (isSoftKeyEvent(event)) {
+    return;
+  }
   const code = keyCode(event);
   if (event.repeat || activeKeyCodes.has(event.code)) {
     if (code !== 0) {
@@ -637,45 +670,339 @@ canvas.addEventListener("keydown", (event) => {
     event.preventDefault();
     activeKeyCodes.set(event.code, code);
     audio.resume();
-    emu.keyDown(code);
+    // Keys without a fixed TVC position (letters, punctuation) are mapped
+    // from the character they produce on the host layout.
+    if (!emu.keyDown(code) && event.key.length === 1 && !event.ctrlKey && !event.metaKey) {
+      emu.keyPressText(event.key);
+    }
   }
-});
+}
 
-canvas.addEventListener("pointerdown", () => {
-  audio.resume();
-  canvas.focus();
-});
-
-canvas.addEventListener("keyup", (event) => {
+function onKeyUp(event) {
+  if (isSoftKeyEvent(event)) {
+    return;
+  }
   const code = activeKeyCodes.get(event.code) ?? keyCode(event);
   activeKeyCodes.delete(event.code);
   if (code !== 0) {
     event.preventDefault();
     emu.keyUp(code);
   }
-});
+}
 
-canvas.addEventListener("blur", () => {
+function releaseKeys() {
   activeKeyCodes.clear();
+  emu.focusChange(false);
+}
+
+const softInput = installSoftKeyboard({
+  typeText(text) {
+    audio.resume();
+    emu.typeText(text);
+  },
 });
 
-canvas.addEventListener("input", (event) => {
-  if (event.data) {
-    emu.keyPressText(event.data);
+for (const target of [canvas, softInput]) {
+  target.addEventListener("keydown", onKeyDown);
+  target.addEventListener("keyup", onKeyUp);
+  target.addEventListener("blur", releaseKeys);
+}
+
+canvas.addEventListener("pointerdown", () => {
+  audio.resume();
+  if (document.activeElement !== softInput) {
+    canvas.focus();
   }
 });
 
-function frame() {
-  emu.runFrame();
-  audio.push(emu.takeAudioSamples());
-  if (emu.takeFrameComplete()) {
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    releaseKeys();
+  }
+});
+
+// The TVC runs at 50 frames per second whatever the display refresh rate
+// (60, 90, 120 Hz phones), so emulate whole frames against elapsed time.
+const FRAME_SECONDS = 1 / 50;
+const MAX_CATCH_UP_SECONDS = 0.1;
+let lastFrameTime;
+let pendingSeconds = 0;
+
+// `?stats` shows the same readout as the full UI's status bar: emulated
+// frames per second (repaints per second, ms of emulation per TVC frame).
+const stats = new URLSearchParams(location.search).has("stats") ? createStats() : null;
+
+function createStats() {
+  const panel = document.createElement("div");
+  panel.style.cssText =
+    "position:fixed;left:8px;top:calc(8px + env(safe-area-inset-top));z-index:5;" +
+    "font:12px ui-monospace,monospace;color:#0f0;background:#000a;padding:2px 6px;" +
+    "pointer-events:none";
+  document.body.append(panel);
+  let since = performance.now();
+  let frames = 0;
+  let repaints = 0;
+  let emuMs = 0;
+  return {
+    frame(ms) {
+      frames += 1;
+      emuMs += ms;
+    },
+    repaint(now) {
+      repaints += 1;
+      if (now - since >= 1000) {
+        const perFrame = frames ? emuMs / frames : 0;
+        panel.textContent = `FPS: ${frames} (${repaints} Hz, ${perFrame.toFixed(1)} ms)`;
+        since = now;
+        frames = 0;
+        repaints = 0;
+        emuMs = 0;
+      }
+    },
+  };
+}
+
+function frame(now) {
+  if (lastFrameTime !== undefined) {
+    pendingSeconds += Math.min((now - lastFrameTime) / 1000, MAX_CATCH_UP_SECONDS);
+  }
+  lastFrameTime = now;
+  let completed = false;
+  while (pendingSeconds >= FRAME_SECONDS) {
+    pendingSeconds -= FRAME_SECONDS;
+    const started = performance.now();
+    emu.runFrame();
+    stats?.frame(performance.now() - started);
+    audio.push(emu.takeAudioSamples());
+    completed = emu.takeFrameComplete() || completed;
+  }
+  if (completed) {
     draw();
   }
+  stats?.repaint(now);
   requestAnimationFrame(frame);
 }
 
 draw();
 requestAnimationFrame(frame);
+"#;
+
+/// Phone soft-keyboard support shared by both web bundles.
+const SOFT_KEYBOARD_JS: &str = r#"// A canvas cannot bring up a phone's on-screen keyboard, so a hidden textarea
+// takes focus instead. Typed characters are recovered by diffing its value,
+// which also works when the keyboard composes whole words (Android) and
+// reports keydown as "Unidentified". The value always starts with SENTINEL
+// so Backspace has something to delete.
+const SENTINEL = "~~";
+
+// Soft keyboards send key events without a physical key code. Those are left
+// to the textarea's input diff; physical keyboards always report event.code.
+export function isSoftKeyEvent(event) {
+  return event.isComposing || event.keyCode === 229 || event.code === "";
+}
+
+// iOS shrinks only the visual viewport when the on-screen keyboard opens, so
+// while it is open pages size themselves from --view-height to keep the TVC
+// screen above it. Only then: resizing the canvas re-creates its GPU buffer,
+// and Safari's toolbar can change the visual viewport at other times.
+function trackViewHeight(input) {
+  const viewport = globalThis.visualViewport;
+  if (!viewport) {
+    return;
+  }
+  const root = document.documentElement.style;
+  let applied = 0;
+  const update = () => {
+    if (document.activeElement !== input) {
+      if (applied) {
+        root.removeProperty("--view-height");
+        applied = 0;
+      }
+      return;
+    }
+    const height = Math.round(viewport.height);
+    if (Math.abs(height - applied) > 1) {
+      root.setProperty("--view-height", `${height}px`);
+      applied = height;
+    }
+  };
+  viewport.addEventListener("resize", update);
+  input.addEventListener("focus", update);
+  input.addEventListener("blur", update);
+}
+
+export function installSoftKeyboard({ typeText, bottom = "0px" }) {
+  const input = document.createElement("textarea");
+  input.className = "rtvc-soft-input";
+  input.setAttribute("aria-label", "TVC keyboard input");
+  input.setAttribute("autocapitalize", "off");
+  input.setAttribute("autocomplete", "off");
+  input.setAttribute("autocorrect", "off");
+  input.setAttribute("enterkeyhint", "enter");
+  input.spellcheck = false;
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "rtvc-soft-button";
+  button.tabIndex = -1;
+  button.textContent = "\u2328";
+  button.setAttribute("aria-label", "Show keyboard");
+  button.style.setProperty("--rtvc-soft-bottom", bottom);
+
+  const style = document.createElement("style");
+  style.textContent = `
+    .rtvc-soft-input {
+      position: fixed; left: 0; top: 0; width: 1px; height: 1px;
+      padding: 0; border: 0; opacity: 0; resize: none; overflow: hidden;
+      pointer-events: none; font-size: 16px; /* below 16px iOS zooms on focus */
+    }
+    .rtvc-soft-button {
+      position: fixed; z-index: 10; display: none;
+      right: calc(12px + env(safe-area-inset-right));
+      /* Follows the visible height so it stays above the on-screen keyboard. */
+      top: calc(var(--view-height, 100dvh) - 60px - var(--rtvc-soft-bottom)
+        - env(safe-area-inset-bottom));
+      width: 48px; height: 48px; border-radius: 50%;
+      border: 1px solid #fff4; background: #222c; color: #eee;
+      font: 24px/1 system-ui, sans-serif; touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .rtvc-soft-button[aria-pressed="true"] { background: #468c; }
+    @media (pointer: coarse) { .rtvc-soft-button { display: block; } }
+  `;
+  document.head.append(style);
+  document.body.append(input, button);
+  trackViewHeight(input);
+
+  // `?keylog` shows the last keyboard events on screen, for debugging phone
+  // keyboards where no developer console is at hand.
+  const keyLog = new URLSearchParams(location.search).has("keylog")
+    ? createKeyLog(input)
+    : null;
+
+  let last = SENTINEL;
+  let composing = false;
+
+  function reset() {
+    input.value = SENTINEL;
+    input.setSelectionRange(SENTINEL.length, SENTINEL.length);
+    last = SENTINEL;
+  }
+
+  function flush() {
+    const value = input.value;
+    let common = 0;
+    while (common < last.length && common < value.length && last[common] === value[common]) {
+      common += 1;
+    }
+    const text =
+      "\b".repeat(last.length - common) + value.slice(common).replace(/\r?\n/g, "\r");
+    last = value;
+    if (text) {
+      typeText(text);
+    }
+  }
+
+  input.addEventListener("focus", () => {
+    reset();
+    button.setAttribute("aria-pressed", "true");
+  });
+  input.addEventListener("blur", () => {
+    composing = false;
+    button.setAttribute("aria-pressed", "false");
+  });
+  input.addEventListener("compositionstart", () => {
+    composing = true;
+  });
+  input.addEventListener("compositionend", () => {
+    composing = false;
+    flush();
+    reset();
+  });
+  input.addEventListener("input", (event) => {
+    keyLog?.(event);
+    flush();
+    if (!composing) {
+      reset();
+    }
+  });
+
+  // Phone keyboards may send keydown and keyup back to back, before the
+  // emulator runs a frame, and iOS fills in event.code, so these keys must not
+  // reach the app's physical-key handlers: a key pressed and released between
+  // two frames is never seen by the TVC. Type them through the timed queue
+  // instead. Registered before the app's listeners, so it runs first.
+  const typedKey = (event) => {
+    if (event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey) {
+      return "";
+    }
+    if (event.key === "Enter") {
+      return "\r";
+    }
+    if (event.key === "Backspace") {
+      return "\b";
+    }
+    return event.key.length === 1 ? event.key : "";
+  };
+  input.addEventListener("keydown", (event) => {
+    keyLog?.(event);
+    const text = typedKey(event);
+    if (text) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      typeText(text);
+    }
+  });
+  input.addEventListener("keyup", (event) => {
+    keyLog?.(event);
+    if (typedKey(event)) {
+      event.stopImmediatePropagation();
+    }
+  });
+  for (const type of ["compositionstart", "compositionend", "beforeinput"]) {
+    input.addEventListener(type, (event) => keyLog?.(event));
+  }
+
+  // Keep focus where it is when the button is pressed; toggle on click, which
+  // iOS requires before focus() may open the keyboard.
+  button.addEventListener("pointerdown", (event) => event.preventDefault());
+  button.addEventListener("click", () => {
+    if (document.activeElement === input) {
+      input.blur();
+    } else {
+      input.focus({ preventScroll: true });
+    }
+  });
+
+  return input;
+}
+
+function createKeyLog(input) {
+  const panel = document.createElement("pre");
+  panel.style.cssText =
+    "position:fixed;left:0;top:0;z-index:20;margin:0;padding:4px;max-width:100vw;" +
+    "font:11px/1.3 ui-monospace,monospace;color:#0f0;background:#000c;" +
+    "pointer-events:none;white-space:pre-wrap";
+  document.body.append(panel);
+  const lines = [];
+  return (event) => {
+    const parts = [event.type];
+    if ("key" in event) {
+      parts.push(`key=${JSON.stringify(event.key)} code=${JSON.stringify(event.code)}`,
+        `kc=${event.keyCode}`);
+    }
+    if ("inputType" in event) {
+      parts.push(`it=${event.inputType} data=${JSON.stringify(event.data)}`);
+    }
+    if (event.isComposing) {
+      parts.push("composing");
+    }
+    parts.push(`val=${JSON.stringify(input.value)}`);
+    lines.push(parts.join(" "));
+    lines.splice(0, Math.max(0, lines.length - 12));
+    panel.textContent = lines.join("\n");
+  };
+}
 "#;
 
 const AUDIO_WORKLET_JS: &str = r#"class RtvcAudioProcessor extends AudioWorkletProcessor {
@@ -731,7 +1058,7 @@ const WEB_FULL_INDEX_HTML: &str = r#"<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <title>rtvc - Videoton TV Computer Emulator</title>
   <link rel="icon" href="./favicon.ico" sizes="any">
   <style>
@@ -739,8 +1066,10 @@ const WEB_FULL_INDEX_HTML: &str = r#"<!doctype html>
       margin: 0;
       padding: 0;
       width: 100%;
-      height: 100%;
+      /* Visible height; soft-keyboard.js tracks the on-screen keyboard. */
+      height: var(--view-height, 100%);
       overflow: hidden;
+      overscroll-behavior: none;
       background-color: #1a1a1a;
       font: 14px system-ui, sans-serif;
     }
@@ -749,17 +1078,19 @@ const WEB_FULL_INDEX_HTML: &str = r#"<!doctype html>
       height: 100%;
       display: block;
       outline: none;
+      touch-action: none;
     }
   </style>
 </head>
 <body>
   <canvas id="tvc_canvas"></canvas>
-  <script type="module" src="./app.js"></script>
+  <script type="module" src="./app.js?v=__RTVC_BUILD__"></script>
 </body>
 </html>
 "#;
 
-const WEB_FULL_APP_JS: &str = r#"import init, { WebHandle } from "./rtvc.js";
+const WEB_FULL_APP_JS: &str = r#"import init, { WebHandle } from "./rtvc.js?v=__RTVC_BUILD__";
+import { installSoftKeyboard, isSoftKeyEvent } from "./soft-keyboard.js?v=__RTVC_BUILD__";
 
 const DB_NAME = "rtvc";
 const DB_VERSION = 1;
@@ -908,7 +1239,7 @@ async function createAudioSink(sampleRate) {
     context = new AudioContext();
   }
   try {
-    await context.audioWorklet.addModule("./audio-worklet.js");
+    await context.audioWorklet.addModule("./audio-worklet.js?v=__RTVC_BUILD__");
   } catch (error) {
     void context.close();
     throw error;
@@ -984,48 +1315,88 @@ function transactionDone(transaction) {
 
 function installKeyboard(canvas) {
   canvas.tabIndex = 0;
+  // Sits above the egui status bar.
+  const softInput = installSoftKeyboard({
+    bottom: "28px",
+    typeText(text) {
+      keyboardEvents.push({ type: "text", text });
+      globalThis.rtvcAudioResume();
+    },
+  });
   canvas.addEventListener("pointerdown", () => {
-    canvas.focus();
+    if (document.activeElement !== softInput) {
+      canvas.focus();
+    }
     globalThis.rtvcAudioResume();
   });
-  canvas.addEventListener("keydown", (event) => {
-    const code = legacyKeyCode(event);
-    const text =
-      !event.ctrlKey && !event.metaKey && event.key.length === 1 ? event.key : "";
-    if (event.repeat || activeKeyCodes.has(event.code)) {
-      if (code !== 0 || text) {
-        event.preventDefault();
-      }
-      return;
+  for (const target of [canvas, softInput]) {
+    target.addEventListener("keydown", onKeyDown);
+    target.addEventListener("keyup", onKeyUp);
+  }
+  // Moving focus between the canvas and the soft keyboard releases held keys
+  // but keeps Developer-mode screen capture, so typing still reaches the TVC.
+  const onBlur = (event) => {
+    const target = event.relatedTarget;
+    if (target === canvas || target === softInput) {
+      releaseHeldKeys();
+    } else {
+      resetKeyboard();
     }
-    if (code !== 0) {
-      if (code === 225) {
-        keyboardEvents.push({ type: "up", code: 17 });
-      }
-      activeKeyCodes.set(event.code, code);
-      keyboardEvents.push({ type: "down", code, text });
-      globalThis.rtvcAudioResume();
-      event.preventDefault();
-    } else if (text) {
-      keyboardEvents.push({ type: "text", text });
-      event.preventDefault();
-    }
-  });
-  canvas.addEventListener("keyup", (event) => {
-    const code = activeKeyCodes.get(event.code) ?? legacyKeyCode(event);
-    activeKeyCodes.delete(event.code);
-    if (code !== 0) {
-      keyboardEvents.push({ type: "up", code });
-      event.preventDefault();
-    }
-  });
-  canvas.addEventListener("blur", resetKeyboard);
+  };
+  canvas.addEventListener("blur", onBlur);
+  softInput.addEventListener("blur", onBlur);
   window.addEventListener("blur", resetKeyboard);
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       resetKeyboard();
     }
   });
+}
+
+function onKeyDown(event) {
+  if (isSoftKeyEvent(event)) {
+    return;
+  }
+  const code = legacyKeyCode(event);
+  const text =
+    !event.ctrlKey && !event.metaKey && event.key.length === 1 ? event.key : "";
+  if (event.repeat || activeKeyCodes.has(event.code)) {
+    if (code !== 0 || text) {
+      event.preventDefault();
+    }
+    return;
+  }
+  if (code !== 0) {
+    if (code === 225) {
+      keyboardEvents.push({ type: "up", code: 17 });
+    }
+    activeKeyCodes.set(event.code, code);
+    keyboardEvents.push({ type: "down", code, text });
+    globalThis.rtvcAudioResume();
+    event.preventDefault();
+  } else if (text) {
+    keyboardEvents.push({ type: "text", text });
+    event.preventDefault();
+  }
+}
+
+function onKeyUp(event) {
+  if (isSoftKeyEvent(event)) {
+    return;
+  }
+  const code = activeKeyCodes.get(event.code) ?? legacyKeyCode(event);
+  activeKeyCodes.delete(event.code);
+  if (code !== 0) {
+    keyboardEvents.push({ type: "up", code });
+    event.preventDefault();
+  }
+}
+
+function releaseHeldKeys() {
+  for (const code of activeKeyCodes.values()) {
+    keyboardEvents.push({ type: "up", code });
+  }
+  activeKeyCodes.clear();
 }
 
 function resetKeyboard() {
@@ -1132,7 +1503,7 @@ async function run() {
     return [];
   });
   const startupLaunch = loadStartupLaunch(bundledMedia);
-  await init();
+  await init({ module_or_path: "./rtvc_bg.wasm?v=__RTVC_BUILD__" });
   const canvas = document.getElementById("tvc_canvas");
   globalThis.rtvcStartupAudioError = await globalThis.rtvcAudioInit(44100);
   try {
@@ -1172,6 +1543,18 @@ mod tests {
         );
         assert!(WEB_FULL_APP_JS.contains("./bundled/index.json"));
         assert!(WEB_FULL_APP_JS.contains(r#"get("run")"#));
+    }
+
+    #[test]
+    fn web_bundles_share_soft_keyboard_and_player_paces_frames() {
+        for app_js in [APP_JS, WEB_FULL_APP_JS] {
+            assert!(app_js.contains(r#"from "./soft-keyboard.js?v=__RTVC_BUILD__""#));
+            assert!(app_js.contains("installSoftKeyboard({"));
+            assert!(app_js.contains("isSoftKeyEvent(event)"));
+        }
+        assert!(SOFT_KEYBOARD_JS.contains("export function installSoftKeyboard"));
+        assert!(APP_JS.contains("const FRAME_SECONDS = 1 / 50;"));
+        assert!(APP_JS.contains("emu.typeText(text)"));
     }
 
     #[test]

@@ -238,6 +238,9 @@ extern "C" {
 
 const TVC_REFRESH_HZ: u32 = 50;
 const TVC_FRAME_DT: f64 = 1.0 / TVC_REFRESH_HZ as f64;
+/// Frames run in one repaint to catch up; matches the 0.1 s cap on the
+/// repaint interval.
+const MAX_CATCH_UP_FRAMES: u32 = 5;
 /// Host time per repaint spent running extra frames while warping.
 const WARP_FRAME_BUDGET: Duration = Duration::from_millis(15);
 
@@ -362,6 +365,12 @@ pub struct EmuApp {
     emu_frame_accumulator: f64,
     frame_count: u32,
     fps: u32,
+    /// Repaints and emulation time in the current second, shown beside FPS so
+    /// a slow device shows whether drawing or emulation is the bottleneck.
+    repaint_count: u32,
+    emu_time: Duration,
+    repaint_hz: u32,
+    emu_ms_per_frame: f32,
     prev_shift: bool,
     prev_ctrl: bool,
     prev_alt: bool,
@@ -410,6 +419,10 @@ impl EmuApp {
             pending_launch: None,
             frame_count: 0,
             fps: 0,
+            repaint_count: 0,
+            emu_time: Duration::ZERO,
+            repaint_hz: 0,
+            emu_ms_per_frame: 0.0,
             prev_shift: false,
             prev_ctrl: false,
             prev_alt: false,
@@ -1489,19 +1502,25 @@ impl EmuApp {
         });
     }
 
+    /// Pauses or resumes emulation, restarting frame timing so a resume does
+    /// not try to catch up on the paused time.
+    fn toggle_running(&mut self) {
+        if !self.emu.running {
+            self.debugger_ui.prepare_history_resume();
+        }
+        self.emu.toggle_running();
+        self.last_repaint_time = Instant::now();
+        self.emu_frame_accumulator = 0.0;
+        self.save_app_state();
+    }
+
     fn draw_machine_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Machine", |ui| {
             if ui
                 .button(if self.emu.running { "Pause" } else { "Run" })
                 .clicked()
             {
-                if !self.emu.running {
-                    self.debugger_ui.prepare_history_resume();
-                }
-                self.emu.toggle_running();
-                self.last_repaint_time = Instant::now();
-                self.emu_frame_accumulator = 0.0;
-                self.save_app_state();
+                self.toggle_running();
                 ui.close_menu();
             }
 
@@ -2138,11 +2157,33 @@ PI                           — π (3.141592654)
             .exact_height(24.0)
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
+                    // Controls and FPS come first so they stay visible on a
+                    // narrow (portrait phone) screen.
                     if ui.small_button("Reset").clicked() {
                         self.emu.reset();
                         self.emu_frame_accumulator = 0.0;
                         self.save_app_state();
                     }
+                    let run_label = if self.emu.running { "Pause" } else { "Run" };
+                    if ui
+                        .add(
+                            egui::Button::new(run_label)
+                                .small()
+                                .min_size(egui::vec2(40.0, 0.0)),
+                        )
+                        .clicked()
+                    {
+                        self.toggle_running();
+                    }
+                    ui.separator();
+                    ui.label(format!(
+                        "FPS: {} ({} Hz, {:.1} ms)",
+                        self.fps, self.repaint_hz, self.emu_ms_per_frame
+                    ))
+                    .on_hover_text(
+                        "Emulated frames per second (repaints per second, \
+                         emulation time per TVC frame)",
+                    );
                     ui.separator();
                     let machine_tape = self
                         .emu
@@ -2152,22 +2193,16 @@ PI                           — π (3.141592654)
                     let tape_active = machine_tape.is_some()
                         || self.emu.tvc().is_some_and(|tvc| tvc.bus.tape_play_active());
                     draw_tape_led(ui, tape_active, self.emu.get_current_tape_level());
-                    ui.label(
-                        if let Some(percent) = machine_tape.or_else(|| {
-                            self.emu
-                                .tvc()
-                                .and_then(|tvc| tvc.bus.tape_progress_percent())
-                        }) {
-                            format!("Tape active ({percent}%)")
-                        } else {
-                            "Tape idle".to_string()
-                        },
-                    );
-                    ui.separator();
-                    ui.label(format!(
-                        "Tape: {}",
-                        self.emu.loaded_tape.as_deref().unwrap_or("(none)")
-                    ));
+                    let tape_name = self.emu.loaded_tape.as_deref().unwrap_or("(none)");
+                    let tape_percent = machine_tape.or_else(|| {
+                        self.emu
+                            .tvc()
+                            .and_then(|tvc| tvc.bus.tape_progress_percent())
+                    });
+                    ui.label(match tape_percent {
+                        Some(percent) => format!("Tape: {tape_name} {percent}%"),
+                        None => format!("Tape: {tape_name}"),
+                    });
                     let mut warp = self.emu.warp_loading();
                     if ui
                         .add_enabled(
@@ -2197,14 +2232,6 @@ PI                           — π (3.141592654)
                     } else {
                         disks.join("  ")
                     });
-                    ui.separator();
-                    ui.label(if self.emu.running {
-                        "Running"
-                    } else {
-                        "Paused"
-                    });
-                    ui.separator();
-                    ui.label(format!("FPS: {}", self.fps));
                     ui.separator();
                     let machine_label = if self.emu.system() == System::Tvc {
                         self.emu.machine_type.label()
@@ -2421,10 +2448,11 @@ PI                           — π (3.141592654)
                     }
                 }
                 "text" => {
+                    // Characters without a usable key code (phone soft
+                    // keyboards, unmapped layout keys) are typed as timed
+                    // presses so they cannot leave a matrix key held.
                     if self.workspace.accepts_machine_input(self.screen_captured) {
-                        for ch in wasm_event_text(&event).chars() {
-                            self.emu.key_press(ch);
-                        }
+                        self.emu.append_typed_text(&wasm_event_text(&event));
                     }
                 }
                 "blur" => {
@@ -2928,17 +2956,27 @@ impl eframe::App for EmuApp {
         }
 
         if self.emu.running && self.emu_frame_accumulator >= TVC_FRAME_DT {
+            // Run every frame that is due, so a late or uneven repaint (phone
+            // browsers, 30 Hz power saving) does not slow the TVC down. Only
+            // the last frame is shown.
+            let due = ((self.emu_frame_accumulator / TVC_FRAME_DT) as u32)
+                .clamp(1, MAX_CATCH_UP_FRAMES);
+            let mut ran = 0;
             // Warp runs extra frames within a host-time budget while a tape
             // loads; their audio is dropped instead of queued.
             loop {
                 let warping = self.emu.warp_active();
                 let hit_breakpoint = self.run_emulator_frame();
+                ran += 1;
                 if warping {
                     let _ = self.emu.take_audio_samples();
                 } else {
                     self.push_audio_samples();
                 }
-                if hit_breakpoint || !self.emu.warp_active() || now.elapsed() >= WARP_FRAME_BUDGET {
+                if hit_breakpoint || now.elapsed() >= WARP_FRAME_BUDGET {
+                    break;
+                }
+                if !self.emu.warp_active() && ran >= due {
                     break;
                 }
             }
@@ -2966,7 +3004,9 @@ impl EmuApp {
     /// Runs one emulator frame and handles a breakpoint; returns whether one
     /// was hit.
     fn run_emulator_frame(&mut self) -> bool {
+        let started = Instant::now();
         let hit_breakpoint = self.emu.tick();
+        self.emu_time += started.elapsed();
         if !hit_breakpoint && self.emu.frame_complete() {
             if let Err(error) = self.debugger_ui.capture_history_frame(&self.emu) {
                 self.file_status = Some(format!("Frame history stopped: {error}"));
@@ -2992,10 +3032,19 @@ impl EmuApp {
     }
 
     fn finish_update(&mut self, ctx: &egui::Context) {
+        self.repaint_count += 1;
         let elapsed = self.last_frame_time.elapsed();
         if elapsed.as_secs() >= 1 {
             self.fps = self.frame_count;
+            self.repaint_hz = self.repaint_count;
+            self.emu_ms_per_frame = if self.frame_count == 0 {
+                0.0
+            } else {
+                self.emu_time.as_secs_f32() * 1000.0 / self.frame_count as f32
+            };
             self.frame_count = 0;
+            self.repaint_count = 0;
+            self.emu_time = Duration::ZERO;
             self.last_frame_time = Instant::now();
         }
 

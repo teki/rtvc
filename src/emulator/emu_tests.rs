@@ -89,8 +89,7 @@ fn debug_snapshot_restores_in_place_and_clears_typed_input() {
     assert!(!emu.running);
     assert_eq!(emu.z80_state().pc, 0x4567);
     assert_eq!(emu.read_mapped_memory(0x1234, 1), vec![0xA5]);
-    assert!(emu.typed_text.is_empty());
-    assert!(emu.typed_key.is_none());
+    assert!(emu.typer.is_idle());
     assert!(emu.frame_complete());
 }
 
@@ -126,6 +125,31 @@ fn timed_key_press_rejects_zero_duration_and_unknown_codes() {
     assert!(emu.key_press_frames(49, 0).is_err());
     assert!(emu.key_press_frames(999, 1).is_err());
     assert!(!any_tvc_key_pressed(&mut emu));
+}
+
+#[test]
+fn appended_text_follows_queued_text_and_releases_every_key() {
+    let mut emu = Emu::new(MachineType::standard(false, RomVersion::V1_2, false));
+
+    // A physical key that cached a mapping must not affect soft-keyboard text.
+    emu.key_down(65);
+    emu.key_press('a');
+    emu.key_up(65);
+
+    emu.type_text("a");
+    emu.append_typed_text("A\x08\r");
+    assert_eq!(emu.typer.queued(), "aA\x08\r");
+
+    let mut pressed_frames = 0;
+    for _ in 0..32 {
+        emu.tick();
+        if any_tvc_key_pressed(&mut emu) {
+            pressed_frames += 1;
+        }
+    }
+    assert!(emu.typer.is_idle());
+    assert!(!any_tvc_key_pressed(&mut emu));
+    assert_eq!(pressed_frames, 4 * crate::key::TYPED_KEY_HOLD_FRAMES);
 }
 
 #[test]
@@ -234,7 +258,7 @@ fn gamebase_cas_starts_from_clean_boot_and_queues_run() {
         MachineType::standard(true, RomVersion::V1_2, true)
     );
     assert!(emu.running);
-    assert_eq!(emu.typed_text.iter().collect::<String>(), "RUN\r");
+    assert_eq!(emu.typer.queued(), "RUN\r");
     assert_eq!(emu.loaded_tape.as_deref(), Some("TEST.CAS (Injected)"));
 }
 
@@ -246,7 +270,7 @@ fn gamebase_disk_starts_from_clean_boot_and_queues_load() {
     emu.start_gamebase_media_bytes("TEST.DSK", &disk).unwrap();
 
     assert!(emu.running);
-    assert_eq!(emu.typed_text.iter().collect::<String>(), "LOAD \"*\"\r");
+    assert_eq!(emu.typer.queued(), "LOAD \"*\"\r");
     assert_eq!(emu.loaded_disk[0].as_deref(), Some("TEST.DSK"));
 }
 
@@ -411,7 +435,7 @@ fn dropped_cas_bytes_boot_vtdos_and_queue_run() {
         emu.machine_type,
         MachineType::standard(true, RomVersion::V1_2, true)
     );
-    assert_eq!(emu.typed_text.iter().collect::<String>(), "RUN\r");
+    assert_eq!(emu.typer.queued(), "RUN\r");
 }
 
 #[test]

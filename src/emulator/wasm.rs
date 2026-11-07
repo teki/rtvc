@@ -5,6 +5,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
 use crate::host_file::{HostFileStore, MemoryStore};
+use crate::key::{KeyTyper, TypedKeyStep};
 use crate::machine::VidModel;
 use crate::machine_type::ExpansionCard;
 use crate::tvc::Tvc;
@@ -16,6 +17,7 @@ pub const SCREEN_HEIGHT: usize = 288;
 pub struct WasmTvc {
     tvc: Tvc,
     host_files: Arc<MemoryStore>,
+    typer: KeyTyper,
 }
 
 impl WasmTvc {
@@ -34,10 +36,12 @@ impl WasmTvc {
         WasmTvc {
             tvc: Tvc::new_with_vid_model(is_plus, default_web_vid_model()),
             host_files: Arc::new(MemoryStore::new()),
+            typer: KeyTyper::default(),
         }
     }
 
     pub fn reset(&mut self) {
+        self.typer.clear();
         self.tvc.reset();
     }
 
@@ -48,6 +52,7 @@ impl WasmTvc {
 
     #[wasm_bindgen(js_name = loadSnapshot)]
     pub fn load_snapshot(&mut self, data: &[u8]) -> Result<(), JsValue> {
+        self.typer.clear();
         if let Some(machine) = snapshot_machine_type(data)? {
             let fast_boot = self.tvc.fast_boot();
             self.tvc = Tvc::new_with_vid_model(machine.is_plus, self.tvc.vid_model());
@@ -84,6 +89,14 @@ impl WasmTvc {
 
     #[wasm_bindgen(js_name = runFrame)]
     pub fn run_frame(&mut self) -> bool {
+        match self.typer.step() {
+            TypedKeyStep::Idle => {}
+            TypedKeyStep::Release(code) => self.tvc.key_up(code),
+            TypedKeyStep::Press(ch) => {
+                let code = self.tvc.press_char(ch);
+                self.typer.pressed(code);
+            }
+        }
         self.tvc.run_for_a_frame()
     }
 
@@ -174,8 +187,21 @@ impl WasmTvc {
         }
     }
 
+    /// Queues text to be typed one key at a time over the next frames, for
+    /// keyboards that deliver characters without a usable key code (phone
+    /// soft keyboards). `\r` is Return and `\x08` is Backspace.
+    #[wasm_bindgen(js_name = typeText)]
+    pub fn type_text(&mut self, text: &str) {
+        self.typer.push_str(text);
+    }
+
     #[wasm_bindgen(js_name = focusChange)]
     pub fn focus_change(&mut self, has_focus: bool) {
+        if !has_focus {
+            if let Some(code) = self.typer.clear() {
+                self.tvc.key_up(code);
+            }
+        }
         self.tvc.focus_change(has_focus);
     }
 
@@ -205,6 +231,16 @@ impl WasmTvc {
         self.tvc.frame_complete = false;
         complete
     }
+}
+
+/// True when the main pointer is a finger (phones and tablets).
+#[cfg(feature = "wasm-full")]
+fn is_touch_device(window: &web_sys::Window) -> bool {
+    window
+        .match_media("(pointer: coarse)")
+        .ok()
+        .flatten()
+        .is_some_and(|query| query.matches())
 }
 
 fn default_web_vid_model() -> VidModel {
@@ -283,7 +319,13 @@ impl WebHandle {
             .machine_type
             .unwrap_or_else(|| crate::emu::MachineType::all_types()[0]);
         let mut emu = Emu::new(machine_type);
-        if let Some(vid_model) = app_state_file.state.vid_model {
+        // Without a saved choice, touch devices start in Fast frame: phones
+        // have less headroom, and some (Safari with Lockdown Mode) run
+        // WebAssembly without a compiler, where Interleaved misses 50 FPS.
+        let vid_model = app_state_file.state.vid_model.or_else(|| {
+            is_touch_device(&web_sys::window()?).then_some(VidModel::FastFrame)
+        });
+        if let Some(vid_model) = vid_model {
             emu.set_vid_model(vid_model);
         }
         emu.set_fast_boot(app_state_file.state.fast_boot);

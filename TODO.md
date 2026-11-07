@@ -188,6 +188,19 @@ Open issues and planned improvements for the TVC emulator.
     or instead of the built-in `progs/` list.
   - Persist the selected directory path across sessions.
 
+## Web On Phones
+
+- [x] Open the phone's on-screen keyboard from a touch button and type through
+  it; pace the lightweight player at 50 Hz on any display.
+- [ ] On-screen joystick (D-pad and fire on matrix row 8) and a configurable
+  row of TVC keys, settable per game from the URL beside `?run=`.
+- [ ] Gamepad API input for the joystick rows 8 and 9.
+- [ ] Full web on narrow screens: Simple mode, larger UI scale, a collapsible
+  menu bar, and a fullscreen button with landscape lock where supported.
+- [ ] Installable web app (manifest, offline service worker).
+- [ ] Verify on real iOS Safari and Android Chrome: soft keyboard, audio
+  start, and Fast frame performance on mid-range phones.
+
 ## Help
 
 - [ ] Extend the integrated help system.

@@ -4,6 +4,23 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+- Web on phones: a keyboard button on touch screens opens the phone's
+  on-screen keyboard and types into the TVC, including Backspace, Return, and
+  Android word suggestions. The TVC screen moves above the keyboard while it
+  is open.
+- The lightweight web player runs at the TVC's 50 frames per second on any
+  display. Before, 60–120 Hz screens ran games too fast. It also types letters
+  and punctuation from a physical keyboard, which it previously ignored.
+- The full web build no longer slows the TVC down when the browser repaints
+  unevenly: missed frames are caught up (phones dropped to about 45 FPS).
+- The status bar starts with Reset, a Run/Pause button, and FPS (with repaint
+  rate and emulation time), so they show on a portrait phone. The tape light,
+  name, and progress are merged into one entry.
+- The full web build starts in Fast frame on phones and tablets, unless a
+  video model was chosen before; Interleaved is too slow for many phones.
+- Web bundles add a build id to script URLs, so browsers load a new build
+  instead of a cached one.
+
 ## v0.8.11 - 2026-11-05
 
 - The web build can ship tapes and disks: CAS, DSK, or ZIP files in
