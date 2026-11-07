@@ -40,6 +40,12 @@ export class WasmTvc {
     setVidModel(model: string): void;
     takeAudioSamples(): Float32Array;
     takeFrameComplete(): boolean;
+    /**
+     * Queues text to be typed one key at a time over the next frames, for
+     * keyboards that deliver characters without a usable key code (phone
+     * soft keyboards). `\r` is Return and `\x08` is Backspace.
+     */
+    typeText(text: string): void;
     vidModel(): string;
 }
 
@@ -81,15 +87,16 @@ export interface InitOutput {
     readonly wasmtvc_setVidModel: (a: number, b: number, c: number, d: number) => void;
     readonly wasmtvc_takeAudioSamples: (a: number, b: number) => void;
     readonly wasmtvc_takeFrameComplete: (a: number) => number;
+    readonly wasmtvc_typeText: (a: number, b: number, c: number) => void;
     readonly wasmtvc_vidModel: (a: number, b: number) => void;
     readonly webhandle_new: () => number;
     readonly webhandle_start: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_4968: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_4988: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_1813: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_1813_2: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_1815: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_1525: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_4974: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_4994: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_1819: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_1819_2: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_1821: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_1531: (a: number, b: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

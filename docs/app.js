@@ -1,4 +1,5 @@
-import init, { WebHandle } from "./rtvc.js";
+import init, { WebHandle } from "./rtvc.js?v=6aeefece";
+import { installSoftKeyboard, isSoftKeyEvent } from "./soft-keyboard.js?v=6aeefece";
 
 const DB_NAME = "rtvc";
 const DB_VERSION = 1;
@@ -147,7 +148,7 @@ async function createAudioSink(sampleRate) {
     context = new AudioContext();
   }
   try {
-    await context.audioWorklet.addModule("./audio-worklet.js");
+    await context.audioWorklet.addModule("./audio-worklet.js?v=6aeefece");
   } catch (error) {
     void context.close();
     throw error;
@@ -223,48 +224,88 @@ function transactionDone(transaction) {
 
 function installKeyboard(canvas) {
   canvas.tabIndex = 0;
+  // Sits above the egui status bar.
+  const softInput = installSoftKeyboard({
+    bottom: "28px",
+    typeText(text) {
+      keyboardEvents.push({ type: "text", text });
+      globalThis.rtvcAudioResume();
+    },
+  });
   canvas.addEventListener("pointerdown", () => {
-    canvas.focus();
+    if (document.activeElement !== softInput) {
+      canvas.focus();
+    }
     globalThis.rtvcAudioResume();
   });
-  canvas.addEventListener("keydown", (event) => {
-    const code = legacyKeyCode(event);
-    const text =
-      !event.ctrlKey && !event.metaKey && event.key.length === 1 ? event.key : "";
-    if (event.repeat || activeKeyCodes.has(event.code)) {
-      if (code !== 0 || text) {
-        event.preventDefault();
-      }
-      return;
+  for (const target of [canvas, softInput]) {
+    target.addEventListener("keydown", onKeyDown);
+    target.addEventListener("keyup", onKeyUp);
+  }
+  // Moving focus between the canvas and the soft keyboard releases held keys
+  // but keeps Developer-mode screen capture, so typing still reaches the TVC.
+  const onBlur = (event) => {
+    const target = event.relatedTarget;
+    if (target === canvas || target === softInput) {
+      releaseHeldKeys();
+    } else {
+      resetKeyboard();
     }
-    if (code !== 0) {
-      if (code === 225) {
-        keyboardEvents.push({ type: "up", code: 17 });
-      }
-      activeKeyCodes.set(event.code, code);
-      keyboardEvents.push({ type: "down", code, text });
-      globalThis.rtvcAudioResume();
-      event.preventDefault();
-    } else if (text) {
-      keyboardEvents.push({ type: "text", text });
-      event.preventDefault();
-    }
-  });
-  canvas.addEventListener("keyup", (event) => {
-    const code = activeKeyCodes.get(event.code) ?? legacyKeyCode(event);
-    activeKeyCodes.delete(event.code);
-    if (code !== 0) {
-      keyboardEvents.push({ type: "up", code });
-      event.preventDefault();
-    }
-  });
-  canvas.addEventListener("blur", resetKeyboard);
+  };
+  canvas.addEventListener("blur", onBlur);
+  softInput.addEventListener("blur", onBlur);
   window.addEventListener("blur", resetKeyboard);
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       resetKeyboard();
     }
   });
+}
+
+function onKeyDown(event) {
+  if (isSoftKeyEvent(event)) {
+    return;
+  }
+  const code = legacyKeyCode(event);
+  const text =
+    !event.ctrlKey && !event.metaKey && event.key.length === 1 ? event.key : "";
+  if (event.repeat || activeKeyCodes.has(event.code)) {
+    if (code !== 0 || text) {
+      event.preventDefault();
+    }
+    return;
+  }
+  if (code !== 0) {
+    if (code === 225) {
+      keyboardEvents.push({ type: "up", code: 17 });
+    }
+    activeKeyCodes.set(event.code, code);
+    keyboardEvents.push({ type: "down", code, text });
+    globalThis.rtvcAudioResume();
+    event.preventDefault();
+  } else if (text) {
+    keyboardEvents.push({ type: "text", text });
+    event.preventDefault();
+  }
+}
+
+function onKeyUp(event) {
+  if (isSoftKeyEvent(event)) {
+    return;
+  }
+  const code = activeKeyCodes.get(event.code) ?? legacyKeyCode(event);
+  activeKeyCodes.delete(event.code);
+  if (code !== 0) {
+    keyboardEvents.push({ type: "up", code });
+    event.preventDefault();
+  }
+}
+
+function releaseHeldKeys() {
+  for (const code of activeKeyCodes.values()) {
+    keyboardEvents.push({ type: "up", code });
+  }
+  activeKeyCodes.clear();
 }
 
 function resetKeyboard() {
@@ -371,7 +412,7 @@ async function run() {
     return [];
   });
   const startupLaunch = loadStartupLaunch(bundledMedia);
-  await init();
+  await init({ module_or_path: "./rtvc_bg.wasm?v=6aeefece" });
   const canvas = document.getElementById("tvc_canvas");
   globalThis.rtvcStartupAudioError = await globalThis.rtvcAudioInit(44100);
   try {
