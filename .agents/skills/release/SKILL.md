@@ -33,7 +33,7 @@ Use this skill only when the user asks to prepare, cut, publish, tag, or push an
    - Ensure the WASM target and matching `wasm-bindgen` CLI are available:
      ```bash
      rustup target add wasm32-unknown-unknown
-     cargo install wasm-bindgen-cli --version 0.2.122
+     cargo install wasm-bindgen-cli --version 0.2.130
      ```
    - Rebuild the full browser application into the tracked website directory:
      ```bash

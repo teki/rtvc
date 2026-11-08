@@ -1745,7 +1745,7 @@ pub fn extract_game_archive_member(
 
     for index in 0..archive.len() {
         let mut file = archive.by_index(index)?;
-        let entry_name = file.name().replace('\\', "/");
+        let entry_name = file.name()?.replace('\\', "/");
         let entry_file_name = entry_name.rsplit('/').next().unwrap_or(&entry_name);
         if entry_name.eq_ignore_ascii_case(&target_name)
             || entry_file_name.eq_ignore_ascii_case(target_file_name)
@@ -1801,7 +1801,7 @@ pub fn classify_dropped_media(
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
     for index in 0..archive.len() {
         let mut file = archive.by_index(index)?;
-        let entry_name = file.name().replace('\\', "/");
+        let entry_name = file.name()?.replace('\\', "/");
         let entry_lower = entry_name.to_ascii_lowercase();
         if entry_lower.ends_with(".cas") || entry_lower.ends_with(".dsk") {
             let mut media = Vec::new();
@@ -1954,7 +1954,7 @@ pub fn unzip_snapshot(data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>
 
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
-        let name = file.name().to_ascii_lowercase();
+        let name = file.name()?.to_ascii_lowercase();
         if name.ends_with(".rtvcsnap") {
             let mut snapshot = Vec::new();
             file.read_to_end(&mut snapshot)?;
@@ -2023,7 +2023,7 @@ fn zip_media_kinds(bytes: &[u8]) -> (bool, bool) {
     let Ok(archive) = zip::ZipArchive::new(std::io::Cursor::new(bytes)) else {
         return (false, false);
     };
-    for entry_name in archive.file_names() {
+    for entry_name in archive.file_names().flatten() {
         let entry_name = entry_name.to_ascii_lowercase();
         is_cas |= entry_name.ends_with(".cas");
         is_disk |= entry_name.ends_with(".dsk");
@@ -2042,13 +2042,13 @@ pub fn unpack_cas_bytes(
         let mut archive = zip::ZipArchive::new(reader)?;
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)?;
-            let entry_name = file.name().to_string();
+            let entry_name = file.name()?.to_string();
             if entry_name.to_lowercase().ends_with(".cas") {
                 let mut buf = Vec::new();
                 file.read_to_end(&mut buf)?;
                 let display_name = std::path::Path::new(&entry_name)
                     .file_name()
-                    .unwrap_or(file.name().as_ref())
+                    .unwrap_or(entry_name.as_ref())
                     .to_string_lossy()
                     .to_string();
                 return Ok((display_name, buf));
@@ -2071,13 +2071,13 @@ pub fn unpack_dsk_bytes(
         let mut archive = zip::ZipArchive::new(reader)?;
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)?;
-            let entry_name = file.name().to_string();
+            let entry_name = file.name()?.to_string();
             if entry_name.to_lowercase().ends_with(".dsk") {
                 let mut buf = Vec::new();
                 file.read_to_end(&mut buf)?;
                 let display_name = std::path::Path::new(&entry_name)
                     .file_name()
-                    .unwrap_or(file.name().as_ref())
+                    .unwrap_or(entry_name.as_ref())
                     .to_string_lossy()
                     .to_string();
                 return Ok((display_name, buf));

@@ -343,7 +343,7 @@ impl DebuggerUi {
                                     let image = egui::Image::new(texture)
                                         .fit_to_exact_size(egui::vec2(160.0, 76.0));
                                     let response = ui.add(
-                                        egui::ImageButton::new(image)
+                                        egui::Button::image(image)
                                             .selected(selected == Some(index))
                                             .frame(true),
                                     );
@@ -1482,10 +1482,7 @@ fn thumbnail_image(thumbnail: &FrameThumbnail) -> ColorImage {
             )
         })
         .collect();
-    ColorImage {
-        size: [thumbnail.width, thumbnail.height],
-        pixels,
-    }
+    ColorImage::new([thumbnail.width, thumbnail.height], pixels)
 }
 
 #[cfg(test)]

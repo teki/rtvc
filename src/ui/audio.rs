@@ -38,25 +38,25 @@ impl NativeAudioSink {
 
         let stream = match sample_format {
             cpal::SampleFormat::F32 => device.build_output_stream(
-                &config,
+                config.clone(),
                 move |data: &mut [f32], _| fill_output(data, channels, &queue_for_stream),
                 err_fn,
                 None,
             ),
             cpal::SampleFormat::I16 => device.build_output_stream(
-                &config,
+                config.clone(),
                 move |data: &mut [i16], _| fill_output(data, channels, &queue_for_stream),
                 err_fn,
                 None,
             ),
             cpal::SampleFormat::U8 => device.build_output_stream(
-                &config,
+                config.clone(),
                 move |data: &mut [u8], _| fill_output(data, channels, &queue_for_stream),
                 err_fn,
                 None,
             ),
             cpal::SampleFormat::U16 => device.build_output_stream(
-                &config,
+                config.clone(),
                 move |data: &mut [u16], _| fill_output(data, channels, &queue_for_stream),
                 err_fn,
                 None,

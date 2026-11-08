@@ -15,17 +15,17 @@ name = "rtvc_core"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-cpal = { version = "0.17", optional = true }
-egui = { version = "0.31", optional = true }
-eframe = { version = "0.31", optional = true }
-egui_dock = { version = "0.16.0", features = ["serde"], optional = true }
-png = { version = "0.17", optional = true }
+cpal = { version = "0.18", optional = true }
+egui = { version = "0.33", optional = true }
+eframe = { version = "0.33", default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland", "web_screen_reader", "x11"], optional = true }
+egui_dock = { version = "0.18", features = ["serde"], optional = true }
+png = { version = "0.18", optional = true }
 image = { version = "0.25", default-features = false, features = ["gif"], optional = true }
-rfd = { version = "0.15", optional = true }
-ureq = { version = "3.3", optional = true }
-zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
+rfd = { version = "0.18", optional = true }
+ureq = { version = "3.5", optional = true }
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"], optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
-toml = { version = "0.8", optional = true }
+toml = { version = "1", optional = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0", optional = true }
 web-sys = { version = "0.3", features = ["Window", "Document", "HtmlElement", "HtmlAnchorElement", "HtmlCanvasElement", "Blob", "Url", "Storage", "BlobPropertyBag", "MediaQueryList", "console"], optional = true }
@@ -33,7 +33,7 @@ js-sys = { version = "0.3", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 web-time = { version = "1.1", optional = true }
 fatfs = { version = "0.3.6", default-features = false, features = ["std", "alloc"] }
-sha2 = "0.10"
+sha2 = "0.11"
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"

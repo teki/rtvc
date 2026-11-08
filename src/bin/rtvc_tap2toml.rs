@@ -701,8 +701,11 @@ fn build_tap_order(
 fn hex_sha256(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
-    let result = hasher.finalize();
-    format!("{:x}", result)
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 // ---- TOML output ----

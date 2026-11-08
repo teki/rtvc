@@ -207,7 +207,7 @@ python -m http.server 8000
 Fejlesztők ugyanezt a webalkalmazást így építhetik és szolgálhatják ki helyben:
 
 ```bash
-cargo install wasm-bindgen-cli --version 0.2.122
+cargo install wasm-bindgen-cli --version 0.2.130
 # A webes csomag felépítése a docs/ könyvtárba
 cargo xtask bundle-web-full docs
 # A docs/ könyvtár kiszolgálása (macOS/Linux alatt)

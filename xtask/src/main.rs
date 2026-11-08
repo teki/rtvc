@@ -311,7 +311,10 @@ fn unzip_snapshot(data: &[u8]) -> Result<Vec<u8>, String> {
         let mut file = archive
             .by_index(i)
             .map_err(|err| format!("failed to read snapshot zip entry: {err}"))?;
-        if file.name().to_ascii_lowercase().ends_with(".rtvcsnap") {
+        let name = file
+            .name()
+            .map_err(|err| format!("failed to read snapshot zip entry name: {err}"))?;
+        if name.to_ascii_lowercase().ends_with(".rtvcsnap") {
             let mut snapshot = Vec::new();
             file.read_to_end(&mut snapshot)
                 .map_err(|err| format!("failed to extract snapshot zip entry: {err}"))?;

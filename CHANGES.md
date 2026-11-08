@@ -18,6 +18,11 @@ Release notes start here. Older release history is intentionally not backfilled.
   name, and progress are merged into one entry.
 - The full web build starts in Fast frame on phones and tablets, unless a
   video model was chosen before; Interleaved is too slow for many phones.
+- Updated egui and eframe to 0.33, egui_dock to 0.18, and the other
+  dependencies (cpal, rfd, png, zip, toml, sha2, ureq). Building the web
+  version now needs `wasm-bindgen-cli` 0.2.130. egui stays on 0.33, the last
+  release before its new text renderer, which would add about 0.6 MB to the
+  compressed web download.
 - Web bundles add a build id to script URLs, so browsers load a new build
   instead of a cached one.
 

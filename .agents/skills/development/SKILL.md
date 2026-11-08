@@ -183,7 +183,7 @@ This skill provides step-by-step instructions and references for compiling, exec
 
 - **Bundle a lightweight web snapshot upload:**
   ```bash
-  cargo install wasm-bindgen-cli --version 0.2.122
+  cargo install wasm-bindgen-cli --version 0.2.130
   cargo bundle-web path/to/game.rtvcsnap
   # or:
   cargo xtask bundle-web path/to/game.rtvcsnap

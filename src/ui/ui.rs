@@ -486,7 +486,7 @@ impl EmuApp {
                         .clicked()
                     {
                         self.apply_machine_type(machine_type);
-                        ui.close_menu();
+                        ui.close();
                     }
                 }
                 if self.selected_machine.is_none() {
@@ -529,7 +529,7 @@ impl EmuApp {
                 let mut machine = current;
                 machine.cart = None;
                 self.apply_machine_type(machine);
-                ui.close_menu();
+                ui.close();
             }
             let mut stems = cartridge_stems();
             if let Some(cart) = current.cart {
@@ -549,7 +549,7 @@ impl EmuApp {
                     let mut machine = current;
                     machine.cart = Some(cart);
                     self.apply_machine_type(machine);
-                    ui.close_menu();
+                    ui.close();
                 }
             }
         });
@@ -573,7 +573,7 @@ impl EmuApp {
                                 machine.set_slot(slot, choice);
                                 self.apply_machine_type(machine);
                             }
-                            ui.close_menu();
+                            ui.close();
                         }
                     }
                 });
@@ -600,7 +600,7 @@ impl EmuApp {
         {
             ui.label(format!("Folder: {}", self.emu.host_file_dir().display()));
             if ui.button("Choose folder...").clicked() {
-                ui.close_menu();
+                ui.close();
                 if let Some(dir) = rfd::FileDialog::new()
                     .set_directory(self.emu.host_file_dir())
                     .pick_folder()
@@ -964,7 +964,7 @@ impl EmuApp {
         }
 
         let mut open = self.game_library.open;
-        let dialog_rect = ctx.available_rect().shrink(8.0);
+        let dialog_rect = ctx.content_rect().shrink(8.0);
         egui::Window::new("TVC Gamebase")
             .open(&mut open)
             .collapsible(false)
@@ -1404,7 +1404,7 @@ impl EmuApp {
             egui::Order::Foreground,
             egui::Id::new("media_drop_overlay"),
         ));
-        let rect = ctx.screen_rect();
+        let rect = ctx.content_rect();
         painter.rect_filled(rect, 0.0, Color32::from_black_alpha(180));
         painter.text(
             rect.center(),
@@ -1449,7 +1449,7 @@ impl EmuApp {
 
     fn draw_menu_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
                 self.draw_file_menu(ui);
                 self.draw_machine_menu(ui);
                 self.draw_tape_menu(ui);
@@ -1464,30 +1464,30 @@ impl EmuApp {
         ui.menu_button("File", |ui| {
             if ui.button("Browse Gamebase...").clicked() {
                 self.open_game_library(ui.ctx().clone());
-                ui.close_menu();
+                ui.close();
             }
             ui.separator();
             if ui.button("Load Tape...").clicked() {
                 self.load_tape_dialog(ui.ctx().clone());
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Load Disk...").clicked() {
                 self.load_disk_dialog(0, ui.ctx().clone());
-                ui.close_menu();
+                ui.close();
             }
             ui.separator();
             if ui.button("Load State...").clicked() {
                 self.load_snapshot_dialog(ui.ctx().clone());
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Save Snapshot...").clicked() {
                 self.save_snapshot_dialog();
-                ui.close_menu();
+                ui.close();
             }
             ui.separator();
             if ui.button("Save Screenshot...").clicked() {
                 self.save_screenshot_dialog();
-                ui.close_menu();
+                ui.close();
             }
             #[cfg(not(target_arch = "wasm32"))]
             {
@@ -1496,7 +1496,7 @@ impl EmuApp {
                     self.save_app_state();
                     self.save_workspace();
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                    ui.close_menu();
+                    ui.close();
                 }
             }
         });
@@ -1521,14 +1521,14 @@ impl EmuApp {
                 .clicked()
             {
                 self.toggle_running();
-                ui.close_menu();
+                ui.close();
             }
 
             if ui.button("Reset").clicked() {
                 self.emu.reset();
                 self.emu_frame_accumulator = 0.0;
                 self.save_app_state();
-                ui.close_menu();
+                ui.close();
             }
 
             if self.emu.system() == System::Tvc {
@@ -1563,7 +1563,7 @@ impl EmuApp {
             ) {
                 self.emu.set_vid_model(vid_model);
                 self.save_app_state();
-                ui.close_menu();
+                ui.close();
             }
         });
     }
@@ -1585,7 +1585,7 @@ impl EmuApp {
                 }
                 self.emu.set_vid_model(vid_model);
                 self.save_app_state();
-                ui.close_menu();
+                ui.close();
             }
             #[cfg(not(target_arch = "wasm32"))]
             Some(System::Zx82) => {
@@ -1594,7 +1594,7 @@ impl EmuApp {
                 } else {
                     self.file_status = Some("Booted Zx82 from roms/48.rom".to_string());
                 }
-                ui.close_menu();
+                ui.close();
             }
             #[cfg(not(target_arch = "wasm32"))]
             Some(System::Cpc) => {
@@ -1603,7 +1603,7 @@ impl EmuApp {
                 } else {
                     self.file_status = Some("Booted CPC 464 from roms/CPC_*.ROM".to_string());
                 }
-                ui.close_menu();
+                ui.close();
             }
             _ => {}
         }
@@ -1617,7 +1617,7 @@ impl EmuApp {
             }
             if ui.button("Open Tape File...").clicked() {
                 self.load_tape_dialog(ui.ctx().clone());
-                ui.close_menu();
+                ui.close();
             }
 
             self.draw_recent_tapes(ui);
@@ -1636,7 +1636,7 @@ impl EmuApp {
                         self.emu.selected_prog = index;
                         self.emu.play_tape();
                         self.save_app_state();
-                        ui.close_menu();
+                        ui.close();
                     }
                 }
             }
@@ -1661,14 +1661,14 @@ impl EmuApp {
                         self.file_status = Some(format!("Tape injection failed: {err}"));
                     }
                 }
-                ui.close_menu();
+                ui.close();
             }
 
             if self.emu.tvc().is_some_and(|tvc| tvc.bus.tape_play_active()) {
                 if ui.button("Stop").clicked() {
                     self.emu.stop_tape();
                     self.save_app_state();
-                    ui.close_menu();
+                    ui.close();
                 }
             } else if ui
                 .add_enabled(tape_selected, egui::Button::new("Play"))
@@ -1676,7 +1676,7 @@ impl EmuApp {
             {
                 self.emu.play_tape();
                 self.save_app_state();
-                ui.close_menu();
+                ui.close();
             }
         });
     }
@@ -1704,12 +1704,12 @@ impl EmuApp {
                         } else {
                             self.persist_wasm_recent("tape", recent, ui.ctx().clone());
                         }
-                        ui.close_menu();
+                        ui.close();
                     }
                 }
                 if ui.button("Clear Recent Tapes").clicked() {
                     self.clear_wasm_recents("tape", ui.ctx().clone());
-                    ui.close_menu();
+                    ui.close();
                 }
             }
         }
@@ -1739,7 +1739,7 @@ impl EmuApp {
                         } else {
                             self.save_app_state();
                         }
-                        ui.close_menu();
+                        ui.close();
                     }
                 }
             }
@@ -1750,7 +1750,7 @@ impl EmuApp {
     fn draw_machine_tape_menu(&mut self, ui: &mut egui::Ui) {
         if ui.button("Open Tape File...").clicked() {
             self.load_tape_dialog(ui.ctx().clone());
-            ui.close_menu();
+            ui.close();
         }
         self.draw_recent_tapes(ui);
         let Some(player) = self.emu.tape_player() else {
@@ -1768,7 +1768,7 @@ impl EmuApp {
                 if let Some(player) = self.emu.tape_player_mut() {
                     player.stop();
                 }
-                ui.close_menu();
+                ui.close();
             }
         } else if ui
             .add_enabled(!finished, egui::Button::new("Play"))
@@ -1777,7 +1777,7 @@ impl EmuApp {
             if let Some(player) = self.emu.tape_player_mut() {
                 player.play();
             }
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("Rewind").clicked() {
             let is_cpc = self.emu.system() == System::Cpc;
@@ -1788,11 +1788,11 @@ impl EmuApp {
                     player.play();
                 }
             }
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("Eject").clicked() {
             self.emu.eject_machine_tape();
-            ui.close_menu();
+            ui.close();
         }
     }
 
@@ -1810,7 +1810,7 @@ impl EmuApp {
                 ui.menu_button(format!("Drive {}", self.emu.disk_unit_label(drive)), |ui| {
                     if ui.button("Open Disk File...").clicked() {
                         self.load_disk_dialog(drive, ui.ctx().clone());
-                        ui.close_menu();
+                        ui.close();
                     }
                     for geometry in [DiskGeometry::TVC_360K, DiskGeometry::TVC_720K] {
                         if ui.button(format!("New {} Disk", geometry.label)).clicked() {
@@ -1819,7 +1819,7 @@ impl EmuApp {
                             } else {
                                 self.save_app_state();
                             }
-                            ui.close_menu();
+                            ui.close();
                         }
                     }
 
@@ -1829,7 +1829,7 @@ impl EmuApp {
                         .clicked()
                     {
                         self.save_disk_dialog(drive);
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui
                         .add_enabled(has_disk, egui::Button::new("Eject"))
@@ -1837,7 +1837,7 @@ impl EmuApp {
                     {
                         self.emu.eject_disk(drive);
                         self.save_app_state();
-                        ui.close_menu();
+                        ui.close();
                     }
 
                     #[cfg(target_arch = "wasm32")]
@@ -1857,14 +1857,14 @@ impl EmuApp {
                                     } else {
                                         self.persist_wasm_recent("disk", recent, ui.ctx().clone());
                                     }
-                                    ui.close_menu();
+                                    ui.close();
                                 }
                             }
                         }
                         if !self.emu.recent_disks_wasm.is_empty() {
                             if ui.button("Clear Recent Disks").clicked() {
                                 self.clear_wasm_recents("disk", ui.ctx().clone());
-                                ui.close_menu();
+                                ui.close();
                             }
                         }
                     }
@@ -1890,7 +1890,7 @@ impl EmuApp {
                                     } else {
                                         self.save_app_state();
                                     }
-                                    ui.close_menu();
+                                    ui.close();
                                 }
                             }
                         }
@@ -1918,7 +1918,7 @@ impl EmuApp {
                         self.emu.selected_prog = index;
                         self.emu.insert_selected_disk();
                         self.save_app_state();
-                        ui.close_menu();
+                        ui.close();
                     }
                 }
             }
@@ -1931,7 +1931,7 @@ impl EmuApp {
             {
                 self.emu.insert_selected_disk();
                 self.save_app_state();
-                ui.close_menu();
+                ui.close();
             }
         });
     }
@@ -1972,7 +1972,7 @@ impl EmuApp {
                                 self.workspace.open_tab(tab);
                             }
                             self.save_workspace();
-                            ui.close_menu();
+                            ui.close();
                         }
                     }
                 });
@@ -1981,14 +1981,14 @@ impl EmuApp {
                     self.release_screen_capture();
                     self.workspace.debugger_layout();
                     self.save_workspace();
-                    ui.close_menu();
+                    ui.close();
                 }
 
                 if ui.button("Reset Workspace").clicked() {
                     self.release_screen_capture();
                     self.workspace.reset_layout();
                     self.save_workspace();
-                    ui.close_menu();
+                    ui.close();
                 }
             });
         });
@@ -1998,7 +1998,7 @@ impl EmuApp {
         ui.menu_button("Help", |ui| {
             if ui.button("Help Contents...").clicked() {
                 self.show_help = true;
-                ui.close_menu();
+                ui.close();
             }
         });
     }
@@ -2363,7 +2363,7 @@ PI                           — π (3.141592654)
     #[cfg(target_arch = "wasm32")]
     fn draw_wasm_host_file_menu(&mut self, ui: &mut egui::Ui) {
         if ui.button("Upload file...").clicked() {
-            ui.close_menu();
+            ui.close();
             let file_tx = self.file_tx.clone();
             let ctx = ui.ctx().clone();
             wasm_bindgen_futures::spawn_local(async move {
@@ -2386,7 +2386,7 @@ PI                           — π (3.141592654)
                     if let Some(bytes) = self.emu.host_file_memory().get(&name) {
                         download_file(&name, &bytes, "application/octet-stream");
                     }
-                    ui.close_menu();
+                    ui.close();
                 }
             }
         });
@@ -2609,7 +2609,7 @@ fn framebuffer_image(framebuffer: &[u32], size: [usize; 2]) -> ColorImage {
             );
             pixels.set_len(framebuffer.len());
         };
-        ColorImage { size, pixels }
+        ColorImage::new(size, pixels)
     }
 
     #[cfg(not(target_endian = "little"))]
@@ -2665,7 +2665,7 @@ fn draw_game_tile(
                             .fit_to_exact_size(image_size)
                             .maintain_aspect_ratio(true);
                         ui.add(
-                            egui::ImageButton::new(image)
+                            egui::Button::image(image)
                                 .selected(selected)
                                 .frame(selected),
                         )

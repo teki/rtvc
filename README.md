@@ -221,7 +221,7 @@ python -m http.server 8000
 Developers can build the same web application and serve it locally with:
 
 ```bash
-cargo install wasm-bindgen-cli --version 0.2.122
+cargo install wasm-bindgen-cli --version 0.2.130
 # Build the web bundle into docs/
 cargo xtask bundle-web-full docs
 # Serve the docs/ directory (on macOS/Linux)

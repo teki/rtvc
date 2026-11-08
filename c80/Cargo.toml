@@ -16,4 +16,4 @@ path = "src/bin/rtvc_c80.rs"
 [dependencies]
 rtvc_core = { path = "..", package = "rtvc", default-features = false, features = ["asm-toml"] }
 serde = { version = "1.0", features = ["derive"] }
-toml = "0.8"
+toml = "1"
