@@ -8,12 +8,12 @@ export class WasmTvc {
      * Loads a system or cartridge ROM. A `*DOS*` ROM name keeps its earlier
      * meaning and plugs an HBF card into slot 0.
      */
-    addRom(name: string, data: Uint8Array): void;
+    addRom(name: string, data: Uint8Array | number[]): void;
     /**
      * Plugs a card into `slot` (0-3): `vtdos12` with its ROM in `data`, or
      * `hostfile`, backed by the files managed with `putHostFile`.
      */
-    attachCard(slot: number, card: string, data: Uint8Array): void;
+    attachCard(slot: number, card: string, data: Uint8Array | number[]): void;
     audioSampleRate(): number;
     focusChange(has_focus: boolean): void;
     framebufferLen(): number;
@@ -23,15 +23,15 @@ export class WasmTvc {
     keyPressText(text: string): void;
     keyUp(code: number): void;
     listHostFiles(): string[];
-    loadCartRom(data: Uint8Array): void;
+    loadCartRom(data: Uint8Array | number[]): void;
     /**
      * Inserts a disk into drive 0/1 of the first HBF card.
      */
-    loadDisk(drive: number, name: string, data: Uint8Array): void;
-    loadSlotDisk(slot: number, drive: number, name: string, data: Uint8Array): void;
-    loadSnapshot(data: Uint8Array): void;
+    loadDisk(drive: number, name: string, data: Uint8Array | number[]): void;
+    loadSlotDisk(slot: number, drive: number, name: string, data: Uint8Array | number[]): void;
+    loadSnapshot(data: Uint8Array | number[]): void;
     constructor(is_plus: boolean);
-    putHostFile(name: string, data: Uint8Array): void;
+    putHostFile(name: string, data: Uint8Array | number[]): void;
     reset(): void;
     runFrame(): boolean;
     saveSnapshot(): Uint8Array;
@@ -91,18 +91,23 @@ export interface InitOutput {
     readonly wasmtvc_vidModel: (a: number, b: number) => void;
     readonly webhandle_new: () => number;
     readonly webhandle_start: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_4974: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_4994: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_1819: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_1819_2: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_1821: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_1531: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_5125: (a: number, b: number, c: number, d: any) => void;
+    readonly __wasm_bindgen_func_elem_5147: (a: number, b: number, c: any, d: any) => void;
+    readonly __wasm_bindgen_func_elem_1785: (a: number, b: number, c: any) => void;
+    readonly __wasm_bindgen_func_elem_1785_32: (a: number, b: number, c: any) => void;
+    readonly __wasm_bindgen_func_elem_1787: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_1558: (a: number, b: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
-    readonly __wbindgen_export3: (a: number) => void;
-    readonly __wbindgen_export4: (a: number, b: number, c: number) => void;
-    readonly __wbindgen_export5: (a: number, b: number) => void;
+    readonly __wbindgen_export3: (a: number, b: number, c: number) => void;
+    readonly __wbindgen_export4: () => number;
+    readonly __wbindgen_externrefs: WebAssembly.Table;
+    readonly __wbindgen_export5: (a: number) => void;
+    readonly __wbindgen_export6: (a: number, b: number) => void;
     readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
+    readonly __wbindgen_export7: (a: number) => void;
+    readonly __wbindgen_export8: (a: number, b: number) => void;
+    readonly __wbindgen_start: () => void;
 }
 
 export type SyncInitInput = BufferSource | WebAssembly.Module;
