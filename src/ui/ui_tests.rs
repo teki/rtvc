@@ -1,4 +1,4 @@
-use super::{GameEntry, framebuffer_image, normalize_game_name};
+use super::{GameEntry, framebuffer_image, game_web_run_url, normalize_game_name};
 use eframe::egui::Color32;
 
 #[test]
@@ -30,4 +30,17 @@ fn game_filter_matches_normalized_name_only() {
     assert!(game.matches(&normalize_game_name("ARVIZTURO")));
     assert!(game.matches(&normalize_game_name("tukorfurogep")));
     assert!(!game.matches(&normalize_game_name("shooter")));
+}
+
+#[test]
+fn game_web_run_url_points_web_emulator_at_gamebase_archive() {
+    assert_eq!(
+        game_web_run_url("aknamezo.zip"),
+        "https://teki.one/rtvc/?run=https://teki.one/tvc_games/Games/aknamezo.zip"
+    );
+    // Archive names are encoded once for the path and once more for the query.
+    assert_eq!(
+        game_web_run_url("a b&c.zip"),
+        "https://teki.one/rtvc/?run=https://teki.one/tvc_games/Games/a%2520b%2526c.zip"
+    );
 }

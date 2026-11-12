@@ -4,6 +4,8 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+- The Gamebase details pane shows a Web link that opens and starts the
+  selected game in the web emulator at teki.one/rtvc.
 - Web on phones: a keyboard button on touch screens opens the phone's
   on-screen keyboard and types into the TVC, including Backspace, Return, and
   Android word suggestions. The TVC screen moves above the keyboard while it

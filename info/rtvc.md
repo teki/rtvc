@@ -584,6 +584,12 @@ Gamebase launches load the embedded clean VT-DOS boot snapshot, choose the
 matching TVC 1.2 VT-DOS machine, attach or inject media, start emulation, and
 type `RUN` for CAS or `LOAD "*"` for DSK.
 
+The Gamebase details pane shows a `Web:` link for loadable entries:
+`https://teki.one/rtvc/?run=<archive URL>`, which makes the hosted web build
+fetch the entry's archive from `teki.one/tvc_games/Games/` and start it through
+the `?run=` path below. That path takes the ZIP's first `.cas`/`.dsk`, not the
+catalog's `FileToRun`, so a multi-media archive may start a different member.
+
 Dropping a file onto the native or full web window uses the same launch path.
 A `.cas` is injected and a `.dsk` is attached to drive A:. A ZIP resolves to
 its first `.rtvcsnap` member as a snapshot, otherwise to its first `.cas` or

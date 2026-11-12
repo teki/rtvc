@@ -56,6 +56,7 @@ pub enum PendingFile {
 const GAME_CATALOG_URL: &str = "https://teki.one/tvc_games/tvc_games.json";
 const GAME_BASE_URL: &str = "https://teki.one/tvc_games/Games/";
 const GAME_PICTURE_URL: &str = "https://teki.one/tvc_games/Pictures/";
+const WEB_EMULATOR_URL: &str = "https://teki.one/rtvc/";
 
 #[derive(Clone, serde::Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -1149,6 +1150,15 @@ impl EmuApp {
                                         );
                                     }
                                     metadata_label(ui, "SID", &game.sid_file);
+                                    if game.is_loadable() && !game.filename.is_empty() {
+                                        let url = game_web_run_url(&game.filename);
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.strong("Web:");
+                                            ui.hyperlink_to(&url, &url).on_hover_text(
+                                                "Open and start in the web emulator",
+                                            );
+                                        });
+                                    }
                                     if !game.description.is_empty() {
                                         ui.separator();
                                         ui.strong("Description");
@@ -2507,6 +2517,22 @@ fn game_asset_url(base: &str, name: &str) -> String {
         }
     }
     format!("{base}{encoded}")
+}
+
+/// Web emulator link that fetches the Gamebase archive and starts it
+/// through the page's `?run=` parameter.
+fn game_web_run_url(filename: &str) -> String {
+    let archive = game_asset_url(GAME_BASE_URL, filename);
+    let mut query = String::with_capacity(archive.len());
+    for byte in archive.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~' | b':' | b'/') {
+            query.push(byte as char);
+        } else {
+            use std::fmt::Write;
+            let _ = write!(query, "%{byte:02X}");
+        }
+    }
+    format!("{WEB_EMULATOR_URL}?run={query}")
 }
 
 fn dedupe_recent_paths(paths: &[String]) -> Vec<String> {
