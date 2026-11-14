@@ -1,0 +1,20 @@
+// Rejected on purpose: attribute combinations that inline.c80 does not
+// allow. The comment above each function quotes its message. Expansions
+// that do not fit their call site are in inline_cg.fail.c80.
+//! expect-error: parse-expected
+//! expect-error: parse-expected
+//! expect-error: parse-expected
+
+// @inline cannot be combined with @stackcall: an inlined body has no frame
+// or stack arguments; drop one of them
+@inline @stackcall u8 framed(u8 x) {
+    return x;
+}
+
+// @noinline contradicts @inline; drop one of them
+@inline @noinline u8 both(u8 x) {
+    return x;
+}
+
+// @inline applies only to functions
+@inline u8 counter;

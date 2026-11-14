@@ -1,0 +1,39 @@
+// Rejected on purpose: code that registers.c80 shows the fixed version of.
+// These errors come from code generation, so they are reported only for a
+// file without type errors (the declaration errors are in
+// registers.fail.c80). The comment above each function quotes its message.
+//! expect-error: cg-unsupported
+//! expect-error: cg-unsupported
+
+// @fastcall 'sum_strict' must fit in registers, but 'n' has no free register
+// at the cast u8 to u16; pin values to free registers, declare a local
+// 'static', or remove @fastcall
+//
+// p, s, the widened byte and A take all seven registers. Copy n into a
+// static counter (see sum in registers.c80).
+@fastcall u16 sum_strict(ptr<u8> p, u8 n) {
+    u16 s = 0;
+    while (n != 0) {
+        s = s + u16(*p);
+        p++;
+        n--;
+    }
+    return s;
+}
+
+// `pub` with no @preserves: callers assume it changes every register.
+pub u8 twice(u8 v) {
+    return v + v;
+}
+
+// @fastcall 'keep' must fit in registers, but 'y' is live in c across the
+// call to 'twice', which has no register contract (it may change every
+// register); declare @preserves(c) on 'twice'; pin values to free registers,
+// declare a local 'static', or remove @fastcall
+//
+// Without @fastcall the compiler saves y with PUSH BC / POP BC (see keep in
+// registers.c80). contracts.c80 shows the @preserves fix.
+@fastcall u8 keep(u8 x, u8 y) {
+    u8 a = twice(x);
+    return a + y;
+}

@@ -36,7 +36,19 @@ pub struct TypedGlobal {
     pub is_const: bool,
     pub init: Option<u16>,
     pub extra: Vec<u8>,
+    /// Words of the data that hold another global's link-time address
+    /// (H3a): `&g`, `&a[K]`, `&s.f` in a static initializer. The bytes at
+    /// `offset` are zero in `extra`/`init`; the linker fills them.
+    pub relocs: Vec<StaticReloc>,
     pub span: SourceSpan,
+}
+
+/// `DW <target label>+addend` at byte `offset` of a global's data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StaticReloc {
+    pub offset: u16,
+    pub target: GlobalId,
+    pub addend: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,11 +57,45 @@ pub struct TypedFunction {
     pub name: String,
     pub is_pub: bool,
     pub conv: CallConv,
+    /// Explicit `@fastcall` (H2b): no slot, save, or IX fallback allowed.
+    pub strict_registers: bool,
+    /// `@preserves(...)` (H2c): the declared registers as an inline-asm
+    /// resource mask (`RES_A`..`RES_L`, pairs expanded). 0 when undeclared.
+    pub preserves: u16,
+    /// Span of the `@preserves` attribute, when declared.
+    pub preserves_span: Option<SourceSpan>,
+    /// `@inline` (H3i): its span. Every C80 call is expanded in place.
+    pub inline: Option<SourceSpan>,
+    /// `@noinline`: excluded from automatic inlining.
+    pub noinline: bool,
+    /// Emit the out-of-line body (H3i). False for a private `@inline`
+    /// function and, in optimized builds, for a private function whose every
+    /// call was inlined automatically; such a function has no address.
+    pub out_of_line: bool,
+    /// Where expanded ops came from (H3i): `IrBlock::origin` indexes this
+    /// table, 1-based (0 is the function's own code).
+    pub inline_sites: Vec<InlineSite>,
     pub ret: CType,
     pub params: Vec<TypedParam>,
     pub locals: Vec<TypedLocal>,
     pub blocks: Vec<IrBlock>,
     pub span: SourceSpan,
+}
+
+/// The chain of expanded calls an op came through, outermost first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlineSite {
+    pub frames: Vec<InlineFrame>,
+}
+
+/// One expanded call: the callee and the call site in its caller.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlineFrame {
+    pub callee: FuncId,
+    pub name: String,
+    pub call: SourceSpan,
+    /// Chosen by automatic inlining (optimized builds), not `@inline`.
+    pub auto: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +104,7 @@ pub struct TypedParam {
     pub name: String,
     pub ty: CType,
     pub span: SourceSpan,
+    pub pin: Option<RegPin>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,12 +113,31 @@ pub struct TypedLocal {
     pub name: String,
     pub ty: CType,
     pub span: SourceSpan,
+    pub pin: Option<RegPin>,
+}
+
+/// A register pin (`name @ reg`, H2b): the variable lives in `reg` for
+/// function-wide op indexes `scope.0..scope.1` (its lexical scope).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegPin {
+    pub reg: AsmGpr,
+    pub span: SourceSpan,
+    pub scope: (usize, usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IrBlock {
     pub id: BlockId,
     pub ops: Vec<IrOp>,
+    /// Per op: index into `TypedFunction::inline_sites` plus one, or 0. Empty
+    /// when the block has no expanded ops (H3i).
+    pub origin: Vec<u32>,
+}
+
+impl IrBlock {
+    pub fn origin_of(&self, op: usize) -> u32 {
+        self.origin.get(op).copied().unwrap_or(0)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

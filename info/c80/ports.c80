@@ -1,22 +1,37 @@
-// cpu:: builtins. No import. in:/out: stay asm operand keywords.
+// cpu:: builtins for ports, block copy and interrupts. They need no import.
+// `in:` and `out:` remain asm operand keywords; these are cpu::in/cpu::out.
 
+// A variable port uses IN A,(C) with B = 0.
+//! expect: read_device(0x58) == 0x7F with in(0x58) = 0x7F
 u8 read_device(u8 port) {
     return cpu::in(port);
 }
 
+// port arrives in A and value in C; OUT (C),A needs them the other way
+// round, so the listing moves both first.
+//! expect-mem: write_device(0x60, 0x14) => out(0x60) == 0x14
 void write_device(u8 port, u8 value) {
     cpu::out(port, value);
 }
 
+// Two writes to consecutive ports.
+//! expect-mem: write_pair(0x70, 0x0A, 0x03) => out(0x70) == 0x0A
+//! expect-mem: write_pair(0x70, 0x0A, 0x03) => out(0x71) == 0x03
 void write_pair(u8 port, u8 lo, u8 hi) {
     cpu::out(port, lo);
     cpu::out(port + 1, hi);
 }
 
+// cpu::ldir(src, dst, n) is Z80 order: source in HL, destination in DE,
+// count in BC. Those are exactly the word argument registers, so the body
+// is LDIR then RET.
+//! expect-mem: copy_block(0x9000, 0x9100, 3) => [0x9100..0x9103] == 1, 2, 3 with [0x9000..0x9003] = 1 2 3
+//! expect-bytes: copy_block == 3
 void copy_block(ptr<u8> src, ptr<u8> dst, u16 n) {
     cpu::ldir(src, dst, n);
 }
 
+// DI and EI.
 void ints() {
     cpu::di();
     cpu::ei();

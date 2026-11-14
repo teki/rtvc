@@ -101,7 +101,7 @@ impl SourceMap {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct IdGen {
     next: u32,
 }

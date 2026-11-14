@@ -1,0 +1,109 @@
+// Inlining: a small hot routine that costs what a macro would.
+//
+// `@inline` expands every C80 call to the function in place, in optimized
+// and --no-optimize builds alike. Arguments are evaluated once, left to
+// right; a constant argument becomes an immediate. A private @inline
+// function has no out-of-line copy; `pub @inline` keeps one, so BASIC and
+// asm units can still call it. Each expansion is marked `; inline NAME` in
+// the listing, and its bytes belong to the caller.
+//
+// Optimized builds also inline on their own: a private function whose only
+// call is expanded, or a call whose expansion is no bigger than the call
+// sequence, unless that would add a spill. Those are marked
+// `; inline NAME (auto)`, and a private function left with no call has no
+// out-of-line copy. `@noinline` keeps a function out of this; the call
+// version below uses it.
+
+// --- The same helper as a call and inlined ------------------------------
+//
+// The byte column of pixel x: four pixels per byte.
+//
+//     RRCA
+//     RRCA
+//     AND 63
+//     RET
+//! expect: col_call(9) == 2
+//! expect-tstates: col_call == 25
+//! expect-bytes: col_call == 5
+@noinline u8 col_call(u8 x) {
+    return x >> 2;
+}
+
+// Called twice. col_call is private and writes only A, so b waits in C and
+// the first result in B, with no save:
+//
+//     CALL col_call
+//     LD B,A ; spill
+//     LD A,C
+//     CALL col_call
+//     LD C,A
+//     LD A,B
+//     ADD A,C
+//     RET
+//! expect: cols_call(9, 40) == 12
+//! expect-tstates: cols_call == 114
+//! expect-bytes: cols_call == 12
+u8 cols_call(u8 a, u8 b) {
+    return col_call(a) + col_call(b);
+}
+
+// The same body with @inline. `pub` keeps an out-of-line copy as well.
+//! expect: col(9) == 2
+@inline pub u8 col(u8 x) {
+    return x >> 2;
+}
+
+// No CALL, no RET, no moves: the first copy works on a in A, the second on
+// b where it arrived, in C. 45 T and 10 bytes against 114 T and 12 bytes
+// (plus the 5-byte helper).
+//
+//     ; inline col
+//     RRCA
+//     RRCA
+//     AND 63
+//     ; inline col
+//     SRL C
+//     SRL C
+//     ADD A,C
+//     RET
+//! expect: cols(9, 40) == 12
+//! expect-tstates: cols == 45
+//! expect-bytes: cols == 10
+u8 cols(u8 a, u8 b) {
+    return col(a) + col(b);
+}
+
+// A constant argument folds: col(40) is 10, an immediate (ADD A,10).
+//! expect: col_plus_ten(9) == 12
+//! expect-bytes: col_plus_ten == 7
+u8 col_plus_ten(u8 x) {
+    return col(x) + col(40);
+}
+
+// --- In a loop ----------------------------------------------------------
+//
+// inc is private, so it has no copy of its own: the listing has no INC
+// label, only the expansion inside count.
+@inline u8 inc(u8 x) {
+    return x + 1;
+}
+
+// `s = inc(s)` is one INC C: the expansion of `x + 1` stored straight back
+// into s's register.
+//
+//     OR A          ; n != 0, tested once (A still holds n)
+//     JR Z,done
+//   loop:
+//     ; inline inc
+//     INC C
+//     DJNZ loop
+//! expect: count(5) == 5
+//! expect: count(0) == 0
+u8 count(u8 n @ b) {
+    u8 s = 0;
+    while (n != 0) {
+        s = inc(s);
+        n--;
+    }
+    return s;
+}

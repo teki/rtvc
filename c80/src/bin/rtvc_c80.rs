@@ -8,6 +8,7 @@ use rtvc_c80::project::{
 };
 use rtvc_c80::{
     C80Target, CompilationResult, CompileInput, DEFAULT_CODE_ORIGIN, SourceInput, compile,
+    render_diagnostic,
 };
 
 fn main() {
@@ -26,14 +27,11 @@ fn run() -> Result<(), String> {
     }
     let options = parse_args(program, &args[1..])?;
     let result = compile_input(&options)?;
-    if result.has_errors() {
-        for diag in &result.diagnostics {
-            eprintln!("{}: {}", diag.code.as_str(), diag.message);
-        }
-        return Err("compilation failed".to_string());
-    }
     for diag in &result.diagnostics {
-        eprintln!("{}: {}", diag.code.as_str(), diag.message);
+        eprint!("{}", render_diagnostic(&result.sources, diag));
+    }
+    if result.has_errors() {
+        return Err("compilation failed".to_string());
     }
     let code = result
         .code
@@ -235,7 +233,8 @@ fn compile_input(options: &Options) -> Result<CompilationResult, String> {
     };
     let result = compile(CompileInput {
         files: vec![SourceInput {
-            name: &options.input_name,
+            // The path as given, so diagnostics read `dir/f.c80:3:5: ...`.
+            name: options.input.to_str().unwrap_or(&options.input_name),
             text: &text,
         }],
         origin: options.origin.unwrap_or(DEFAULT_CODE_ORIGIN),

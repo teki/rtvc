@@ -46,8 +46,8 @@ More historical background is available on the
   the TVC floppy disk subsystem: setup, BASIC usage, and CLI commands.
 - [rtvc Implementation and Usage Reference](info/rtvc.md) — emulator
   architecture, media, snapshots, debugger, UI, and build targets.
-- [C80 Language Reference](info/c80.md) — implemented compiler syntax,
-  diagnostics, and library entry. **Work in progress:** C80 is experimental
+- [C80 Language Reference](info/c80.md) — language, generated code,
+  optimization, diagnostics, and library entry. **Work in progress:** C80 is experimental
   and may change without notice.
 - [C80 Tutorial](info/c80/tutorial.md) — walkthrough with compilable examples
   (work in progress).

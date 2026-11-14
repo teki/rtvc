@@ -1,0 +1,11 @@
+// Rejected on purpose: recursion, direct or through other functions.
+// Static slots and `static` locals have fixed addresses, so C80 code is
+// not reentrant; write the loop.
+//! expect-error: ty-recursion
+
+u8 down(u8 n) {
+    if (n == 0) {
+        return 0;
+    }
+    return down(n - 1);
+}

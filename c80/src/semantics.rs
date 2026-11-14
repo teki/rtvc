@@ -84,6 +84,8 @@ pub fn analyze_unit_in_project(
         next_block: 1,
         next_anon: 0,
         anon_globals: Vec::new(),
+        static_scopes: None,
+        static_relocs: Vec::new(),
         str_lens: HashMap::new(),
         imports: HashSet::new(),
         unit_name: unit_name.to_string(),
@@ -113,6 +115,8 @@ pub fn collect_exports(unit: &TranslationUnit, diagnostics: &mut Vec<Diagnostic>
         next_block: 1,
         next_anon: 0,
         anon_globals: Vec::new(),
+        static_scopes: None,
+        static_relocs: Vec::new(),
         str_lens: HashMap::new(),
         imports: HashSet::new(),
         unit_name: String::new(),
@@ -247,6 +251,18 @@ struct Analyzer<'a> {
     struct_ids: HashMap<String, StructId>,
     pending_structs: HashMap<StructId, StructDecl>,
     layouting: HashSet<StructId>,
+    /// Scopes a function-local `static` initializer sees (H3a): it may name
+    /// another `static` in scope; automatic locals have no fixed address.
+    static_scopes: Option<Vec<HashMap<String, LocalBind>>>,
+    /// Link-time addresses found while writing one global's initializer.
+    static_relocs: Vec<StaticReloc>,
+}
+
+/// A static initializer's value: plain bits, or another global's link-time
+/// address plus a byte offset (H3a).
+enum StaticValue {
+    Bits(u16),
+    Addr { target: GlobalId, offset: u16 },
 }
 
 struct FnCtx {
@@ -261,6 +277,23 @@ struct FnCtx {
     loop_stack: Vec<LoopCtx>,
     reachable: bool,
     owner_span: SourceSpan,
+    /// Pinned locals: (block, op count) where the scope starts and ends.
+    pin_marks: HashMap<NodeId, PinMarks>,
+    /// `@preserves` mask of the function (H2c); pins may not use it.
+    preserves: u16,
+    /// Locals already reported as used before assignment: the index of the
+    /// error and how many further uses were not reported.
+    unassigned: HashMap<NodeId, (usize, u32)>,
+    /// Locals whose declaration was rejected; uses of them stay silent.
+    rejected: HashSet<NodeId>,
+    /// Unresolved names already reported in this function.
+    unresolved: HashMap<String, (usize, u32)>,
+}
+
+#[derive(Clone, Copy)]
+struct PinMarks {
+    start: (BlockId, usize),
+    end: Option<(BlockId, usize)>,
 }
 
 #[derive(Clone)]
@@ -272,6 +305,10 @@ struct LocalBind {
     is_const: bool,
     #[allow(dead_code)]
     is_param: bool,
+    /// Pinned register (`name @ reg`).
+    pin: Option<Pin>,
+    /// A `static` local: the hidden symbol of its storage.
+    static_key: Option<String>,
 }
 
 struct LoopCtx {
@@ -316,6 +353,35 @@ impl<'a> Analyzer<'a> {
     fn emit(&mut self, code: DiagCode, span: SourceSpan, message: impl Into<String>) {
         self.diagnostics
             .push(Diagnostic::error(code, span, message));
+    }
+
+    /// Reports a use before assignment once per local (later uses are
+    /// counted into that error), and never for a rejected declaration.
+    fn unassigned(&mut self, ctx: &mut FnCtx, id: NodeId, span: SourceSpan, message: String) {
+        if ctx.rejected.contains(&id) {
+            return;
+        }
+        if let Some(entry) = ctx.unassigned.get_mut(&id) {
+            entry.1 += 1;
+            return;
+        }
+        ctx.unassigned.insert(id, (self.diagnostics.len(), 0));
+        self.emit(DiagCode::TyUseBeforeAssign, span, message);
+    }
+
+    /// Reports an unresolved name once per function; later uses are counted.
+    fn unresolved(&mut self, ctx: &mut FnCtx, span: SourceSpan, name: &str) {
+        if let Some(entry) = ctx.unresolved.get_mut(name) {
+            entry.1 += 1;
+            return;
+        }
+        ctx.unresolved
+            .insert(name.to_string(), (self.diagnostics.len(), 0));
+        self.emit(
+            DiagCode::TyUnresolvedName,
+            span,
+            format!("unresolved name '{name}'"),
+        );
     }
 
     fn warn(&mut self, code: DiagCode, span: SourceSpan, message: impl Into<String>) {
@@ -383,6 +449,7 @@ impl<'a> Analyzer<'a> {
             is_const: true,
             init: None,
             extra,
+            relocs: Vec::new(),
             span: SourceSpan::new(owner.file, owner.end, owner.end),
         });
         Some(GlobalId(id))
@@ -834,11 +901,14 @@ impl<'a> Analyzer<'a> {
                     "const aggregates are not supported; use a mutable global",
                 );
             }
+            self.static_relocs.clear();
             if let Some(expr) = &decl.init {
                 if !self.write_static_init(&mut extra, 0, ty, expr) {
                     extra.fill(0);
+                    self.static_relocs.clear();
                 }
             }
+            let relocs = std::mem::take(&mut self.static_relocs);
             if let Some(sym) = self.symbols.get_mut(&decl.name.name) {
                 sym.ty = ty;
             }
@@ -850,14 +920,32 @@ impl<'a> Analyzer<'a> {
                 is_const: decl.is_const,
                 init: None,
                 extra,
+                relocs,
                 span: decl.span,
             });
         }
+        let mut relocs = Vec::new();
         let init = if matches!(ty, CType::Str) {
             None
         } else if let Some(expr) = &decl.init {
-            match self.eval_const_expr(expr, Some(ty)) {
-                Some(bits) => Some(bits),
+            match self.eval_static_value(expr, ty) {
+                Some(StaticValue::Bits(bits)) => Some(bits),
+                Some(StaticValue::Addr { .. }) if decl.is_const => {
+                    self.emit(
+                        DiagCode::TyMismatch,
+                        expr.span,
+                        "a const cannot hold an address: it is fixed only when the program is linked; declare a global instead",
+                    );
+                    None
+                }
+                Some(StaticValue::Addr { target, offset }) => {
+                    relocs.push(StaticReloc {
+                        offset: 0,
+                        target,
+                        addend: offset,
+                    });
+                    Some(0)
+                }
                 None => {
                     if decl.is_const {
                         self.emit(
@@ -892,6 +980,7 @@ impl<'a> Analyzer<'a> {
             is_const: decl.is_const,
             init,
             extra,
+            relocs,
             span: decl.span,
         })
     }
@@ -987,13 +1076,31 @@ impl<'a> Analyzer<'a> {
                     );
                     return false;
                 }
-                let Some(bits) = self.eval_const_expr(expr, Some(ty)) else {
-                    self.emit(
-                        DiagCode::TyMismatch,
-                        expr.span,
-                        "static initializer must be a compile-time value",
-                    );
-                    return false;
+                let mentions_addr = mentions_addr_of(expr);
+                let bits = match self.eval_static_value(expr, ty) {
+                    Some(StaticValue::Bits(bits)) => bits,
+                    Some(StaticValue::Addr {
+                        target,
+                        offset: addend,
+                    }) => {
+                        self.static_relocs.push(StaticReloc {
+                            offset: offset as u16,
+                            target,
+                            addend,
+                        });
+                        0
+                    }
+                    None => {
+                        // An address form has its own located diagnostic.
+                        if !mentions_addr {
+                            self.emit(
+                                DiagCode::TyMismatch,
+                                expr.span,
+                                "static initializer must be a compile-time value",
+                            );
+                        }
+                        return false;
+                    }
                 };
                 match ty.byte_width() {
                     Some(1) => buf[offset] = bits as u8,
@@ -1035,12 +1142,19 @@ impl<'a> Analyzer<'a> {
             blocks: vec![IrBlock {
                 id: entry,
                 ops: Vec::new(),
+                origin: Vec::new(),
             }],
             current: entry,
             loop_stack: Vec::new(),
             reachable: true,
             owner_span: func.span,
+            pin_marks: HashMap::new(),
+            preserves: 0,
+            unassigned: HashMap::new(),
+            rejected: HashSet::new(),
+            unresolved: HashMap::new(),
         };
+        ctx.preserves = self.check_preserves(func, ret);
         let mut param_names = HashSet::new();
         for param in &func.params {
             let ty = self.type_of(&param.ty);
@@ -1065,12 +1179,17 @@ impl<'a> Analyzer<'a> {
                     format!("duplicate parameter '{}'", param.name.name),
                 );
             }
+            let pin = param
+                .pin
+                .filter(|pin| self.check_pin(&ctx, pin, ty, &param.name));
             let bind = LocalBind {
                 id: LocalId(param.id),
                 ty,
                 span: param.name.span,
                 is_const: false,
                 is_param: true,
+                pin,
+                static_key: None,
             };
             ctx.scopes[0].insert(param.name.name.clone(), bind);
             ctx.assigned.insert(param.id);
@@ -1079,6 +1198,11 @@ impl<'a> Analyzer<'a> {
                 name: param.name.name.clone(),
                 ty,
                 span: param.span,
+                pin: pin.map(|p| RegPin {
+                    reg: p.reg,
+                    span: p.span,
+                    scope: (0, usize::MAX),
+                }),
             });
         }
         self.check_block_stmts(&mut ctx, &func.body);
@@ -1102,11 +1226,44 @@ impl<'a> Analyzer<'a> {
                 );
             }
         }
+        // One use-before-assignment error per local; it counts the rest.
+        for &(index, further) in ctx.unassigned.values().chain(ctx.unresolved.values()) {
+            if further > 0 {
+                let plural = if further == 1 { "use" } else { "uses" };
+                if let Some(diag) = self.diagnostics.get_mut(index) {
+                    diag.message +=
+                        &format!(" ({further} further {plural} in this function not reported)");
+                }
+            }
+        }
+        // Pin scopes as function-wide op indexes (the order the lowering
+        // walks the blocks in).
+        let mut base = HashMap::new();
+        let mut at = 0usize;
+        for block in &ctx.blocks {
+            base.insert(block.id, at);
+            at += block.ops.len();
+        }
+        let flat = |mark: (BlockId, usize)| base.get(&mark.0).map(|&b| b + mark.1);
+        for local in &mut ctx.locals {
+            if let (Some(pin), Some(marks)) = (local.pin.as_mut(), ctx.pin_marks.get(&local.id.0)) {
+                let start = flat(marks.start).unwrap_or(0);
+                let end = marks.end.and_then(flat).unwrap_or(at);
+                pin.scope = (start, end.max(start));
+            }
+        }
         TypedFunction {
             id: FuncId(func.id),
             name: func.name.name.clone(),
             is_pub: func.is_pub,
             conv: func.conv,
+            strict_registers: func.strict_registers,
+            preserves: ctx.preserves,
+            preserves_span: func.preserves.as_ref().map(|p| p.span),
+            inline: func.inline,
+            noinline: func.noinline,
+            out_of_line: true,
+            inline_sites: Vec::new(),
             ret,
             params: ctx.params,
             locals: ctx.locals,
@@ -1115,12 +1272,125 @@ impl<'a> Analyzer<'a> {
         }
     }
 
+    /// `@preserves(...)` as a register mask (F-028). Pairs and halves
+    /// normalise (`b, c` is `bc`). A result register cannot be preserved.
+    fn check_preserves(&mut self, func: &Function, ret: CType) -> u16 {
+        let Some(pres) = &func.preserves else {
+            return 0;
+        };
+        let result = match ret.byte_width() {
+            _ if ret == CType::Void => 0,
+            Some(1) => gpr_mask(AsmGpr::A),
+            Some(2) => gpr_mask(AsmGpr::Hl),
+            _ => 0,
+        };
+        let mut mask = 0u16;
+        for reg in &pres.regs {
+            let bits = gpr_mask(reg.reg);
+            if bits & result != 0 {
+                let carrier = if result == gpr_mask(AsmGpr::A) {
+                    "a"
+                } else {
+                    "hl"
+                };
+                self.emit(
+                    DiagCode::TyMismatch,
+                    reg.span,
+                    format!(
+                        "'{}' returns {} in {carrier}, so it cannot preserve {}",
+                        func.name.name,
+                        ret.as_str(),
+                        reg.reg.as_str()
+                    ),
+                );
+                continue;
+            }
+            mask |= bits;
+        }
+        mask
+    }
+
+    /// A pin's register must match the type's width and must not overlap
+    /// another pin that is in scope (F-027).
+    fn check_pin(&mut self, ctx: &FnCtx, pin: &Pin, ty: CType, name: &Ident) -> bool {
+        let ok_width = match ty.byte_width() {
+            Some(1) => !pin.reg.is_pair(),
+            Some(2) => pin.reg.is_pair(),
+            _ => false,
+        };
+        if !ok_width {
+            self.emit(
+                DiagCode::TyMismatch,
+                pin.span,
+                format!(
+                    "'{}' is {} but '{}' is a {} register; a byte pins to a b c d e h l, a word or pointer to bc de hl",
+                    name.name,
+                    ty.as_str(),
+                    pin.reg.as_str(),
+                    if pin.reg.is_pair() { "word" } else { "byte" }
+                ),
+            );
+            return false;
+        }
+        if gpr_mask(pin.reg) & ctx.preserves != 0 {
+            self.emit(
+                DiagCode::TyMismatch,
+                pin.span,
+                format!(
+                    "'{}' is pinned to {}, but '{}' declares it in @preserves; a preserved register keeps the caller's value for the whole call",
+                    name.name,
+                    pin.reg.as_str(),
+                    ctx.name
+                ),
+            );
+            return false;
+        }
+        for scope in &ctx.scopes {
+            for (other, bind) in scope {
+                let Some(op) = bind.pin else { continue };
+                if gpr_mask(op.reg) & gpr_mask(pin.reg) != 0 {
+                    let mut diag = Diagnostic::error(
+                        DiagCode::TyDuplicateName,
+                        pin.span,
+                        format!(
+                            "pin '{} @ {}' overlaps '{} @ {}', which is still in scope",
+                            name.name,
+                            pin.reg.as_str(),
+                            other,
+                            op.reg.as_str()
+                        ),
+                    );
+                    diag.related.push(super::diagnostic::RelatedSpan {
+                        span: op.span,
+                        message: format!("'{other}' is pinned here"),
+                    });
+                    self.diagnostics.push(diag);
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
     fn check_block_stmts(&mut self, ctx: &mut FnCtx, block: &Block) {
         ctx.scopes.push(HashMap::new());
         for stmt in &block.stmts {
             self.check_stmt(ctx, stmt);
         }
-        ctx.scopes.pop();
+        let scope = ctx.scopes.pop().unwrap_or_default();
+        let here = (ctx.current, self.current_len(ctx));
+        for bind in scope.values().filter(|b| b.pin.is_some()) {
+            if let Some(marks) = ctx.pin_marks.get_mut(&bind.id.0) {
+                marks.end = Some(here);
+            }
+        }
+    }
+
+    fn current_len(&self, ctx: &FnCtx) -> usize {
+        ctx.blocks
+            .iter()
+            .find(|b| b.id == ctx.current)
+            .map_or(0, |b| b.ops.len())
     }
 
     fn check_stmt(&mut self, ctx: &mut FnCtx, stmt: &Stmt) {
@@ -1570,7 +1840,10 @@ impl<'a> Analyzer<'a> {
             );
             return None;
         };
-        if let Some(bind) = lookup_local(&ctx.scopes, &name.name).cloned() {
+        if let Some(bind) = lookup_local(&ctx.scopes, &name.name)
+            .filter(|b| b.static_key.is_none())
+            .cloned()
+        {
             if bind.is_const {
                 self.emit(
                     DiagCode::TyAssignConst,
@@ -1581,7 +1854,8 @@ impl<'a> Analyzer<'a> {
             }
             return Some((AsmDest::Local(bind.id), bind.ty));
         }
-        if let Some(sym) = self.symbols.get(&name.name) {
+        let gkey = self.global_key(ctx, &name.name).unwrap_or_default();
+        if let Some(sym) = self.symbols.get(&gkey) {
             if matches!(sym.kind, SymbolKind::Function { .. }) {
                 self.emit(
                     DiagCode::TyNotLvalue,
@@ -1600,11 +1874,7 @@ impl<'a> Analyzer<'a> {
             }
             return Some((AsmDest::Global(GlobalId(sym.id)), sym.ty));
         }
-        self.emit(
-            DiagCode::TyUnresolvedName,
-            name.span,
-            format!("unresolved name '{}'", name.name),
-        );
+        self.unresolved(ctx, name.span, &name.name);
         None
     }
 
@@ -1614,10 +1884,11 @@ impl<'a> Analyzer<'a> {
             AsmDest::Local(local) => {
                 if let Some(bind) = lookup_local_id(&ctx.scopes, *local) {
                     if !bind.is_const && !ctx.assigned.contains(&local.0) {
-                        self.emit(
-                            DiagCode::TyUseBeforeAssign,
+                        self.unassigned(
+                            ctx,
+                            local.0,
                             expr.span,
-                            "inout operand is used before assignment",
+                            "inout operand is used before assignment".into(),
                         );
                         return None;
                     }
@@ -1663,12 +1934,17 @@ impl<'a> Analyzer<'a> {
     }
 
     fn check_local(&mut self, ctx: &mut FnCtx, decl: &VarDecl) {
+        if decl.is_static {
+            self.check_static_local(ctx, decl);
+            return;
+        }
         if decl.array_len.is_some() || self.type_of(&decl.ty).is_aggregate() {
             self.emit(
                 DiagCode::TyMismatch,
                 decl.name.span,
-                "local arrays and structs are not supported; use a global or a pointer",
+                "local arrays and structs need storage; declare them 'static' (a fixed address after the function), or use a global or a pointer",
             );
+            ctx.rejected.insert(decl.id);
         }
         let ty = self.type_of(&decl.ty);
         if ty == CType::Void {
@@ -1687,12 +1963,25 @@ impl<'a> Analyzer<'a> {
             let _ = prev;
             return;
         }
+        let pin = decl.pin.filter(|pin| {
+            if decl.is_const {
+                self.emit(
+                    DiagCode::TyMismatch,
+                    pin.span,
+                    "a const has no storage and cannot be pinned",
+                );
+                return false;
+            }
+            self.check_pin(ctx, pin, ty, &decl.name)
+        });
         let bind = LocalBind {
             id: LocalId(decl.id),
             ty,
             span: decl.name.span,
             is_const: decl.is_const,
             is_param: false,
+            pin,
+            static_key: None,
         };
         ctx.scopes
             .last_mut()
@@ -1703,9 +1992,20 @@ impl<'a> Analyzer<'a> {
             name: decl.name.name.clone(),
             ty,
             span: decl.span,
+            pin: pin.map(|p| RegPin {
+                reg: p.reg,
+                span: p.span,
+                scope: (0, usize::MAX),
+            }),
         });
         if let Some(init) = &decl.init {
             if let Some(val) = self.check_expr(ctx, init, Some(ty)) {
+                // A pin's scope starts at its initializing store, after the
+                // initializer is evaluated.
+                if pin.is_some() {
+                    let start = (ctx.current, self.current_len(ctx));
+                    ctx.pin_marks.insert(decl.id, PinMarks { start, end: None });
+                }
                 self.emit_op(
                     ctx,
                     IrOp::StoreLocal {
@@ -1723,24 +2023,126 @@ impl<'a> Analyzer<'a> {
                 "const declaration requires an initializer",
             );
         }
+        if pin.is_some() && !ctx.pin_marks.contains_key(&decl.id) {
+            let start = (ctx.current, self.current_len(ctx));
+            ctx.pin_marks.insert(decl.id, PinMarks { start, end: None });
+        }
+    }
+
+    /// `static T x [= init];` / `static T a[N] [= {...}];` (H2b): real static
+    /// storage placed right after the function, initialized once in the image,
+    /// accessed like a global.
+    fn check_static_local(&mut self, ctx: &mut FnCtx, decl: &VarDecl) {
+        if ctx.scopes.last().unwrap().contains_key(&decl.name.name) {
+            self.emit(
+                DiagCode::TyDuplicateName,
+                decl.name.span,
+                format!("duplicate name '{}' in this scope", decl.name.name),
+            );
+            return;
+        }
+        let mut storage = decl.clone();
+        if let Some(init) = &decl.init {
+            let init_ty = self.type_of(&decl.ty);
+            let before = self.diagnostics.len();
+            if !matches!(init.kind, ExprKind::InitList { .. } | ExprKind::String(_))
+                && decl.array_len.is_none()
+                && !mentions_addr_of(init)
+                && self.eval_const_expr(init, Some(init_ty)).is_none()
+            {
+                // One error, not the constant evaluator's follow-ups (such as
+                // an unresolved local); the static is still declared, zeroed.
+                self.diagnostics.truncate(before);
+                self.emit(
+                    DiagCode::TyMismatch,
+                    init.span,
+                    "a static initializer must be a compile-time value; it is stored once in the image, not run on each call",
+                );
+                storage.init = None;
+            }
+        }
+        let key = format!("{}\u{0}{}", ctx.name, decl.id.0);
+        let mut ty = self.type_of(&decl.ty);
+        if let Some(len_expr) = &decl.array_len {
+            if let ExprKind::Int(lit) = &len_expr.kind {
+                if let (Some(n), Some(elem)) = (
+                    lit.value.and_then(|v| u16::try_from(v).ok()),
+                    ArrayElem::from_ctype(ty),
+                ) {
+                    ty = CType::Array(ArrayType { elem, len: n });
+                }
+            }
+        }
+        self.symbols.insert(
+            key.clone(),
+            Symbol {
+                kind: SymbolKind::Global,
+                ty,
+                id: decl.id,
+                span: decl.name.span,
+                is_const: false,
+                is_pub: false,
+                const_bits: None,
+            },
+        );
+        storage.name.name = key.clone();
+        storage.is_static = false;
+        // The initializer may name statics in scope, this one included (a
+        // self-linked node); automatic locals are visible only to be rejected.
+        let mut scopes = ctx.scopes.clone();
+        scopes.last_mut().unwrap().insert(
+            decl.name.name.clone(),
+            LocalBind {
+                id: LocalId(decl.id),
+                ty,
+                span: decl.name.span,
+                is_const: false,
+                is_param: false,
+                pin: None,
+                static_key: Some(key.clone()),
+            },
+        );
+        self.static_scopes = Some(scopes);
+        let checked = self.check_global(&storage);
+        self.static_scopes = None;
+        let Some(mut global) = checked else {
+            self.symbols.remove(&key);
+            return;
+        };
+        global.name = format!("{}.{}", ctx.name, decl.name.name);
+        let ty = global.ty;
+        self.anon_globals.push(global);
+        ctx.scopes.last_mut().unwrap().insert(
+            decl.name.name.clone(),
+            LocalBind {
+                id: LocalId(decl.id),
+                ty,
+                span: decl.name.span,
+                is_const: false,
+                is_param: false,
+                pin: None,
+                static_key: Some(key),
+            },
+        );
+    }
+
+    /// The symbol key `name` resolves to when it is not an automatic local:
+    /// the hidden key of a `static` local, or the global name. `None` when an
+    /// automatic local shadows it.
+    fn global_key(&self, ctx: &FnCtx, name: &str) -> Option<String> {
+        match lookup_local(&ctx.scopes, name) {
+            Some(bind) => bind.static_key.clone(),
+            None => Some(name.to_string()),
+        }
     }
 
     fn check_if(&mut self, ctx: &mut FnCtx, stmt: &IfStmt) {
-        let Some(cond) = self.check_expr(ctx, &stmt.cond, Some(CType::Bool)) else {
-            return;
-        };
         let then_blk = self.block_id();
         let else_blk = self.block_id();
         let join_blk = self.block_id();
-        self.emit_op(
-            ctx,
-            IrOp::Branch {
-                cond: cond.reg,
-                true_blk: then_blk,
-                false_blk: else_blk,
-                span: stmt.cond.span,
-            },
-        );
+        if !self.check_branch(ctx, &stmt.cond, then_blk, else_blk) {
+            return;
+        }
         let assigned_before = ctx.assigned.clone();
         self.start_block(ctx, then_blk);
         ctx.reachable = true;
@@ -1804,18 +2206,9 @@ impl<'a> Analyzer<'a> {
         );
         let assigned_entry = ctx.assigned.clone();
         self.start_block(ctx, cond_blk);
-        let Some(cond) = self.check_expr(ctx, &stmt.cond, Some(CType::Bool)) else {
+        if !self.check_branch(ctx, &stmt.cond, body_blk, after_blk) {
             return;
-        };
-        self.emit_op(
-            ctx,
-            IrOp::Branch {
-                cond: cond.reg,
-                true_blk: body_blk,
-                false_blk: after_blk,
-                span: stmt.cond.span,
-            },
-        );
+        }
         ctx.loop_stack.push(LoopCtx {
             break_blk: after_blk,
             continue_blk: cond_blk,
@@ -1863,24 +2256,25 @@ impl<'a> Analyzer<'a> {
         );
         let assigned_entry = ctx.assigned.clone();
         self.start_block(ctx, cond_blk);
-        let cond = if let Some(cond) = &stmt.cond {
-            self.check_expr(ctx, cond, Some(CType::Bool))
+        let ok = if let Some(cond) = &stmt.cond {
+            self.check_branch(ctx, cond, body_blk, after_blk)
         } else {
-            Some(self.const_val(ctx, CType::Bool, 1, stmt.span))
+            let cond = self.const_val(ctx, CType::Bool, 1, stmt.span);
+            self.emit_op(
+                ctx,
+                IrOp::Branch {
+                    cond: cond.reg,
+                    true_blk: body_blk,
+                    false_blk: after_blk,
+                    span: stmt.span,
+                },
+            );
+            true
         };
-        let Some(cond) = cond else {
+        if !ok {
             ctx.scopes.pop();
             return;
-        };
-        self.emit_op(
-            ctx,
-            IrOp::Branch {
-                cond: cond.reg,
-                true_blk: body_blk,
-                false_blk: after_blk,
-                span: stmt.cond.as_ref().map(|c| c.span).unwrap_or(stmt.span),
-            },
-        );
+        }
         ctx.loop_stack.push(LoopCtx {
             break_blk: after_blk,
             continue_blk: update_blk,
@@ -1952,18 +2346,9 @@ impl<'a> Analyzer<'a> {
         ctx.loop_stack.pop();
         self.start_block(ctx, cond_blk);
         ctx.reachable = true;
-        let Some(cond) = self.check_expr(ctx, &stmt.cond, Some(CType::Bool)) else {
+        if !self.check_branch(ctx, &stmt.cond, body_blk, after_blk) {
             return;
-        };
-        self.emit_op(
-            ctx,
-            IrOp::Branch {
-                cond: cond.reg,
-                true_blk: body_blk,
-                false_blk: after_blk,
-                span: stmt.cond.span,
-            },
-        );
+        }
         ctx.assigned = assigned_after_body;
         ctx.reachable = true;
         self.start_block(ctx, after_blk);
@@ -1994,7 +2379,7 @@ impl<'a> Analyzer<'a> {
                     ExprKind::Unary {
                         op: UnaryOp::AddrOf,
                         expr: inner
-                    } if matches!(&inner.kind, ExprKind::Name(name) if lookup_local(&ctx.scopes, &name.name).is_some())
+                    } if matches!(&inner.kind, ExprKind::Name(name) if lookup_local(&ctx.scopes, &name.name).is_some_and(|b| b.static_key.is_none() && b.pin.is_none() && !b.is_const))
                 ) {
                     self.warn(
                         DiagCode::TyReturnLocalAddr,
@@ -2233,13 +2618,13 @@ impl<'a> Analyzer<'a> {
     }
 
     fn check_name(&mut self, ctx: &mut FnCtx, name: &Ident) -> Option<Value> {
-        if let Some(bind) = lookup_local(&ctx.scopes, &name.name).cloned() {
+        if let Some(bind) = lookup_local(&ctx.scopes, &name.name)
+            .filter(|b| b.static_key.is_none())
+            .cloned()
+        {
             if !bind.is_const && !ctx.assigned.contains(&bind.id.0) {
-                self.emit(
-                    DiagCode::TyUseBeforeAssign,
-                    name.span,
-                    format!("'{}' is used before assignment", name.name),
-                );
+                let message = format!("'{}' is used before assignment", name.name);
+                self.unassigned(ctx, bind.id.0, name.span, message);
                 return None;
             }
             let dst = self.vreg();
@@ -2257,7 +2642,8 @@ impl<'a> Analyzer<'a> {
                 bits: None,
             });
         }
-        let global = self.symbols.get(&name.name).map(|sym| {
+        let gkey = self.global_key(ctx, &name.name).unwrap_or_default();
+        let global = self.symbols.get(&gkey).map(|sym| {
             (
                 matches!(sym.kind, SymbolKind::Function { .. }),
                 sym.ty,
@@ -2334,11 +2720,7 @@ impl<'a> Analyzer<'a> {
                 bits: None,
             });
         }
-        self.emit(
-            DiagCode::TyUnresolvedName,
-            name.span,
-            format!("unresolved name '{}'", name.name),
-        );
+        self.unresolved(ctx, name.span, &name.name);
         None
     }
 
@@ -2788,7 +3170,8 @@ impl<'a> Analyzer<'a> {
             known_len = Some(bytes.len() as u32);
         }
         let base_val = if let ExprKind::Name(name) = &base.kind {
-            let array = self.symbols.get(&name.name).and_then(|sym| {
+            let gkey = self.global_key(ctx, &name.name).unwrap_or_default();
+            let array = self.symbols.get(&gkey).and_then(|sym| {
                 if let CType::Array(arr) = sym.ty {
                     Some((arr, sym.id, name.span))
                 } else {
@@ -2879,7 +3262,8 @@ impl<'a> Analyzer<'a> {
         } else if base_val.ty == CType::Str {
             immutable = true;
             if let ExprKind::Name(name) = &base.kind {
-                if let Some(sym) = self.symbols.get(&name.name) {
+                let gkey = self.global_key(ctx, &name.name).unwrap_or_default();
+                if let Some(sym) = self.symbols.get(&gkey) {
                     if let Some(&len) = self.str_lens.get(&sym.id) {
                         known_len = Some(u32::from(len));
                     }
@@ -2972,12 +3356,27 @@ impl<'a> Analyzer<'a> {
                 Some(addr)
             }
             ExprKind::Name(name) => {
-                if let Some(bind) = lookup_local(&ctx.scopes, &name.name).cloned() {
+                if let Some(bind) = lookup_local(&ctx.scopes, &name.name)
+                    .filter(|b| b.static_key.is_none())
+                    .cloned()
+                {
                     if bind.is_const {
                         self.emit(
                             DiagCode::TyNotLvalue,
                             span,
                             "cannot take the address of a constant",
+                        );
+                        return None;
+                    }
+                    if let Some(pin) = bind.pin {
+                        self.emit(
+                            DiagCode::TyNotLvalue,
+                            span,
+                            format!(
+                                "cannot take the address of '{}': it is pinned to register {}; declare it 'static' to give it an address",
+                                name.name,
+                                pin.reg.as_str()
+                            ),
                         );
                         return None;
                     }
@@ -3004,7 +3403,8 @@ impl<'a> Analyzer<'a> {
                         bits: None,
                     });
                 }
-                let global = self.symbols.get(&name.name).map(|sym| {
+                let gkey = self.global_key(ctx, &name.name).unwrap_or_default();
+                let global = self.symbols.get(&gkey).map(|sym| {
                     (
                         matches!(sym.kind, SymbolKind::Function { .. }),
                         sym.ty,
@@ -3063,11 +3463,7 @@ impl<'a> Analyzer<'a> {
                         bits: None,
                     });
                 }
-                self.emit(
-                    DiagCode::TyUnresolvedName,
-                    name.span,
-                    format!("unresolved name '{}'", name.name),
-                );
+                self.unresolved(ctx, name.span, &name.name);
                 None
             }
             ExprKind::Qualified { unit, name } => match self.lookup_qualified(unit, name)? {
@@ -3353,7 +3749,10 @@ impl<'a> Analyzer<'a> {
                 }
             }
             ExprKind::Name(name) => {
-                if let Some(bind) = lookup_local(&ctx.scopes, &name.name).cloned() {
+                if let Some(bind) = lookup_local(&ctx.scopes, &name.name)
+                    .filter(|b| b.static_key.is_none())
+                    .cloned()
+                {
                     if let CType::Struct(id) = bind.ty {
                         let dst = self.vreg();
                         self.emit_op(
@@ -3373,7 +3772,8 @@ impl<'a> Analyzer<'a> {
                     );
                     return None;
                 }
-                let global = self.symbols.get(&name.name).map(|sym| {
+                let gkey = self.global_key(ctx, &name.name).unwrap_or_default();
+                let global = self.symbols.get(&gkey).map(|sym| {
                     (
                         sym.ty,
                         sym.id,
@@ -3409,11 +3809,7 @@ impl<'a> Analyzer<'a> {
                     );
                     return None;
                 }
-                self.emit(
-                    DiagCode::TyUnresolvedName,
-                    name.span,
-                    format!("unresolved name '{}'", name.name),
-                );
+                self.unresolved(ctx, name.span, &name.name);
                 None
             }
             _ => {
@@ -3456,7 +3852,9 @@ impl<'a> Analyzer<'a> {
             } else {
                 self.check_expr(ctx, lhs, int_expected)?
             };
-            let right = self.check_expr(ctx, rhs, Some(CType::U8))?;
+            // An untyped literal count is a u8; a typed count keeps its
+            // type, so the check below can say "shift count must be u8".
+            let right = self.check_expr(ctx, rhs, rhs_untyped.map(|_| CType::U8))?;
             (left, right)
         } else if lhs_untyped.is_some() && rhs_untyped.is_some() {
             let ty = int_expected.unwrap_or_else(|| {
@@ -3504,7 +3902,27 @@ impl<'a> Analyzer<'a> {
                 return self.ptr_offset(ctx, right, left, false, span);
             }
         }
-        if left.ty != right.ty {
+        let shift = matches!(op, BinaryOp::Shl | BinaryOp::Shr);
+        if shift {
+            // The count is always `u8`; the result has the left operand's
+            // type, so the two operand types are independent (F001).
+            if !left.ty.is_integer() {
+                self.emit(
+                    DiagCode::TyMismatch,
+                    span,
+                    format!("{} requires integer operands", op.as_str()),
+                );
+                return None;
+            }
+            if right.ty != CType::U8 {
+                self.emit(
+                    DiagCode::TyMismatch,
+                    rhs.span,
+                    format!("shift count must be u8, found {}", right.ty.as_str()),
+                );
+                return None;
+            }
+        } else if left.ty != right.ty {
             self.emit(
                 DiagCode::TyMismatch,
                 span,
@@ -3575,10 +3993,6 @@ impl<'a> Analyzer<'a> {
             );
             return None;
         }
-        if matches!(op, BinaryOp::Shl | BinaryOp::Shr) && right.ty != CType::U8 {
-            self.emit(DiagCode::TyMismatch, span, "shift count must be u8");
-            return None;
-        }
         let dst = self.vreg();
         let bits = match (left.bits, right.bits) {
             (Some(a), Some(b)) => Some(fold_binary(op, left.ty, a, b)),
@@ -3600,6 +4014,57 @@ impl<'a> Analyzer<'a> {
             reg: dst,
             bits,
         })
+    }
+
+    /// A condition that only decides a branch (H5 item 1): `&&`, `||` and
+    /// `!` become control flow, so no 0/1 is built for them; any other
+    /// expression is evaluated as a bool and branched on (the lowerer fuses
+    /// a comparison with its branch). False when the expression has errors.
+    fn check_branch(
+        &mut self,
+        ctx: &mut FnCtx,
+        expr: &Expr,
+        true_blk: BlockId,
+        false_blk: BlockId,
+    ) -> bool {
+        match &expr.kind {
+            ExprKind::Binary {
+                op: op @ (BinaryOp::And | BinaryOp::Or),
+                lhs,
+                rhs,
+            } => {
+                let mid = self.block_id();
+                let ok = if *op == BinaryOp::And {
+                    self.check_branch(ctx, lhs, mid, false_blk)
+                } else {
+                    self.check_branch(ctx, lhs, true_blk, mid)
+                };
+                if !ok {
+                    return false;
+                }
+                self.start_block(ctx, mid);
+                self.check_branch(ctx, rhs, true_blk, false_blk)
+            }
+            ExprKind::Unary {
+                op: UnaryOp::Not,
+                expr: inner,
+            } => self.check_branch(ctx, inner, false_blk, true_blk),
+            _ => {
+                let Some(cond) = self.check_expr(ctx, expr, Some(CType::Bool)) else {
+                    return false;
+                };
+                self.emit_op(
+                    ctx,
+                    IrOp::Branch {
+                        cond: cond.reg,
+                        true_blk,
+                        false_blk,
+                        span: expr.span,
+                    },
+                );
+                true
+            }
+        }
     }
 
     fn check_short_circuit(
@@ -3705,47 +4170,51 @@ impl<'a> Analyzer<'a> {
         if scale == 1 {
             return src;
         }
+        // One shift per run of zero bits between the set bits of the scale
+        // (H3): `<< k` picks the fastest sequence for k, where k doublings
+        // cost k additions.
         let mut acc: Option<VReg> = None;
         let mut part = src;
-        let mut bits = scale;
-        loop {
-            if bits & 1 != 0 {
-                acc = Some(match acc {
-                    None => part,
-                    Some(a) => {
-                        let dst = self.vreg();
-                        self.emit_op(
-                            ctx,
-                            IrOp::Binary {
-                                dst,
-                                ty: CType::U16,
-                                op: IrBinary::Add,
-                                lhs: a,
-                                rhs: part,
-                                span,
-                            },
-                        );
-                        dst
-                    }
-                });
+        let mut shifted = 0u32;
+        for bit in 0..16u32 {
+            if scale & (1 << bit) == 0 {
+                continue;
             }
-            bits >>= 1;
-            if bits == 0 {
-                break;
+            if bit > shifted {
+                let count = self.const_val(ctx, CType::U8, (bit - shifted) as u16, span);
+                let dst = self.vreg();
+                self.emit_op(
+                    ctx,
+                    IrOp::Binary {
+                        dst,
+                        ty: CType::U16,
+                        op: IrBinary::Shl,
+                        lhs: part,
+                        rhs: count.reg,
+                        span,
+                    },
+                );
+                part = dst;
+                shifted = bit;
             }
-            let doubled = self.vreg();
-            self.emit_op(
-                ctx,
-                IrOp::Binary {
-                    dst: doubled,
-                    ty: CType::U16,
-                    op: IrBinary::Add,
-                    lhs: part,
-                    rhs: part,
-                    span,
-                },
-            );
-            part = doubled;
+            acc = Some(match acc {
+                None => part,
+                Some(a) => {
+                    let dst = self.vreg();
+                    self.emit_op(
+                        ctx,
+                        IrOp::Binary {
+                            dst,
+                            ty: CType::U16,
+                            op: IrBinary::Add,
+                            lhs: a,
+                            rhs: part,
+                            span,
+                        },
+                    );
+                    dst
+                }
+            });
         }
         acc.unwrap_or(src)
     }
@@ -3755,11 +4224,7 @@ impl<'a> Analyzer<'a> {
         match *place {
             Place::Local { id, is_const, .. } => {
                 if !is_const && !ctx.assigned.contains(&id.0) {
-                    self.emit(
-                        DiagCode::TyUseBeforeAssign,
-                        span,
-                        "value is used before assignment",
-                    );
+                    self.unassigned(ctx, id.0, span, "value is used before assignment".into());
                     return None;
                 }
                 let dst = self.vreg();
@@ -3898,14 +4363,18 @@ impl<'a> Analyzer<'a> {
             }
             ExprKind::Field { base, name } => self.check_field_place(ctx, base, name, expr.span),
             ExprKind::Name(name) => {
-                if let Some(bind) = lookup_local(&ctx.scopes, &name.name).cloned() {
+                if let Some(bind) = lookup_local(&ctx.scopes, &name.name)
+                    .filter(|b| b.static_key.is_none())
+                    .cloned()
+                {
                     return Some(Place::Local {
                         id: bind.id,
                         ty: bind.ty,
                         is_const: bind.is_const,
                     });
                 }
-                let global = self.symbols.get(&name.name).map(|sym| {
+                let gkey = self.global_key(ctx, &name.name).unwrap_or_default();
+                let global = self.symbols.get(&gkey).map(|sym| {
                     (
                         matches!(sym.kind, SymbolKind::Function { .. } | SymbolKind::Struct),
                         sym.ty,
@@ -3928,11 +4397,7 @@ impl<'a> Analyzer<'a> {
                         is_const,
                     })
                 } else {
-                    self.emit(
-                        DiagCode::TyUnresolvedName,
-                        name.span,
-                        format!("unresolved name '{}'", name.name),
-                    );
+                    self.unresolved(ctx, name.span, &name.name);
                     None
                 }
             }
@@ -4012,14 +4477,18 @@ impl<'a> Analyzer<'a> {
             return None;
         }
         let rhs_ty = if matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
-            Some(CType::U8)
+            untyped_int_tree(rhs).map(|_| CType::U8)
         } else {
             Some(ty)
         };
         let rhs_val = self.check_expr(ctx, rhs, rhs_ty)?;
         if matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
             if rhs_val.ty != CType::U8 {
-                self.emit(DiagCode::TyMismatch, rhs.span, "shift count must be u8");
+                self.emit(
+                    DiagCode::TyMismatch,
+                    rhs.span,
+                    format!("shift count must be u8, found {}", rhs_val.ty.as_str()),
+                );
                 return None;
             }
         } else if rhs_val.ty != ty {
@@ -4299,7 +4768,10 @@ impl<'a> Analyzer<'a> {
             let _ = self.check_expr(ctx, rhs, None);
             return None;
         };
-        if let Some(bind) = lookup_local(&ctx.scopes, &name.name).cloned() {
+        if let Some(bind) = lookup_local(&ctx.scopes, &name.name)
+            .filter(|b| b.static_key.is_none())
+            .cloned()
+        {
             if bind.is_const {
                 self.emit(
                     DiagCode::TyAssignConst,
@@ -4320,7 +4792,8 @@ impl<'a> Analyzer<'a> {
             ctx.assigned.insert(bind.id.0);
             return Some(val);
         }
-        if let Some(sym) = self.symbols.get(&name.name) {
+        let gkey = self.global_key(ctx, &name.name).unwrap_or_default();
+        if let Some(sym) = self.symbols.get(&gkey) {
             if matches!(sym.kind, SymbolKind::Function { .. }) {
                 self.emit(
                     DiagCode::TyNotLvalue,
@@ -4366,11 +4839,7 @@ impl<'a> Analyzer<'a> {
             );
             return Some(val);
         }
-        self.emit(
-            DiagCode::TyUnresolvedName,
-            name.span,
-            format!("unresolved name '{}'", name.name),
-        );
+        self.unresolved(ctx, name.span, &name.name);
         None
     }
 
@@ -4390,11 +4859,7 @@ impl<'a> Analyzer<'a> {
         let (func_name, func_id, params, ret, callee_key) = match &callee.kind {
             ExprKind::Name(name) => {
                 let Some(sym) = self.symbols.get(&name.name) else {
-                    self.emit(
-                        DiagCode::TyUnresolvedName,
-                        name.span,
-                        format!("unresolved name '{}'", name.name),
-                    );
+                    self.unresolved(ctx, name.span, &name.name);
                     return None;
                 };
                 let SymbolKind::Function { params, conv: _ } = &sym.kind else {
@@ -4712,8 +5177,189 @@ impl<'a> Analyzer<'a> {
         }
     }
 
+    /// A static initializer's scalar value (H3a). Without `&` it is a
+    /// compile-time constant. With `&` it is typed exactly like the run-time
+    /// expression (same diagnostics for `&array`, `&const`, a string payload,
+    /// a pinned local), then must reduce to a global plus a constant byte
+    /// offset: `&g`, `&a[K]`, `&g.f`, `&a[K].f`, `&unit::g`, wrapped in
+    /// `ptr<T>(...)` or `u16(...)`.
+    fn eval_static_value(&mut self, expr: &Expr, ty: CType) -> Option<StaticValue> {
+        if !mentions_addr_of(expr) {
+            return self.eval_const_expr(expr, Some(ty)).map(StaticValue::Bits);
+        }
+        let mut ctx = self.const_ctx(expr.span);
+        if let Some(scopes) = &self.static_scopes {
+            ctx.scopes = scopes.clone();
+        }
+        let before = self.diagnostics.len();
+        self.check_expr(&mut ctx, expr, Some(ty))?;
+        if self.diagnostics[before..].iter().any(Diagnostic::is_error) {
+            return None;
+        }
+        match self.static_addr(&ctx, expr) {
+            Ok((target, offset)) => Some(StaticValue::Addr { target, offset }),
+            Err((code, span, msg)) => {
+                self.emit(code, span, msg);
+                None
+            }
+        }
+    }
+
+    fn static_addr(
+        &mut self,
+        ctx: &FnCtx,
+        expr: &Expr,
+    ) -> Result<(GlobalId, u16), (DiagCode, SourceSpan, String)> {
+        match &expr.kind {
+            ExprKind::Cast { ty, expr: inner } => {
+                let to = self.type_of(ty);
+                if !matches!(to, CType::Ptr(_) | CType::U16) {
+                    return Err((
+                        DiagCode::TyMismatch,
+                        expr.span,
+                        format!("a static address converts only to a pointer or u16, not {}", to.as_str()),
+                    ));
+                }
+                self.static_addr(ctx, inner)
+            }
+            ExprKind::Unary {
+                op: UnaryOp::AddrOf,
+                expr: inner,
+            } => {
+                let (target, offset, _) = self.static_place(ctx, inner)?;
+                Ok((target, offset))
+            }
+            _ => Err((
+                DiagCode::TyMismatch,
+                expr.span,
+                "a static initializer holds an address only as &global, &array[K] or &global.field (K constant), optionally in ptr<T>(...) or u16(...); arithmetic on an address is not allowed".to_string(),
+            )),
+        }
+    }
+
+    /// The global, byte offset and type of a place whose address is fixed
+    /// at link time.
+    fn static_place(
+        &mut self,
+        ctx: &FnCtx,
+        expr: &Expr,
+    ) -> Result<(GlobalId, u16, CType), (DiagCode, SourceSpan, String)> {
+        match &expr.kind {
+            ExprKind::Name(name) => {
+                if let Some(bind) = lookup_local(&ctx.scopes, &name.name) {
+                    if bind.static_key.is_none() {
+                        return Err((
+                            DiagCode::TyNotLvalue,
+                            name.span,
+                            format!(
+                                "a static initializer cannot take the address of automatic local '{}': it has no fixed address; declare it 'static'",
+                                name.name
+                            ),
+                        ));
+                    }
+                }
+                let key = self.global_key(ctx, &name.name).unwrap_or_default();
+                match self.symbols.get(&key) {
+                    Some(sym) if matches!(sym.kind, SymbolKind::Global) => {
+                        Ok((GlobalId(sym.id), 0, sym.ty))
+                    }
+                    _ => Err((
+                        DiagCode::TyMismatch,
+                        name.span,
+                        format!("'{}' has no static address", name.name),
+                    )),
+                }
+            }
+            ExprKind::Qualified { unit, name } if unit.name != "project" && unit.name != "cpu" => {
+                match self.lookup_qualified(unit, name) {
+                    Some(QSym::Value {
+                        id,
+                        ty,
+                        is_const: false,
+                        ..
+                    }) => Ok((id, 0, ty)),
+                    _ => Err((
+                        DiagCode::TyMismatch,
+                        expr.span,
+                        format!("'{}::{}' has no static address", unit.name, name.name),
+                    )),
+                }
+            }
+            ExprKind::Index { base, index } => {
+                let (target, offset, ty) = self.static_place(ctx, base)?;
+                let CType::Array(arr) = ty else {
+                    return Err((
+                        DiagCode::TyMismatch,
+                        base.span,
+                        "a static address can index only an array: a pointer's value is not known until run time".to_string(),
+                    ));
+                };
+                let Some(k) = self.eval_const_expr(index, None) else {
+                    return Err((
+                        DiagCode::TyMismatch,
+                        index.span,
+                        "a static address needs a constant index".to_string(),
+                    ));
+                };
+                if k >= arr.len {
+                    return Err((
+                        DiagCode::TyLiteralRange,
+                        index.span,
+                        "constant index is outside the array or string".to_string(),
+                    ));
+                }
+                let stride = arr.elem.stride(&self.structs).unwrap_or(1);
+                Ok((
+                    target,
+                    offset + k * stride,
+                    arr.elem.to_ctype(),
+                ))
+            }
+            ExprKind::Field { base, name } => {
+                let (target, offset, ty) = self.static_place(ctx, base)?;
+                let field = match ty {
+                    CType::Struct(sid) => self
+                        .structs
+                        .iter()
+                        .find(|s| s.id == sid)
+                        .and_then(|def| def.fields.iter().find(|f| f.name == name.name))
+                        .cloned(),
+                    _ => None,
+                };
+                let Some(field) = field else {
+                    return Err((
+                        DiagCode::TyMismatch,
+                        expr.span,
+                        "a static address takes fields only of a struct global or array element".to_string(),
+                    ));
+                };
+                Ok((target, offset + field.offset, field.ty))
+            }
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                ..
+            } => Err((
+                DiagCode::TyMismatch,
+                expr.span,
+                "a static address cannot go through a pointer: its value is not known until run time".to_string(),
+            )),
+            _ => Err((
+                DiagCode::TyMismatch,
+                expr.span,
+                "this place has no static address".to_string(),
+            )),
+        }
+    }
+
     fn eval_const_expr(&mut self, expr: &Expr, expected: Option<CType>) -> Option<u16> {
-        let mut dummy = FnCtx {
+        let mut dummy = self.const_ctx(expr.span);
+        let val = self.check_expr(&mut dummy, expr, expected)?;
+        val.bits
+    }
+
+    /// An empty function context for evaluating initializers.
+    fn const_ctx(&self, span: SourceSpan) -> FnCtx {
+        FnCtx {
             ret: CType::Void,
             name: String::new(),
             scopes: vec![HashMap::new()],
@@ -4723,14 +5369,18 @@ impl<'a> Analyzer<'a> {
             blocks: vec![IrBlock {
                 id: BlockId(0),
                 ops: Vec::new(),
+                origin: Vec::new(),
             }],
             current: BlockId(0),
             loop_stack: Vec::new(),
             reachable: true,
-            owner_span: expr.span,
-        };
-        let val = self.check_expr(&mut dummy, expr, expected)?;
-        val.bits
+            owner_span: span,
+            pin_marks: HashMap::new(),
+            preserves: 0,
+            unassigned: HashMap::new(),
+            rejected: HashSet::new(),
+            unresolved: HashMap::new(),
+        }
     }
 
     fn emit_op(&mut self, ctx: &mut FnCtx, op: IrOp) {
@@ -4744,6 +5394,7 @@ impl<'a> Analyzer<'a> {
             ctx.blocks.push(IrBlock {
                 id,
                 ops: Vec::new(),
+                origin: Vec::new(),
             });
         }
         ctx.current = id;
@@ -4853,6 +5504,32 @@ fn clobbers_of(clauses: &[AsmClause]) -> Vec<AsmClobber> {
     out
 }
 
+/// Whether a static initializer takes an address anywhere, so it is checked
+/// as a link-time address rather than a constant.
+fn mentions_addr_of(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Unary {
+            op: UnaryOp::AddrOf,
+            ..
+        } => true,
+        ExprKind::Unary { expr, .. }
+        | ExprKind::Cast { expr, .. }
+        | ExprKind::PrefixInc { expr, .. }
+        | ExprKind::PostfixInc { expr, .. } => mentions_addr_of(expr),
+        ExprKind::Binary { lhs, rhs, .. }
+        | ExprKind::Assign { lhs, rhs }
+        | ExprKind::CompoundAssign { lhs, rhs, .. } => {
+            mentions_addr_of(lhs) || mentions_addr_of(rhs)
+        }
+        ExprKind::Index { base, index } => mentions_addr_of(base) || mentions_addr_of(index),
+        ExprKind::Field { base, .. } => mentions_addr_of(base),
+        ExprKind::Call { callee, args } => {
+            mentions_addr_of(callee) || args.iter().any(mentions_addr_of)
+        }
+        _ => false,
+    }
+}
+
 fn const_index_i32(expr: &Expr) -> Option<i32> {
     match &expr.kind {
         ExprKind::Int(lit) => lit.value.and_then(|v| i32::try_from(v).ok()),
@@ -4914,7 +5591,7 @@ fn ir_binary(op: BinaryOp) -> IrBinary {
     }
 }
 
-fn convert_bits(from: CType, to: CType, bits: u16) -> u16 {
+pub(crate) fn convert_bits(from: CType, to: CType, bits: u16) -> u16 {
     if from == CType::Bool {
         return to.wrap_bits(i32::from(bits != 0));
     }

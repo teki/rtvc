@@ -6,19 +6,29 @@ use std::process::Command;
 
 use rtvc_core::bus::CpuBus;
 
+mod support;
+use support::{boot_tvc12, peek16, type_line, wait_until};
+
 fn exe() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_rtvc-c80"))
 }
 
+/// A fresh directory per call. Tests run on parallel threads of one process,
+/// and the macOS wall clock ticks in microseconds, so pid + time alone gave
+/// two tests the same directory (one then deleted it under the other). A
+/// process-wide counter makes every name unique.
 fn scratch() -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
-        "rtvc-c80-cli-{}-{}",
+        "rtvc-c80-cli-{}-{}-{n}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
     ));
+    let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -294,179 +304,159 @@ fn mixed_cli_emit_segments_contains_basic_and_runs_usr() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-#[test]
-fn pong_cas_inject_starts_the_playfield() {
+/// Compiles a manifest exactly as the CLI's `compile_input` does: unit and
+/// BASIC paths resolve from the manifest directory.
+fn compile_manifest_like_cli(
+    manifest_path: &std::path::Path,
+    optimize: bool,
+) -> rtvc_c80::CompilationResult {
     use rtvc_c80::project::{
-        ProjectUnitInput, UnitKind, compile_project, parse_manifest, render_rtvc_asm_v1,
-    };
-    use rtvc_core::cas::{
-        TVC_CAS_HEADER_LEN, TVC_CAS_LOAD_ADDR, TVC_CAS_TYPE_BASIC, encode_tvc_cas,
-        flatten_cas_image,
+        ProjectUnitInput, compile_project_opt, parse_manifest, resolve_manifest_path,
     };
 
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../info/c80/pong");
-    let manifest_text = fs::read_to_string(dir.join("rtvc-c80.toml")).unwrap();
-    let src = fs::read_to_string(dir.join("pong.c80")).unwrap();
-    let bas = fs::read_to_string(dir.join("main.bas")).unwrap();
-    let manifest = parse_manifest(&manifest_text).unwrap();
-    let result = compile_project(
-        &manifest,
-        &[ProjectUnitInput {
-            name: "pong",
-            kind: UnitKind::C80,
-            origin: Some(0x3000),
-            text: &src,
-            source_name: "pong.c80",
-            exports: &[],
-            stack_extra: None,
-        }],
-        Some(&bas),
-    );
-    assert!(!result.has_errors(), "{:?}", result.diagnostics);
-    let code = result.code.as_ref().unwrap();
-    let basic = result.basic.as_ref().unwrap();
-    assert_eq!(basic.origin, 0x19EF);
-    let play = code.function("play").expect("play").addr;
-    assert!(play >= 0x3000, "play at {play:04X}");
-
-    let toml = render_rtvc_asm_v1("pong.toml", 0x3000, &code.assembled);
-    let assembled = rtvc_core::asm::parse_rtvc_asm_v1(&toml).unwrap();
-    let owned: Vec<(u16, Vec<u8>)> = assembled
-        .segments
+    let text = fs::read_to_string(manifest_path).unwrap();
+    let manifest =
+        parse_manifest(&text).unwrap_or_else(|err| panic!("{}: {err}", manifest_path.display()));
+    let dir = manifest_path.parent().unwrap();
+    let owned: Vec<(PathBuf, String)> = manifest
+        .units
         .iter()
-        .map(|s| (s.addr, s.bytes.clone()))
+        .map(|unit| {
+            let path = resolve_manifest_path(dir, &unit.path);
+            let text = fs::read_to_string(&path)
+                .unwrap_or_else(|err| panic!("cannot read unit '{}': {err}", path.display()));
+            (path, text)
+        })
         .collect();
-    let refs: Vec<(u16, &[u8])> = owned.iter().map(|(a, b)| (*a, b.as_slice())).collect();
-    let image = flatten_cas_image(&refs).unwrap();
-    let cas = encode_tvc_cas(&image.bytes, TVC_CAS_TYPE_BASIC, 0xFF, TVC_CAS_LOAD_ADDR);
-    let linear = &cas[TVC_CAS_HEADER_LEN..];
-
-    let mut tvc = boot_tvc12();
-    wait_until(&mut tvc, 400, |tvc| peek16(tvc, 0x1722) == 0x19EF);
-    for _ in 0..120 {
-        tvc.run_for_a_frame();
-    }
-    assert!(tvc.load_cas(&cas));
-    for (i, byte) in linear.iter().enumerate() {
-        assert_eq!(
-            tvc.bus.r8(TVC_CAS_LOAD_ADDR.wrapping_add(i as u16)),
-            *byte,
-            "injected RAM at {:04X}",
-            TVC_CAS_LOAD_ADDR.wrapping_add(i as u16)
-        );
-    }
-    assert_eq!(
-        tvc.bus.r8(play),
-        linear[(play - TVC_CAS_LOAD_ADDR) as usize],
-        "play bytes injected"
-    );
-    let extra = (basic.payload.len() as u16).saturating_sub(1);
-    let last = TVC_CAS_LOAD_ADDR.wrapping_add(extra);
-    assert_eq!(
-        peek16(&mut tvc, 0x1722),
-        TVC_CAS_LOAD_ADDR,
-        "TEXT after inject"
-    );
-    assert_eq!(peek16(&mut tvc, 0x1724), last, "CHAIN after inject");
-    assert_eq!(peek16(&mut tvc, 0x1726), last, "TOP after inject");
-    type_line(&mut tvc, "RUN");
-    let paddle_row = 0x8000u16.wrapping_add(108 * 64);
-    let ball = 0x8000u16.wrapping_add(118 * 64).wrapping_add(32);
-    wait_until(&mut tvc, 600, |tvc| {
-        tvc.bus.mmu.get_map_val() == 0x50
-            && tvc.bus.r8(paddle_row.wrapping_add(2)) == 0xFF
-            && tvc.bus.r8(paddle_row.wrapping_add(61)) == 0xFF
-            && tvc.bus.r8(ball) == 0xFF
+    let inputs: Vec<ProjectUnitInput<'_>> = manifest
+        .units
+        .iter()
+        .zip(owned.iter())
+        .map(|(unit, (path, text))| ProjectUnitInput {
+            name: &unit.name,
+            kind: unit.kind,
+            origin: unit.origin,
+            text,
+            source_name: path.to_str().unwrap_or(&unit.name),
+            exports: &unit.exports,
+            stack_extra: unit.stack_extra,
+        })
+        .collect();
+    let basic_text = manifest.basic.as_ref().map(|spec| {
+        let path = resolve_manifest_path(dir, &spec.path);
+        fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("cannot read BASIC '{}': {err}", path.display()))
     });
-    assert_eq!(tvc.bus.mmu.get_map_val(), 0x50, "VID0 mapped at 8000H");
-    let pc = tvc.z80.state.pc;
+    compile_project_opt(&manifest, &inputs, basic_text.as_deref(), optimize)
+}
+
+#[test]
+fn tutorial_examples_build_without_errors() {
+    use rtvc_c80::{C80Target, CompileInput, SourceInput, compile};
+
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../info/c80");
+    let mut entries: Vec<PathBuf> = fs::read_dir(&root)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    entries.sort();
+    let mut sources = 0;
+    let mut manifests = 0;
+    let mut failures = Vec::new();
+    for path in &entries {
+        let name = path.file_name().unwrap().to_str().unwrap();
+        // *.fail.c80 are rejected on purpose; tests/examples.rs checks them.
+        if path.extension().and_then(|s| s.to_str()) == Some("c80") && !name.ends_with(".fail.c80")
+        {
+            sources += 1;
+            let text = fs::read_to_string(path).unwrap();
+            for optimize in [true, false] {
+                let result = compile(CompileInput {
+                    files: vec![SourceInput { name, text: &text }],
+                    origin: 0x8000,
+                    optimize,
+                    target: C80Target::GenericZ80,
+                });
+                if result.has_errors() || result.code.is_none() {
+                    failures.push(format!(
+                        "{name} (optimize={optimize}): {:?}",
+                        result.diagnostics
+                    ));
+                }
+            }
+        }
+        let manifest = path.join("rtvc-c80.toml");
+        if path.is_dir() && manifest.is_file() {
+            manifests += 1;
+            for optimize in [true, false] {
+                let result = compile_manifest_like_cli(&manifest, optimize);
+                if result.has_errors() || result.code.is_none() {
+                    failures.push(format!(
+                        "{} (optimize={optimize}): {:?}",
+                        manifest.display(),
+                        result.diagnostics
+                    ));
+                }
+            }
+        }
+    }
+    assert!(sources >= 10, "found only {sources} .c80 examples");
+    assert!(manifests >= 4, "found only {manifests} manifests");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn diagnostics_print_path_line_column_and_source() {
+    let dir = scratch();
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("src/bad.c80"),
+        "u8 ok() { return 1; }\nu8 f(u8 a) {\n    return a + 300;\n}\n",
+    )
+    .unwrap();
+    // Run from `dir` with a relative path: the path is printed as given.
+    let out = Command::new(exe())
+        .current_dir(&dir)
+        .args([
+            "build",
+            "src/bad.c80",
+            "--origin",
+            "0x8000",
+            "--emit-asm",
+            "out.asm",
+        ])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    let first = err.lines().next().unwrap_or("");
     assert!(
-        (0x3000..0x4000).contains(&pc),
-        "PC {pc:04X} should be in pong after RUN"
+        first.starts_with("src/bad.c80:3:16: error ty-literal-range: "),
+        "{err}"
     );
-    let bx_addr = code
-        .globals
-        .iter()
-        .find(|g| g.name == "bx")
-        .expect("bx")
-        .addr;
-    let py_addr = code
-        .globals
-        .iter()
-        .find(|g| g.name == "py")
-        .expect("py")
-        .addr;
-    assert_eq!(tvc.bus.r8(bx_addr), 32, "ball starts centred");
-    assert_eq!(tvc.bus.r8(py_addr), 108, "player paddle start");
-    assert_eq!(
-        tvc.bus.vid.cursor_interrupt_setup(),
-        (0x0EFF, Some(239)),
-        "playfield IRQ must be last paper line, not VT-DOS 0x0AFF"
-    );
-
-    tvc.key_down(32);
-    wait_until(&mut tvc, 90, |tvc| tvc.bus.r8(bx_addr) != 32);
-    tvc.key_up(32);
-    assert_ne!(tvc.bus.r8(bx_addr), 32, "Space should serve");
-
-    let py_before = tvc.bus.r8(py_addr);
-    tvc.key_down(38);
-    wait_until(&mut tvc, 90, |tvc| tvc.bus.r8(py_addr) < py_before);
-    tvc.key_up(38);
-    assert!(
-        tvc.bus.r8(py_addr) < py_before,
-        "joystick up should move the left paddle"
-    );
+    assert!(err.contains("3 |     return a + 300;\n"), "{err}");
+    assert!(err.contains("  |                ^~~\n"), "{err}");
+    let _ = fs::remove_dir_all(&dir);
 }
 
-fn boot_tvc12() -> rtvc_core::tvc::Tvc {
-    let mut tvc =
-        rtvc_core::tvc::Tvc::new_with_vid_model(false, rtvc_core::machine::VidModel::Interleaved);
-    tvc.add_rom("TVC12_D4.64K", include_bytes!("../../roms/TVC12_D4.64K"));
-    tvc.add_rom("TVC12_D3.64K", include_bytes!("../../roms/TVC12_D3.64K"));
-    tvc.add_rom("TVC12_D7.64K", include_bytes!("../../roms/TVC12_D7.64K"));
-    tvc.set_fast_boot(true);
-    tvc.reset();
-    tvc
-}
-
-fn peek16(tvc: &mut rtvc_core::tvc::Tvc, addr: u16) -> u16 {
-    u16::from_le_bytes([tvc.bus.r8(addr), tvc.bus.r8(addr.wrapping_add(1))])
-}
-
-fn wait_until(
-    tvc: &mut rtvc_core::tvc::Tvc,
-    frames: u32,
-    mut pred: impl FnMut(&mut rtvc_core::tvc::Tvc) -> bool,
-) {
-    for _ in 0..frames {
-        tvc.run_for_a_frame();
-        if pred(tvc) {
-            return;
-        }
-    }
-    let pc = tvc.z80.state.pc;
-    let text = peek16(tvc, 0x1722);
-    let marker = tvc.bus.r8(0x3FFF);
-    panic!("timeout pc={pc:04X} TEXT={text:04X} m3fff={marker:02X}");
-}
-
-fn type_line(tvc: &mut rtvc_core::tvc::Tvc, text: &str) {
-    for ch in text.chars().chain(std::iter::once('\r')) {
-        let code = ch as u32;
-        tvc.key_down(code);
-        if ch != '\r' {
-            tvc.key_press(ch);
-        }
-        for _ in 0..8 {
-            tvc.run_for_a_frame();
-        }
-        tvc.key_up(code);
-        for _ in 0..3 {
-            tvc.run_for_a_frame();
-        }
-    }
-    for _ in 0..40 {
-        tvc.run_for_a_frame();
-    }
+#[test]
+fn manifest_diagnostics_use_the_manifest_relative_path() {
+    let dir = scratch();
+    fs::create_dir_all(dir.join("proj")).unwrap();
+    fs::write(dir.join("proj/main.c80"), "void f() {\n    return 1;\n}\n").unwrap();
+    fs::write(
+        dir.join("proj/rtvc-c80.toml"),
+        "[[unit]]\nname = \"main\"\npath = \"main.c80\"\norigin = 0x8000\n",
+    )
+    .unwrap();
+    let out = Command::new(exe())
+        .current_dir(&dir)
+        .args(["build", "proj/rtvc-c80.toml", "--emit-asm", "out.asm"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.starts_with("proj/main.c80:2:"), "{err}");
+    assert!(err.contains("2 |     return 1;\n"), "{err}");
+    let _ = fs::remove_dir_all(&dir);
 }

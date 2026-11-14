@@ -168,7 +168,7 @@ This skill provides step-by-step instructions and references for compiling, exec
   rustup target add wasm32-unknown-unknown
   cargo check --lib --no-default-features --features wasm,web-vid-simple --target wasm32-unknown-unknown
   ```
-  - The `wasm` feature exposes [src/wasm.rs](../../../src/wasm.rs) through `wasm-bindgen`.
+  - The `wasm` feature exposes [src/emulator/wasm.rs](../../../src/emulator/wasm.rs) through `wasm-bindgen`.
   - `web-vid-simple` is retained as a compatibility build selector.
   - Lightweight WASM constructors default to `VidModel::FastFrame`.
   - This build intentionally excludes the native `egui`/`eframe` UI stack and the zipped-disk filesystem helper.
@@ -278,7 +278,7 @@ This skill provides step-by-step instructions and references for compiling, exec
   - `target = "tvc"` may include one `[basic]` table (`path` only). Tokenized BASIC is emitted in the same `--emit-segments` TOML at `19EFH` (`project::basic_base` / `project::basic_program_size`). The linker errors if that payload overlaps C80/ASM, `[stack]`, or `[[reserve]]`. `--emit-bin` still requires a contiguous union of all emitted ranges, including BASIC. `rtvc-tocas` flattens that TOML to CAS (the tutorial mixed examples use this).
   - At least one of `--emit-asm`, `--emit-segments`, `--emit-bin` is required. Segment output is `rtvc-asm-v1`. Raw binary requires a contiguous union of emitted ranges.
   - Optimization (identity moves, fallthrough jumps, in-range `JP`→`JR`) is on by default; `--no-optimize` keeps baseline lowering.
-  - A feature walkthrough with checked-in sources is [info/c80/tutorial.md](../../../info/c80/tutorial.md); [info/c80/compile.sh](../../../info/c80/compile.sh) and [info/c80/compile.bat](../../../info/c80/compile.bat) compile every example into `info/c80/out/`. Mixed TVC examples (`mixed`, `tvc-usr`, `pong`) also emit sibling `.cas` files through `rtvc-tocas`.
+  - A feature walkthrough with checked-in sources is [info/c80/tutorial.md](../../../info/c80/tutorial.md); [info/c80/compile.sh](../../../info/c80/compile.sh) and [info/c80/compile.bat](../../../info/c80/compile.bat) compile every example into `info/c80/out/`. Mixed TVC examples (`mixed`, `tvc-usr`, `pong`, `selfcheck`) also emit sibling `.cas` files through `rtvc-tocas`.
   - Diagnostics go to stderr. Exit 0 includes warnings; errors do not replace existing outputs.
 
 - **Compile numbered TVC BASIC source to CAS:**
@@ -364,14 +364,51 @@ The lightweight web dependency tree should contain `wasm-bindgen` but not cpal, 
   ```bash
   cargo test -p rtvc-c80 --lib
   cargo test -p rtvc-c80 --test rtvc_c80
+  cargo test -p rtvc-c80 --test examples
+  cargo test -p rtvc-c80 --test tvc
+  cargo test -p rtvc-c80 --test docs
   cargo test -p rtvc-c80 --bin rtvc-c80
-  cargo test --bin rtvc-tocas
+  cargo test --bin rtvc-tocas --no-default-features --features cli-tools
+  cargo fmt -p rtvc-c80 -- --check
   ```
+  `cargo test -p rtvc-c80` runs all of them except `rtvc-tocas` (lib about 9 s,
+  examples about 7 s, tvc about 7 s in debug on an 8-core machine).
   - Requires a non-zero `rtvc-c80` lib test count. The assembler filter `asm::` also matches
     `disasm::`; unique assembler runs use `asm::tests:: -- --skip disasm`.
   - [`c80/tests/rtvc_c80.rs`](../../../c80/tests/rtvc_c80.rs) covers CLI origin/manifest path, compile-error output
     preservation, multi-unit `--emit-segments`, TVC `[basic]` path resolution, and CAS USR inject.
+  - [`c80/tests/tvc.rs`](../../../c80/tests/tvc.rs) runs C80 on an emulated TVC 1.2 (cold ROM boot, in both
+    optimize modes): the [selfcheck](../../../info/c80/selfcheck/) battery under the ROM interrupt with
+    stack-bound and `USR` return-SP checks, and a Pong play test (serve, joystick, autopilot, full VID0
+    compare). About 7 s in debug; `-- --nocapture` prints interrupt counts, stack numbers and timings.
+    Shared boot/CAS helpers are in [`c80/tests/support/mod.rs`](../../../c80/tests/support/mod.rs).
   - `rtvc-tocas` TOML tests flatten `rtvc-asm-v1` segments to a `19EFH` CAS.
+  - [`c80/tests/examples.rs`](../../../c80/tests/examples.rs) runs the `//! expect...` directives in every
+    `info/c80` example in both optimize modes, checks every `*.fail.c80` against its `//! expect-error:`
+    codes, and compares optimized listings with [`info/c80/expected/`](../../../info/c80/expected/).
+    The directive grammar is in [info/c80/tutorial.md](../../../info/c80/tutorial.md#examples-check-themselves).
+    After a deliberate codegen change, regenerate and review the golden listings:
+    ```bash
+    C80_UPDATE_EXPECTED=1 cargo test -p rtvc-c80 --test examples golden
+    git diff info/c80/expected/
+    ```
+  - [`c80/src/conformance_tests.rs`](../../../c80/src/conformance_tests.rs) (in `--lib`) runs the
+    operator matrix, program fixtures, and seeded random expressions in both optimize modes against
+    a reference evaluator. `KNOWN_GAPS` and `RANDOM_GAPS` must match exactly (both are empty).
+    `C80_CONFORMANCE_DUMP=1 cargo test -p rtvc-c80 --lib conformance -- --nocapture` prints the
+    observed ledger; `C80_CONFORMANCE_DUMP_DETAILS=1` adds the failing sources.
+  - [`c80/tests/docs.rs`](../../../c80/tests/docs.rs) compiles every `c80` code block in
+    [info/c80.md](../../../info/c80.md) and the tutorial (`c80 error=code,...` blocks must report
+    exactly those codes; a `text output` block must match the previous block's messages; an
+    `asm golden=FILE` block must appear in that golden listing; unmarked C/C80 blocks fail) and
+    checks the relative links of the C80 docs and the plan, TODO, CHANGES, README and skill files.
+  - The constant-count shift sequences (bytes and T-states per count) are printed by
+    `cargo test -p rtvc-c80 --lib print_constant_shift_table -- --nocapture`.
+  - The code-quality table (compiler vs hand-written reference: bytes, T-states, ratios)
+    is `cargo test -p rtvc-c80 --lib quality_table -- --nocapture`. It fails when a
+    fixture exceeds its `BUDGET` row in [quality_tests.rs](../../../c80/src/quality_tests.rs);
+    `C80_QUALITY_LISTINGS=1` prints the listings, `C80_QUALITY_DUMP=1` prints fresh
+    budget rows (only lower them).
 
 - **Run FUSE tests (1334 tests):**
   These tests are adapted from the FUSE ZX Spectrum emulator test vectors. They are **fast to run** and are the primary validation suite used to verify correctness during active development.

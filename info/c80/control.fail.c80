@@ -1,0 +1,21 @@
+// Rejected on purpose: conditions must be bool, and locals have no
+// implicit initial value.
+//! expect-error: ty-mismatch
+//! expect-error: ty-use-before-assign
+
+// `if (x)` with a u8: write `if (x != 0)`.
+u8 truthy(u8 x) {
+    if (x) {
+        return 1;
+    }
+    return 0;
+}
+
+// `s` is unassigned when n == 0: every path must assign before a read.
+u8 uninit(u8 n) {
+    u8 s;
+    if (n != 0) {
+        s = n;
+    }
+    return s;
+}

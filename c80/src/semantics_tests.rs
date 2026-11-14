@@ -23,11 +23,49 @@ fn ok(src: &str) -> CompilationResult {
 
 #[test]
 fn signed_unsigned_limits_and_wrapping() {
-    let result = ok(r#"
+    let src = r#"
 u8 wrap() { return 255 + 1; }
 i8 min() { return -128; }
 u16 wide() { return 255 + 1; }
-"#);
+"#;
+    // H5: optimized builds fold the literal add to a u8 0 (255 + 1 wraps).
+    let folded = ok(src);
+    let wrap = function_by_name(folded.program.as_ref().unwrap(), "wrap").unwrap();
+    assert!(
+        wrap.blocks.iter().any(|b| b.ops.iter().any(|op| matches!(
+            op,
+            IrOp::Const {
+                ty: CType::U8,
+                bits: 0,
+                ..
+            }
+        ))),
+        "{:?}",
+        wrap.blocks
+    );
+    let wide = function_by_name(folded.program.as_ref().unwrap(), "wide").unwrap();
+    assert!(
+        wide.blocks.iter().any(|b| b.ops.iter().any(|op| matches!(
+            op,
+            IrOp::Const {
+                ty: CType::U16,
+                bits: 256,
+                ..
+            }
+        ))),
+        "{:?}",
+        wide.blocks
+    );
+    let result = compile(CompileInput {
+        files: vec![SourceInput {
+            name: "test.c80",
+            text: src,
+        }],
+        origin: DEFAULT_CODE_ORIGIN,
+        optimize: false,
+        target: C80Target::GenericZ80,
+    });
+    assert!(!result.has_errors(), "{:?}", result.diagnostics);
     let wrap = function_by_name(result.program.as_ref().unwrap(), "wrap").unwrap();
     let has_u8_add = wrap.blocks.iter().any(|b| {
         b.ops.iter().any(|op| {
@@ -190,6 +228,53 @@ fn use_before_assignment() {
         codes(&result).contains(&"ty-use-before-assign"),
         "{:?}",
         codes(&result)
+    );
+}
+
+#[test]
+fn one_error_per_unassigned_rejected_or_unresolved_name() {
+    // A rejected local array is reported once; its uses add nothing.
+    let result =
+        compile_src("u8 f(u8 x) { u8 buf[4]; buf[0] = x; buf[1] = buf[0] + 1; return buf[1]; }");
+    assert_eq!(codes(&result), ["ty-mismatch"], "{:?}", result.diagnostics);
+    // One use-before-assignment error per local, counting the rest.
+    let result =
+        compile_src("u8 f(u8 x) { u8 y; u8 z = y; u8 w = y; if (x != 0) { return y; } return y; }");
+    assert_eq!(codes(&result), ["ty-use-before-assign"]);
+    assert!(
+        result.diagnostics[0]
+            .message
+            .ends_with("(3 further uses in this function not reported)"),
+        "{}",
+        result.diagnostics[0].message
+    );
+    // Separate functions and separate locals each get their own error.
+    let result =
+        compile_src("u8 f() { u8 a; u8 b; u8 c = a; return b; } u8 g() { u8 a; return a; }");
+    assert_eq!(codes(&result), ["ty-use-before-assign"; 3]);
+    // One unresolved-name error per name and function.
+    let result = compile_src("u8 f(u8 x) { q = x; x = q; x += q; zz(x); zz(x); return q; }");
+    assert_eq!(
+        codes(&result),
+        ["ty-unresolved-name"; 2],
+        "{:?}",
+        result.diagnostics
+    );
+    assert!(result.diagnostics[0].message.contains("(3 further uses"));
+    assert!(result.diagnostics[1].message.contains("(1 further use in"));
+}
+
+#[test]
+fn address_of_a_pinned_local_is_one_error_without_the_dangling_warning() {
+    let result = compile_src("ptr<u8> k() { u8 n @ b = 3; return &n; }");
+    assert_eq!(codes(&result), ["ty-not-lvalue"]);
+    assert!(
+        !result
+            .diagnostics
+            .iter()
+            .any(|d| d.code.as_str() == "ty-return-local-addr"),
+        "{:?}",
+        result.diagnostics
     );
 }
 

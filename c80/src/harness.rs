@@ -262,6 +262,13 @@ pub fn execute_function_with(
         }
     }
 
+    // Values the register contract promises to keep (H2c), arguments included.
+    let entry_regs: Vec<(R8, u8)> = func
+        .preserves
+        .iter()
+        .map(|&r| (r, cpu.state.r8[r8_index(r)]))
+        .collect();
+
     let ret_sp = cpu.state.sp.wrapping_sub(2);
     bus.mem[ret_sp as usize] = config.sentinel as u8;
     bus.mem[ret_sp.wrapping_add(1) as usize] = (config.sentinel >> 8) as u8;
@@ -269,10 +276,44 @@ pub fn execute_function_with(
     let entry_sp = ret_sp;
     let mut min_sp = ret_sp;
 
+    // Nested calls are checked too: a `CALL` into a function with a
+    // contract records its preserved registers, and the matching return
+    // compares them (H2c).
+    let contracts: HashMap<u16, (&str, &[R8], &str)> = code
+        .functions
+        .iter()
+        .filter(|f| !f.preserves.is_empty())
+        .map(|f| {
+            (
+                f.addr,
+                (f.name.as_str(), f.preserves.as_slice(), f.contract.as_str()),
+            )
+        })
+        .collect();
+    // (return address, SP after return, function, contract, saved values)
+    type Frame<'a> = (u16, u16, &'a str, &'a str, Vec<(R8, u8)>);
+    let mut frames: Vec<Frame<'_>> = Vec::new();
+
     let mut tstates = 0u64;
     let mut insns = 0u32;
     let mut timed_out = false;
     loop {
+        while let Some((ret, sp_after, fname, kind, saved)) = frames.last() {
+            if cpu.state.pc != *ret || cpu.state.sp != *sp_after {
+                break;
+            }
+            for &(r, before) in saved {
+                let after = cpu.state.r8[r8_index(r)];
+                if after != before {
+                    return Err(ExecError(format!(
+                        "function '{fname}' broke its {kind} register contract: {} was {before:02X} on entry and {after:02X} on return",
+                        r.name()
+                    )));
+                }
+            }
+            let _ = (ret, sp_after);
+            frames.pop();
+        }
         if cpu.state.pc == config.sentinel {
             break;
         }
@@ -286,8 +327,24 @@ pub fn execute_function_with(
         };
         bus.fetch_lo = cpu.state.pc;
         bus.fetch_hi = cpu.state.pc.wrapping_add(u16::from(peek.len));
+        let (pc_before, sp_before) = (cpu.state.pc, cpu.state.sp);
         tstates += u64::from(cpu.step(&mut bus, 0));
         insns += 1;
+        let ret = pc_before.wrapping_add(u16::from(peek.len));
+        let pushed_ret = cpu.state.sp == sp_before.wrapping_sub(2)
+            && u16::from_le_bytes([
+                bus.mem[cpu.state.sp as usize],
+                bus.mem[cpu.state.sp.wrapping_add(1) as usize],
+            ]) == ret;
+        if pushed_ret {
+            if let Some(&(fname, regs, kind)) = contracts.get(&cpu.state.pc) {
+                let saved = regs
+                    .iter()
+                    .map(|&r| (r, cpu.state.r8[r8_index(r)]))
+                    .collect();
+                frames.push((ret, sp_before, fname, kind, saved));
+            }
+        }
         let depth = entry_sp.wrapping_sub(cpu.state.sp);
         if depth > 0 && depth < 0x8000 && depth > entry_sp.wrapping_sub(min_sp) {
             min_sp = cpu.state.sp;
@@ -299,6 +356,19 @@ pub fn execute_function_with(
             "execution timed out after {insns} instructions / {tstates} T-states (pc={:04X})",
             cpu.state.pc
         )));
+    }
+
+    // The permanent guard for `@preserves` and inferred contracts: every
+    // preserved register must hold its entry value on return.
+    for &(r, before) in &entry_regs {
+        let after = cpu.state.r8[r8_index(r)];
+        if after != before {
+            return Err(ExecError(format!(
+                "function '{name}' broke its {} register contract: {} was {before:02X} on entry and {after:02X} on return",
+                func.contract.as_str(),
+                r.name()
+            )));
+        }
     }
 
     if func.conv == CallConv::Stack {

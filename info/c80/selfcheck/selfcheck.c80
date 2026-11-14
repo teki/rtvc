@@ -1,0 +1,317 @@
+// A C80 self-check that runs on the TVC itself, launched from BASIC:
+//   20 LET R=USR(@{selfcheck::run},@{selfcheck::PASSES})
+// run() repeats the battery PASSES times and returns the number of failed
+// checks. Check i sets bit (i & 7) of seen[i >> 3] when it runs, and of
+// failed[i >> 3] when its result is wrong. BASIC prints both; a test reads
+// them straight from emulated memory (c80/tests/tvc.rs).
+//
+// The battery runs under the real ROM: the 50 Hz interrupt fires while it
+// runs, the stack is BASIC's, and VID0 is not mapped. A check that passes
+// in the bare test harness and fails here points at something the harness
+// does not model.
+//
+// Every expected value is a literal worked out by hand (the comment beside
+// it shows how), never by the compiler under test. Inputs come from
+// globals, so nothing is folded at compile time. Indexes are stable: a
+// failing bit names its feature. Conditions with && are written straight
+// into the mark() call: the index argument is computed before the &&
+// branches and carried across them (F-032).
+//
+//   0- 3  u8 operators        16-23  compares at overflow boundaries
+//   4- 7  i8 operators        24-27  constant shifts
+//   8-11  u16 operators       28-31  variable shifts, count >= width
+//  12-15  i16 operators       32-43  calls, storage, data (see below)
+
+pub const u8 CHECKS = 44;
+pub const u8 PASSES = 40;
+
+pub u8 seen[6];
+pub u8 failed[6];
+pub u16 checks;
+pub u8 passes;
+pub u8 basic_done;   // BASIC POKEs 1 here after printing the results
+u8 fails;
+
+// Inputs.
+u8 ua = 0xFF;
+u8 ub = 1;
+i8 sa = -128;
+i8 sb = 1;
+i8 sc = 127;
+u16 wa = 0xFFFF;
+u16 wb = 1;
+u16 wc = 0x8000;
+i16 ia = -32768;
+i16 ib = 1;
+i16 ic = 32767;
+u8 k3 = 3;
+u8 k4 = 4;
+u8 k8 = 8;
+u8 k9 = 9;
+u8 k16 = 16;
+u8 k20 = 20;
+u8 n5 = 5;
+u8 n37 = 0x37;
+u8 n5a = 0x5A;
+u8 i1 = 1;
+u8 i2 = 2;
+
+// Records one result.
+//! expect-mem: mark(9, true) => seen[1] == 2
+//! expect-mem: mark(9, false) => failed[1] == 2
+@noinline void mark(u8 i, bool good) {
+    u8 bit = 1 << (i & 7);
+    u8 k = i >> 3;
+    seen[k] |= bit;
+    if (!good) {
+        failed[k] |= bit;
+        fails++;
+    }
+    checks++;
+}
+
+// --- 0-15: operators on all four integer types --------------------------
+
+void ops8() {
+    mark(0, ua + ub == 0);                          // 0xFF + 1 = 0x100 -> 0x00
+    mark(1, ub - ua == 2);                          // 1 - 255 = -254 -> 0x02
+    mark(2, ((ua & 0x0F) | (ub ^ 0x80)) == 0x8F);   // 0x0F | 0x81
+    mark(3, ~ub == 0xFE);
+    mark(4, sc + sb == -128);                       // 127 + 1 wraps
+    mark(5, sa - sb == 127);                        // -128 - 1 wraps
+    mark(6, -sa == -128);                           // -(-128) wraps
+    mark(7, (sa | sb) == -127);                     // 0x80 | 0x01 = 0x81
+}
+
+void ops16() {
+    mark(8, wa + wb == 0);                          // 0xFFFF + 1
+    mark(9, wb - wa == 2);                          // 1 - 0xFFFF
+    mark(10, ((wa & 0x0F0F) ^ wc) == 0x8F0F);
+    mark(11, ~wc == 0x7FFF);
+    mark(12, ic + ib == -32768);                    // 32767 + 1 wraps
+    mark(13, ia - ib == 32767);                     // -32768 - 1 wraps
+    mark(14, -ia == -32768);
+    mark(15, (ia | ib) == -32767);                  // 0x8000 | 1 = 0x8001
+}
+
+// --- 16-23: compares where signed and unsigned disagree -----------------
+
+void compares() {
+    mark(16, ua > ub);                              // 255 > 1 unsigned
+    mark(17, sa < sb);                              // -128 < 1
+    mark(18, sc > sa);                              // 127 > -128
+    mark(19, wc > 0x7FFF);                          // 0x8000 > 0x7FFF unsigned
+    mark(20, ia < ic);                              // -32768 < 32767
+    mark(21, ia < ib && !(ic < ia));
+    mark(22, ub <= ua && ua >= ua && !(ub >= ua));
+    mark(23, i16(wc) < 0 && i8(ua) < 0);            // 0x8000 and 0xFF are negative
+}
+
+// --- 24-31: shifts -------------------------------------------------------
+
+void shifts() {
+    mark(24, (ua >> 4) == 0x0F && (ub << 7) == 0x80);
+    mark(25, (sa >> 3) == -16);                     // 0x80 >> 3 with sign = 0xF0
+    mark(26, (wc >> 15) == 1 && (wb << 15) == 0x8000);
+    mark(27, (ia >> 15) == -1);
+    mark(28, (ua >> k3) == 0x1F && (ub << k3) == 8);
+    mark(29, (ua >> k8) == 0 && (ub << k9) == 0);   // count >= width: 0
+    mark(30, (sa >> k9) == -1 && (sc >> k8) == 0);  // ... or the sign
+    mark(31, (wa << k16) == 0 && (ia >> k20) == -1 && (wa >> k4) == 0x0FFF);
+}
+
+// --- 32-43: calls, storage, data -----------------------------------------
+//
+//  32 a function with nine byte locals spills to a static slot
+//  33 a value saved with PUSH/POP around a call
+//  34 strict @fastcall with a pinned counter
+//  35 a @preserves(bc) callee keeps the caller's counter in B
+//  36 a static local keeps its value between calls
+//  37 an @inline helper, with a variable and a constant argument
+//  38 a @stackcall function with byte and word arguments
+//  39 nested calls
+//  40 struct array fields
+//  41 a statically linked list
+//  42 str length and characters
+//  43 cpu::ldir
+
+// 32. Nine byte values live at once: more than the registers hold, so the
+// listing has `; spill` and a static slot. For a = 0x37, b = 0x5A:
+// c = 0x91, d = 0xA6, e = 0xA7, g = 0x27, h = 0x7F, i = 0xEE, j = 0x3B,
+// and the sum of all nine is 0x43E -> 0x3E.
+//! expect: nine(0x37, 0x5A) == 0x3E
+@noinline u8 nine(u8 a, u8 b) {
+    u8 c = a + b;
+    u8 d = c ^ a;
+    u8 e = d + 1;
+    u8 g = e & 0x3F;
+    u8 h = g | b;
+    u8 i = h - c;
+    u8 j = i + d + e;
+    return a + b + c + d + e + g + h + i + j;
+}
+
+// 33. twice_pub is pub, so keep() assumes it changes every register and
+// saves y with PUSH BC / POP BC around the CALL. 5 + 5 + 1 = 11.
+//! expect: twice_pub(5) == 10
+pub u8 twice_pub(u8 v) {
+    return v + v;
+}
+
+//! expect: keep(5, 1) == 11
+@noinline u8 keep(u8 x, u8 y) {
+    u8 a = twice_pub(x);
+    return a + y;
+}
+
+// 34. 7 added 6 times = 42, with the counter pinned in B.
+//! expect: times(7, 6) == 42
+@noinline @fastcall u8 times(u8 v, u8 n @ b) {
+    u8 s = 0;
+    while (n != 0) {
+        s = s + v;
+        n--;
+    }
+    return s;
+}
+
+// 35. inc promises to leave B and C alone, so count's pinned n survives
+// every call with no save (strict @fastcall would reject a save).
+//! expect: inc(41) == 42
+@preserves(bc) pub u8 inc(u8 v) {
+    return v + 1;
+}
+
+//! expect: count(5) == 5
+@noinline @fastcall u8 count(u8 n @ b) {
+    u8 s = 0;
+    while (n != 0) {
+        s = inc(s);
+        n--;
+    }
+    return s;
+}
+
+// 36. Each call returns one more than the last; the byte wraps after 255
+// calls, so the check compares neighbours, not absolute values.
+//! expect: next() == 1
+@noinline u8 next() {
+    static u8 c = 0;
+    c++;
+    return c;
+}
+
+// 37. 0xFF >> 2 = 63; col(40) folds to 10.
+@inline u8 col(u8 x) {
+    return x >> 2;
+}
+
+// 38. 1 + 4 + (0x1100 >> 8 = 0x11) = 22.
+//! expect: mix(1, 0x1100, 4) == 22
+@stackcall u8 mix(u8 a, u16 b, u8 c) {
+    return a + c + u8(b >> 8);
+}
+
+//! expect: id(7) == 7
+@noinline u8 id(u8 x) {
+    return x;
+}
+
+//! expect: add8(200, 100) == 44
+@noinline u8 add8(u8 a, u8 b) {
+    return a + b;
+}
+
+struct Sprite {
+    u8 x;
+    u8 y;
+    u16 w;
+};
+
+Sprite sprites[3] = {
+    { 10, 20, 0x1234 },
+    { 30, 40, 0x5678 },
+    { 50, 60, 0x9ABC },
+};
+
+struct Node {
+    u8 value;
+    ptr<Node> next;
+};
+
+Node first = { 1, &second };
+Node second = { 2, &third };
+Node third = { 4, ptr<Node>(0) };
+
+// 41. 1 + 2 + 4 = 7.
+//! expect: list_sum() == 7
+@noinline u8 list_sum() {
+    ptr<Node> p = &first;
+    u8 s = 0;
+    while (u16(p) != 0) {
+        s += p->value;
+        p = p->next;
+    }
+    return s;
+}
+
+str name = "TVC";
+u8 src[4] = { 1, 2, 3, 4 };
+u8 dst[4];
+
+void calls() {
+    mark(32, nine(n37, n5a) == 0x3E);
+    mark(33, keep(n5, ub) == 11);
+    mark(34, times(7, 6) == 42);
+    mark(35, count(n5) == 5);
+    u8 a = next();
+    u8 b = next();
+    mark(36, u8(b - a) == 1);
+    mark(37, col(ua) == 63 && col(40) == 10);
+    mark(38, mix(ub, 0x1100, 4) == 22);
+    // (1 + 2) + (3 + 255 -> 2) = 5
+    mark(39, add8(add8(id(ub), id(2)), add8(id(3), ua)) == 5);
+}
+
+void data() {
+    mark(40, sprites[i2].y == 60 && sprites[i1].w == 0x5678 && sprites[0].x == 10);
+    mark(41, list_sum() == 7);
+    mark(42, name.len == 3 && name[1] == 0x56);     // 'V'
+    dst[0] = 0;
+    dst[3] = 0;
+    cpu::ldir(&src[0], &dst[0], 4);
+    mark(43, dst[0] == 1 && dst[3] == 4);
+}
+
+void battery() {
+    ops8();
+    ops16();
+    compares();
+    shifts();
+    calls();
+    data();
+}
+
+// Runs the battery `times` times (the low byte) and returns how many checks
+// failed. In the harness one pass is enough; BASIC asks for PASSES so the
+// run spans several frames and the interrupt lands inside generated code.
+//! expect: run(1) == 0
+//! expect-mem: run(1) => seen[0..6] == 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x0F
+//! expect-mem: run(1) => failed[0..6] == 0, 0, 0, 0, 0, 0
+//! expect-mem: run(2) => checks == 88
+pub i16 run(i16 times) {
+    u8 n = u8(times);
+    fails = 0;
+    checks = 0;
+    passes = 0;
+    for (u8 i = 0; i < 6; i++) {
+        seen[i] = 0;
+        failed[i] = 0;
+    }
+    while (n != 0) {
+        battery();
+        passes++;
+        n--;
+    }
+    return i16(fails);
+}

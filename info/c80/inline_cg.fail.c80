@@ -1,0 +1,27 @@
+// Rejected on purpose: expansions that do not fit their call site. A pin
+// inside an @inline body applies within the expansion, so it must not take
+// a register the caller has pinned or promised to preserve. These errors
+// come after type checking, so they are reported only for a file without
+// declaration errors (those are in inline.fail.c80). Each message is
+// located at the call and also points at both pins.
+//! expect-error: ty-duplicate-name
+//! expect-error: ty-duplicate-name
+
+@inline u8 bump(u8 x) {
+    u8 t @ c = x;
+    return t + 1;
+}
+
+// cannot inline 'bump' here: its pin 't @ c' overlaps a register in use at
+// this call ('k @ c' of 'keeps_c' is live there)
+u8 keeps_c(u8 a, u8 b) {
+    u8 k @ c = b;
+    u8 r = bump(a);
+    return r + k;
+}
+
+// cannot inline 'bump' here: its pin 't @ c' overlaps a register in use at
+// this call (the caller 'saves_c' preserves c (@preserves))
+@preserves(c) u8 saves_c(u8 a) {
+    return bump(a);
+}

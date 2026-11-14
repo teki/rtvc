@@ -1,19 +1,28 @@
-// @stackcall is caller-cleaned, right-to-left, two-byte slots.
-// Use it when a signature does not fit the register ABI.
-// The callee uses a saved-IX frame; parameters live at IX+4.
+// @stackcall: arguments are pushed right to left in two-byte slots and the
+// caller pops them. Use it when a signature does not fit the register ABI.
+// The callee builds a saved-IX frame; the first argument is at IX+4 (after
+// the saved IX and the return address), the next at IX+6, and so on.
 
+// a at IX+4, b at IX+6; the result still returns in HL.
+//! expect: add(0x1000, 0x0234) == 0x1234
 @stackcall pub u16 add(u16 a, u16 b) {
     return a + b;
 }
 
+// A byte argument still takes a whole slot: a at IX+4, b at IX+6, c at IX+8.
+//! expect: mix(1, 0x1111, 4) == 5
 @stackcall u8 mix(u8 a, u16 b, u8 c) {
     return a + c;
 }
 
+// The caller pushes 3 then 2, calls, and drops the two slots with INC SP.
+//! expect: use_add() == 5
 u16 use_add() {
     return add(2, 3);
 }
 
+// Byte arguments are widened to a slot before the push.
+//! expect: use_mix() == 5
 u8 use_mix() {
     return mix(1, 0x1111, 4);
 }

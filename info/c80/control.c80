@@ -1,8 +1,13 @@
-// Conditions must be bool: write `x != 0`, not `if (x)`.
-// Locals have no implicit init; every read needs an assignment on all paths.
+// Control flow: while, if, break/continue, && and ||.
+// Conditions must be bool: write `x != 0`, not `if (x)`. Locals have no
+// implicit initial value, so every read needs an assignment on all paths.
+// control.fail.c80 shows both diagnostics.
 
 u8 g;
 
+// A counting loop: n arrives in A; the loop keeps n and s in registers.
+//! expect: count(0) == 0
+//! expect: count(5) == 5
 u8 count(u8 n) {
     u8 s = 0;
     while (n != 0) {
@@ -12,6 +17,10 @@ u8 count(u8 n) {
     return s;
 }
 
+// Early returns.
+//! expect: choose(0) == 1
+//! expect: choose(1) == 2
+//! expect: choose(9) == 3
 u8 choose(u8 x) {
     if (x == 0) {
         return 1;
@@ -22,6 +31,10 @@ u8 choose(u8 x) {
     return 3;
 }
 
+// bool arguments are bytes: a in A, b in C.
+//! expect: nest(true, true) == 1
+//! expect: nest(true, false) == 2
+//! expect: nest(false, true) == 3
 u8 nest(bool a, bool b) {
     if (a) {
         if (b) {
@@ -32,6 +45,11 @@ u8 nest(bool a, bool b) {
     return 3;
 }
 
+// continue skips the count when n reaches 2; break leaves at 0.
+// From 5: n = 4, 3 count, 2 is skipped, 1 counts, 0 breaks.
+//! expect: skipped(5) == 3
+//! expect: skipped(3) == 1
+//! expect: skipped(1) == 0
 u8 skipped(u8 n) {
     u8 s = 0;
     while (n != 0) {
@@ -47,6 +65,16 @@ u8 skipped(u8 n) {
     return s;
 }
 
+// && and || short-circuit. As the condition of an if, while or for they
+// are jumps, not values: each operand is tested (LD A,c / OR A) and a JR
+// goes straight to the then- or else-code, with no 0/1 built in between.
+// Only a bool used as a value, such as `bool t = a && b;`, is built with
+// LD A,1 / LD A,0.
+//! expect-bytes: both == 25
+//! expect: both(true, true) == 1
+//! expect: both(true, false) == 2
+//! expect: both(false, true) == 2
+//! expect: both(false, false) == 0
 u8 both(bool a, bool b) {
     if (a && b) {
         return 1;
@@ -57,6 +85,9 @@ u8 both(bool a, bool b) {
     return 0;
 }
 
+// A global read-modify-write; u8 wraps.
+//! expect-mem: bump() => g == 6 with g = 5
+//! expect-mem: bump() => g == 0 with g = 255
 void bump() {
     g = g + 1;
 }

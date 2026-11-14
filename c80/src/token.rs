@@ -27,6 +27,7 @@ pub enum TokenKind {
     Break,
     Continue,
     Sizeof,
+    Static,
     // Reserved later syntax (lexed so they are not identifiers)
     Import,
     Struct,
@@ -116,6 +117,7 @@ pub fn keyword(ident: &str) -> Option<TokenKind> {
         "break" => TokenKind::Break,
         "continue" => TokenKind::Continue,
         "sizeof" => TokenKind::Sizeof,
+        "static" => TokenKind::Static,
         "import" => TokenKind::Import,
         "struct" => TokenKind::Struct,
         "str" => TokenKind::Str,
@@ -152,6 +154,7 @@ impl TokenKind {
             Self::Break => "'break'",
             Self::Continue => "'continue'",
             Self::Sizeof => "'sizeof'",
+            Self::Static => "'static'",
             Self::Import => "'import'",
             Self::Struct => "'struct'",
             Self::Str => "'str'",

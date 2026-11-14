@@ -69,6 +69,10 @@ pub struct ValidatedAsm {
 
 pub fn validate_body(body: &str, span: SourceSpan) -> Result<ValidatedAsm, Vec<Diagnostic>> {
     let mut diags = Vec::new();
+    marker_diagnostics(body, span, &mut diags);
+    if !diags.is_empty() {
+        return Err(diags);
+    }
     let parsed = match parse_steps(body, span, &mut diags) {
         Some(p) => p,
         None => return Err(diags),
@@ -163,6 +167,42 @@ enum Step {
 struct Jump {
     target: String,
     conditional: bool,
+}
+
+/// `@{unit::name}` markers belong to project `.asm` units; the compiler does
+/// not substitute them inside an inline `asm` body. Report each one at the
+/// marker itself (comments are skipped) instead of letting the assembler
+/// reject the generated listing later.
+fn marker_diagnostics(body: &str, span: SourceSpan, diags: &mut Vec<Diagnostic>) {
+    let mut line_start = 0usize;
+    for raw in body.split_inclusive('\n') {
+        let code_len = match strip_comment(raw) {
+            Ok(code) => code.len(),
+            Err(_) => raw.len(),
+        };
+        let code = &raw[..code_len.min(raw.len())];
+        let mut from = 0usize;
+        while let Some(rel) = code[from..].find("@{") {
+            let at = from + rel;
+            let end = code[at..]
+                .find('}')
+                .map(|e| at + e + 1)
+                .unwrap_or_else(|| code.trim_end().len().max(at + 2));
+            let start = span.start + (line_start + at) as u32;
+            let stop = span.start + (line_start + end) as u32;
+            diags.push(Diagnostic::error(
+                DiagCode::CgUnsupported,
+                SourceSpan::new(span.file, start, stop.min(span.end)),
+                format!(
+                    "markers such as '{}' are not substituted in inline asm; \
+                     call the function from C80, or use the symbol in a project .asm unit",
+                    &code[at..end]
+                ),
+            ));
+            from = end;
+        }
+        line_start += raw.len();
+    }
 }
 
 fn parse_steps(body: &str, span: SourceSpan, diags: &mut Vec<Diagnostic>) -> Option<ParsedBody> {

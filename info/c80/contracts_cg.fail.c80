@@ -1,0 +1,51 @@
+// Rejected on purpose: code that breaks a register contract. These errors
+// come from code generation, so they are reported only for a file without
+// type errors (declaration errors are in contracts.fail.c80). The comment
+// above each function quotes its message.
+//! expect-error: cg-unsupported
+//! expect-error: cg-unsupported
+//! expect-error: cg-unsupported
+
+u16 total;
+
+// 'acc' declares @preserves(hl), but the u16 `+` needs hl; remove hl from
+// @preserves
+//
+// The fixed version, which preserves bc and de instead, is acc in
+// contracts.c80.
+@preserves(hl) void acc(u16 a, u16 b) {
+    total = a + b;
+}
+
+pub u8 inc(u8 v) {
+    return v + 1;
+}
+
+// @fastcall 'count' must fit in registers, but 'n' is live in b across the
+// call to 'inc', which has no register contract (it may change every
+// register); declare @preserves(b) on 'inc'; pin values to free registers,
+// declare a local 'static', or remove @fastcall
+//
+// inc is `pub` and declares nothing, so count cannot keep n in B. The fix
+// is `@preserves(bc)` on inc, as in contracts.c80.
+@fastcall u8 count(u8 n @ b) {
+    u8 s = 0;
+    while (n != 0) {
+        s = inc(s);
+        n--;
+    }
+    return s;
+}
+
+// @fastcall 'clear' must fit in registers, but the caller's bc (kept by
+// @preserves) is live in a register that the asm block changes; pin values
+// to free registers, declare a local 'static', or remove @fastcall
+//
+// A strict function cannot save BC around the block. Without @fastcall the
+// compiler pushes BC around it; or leave c out of the clobber list.
+@fastcall @preserves(bc) u8 clear(u8 v) {
+    asm (clobber: c) {
+        LD C,0
+    }
+    return v;
+}

@@ -1,0 +1,111 @@
+// Static data that points at static data: linked lists, sprite tables and
+// pointers into arrays, all laid out in the image with no start-up code.
+//
+// In a global (or function-local `static`) initializer, `&` names a place
+// whose address is fixed when the program is linked:
+//   &global   &array[K]   &global.field   &array[K].field   &unit::global
+// K must be a constant inside the array. The value may be wrapped in
+// `ptr<T>(...)` or `u16(...)`. The compiler cannot know the address yet, so
+// the listing shows a symbol reference, `DW label+offset`, and the
+// assembler fills in the number. Look for the DW lines below in the listing.
+
+struct Node {
+    u8 value;
+    ptr<Node> next;
+};
+
+// A linked list built at link time. `first` points at `second` before
+// `second` is declared: forward references are fine. The listing shows
+//   G8_FIRST:
+//           DB 1
+//           DW G13_SECOND
+// and a null pointer, ptr<Node>(0), ends the list.
+Node first = { 1, &second };
+Node second = { 2, &third };
+Node third = { 4, ptr<Node>(0) };
+
+//! expect: list_sum() == 7
+u8 list_sum() {
+    ptr<Node> p = &first;
+    u8 s = 0;
+    while (u16(p) != 0) {
+        s += p->value;
+        p = p->next;
+    }
+    return s;
+}
+
+// A sprite table. Each entry points into one shared bitmap array at a
+// constant offset: &frames[4] is `DW G60_FRAMES+4` in the listing. Several
+// entries may share a frame.
+struct Sprite {
+    u8 x;
+    u8 y;
+    ptr<u8> frame;
+};
+
+u8 frames[8] = { 0x18, 0x3C, 0x7E, 0xFF, 0x81, 0x42, 0x24, 0x18 };
+Sprite sprites[3] = {
+    { 10, 20, &frames[0] },
+    { 30, 40, &frames[4] },
+    { 50, 60, &frames[4] },
+};
+
+// The first bitmap row of sprite i, read through its frame pointer.
+//! expect: first_row(0) == 0x18
+//! expect: first_row(1) == 0x81
+//! expect: first_row(2) == 0x81
+u8 first_row(u8 i) {
+    return *sprites[i].frame;
+}
+
+// The stored pointer itself is the element's address.
+//! expect: frame_of(0) == &frames[0]
+//! expect: frame_of(2) == &frames[4]
+ptr<u8> frame_of(u8 i) {
+    return sprites[i].frame;
+}
+
+// Arrays hold numbers and structs, not pointers, so a plain table of
+// addresses is a u16 array filled with u16(&...), converted back with
+// ptr<u8>(...) where it is used. Each element is one `DW G60_FRAMES+n`.
+u16 rows[3] = { u16(&frames[1]), u16(&frames[3]), u16(&frames[5]) };
+
+//! expect: row(0) == 0x3C
+//! expect: row(2) == 0x42
+u8 row(u8 i) {
+    return *ptr<u8>(rows[i]);
+}
+
+// &global.field: a pointer straight at one field (`DW G135_CFG+1`).
+struct Config {
+    u8 speed;
+    u16 score;
+};
+
+Config cfg = { 3, 1000 };
+ptr<u16> score = &cfg.score;
+
+//! expect: bump() == 1010
+//! expect-mem: bump() => cfg[0..3] == 3, 0xF2, 0x03
+u16 bump() {
+    *score += 10;
+    return cfg.score;
+}
+
+// A node may point at itself: a one-element ring.
+Node ring = { 9, &ring };
+
+//! expect: ring_twice() == 9
+u8 ring_twice() {
+    return ring.next->next->value;
+}
+
+// A function-local static may hold the address of another static in scope
+// and of globals. `last` is `DW G170_PEEK_BUF+3`.
+//! expect: peek() == 44
+u8 peek() {
+    static u8 buf[4] = { 11, 22, 33, 44 };
+    static ptr<u8> last = &buf[3];
+    return *last;
+}

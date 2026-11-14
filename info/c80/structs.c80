@@ -1,6 +1,11 @@
-// Packed structs (declaration order, no padding), for/do, ++/--, compound assign.
-// Sprite is 5 bytes: x, y, bitmap, visible.
-// Indexing enemies[i] in a tight leaf can run out of registers; walk with a pointer.
+// Packed structs, for and do-while loops, ++/--, and compound assignment.
+// Fields are laid out in declaration order with no padding, so Sprite is
+// 5 bytes: x, y, bitmap (2), visible. Look at `one` in the listing.
+//
+// Both ways of reaching an array element work: index it (`enemies[i].x`,
+// see nudge) or walk it with a pointer (step). The pointer walk is the
+// cheaper loop: indexing recomputes &enemies[i] = enemies + 5 * i with
+// shifts and adds on every access.
 
 struct Sprite {
     u8 x;
@@ -12,6 +17,10 @@ struct Sprite {
 Sprite one = { 10, 20, 0x1234, true };
 Sprite enemies[8];
 
+// p arrives in HL, n in A (moved to C). p->x += 1 is a read, add, write
+// through HL; p + 1 adds sizeof(Sprite) = 5. No frame.
+//! expect-mem: step(&enemies[0], 2) => enemies[0..10] == 1, 0, 0, 0, 0, 1, 0, 0, 0, 0
+//! expect-mem: step(&enemies[1], 1) => enemies[0..10] == 255, 0, 0, 0, 0, 8, 0, 0, 0, 0 with enemies[0..10] = 255 0 0 0 0 7 0 0 0 0
 void step(ptr<Sprite> p, u8 n) {
     while (n != 0) {
         p->x += 1;
@@ -20,6 +29,24 @@ void step(ptr<Sprite> p, u8 n) {
     }
 }
 
+// enemies[i].x indexed by a variable. Each access computes
+// enemies + 5 * i as (i << 2) + i: ADD HL,HL twice, then one ADD HL,BC.
+// The base, i and the sum still take all three pairs while dx is live, so
+// dx waits in a static slot (`; spill` lines, 1 slot byte at the end of the
+// listing). It is correct, just slower than the pointer walk in step.
+// (Before shifts, 5 * i was three additions through a second pair, and the
+// base spilled too: 71 bytes.)
+//! expect-bytes: nudge == 41
+//! expect-mem: nudge(2, 3) => enemies[10..15] == 3, 0, 0, 0, 0
+//! expect: nudge(1, 7) == 8 with enemies[5] = 1
+u8 nudge(u8 i, u8 dx) {
+    enemies[i].x += dx;
+    return enemies[i].x;
+}
+
+// A for loop with a scoped counter.
+//! expect: walk(0) == 0
+//! expect: walk(3) == 3
 u8 walk(u8 n) {
     u8 s = 0;
     for (u8 i = 0; i < n; i++) {
@@ -28,6 +55,8 @@ u8 walk(u8 n) {
     return s;
 }
 
+// The body of a do-while runs before the first test.
+//! expect: once() == 1
 u8 once() {
     u8 n = 0;
     do {
@@ -36,6 +65,8 @@ u8 once() {
     return n;
 }
 
+// A field of a global struct is a load from a fixed address.
+//! expect: first_x() == 10
 u8 first_x() {
     return one.x;
 }

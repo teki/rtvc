@@ -1,0 +1,35 @@
+FN8_WRAP_ADD:
+FN8_WRAP_ADD_B1:
+        XOR A
+        RET
+FN13_SIGNED_MIN:
+FN13_SIGNED_MIN_B2:
+        LD A,128
+        RET
+FN19_WIDEN:
+FN19_WIDEN_B3:
+        LD L,A
+        LD H,0
+        RET
+FN25_NARROW:
+FN25_NARROW_B4:
+        LD A,L
+        RET
+FN31_NONZERO:
+FN31_NONZERO_B5:
+        NEG
+        SBC A,A
+        NEG
+        RET
+FN39_SIZES:
+FN39_SIZES_B6:
+        LD HL,4
+        RET
+FN43_LIMIT:
+FN43_LIMIT_B7:
+        LD HL,255
+        RET
+FN50_MASK:
+FN50_MASK_B8:
+        AND 15
+        RET

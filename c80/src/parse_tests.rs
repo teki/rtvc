@@ -501,3 +501,22 @@ fn top_level_asm_is_still_unsupported() {
         codes(&result)
     );
 }
+
+/// F-034: a statement that consumes no token (here a `,` after an
+/// expression) used to make `parse_block` loop forever.
+#[test]
+fn stray_tokens_in_a_block_terminate() {
+    for src in [
+        "void f() { { 1, 2 }; }\n",
+        "u8 f(u8 a) { 1, 2 };\n",
+        "void f() { , , ) ] }\n",
+        "struct N { u8 v; };\nN firsmark(37, { 1, 2 };\n",
+    ] {
+        let result = compile_src(src);
+        assert!(
+            result.diagnostics.iter().any(Diagnostic::is_error),
+            "{src}: {:?}",
+            codes(&result)
+        );
+    }
+}

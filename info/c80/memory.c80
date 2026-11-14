@@ -1,10 +1,16 @@
 // Global arrays, pointers, and length-prefixed strings.
-// Arrays do not decay: take &buf[0], not buf. Locals cannot be arrays.
-// Pointer ± integer scales by sizeof(T). No ordered pointer compares.
+// Arrays do not decay: take &buf[0], not buf. Locals cannot be arrays
+// (memory.fail.c80). Pointer ± integer scales by sizeof(T), and pointers
+// have no ordered compares (<, >).
 
 u8 buf[8];
+u16 words[4] = { 100, 200, 300, 400 };
 str hello = "hi";
 
+// p arrives in HL, n in A, v in C. The prologue moves n to C and v to B so
+// the loop can use A, and p stays in HL for LD (HL),A / INC HL: no frame.
+//! expect-mem: fill(&buf[2], 3, 7) => buf[0..8] == 0, 0, 7, 7, 7, 0, 0, 0
+//! expect-mem: fill(&buf[0], 0, 7) => buf[0..8] == 0, 0, 0, 0, 0, 0, 0, 0
 void fill(ptr<u8> p, u8 n, u8 v) {
     while (n != 0) {
         *p = v;
@@ -13,30 +19,77 @@ void fill(ptr<u8> p, u8 n, u8 v) {
     }
 }
 
+// Indexing a global array adds the zero-extended index to its address.
+//! expect: get(3) == 9 with buf[3] = 9
 u8 get(u8 i) {
     return buf[i];
 }
 
+// A word array scales the index by 2: `i << 1`, one ADD HL,HL on the
+// zero-extended index. The doubling needs no second pair, so the first
+// value, the base and the index fit in registers with no spill. (When the
+// doubling was an addition through a second pair, the first value waited in
+// a 2-byte static slot.)
+//! expect-bytes: pair_sum == 35
+//! expect: pair_sum(0) == 300
+//! expect: pair_sum(2) == 700
+u16 pair_sum(u8 i) {
+    return words[i] + words[i + 1];
+}
+
+// A pointer result returns in HL.
+//! expect: start() == &buf[0]
 ptr<u8> start() {
     return &buf[0];
 }
 
+// A str is a pointer to a length byte followed by the characters.
+//! expect: hello_len() == 2
 u8 hello_len() {
     return hello.len;
 }
 
+// hello[i] indexes the characters, past the length byte.
+//! expect: hello_at(0) == 0x68
+//! expect: hello_at(1) == 0x69
 u8 hello_at(u8 i) {
     return hello[i];
 }
 
-u8 lit_len(str t) {
+// A str argument arrives in HL like any pointer. (@noinline keeps the
+// call that pass_lit shows: inline.c80.)
+//! expect: lit_len(&hello) == 2
+@noinline u8 lit_len(str t) {
     return t.len;
 }
 
+// A string literal argument is stored once in the code segment; the call
+// passes its address.
+//! expect: pass_lit() == 2
 u8 pass_lit() {
     return lit_len("xy");
 }
 
+// A pointer and a str are both two bytes.
+//! expect: ptr_width() == 4
 u16 ptr_width() {
     return sizeof(ptr<u8>) + sizeof(str);
+}
+
+// A static pointer and a small table of addresses. The initializers are
+// addresses fixed when the program is linked, so the listing shows symbol
+// references (`DW G2_BUF+4`, `DW G9_WORDS+6`), not numbers. Arrays
+// hold no pointers; the table is u16 and converts back with ptr<u16>(...).
+// More in tables.c80.
+ptr<u8> mid = &buf[4];
+u16 ends[2] = { u16(&words[0]), u16(&words[3]) };
+
+//! expect: mid_ptr() == &buf[4]
+ptr<u8> mid_ptr() {
+    return mid;
+}
+
+//! expect: last_word() == 400
+u16 last_word() {
+    return *ptr<u16>(ends[1]);
 }

@@ -1,37 +1,56 @@
 // Scalar types, wrapping arithmetic, casts, and sizeof.
-// Integer operators need the same type after contextual literal typing.
-// There is no implicit promotion and no *, /, or %.
+// Operands of an integer operator must have the same type once literals take
+// the type their context asks for. There is no implicit promotion and no
+// `*`, `/` or `%`; scalars.fail.c80 shows the diagnostics.
 
 const u16 LIMIT = 255;
 
+// Both literals are u8 here, so 255 + 1 wraps to 0. The optimizer folds
+// the literal sum at compile time, wrapping the same way: XOR A / RET.
+//! expect: wrap_add() == 0
 u8 wrap_add() {
     return 255 + 1;
 }
 
+// i8 ranges -128..127; the byte is 0x80.
+//! expect: signed_min() == -128
 i8 signed_min() {
     return -128;
 }
 
+// u16(x) zero-extends: x in A, result in HL (LD L,A; LD H,0).
+//! expect: widen(200) == 200
 u16 widen(u8 x) {
     return u16(x);
 }
 
+// u8(x) keeps the low byte: x in HL, result in A (LD A,L).
+//! expect: narrow(0x1234) == 0x34
 u8 narrow(u16 x) {
     return u8(x);
 }
 
+// bool(x) is 1 for any non-zero byte, 0 otherwise.
+//! expect: nonzero(0) == false
+//! expect: nonzero(7) == true
 bool nonzero(u8 x) {
     return bool(x);
 }
 
+// sizeof is a u16 byte count: 1 + 2 + 1, folded to LD HL,4.
+//! expect: sizes() == 4
 u16 sizes() {
     return sizeof(u8) + sizeof(i16) + sizeof(bool);
 }
 
+// A const has no storage; the value is loaded as an immediate.
+//! expect: limit() == 255
 u16 limit() {
     return LIMIT;
 }
 
+// Bitwise AND with a literal: one AND n.
+//! expect: mask(0xA7) == 7
 u8 mask(u8 x) {
     return x & 0x0F;
 }

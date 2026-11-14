@@ -1,0 +1,80 @@
+// What happens when values do not fit in registers.
+//
+// C80 keeps values in registers whenever it can. A fallback is inserted only
+// where a value must survive a call, or where more values are live than
+// there are registers. Every fallback instruction is marked `; spill` in the
+// --emit-asm listing, and a function that has any ends with a report line:
+//
+//     ; spill report: 5 slot bytes, saves (bytes per site) none, 166 T-states of spill code
+//
+// "slot bytes" is the size of the static slot area placed right after the
+// function (label NAME_S, emitted as DB 0,...), "saves" lists the bytes
+// pushed at each call/LDIR/asm site, and the T-states are a static sum of
+// every `; spill` instruction, each counted once (not a per-run figure).
+//
+// Costs the compiler compares (T-states per save and restore):
+//   register shuffle into a free register      8
+//   PUSH rr / POP rr                          21
+//   byte slot  LD (nn),A / LD A,(nn)          26
+//   word slot  LD (nn),HL / LD HL,(nn)        32 (40 through BC or DE)
+// No unannotated function uses IX: a static slot has a fixed address, so it
+// costs no frame setup, and the code is not reentrant.
+
+// @noinline keeps the CALL this section is about (inline.c80).
+//! expect: twice(21) == 42
+@noinline u8 twice(u8 v) {
+    return v + v;
+}
+
+// y arrives in C and is still needed after the call. twice is private, so
+// the compiler knows what it writes: A and C, not B (contracts.c80). The
+// cheapest fallback is a move into B (4 T, 1 byte):
+//
+//     LD B,C ; spill
+//     CALL twice
+//     ADD A,B
+//
+// If twice were `pub` (no contract), y would be saved with PUSH BC / POP BC
+// around the CALL (21 T); the saved pair counts toward the stack bound.
+//! expect: keep(5, 1) == 11
+//! expect: keep(200, 100) == 244
+//! expect-bytes: keep == 6
+u8 keep(u8 x, u8 y) {
+    u8 a = twice(x);
+    return a + y;
+}
+
+// Four word locals and a byte counter are live in the loop: nine bytes for
+// six registers. The hot locals keep BC and DE (HL stays free for the
+// arithmetic); b, n and s live in static slots at mix_S+0, +2 and +3. Each
+// loop pass reloads n with LD A,(mix_S+2) and s with LD HL,(mix_S+3), and
+// stores them back; those lines carry `; spill`. The 5 slot bytes are part
+// of the function's size below.
+//! expect: mix(1, 2, 0) == 1
+//! expect: mix(1, 2, 3) == 0x0011
+//! expect: mix(0x1000, 0x0101, 2) == 0x2305
+//! expect-bytes: mix == 70
+u16 mix(u16 a, u16 b, u8 n) {
+    u16 s = 0;
+    u16 t = 1;
+    while (n != 0) {
+        s = s + a;
+        t = t + b;
+        a = a ^ t;
+        n--;
+    }
+    return s + t;
+}
+
+// A local whose address is taken lives in a static slot for the whole
+// function, so &cell is simply LD HL,<label>_S: no IX, no frame. The slot
+// byte is included in the 16 bytes.
+//! expect: via_ptr(41) == 42
+//! expect-bytes: via_ptr == 16
+//! expect-tstates: via_ptr == 69
+u8 via_ptr(u8 v) {
+    u8 cell = 0;
+    ptr<u8> p = &cell;
+    *p = v;
+    return cell + 1;
+}

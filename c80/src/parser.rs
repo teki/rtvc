@@ -152,7 +152,7 @@ impl<'a> Parser<'a> {
                     DiagCode::ParseUnsupported,
                     tok.span,
                     format!(
-                        "{} is not accepted in this compiler slice",
+                        "{} is a statement: put it inside a function body",
                         tok.kind.describe()
                     ),
                 );
@@ -171,6 +171,15 @@ impl<'a> Parser<'a> {
                 );
                 self.skip_until_item_sync();
                 None
+            }
+            TokenKind::Static => {
+                let tok = self.bump();
+                self.emit(
+                    DiagCode::ParseExpected,
+                    tok.span,
+                    "'static' is for locals inside a function body; a global already has a fixed address",
+                );
+                self.parse_decl_or_function()
             }
             TokenKind::Struct => self.parse_struct().map(Item::Struct),
             TokenKind::Import => self.parse_import().map(Item::Import),
@@ -277,14 +286,16 @@ impl<'a> Parser<'a> {
 
     fn parse_decl_or_function(&mut self) -> Option<Item> {
         let start = self.span().start;
-        let conv_before = self.parse_call_conv();
+        let mut preserves = None;
+        let mut inline = InlineAttrs::default();
+        let conv_before = self.parse_call_conv(&mut preserves, &mut inline);
         let is_pub = if self.at(TokenKind::Pub) {
             self.bump();
             true
         } else {
             false
         };
-        let conv_after = self.parse_call_conv();
+        let conv_after = self.parse_call_conv(&mut preserves, &mut inline);
         let conv = match (conv_before, conv_after) {
             (Some(a), Some(b)) if a != b => {
                 self.emit(
@@ -303,7 +314,26 @@ impl<'a> Parser<'a> {
                 a
             }
             (Some(c), None) | (None, Some(c)) => c,
-            (None, None) => CallConv::Register,
+            (None, None) => Attr::Default,
+        };
+        if let (Some(span), Attr::Stack) = (inline.inline, conv) {
+            self.emit(
+                DiagCode::ParseExpected,
+                span,
+                "@inline cannot be combined with @stackcall: an inlined body has no frame or stack arguments; drop one of them",
+            );
+        }
+        if let (Some(_), Some(span)) = (inline.inline, inline.noinline) {
+            self.emit(
+                DiagCode::ParseExpected,
+                span,
+                "@noinline contradicts @inline; drop one of them",
+            );
+        }
+        let strict_registers = conv == Attr::Fast;
+        let conv = match conv {
+            Attr::Stack => CallConv::Stack,
+            Attr::Fast | Attr::Default => CallConv::Register,
         };
         let is_const = if self.at(TokenKind::Const) {
             self.bump();
@@ -314,8 +344,35 @@ impl<'a> Parser<'a> {
         let ty = self.parse_type()?;
         let name = self.parse_ident()?;
         if self.at(TokenKind::LParen) && !is_const {
-            let func = self.parse_function_rest(start, is_pub, conv, ty, name)?;
+            let mut func =
+                self.parse_function_rest(start, is_pub, conv, strict_registers, ty, name)?;
+            func.preserves = preserves;
+            func.inline = inline.inline;
+            func.noinline = inline.noinline.is_some() && inline.inline.is_none();
             return Some(Item::Function(func));
+        }
+        for (span, name) in [(inline.inline, "@inline"), (inline.noinline, "@noinline")] {
+            if let Some(span) = span {
+                self.emit(
+                    DiagCode::ParseExpected,
+                    span,
+                    format!("{name} applies only to functions"),
+                );
+            }
+        }
+        if let Some(p) = &preserves {
+            self.emit(
+                DiagCode::ParseExpected,
+                p.span,
+                "@preserves applies only to functions",
+            );
+        }
+        if let Some(pin) = self.parse_pin() {
+            self.emit(
+                DiagCode::ParseExpected,
+                pin.span,
+                "a register pin applies only to a local or a parameter",
+            );
         }
         if conv_before.is_some() || conv_after.is_some() {
             self.emit(
@@ -338,14 +395,20 @@ impl<'a> Parser<'a> {
             span: SourceSpan::new(self.file, start, end),
             is_pub,
             is_const,
+            is_static: false,
             ty,
             name,
+            pin: None,
             array_len,
             init,
         }))
     }
 
-    fn parse_call_conv(&mut self) -> Option<CallConv> {
+    fn parse_call_conv(
+        &mut self,
+        preserves: &mut Option<Preserves>,
+        inline: &mut InlineAttrs,
+    ) -> Option<Attr> {
         let mut conv = None;
         while self.at(TokenKind::At) {
             let at = self.bump();
@@ -353,8 +416,36 @@ impl<'a> Parser<'a> {
                 continue;
             };
             let next = match ident.name.as_str() {
-                "stackcall" => CallConv::Stack,
-                "fastcall" => CallConv::Register,
+                "stackcall" => Attr::Stack,
+                "fastcall" => Attr::Fast,
+                "inline" | "noinline" => {
+                    let span = at.span.merge(ident.span);
+                    let slot = if ident.name == "inline" {
+                        &mut inline.inline
+                    } else {
+                        &mut inline.noinline
+                    };
+                    if slot.is_some() {
+                        let msg = format!("duplicate @{}", ident.name);
+                        self.emit(DiagCode::ParseExpected, span, msg);
+                    } else {
+                        *slot = Some(span);
+                    }
+                    continue;
+                }
+                "preserves" => {
+                    let parsed = self.parse_preserves(at.span);
+                    if preserves.is_some() {
+                        self.emit(
+                            DiagCode::ParseExpected,
+                            at.span.merge(ident.span),
+                            "duplicate @preserves; list every register in one attribute",
+                        );
+                    } else {
+                        *preserves = parsed;
+                    }
+                    continue;
+                }
                 other => {
                     self.emit(
                         DiagCode::ParseExpected,
@@ -386,6 +477,7 @@ impl<'a> Parser<'a> {
         start: u32,
         is_pub: bool,
         conv: CallConv,
+        strict_registers: bool,
         return_ty: TypeExpr,
         name: Ident,
     ) -> Option<Function> {
@@ -420,6 +512,10 @@ impl<'a> Parser<'a> {
             span: SourceSpan::new(self.file, start, end),
             is_pub,
             conv,
+            strict_registers,
+            preserves: None,
+            inline: None,
+            noinline: false,
             return_ty,
             name,
             params,
@@ -431,12 +527,86 @@ impl<'a> Parser<'a> {
         let start = self.span().start;
         let ty = self.parse_type()?;
         let name = self.parse_ident()?;
+        let pin = self.parse_pin();
+        let end = pin.map_or(name.span.end, |p| p.span.end);
         Some(Param {
             id: self.ids.next(),
-            span: SourceSpan::new(self.file, start, name.span.end),
+            span: SourceSpan::new(self.file, start, end),
             ty,
             name,
+            pin,
         })
+    }
+
+    /// `(reg, ...)` after `@preserves` (F-028).
+    fn parse_preserves(&mut self, at: SourceSpan) -> Option<Preserves> {
+        self.expect(TokenKind::LParen, "'(' after @preserves")?;
+        let mut regs = Vec::new();
+        let mut bad = false;
+        while !self.at(TokenKind::RParen) && !self.at_eof() {
+            let ident = self.parse_ident()?;
+            match AsmGpr::parse(&ident.name) {
+                Some(reg) => regs.push(Pin {
+                    reg,
+                    span: ident.span,
+                }),
+                None => {
+                    bad = true;
+                    self.emit(
+                        DiagCode::ParseExpected,
+                        ident.span,
+                        format!(
+                            "unknown register '{}' in @preserves; use a b c d e h l bc de hl",
+                            ident.name
+                        ),
+                    );
+                }
+            }
+            if self.at(TokenKind::Comma) {
+                self.bump();
+            } else {
+                break;
+            }
+        }
+        let close = self.expect(TokenKind::RParen, "')'")?;
+        let span = at.merge(close.span);
+        if regs.is_empty() {
+            if bad {
+                return None;
+            }
+            self.emit(
+                DiagCode::ParseExpected,
+                span,
+                "@preserves needs at least one register",
+            );
+            return None;
+        }
+        Some(Preserves { regs, span })
+    }
+
+    /// `@ reg` after a declared name (F-027). Register names are those of
+    /// inline-`asm` headers.
+    fn parse_pin(&mut self) -> Option<Pin> {
+        if !self.at(TokenKind::At) {
+            return None;
+        }
+        let at = self.bump();
+        let ident = self.parse_ident()?;
+        let span = at.span.merge(ident.span);
+        match AsmGpr::parse(&ident.name) {
+            Some(reg) => Some(Pin { reg, span }),
+            None => {
+                self.emit(
+                    DiagCode::ParseExpected,
+                    ident.span,
+                    format!(
+                        "unknown register '{}' in a pin; use one of a b c d e h l bc de hl",
+                        ident.name
+                    ),
+                );
+                None
+            }
+        }
     }
 
     fn parse_type(&mut self) -> Option<TypeExpr> {
@@ -568,7 +738,13 @@ impl<'a> Parser<'a> {
                 );
                 break;
             }
+            let before = self.pos;
             stmts.push(self.parse_stmt());
+            // A statement that consumed nothing (an error at a token no
+            // statement can start with) skips it, so the loop always ends.
+            if self.pos == before {
+                self.bump();
+            }
         }
         let end = if self.at(TokenKind::RBrace) {
             self.bump().span.end
@@ -633,7 +809,7 @@ impl<'a> Parser<'a> {
                 }
             }
             TokenKind::Asm => self.parse_asm_stmt(),
-            TokenKind::Const => {
+            TokenKind::Const | TokenKind::Static => {
                 if let Some(decl) = self.parse_local_decl() {
                     Stmt::Decl(decl)
                 } else {
@@ -688,14 +864,35 @@ impl<'a> Parser<'a> {
 
     fn parse_local_decl(&mut self) -> Option<VarDecl> {
         let start = self.span().start;
-        let is_const = if self.at(TokenKind::Const) {
+        let is_static = if self.at(TokenKind::Static) {
             self.bump();
+            true
+        } else {
+            false
+        };
+        let is_const = if self.at(TokenKind::Const) {
+            let tok = self.bump();
+            if is_static {
+                self.emit(
+                    DiagCode::ParseExpected,
+                    tok.span,
+                    "'static const' is not allowed: a const has no storage",
+                );
+            }
             true
         } else {
             false
         };
         let ty = self.parse_type()?;
         let name = self.parse_ident()?;
+        let pin = self.parse_pin();
+        if let (true, Some(pin)) = (is_static, pin) {
+            self.emit(
+                DiagCode::ParseExpected,
+                pin.span,
+                "a static local lives in memory and cannot be pinned to a register",
+            );
+        }
         let array_len = self.parse_array_len();
         let init = if self.at(TokenKind::Eq) {
             self.bump();
@@ -710,8 +907,10 @@ impl<'a> Parser<'a> {
             span: SourceSpan::new(self.file, start, end),
             is_pub: false,
             is_const,
+            is_static,
             ty,
             name,
+            pin: if is_static { None } else { pin },
             array_len,
             init,
         })
@@ -773,6 +972,14 @@ impl<'a> Parser<'a> {
         let init = if self.at(TokenKind::Semicolon) {
             self.bump();
             None
+        } else if self.at(TokenKind::Static) {
+            let tok = self.bump();
+            self.emit(
+                DiagCode::ParseExpected,
+                tok.span,
+                "a 'for' initializer cannot be static; declare the static before the loop",
+            );
+            self.parse_local_decl().map(ForInit::Decl)
         } else if self.at_local_decl() {
             self.parse_local_decl().map(ForInit::Decl)
         } else {
@@ -1206,7 +1413,7 @@ impl<'a> Parser<'a> {
                         DiagCode::ParseUnsupported,
                         op.span,
                         format!(
-                            "{} is not accepted in this compiler slice",
+                            "{} is not supported: C80 has no multiply, divide, or remainder; use shifts and adds",
                             op.kind.describe()
                         ),
                     );
@@ -1849,4 +2056,20 @@ fn infix_binding(kind: TokenKind) -> Option<(u8, u8, TokenKind)> {
         TokenKind::Star | TokenKind::Slash | TokenKind::Percent => (21, 22, kind),
         _ => return None,
     })
+}
+
+/// Function attribute (calling convention and strictness).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Attr {
+    Default,
+    Stack,
+    /// Explicit `@fastcall`: register ABI, and the body must fit registers.
+    Fast,
+}
+
+/// `@inline` / `@noinline` spans seen in one attribute run (H3i, F-031).
+#[derive(Default)]
+struct InlineAttrs {
+    inline: Option<SourceSpan>,
+    noinline: Option<SourceSpan>,
 }

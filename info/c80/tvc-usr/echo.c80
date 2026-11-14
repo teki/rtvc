@@ -1,6 +1,11 @@
-// USR passes the integer argument in HL and reads the result from HL.
-// @fastcall is the default register ABI; a single i16 uses HL.
+// A BASIC USR target. USR passes its integer argument in HL and reads the
+// result from HL; a single i16 parameter under the default register ABI
+// arrives in HL, so echo() is a single RET. @fastcall keeps the same ABI and
+// makes the build fail if the body ever needs the stack or a static slot.
 
+//! expect: echo(42) == 42
+//! expect: echo(-32767) == -32767
+//! expect-bytes: echo == 1
 @fastcall pub i16 echo(i16 value) {
     return value;
 }

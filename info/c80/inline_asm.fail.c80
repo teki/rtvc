@@ -1,0 +1,28 @@
+// Rejected on purpose: each function below is a compile error. The test
+// suite checks that compiling this file reports exactly these codes.
+//! expect-error: cg-unsupported
+//! expect-error: cg-unsupported
+
+// An ordinary asm block may not return. Let the block fall through and
+// `return` in C80.
+
+u8 early(u8 x) {
+    asm (in: a = x, clobber: flags) {
+        ret
+    }
+    return x;
+}
+
+// `@{unit::name}` markers are substituted in project .asm units and BASIC,
+// not inside an inline asm body. The error points at the marker. Call the
+// function from C80 instead.
+u8 inc(u8 x) {
+    return x + 1;
+}
+
+u8 via_marker(u8 x) {
+    asm (inout: a = x, clobber: flags) {
+        call @{inline_asm::inc}
+    }
+    return x;
+}

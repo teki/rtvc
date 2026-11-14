@@ -1,0 +1,22 @@
+// Rejected on purpose: each function below is a compile error. The test
+// suite checks that compiling this file reports exactly these codes.
+//! expect-error: ty-mismatch
+//! expect-error: ty-mismatch
+//! expect-error: ty-literal-range
+
+// The count is a u8. A typed count of another type is an error ("shift
+// count must be u8, found u16"); convert it: `x << u8(n)`.
+u16 wide_count(u16 x, u16 n) {
+    return x << n;
+}
+
+// An untyped literal count must fit a u8. There is no "shift by 256": write
+// the result (0) instead.
+u8 huge(u8 x) {
+    return x << 256;
+}
+
+// Only integers shift; bool and pointers do not.
+bool flag(bool b) {
+    return b << 1;
+}

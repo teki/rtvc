@@ -1,0 +1,152 @@
+// Register contracts: which registers a call leaves alone.
+//
+// A CALL may change every register unless the compiler knows better. When a
+// caller keeps a value in a register across a call, it has to move it to a
+// register the callee leaves alone, or save it with PUSH/POP (see
+// spills.c80). A strict @fastcall caller may not save at all (see
+// registers.c80), so it needs to know what the callee keeps.
+//
+// The compiler knows this in two ways:
+//
+//   @preserves(bc)  declared on the callee: the registers come back with the
+//                   values they had on entry. The compiler checks the body.
+//                   This is part of the function's signature, so callers in
+//                   other units can rely on it, and changing it is a compile
+//                   error in the callers that depended on it, never a
+//                   silent change.
+//   inferred        for a function that is not `pub`: the registers its
+//                   code never writes. Only callers in the same file use
+//                   this, so the edit and its effect are side by side.
+//                   A `pub` function without @preserves promises nothing.
+//
+// The listing ends each such function with its contract, for example
+// `; preserves B C (declared)`. Rejected forms are in contracts.fail.c80
+// and contracts_cg.fail.c80.
+
+// --- A declared contract and a strict caller ----------------------------
+//
+// `inc` only uses A, and says so for B and C. The declaration is checked:
+// if a later edit made `inc` write B or C, this file would stop compiling.
+// The listing of inc is INC A / RET / `; preserves B C (declared)`: the
+// optimizer turns ADD A,1 into INC A because RET reads no flag.
+//! expect: inc(41) == 42
+//! expect-bytes: inc == 2
+@preserves(bc) pub u8 inc(u8 v) {
+    return v + 1;
+}
+
+// The counter stays in B across every call, with no PUSH/POP:
+//
+//     LD B,A        ; n's entry move (the pin)
+//     LD C,0        ; s
+//     OR A          ; n == 0 (A still holds n): same Z as CP 0, 1 byte, 4 T
+//     JR Z,done
+//   loop:
+//     LD A,C
+//     CALL inc      ; B and C survive: inc preserves them
+//     LD C,A
+//     DJNZ loop     ; n-- and the n != 0 test in one instruction
+//   done:
+//     LD A,C
+//     RET
+//
+// The source's own `n != 0` guard runs once, before the first pass, so a
+// zero count never reaches DJNZ.
+//
+// Without @preserves on inc, this function would not compile: n is live
+// across a call that may change B (contracts_cg.fail.c80 shows the message).
+//! expect: count(5) == 5
+//! expect: count(0) == 0
+//! expect-bytes: count == 15
+@fastcall u8 count(u8 n @ b) {
+    u8 s = 0;
+    while (n != 0) {
+        s = inc(s);
+        n--;
+    }
+    return s;
+}
+
+// --- Inference for private helpers --------------------------------------
+//
+// `bump` is private (no `pub`), so callers in this file use what it really
+// writes: only A. `twice_pub` has the same body but is `pub`, so callers
+// assume it may change everything. bump is @noinline so the optimizer
+// keeps the CALL this section is about (inline.c80).
+//! expect: bump(1) == 2
+@noinline u8 bump(u8 v) {
+    return v + 1;
+}
+
+//! expect: twice_pub(4) == 8
+pub u8 twice_pub(u8 v) {
+    return v + v;
+}
+
+// y arrives in C. Calling the private bump, C survives the call and the
+// sum is ADD A,C straight after it (no save at all):
+//
+//     CALL bump
+//     ADD A,C
+//     RET
+//! expect: after_private(5, 1) == 7
+//! expect-bytes: after_private == 5
+u8 after_private(u8 x, u8 y) {
+    u8 a = bump(x);
+    return a + y;
+}
+
+// The same caller of a `pub` function pushes BC around the call:
+//
+//     PUSH BC ; spill
+//     CALL twice_pub
+//     POP BC ; spill
+//     ADD A,C
+//     RET
+//! expect: after_pub(5, 1) == 11
+//! expect-bytes: after_pub == 7
+u8 after_pub(u8 x, u8 y) {
+    u8 a = twice_pub(x);
+    return a + y;
+}
+
+// --- What a declaration lets the body do --------------------------------
+//
+// A parameter that arrives in a preserved register may be read in place;
+// it comes back unchanged. Here b arrives in DE and ADD HL,DE only reads
+// it, so the whole function is ADD HL,DE / RET.
+//! expect: add(0x1234, 0x0101) == 0x1335
+//! expect-bytes: add == 2
+@preserves(de) u16 add(u16 a, u16 b) {
+    return a + b;
+}
+
+// A default (not @fastcall) function may still call something that changes
+// a preserved register: the compiler saves it around that call, and the
+// save is visible as `; spill` lines. In a @fastcall function the same call
+// is an error, because saving is not allowed there.
+//
+//     PUSH BC ; spill
+//     CALL twice_pub
+//     POP BC ; spill
+//     INC A
+//     RET
+//! expect: wrap(20) == 41
+@preserves(bc) u8 wrap(u8 v) {
+    return twice_pub(v) + 1;
+}
+
+// A violation and its fix. With `@preserves(hl)`, `total = a + b` cannot
+// compile: the word `+` is ADD HL,rr, which changes HL. The message is
+//
+//     'acc' declares @preserves(hl), but the u16 `+` needs hl; remove hl
+//     from @preserves
+//
+// (contracts_cg.fail.c80). Preserving the other pairs is fine: a and b
+// arrive in HL and DE, the sum is built in HL, and BC is never touched.
+u16 total;
+
+//! expect-mem: acc(0x1000, 0x0234) => total == 0x1234
+@preserves(bc, de) void acc(u16 a, u16 b) {
+    total = a + b;
+}

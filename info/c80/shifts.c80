@@ -1,0 +1,240 @@
+// Shifts: `<<` and `>>`, and `<<=` / `>>=`.
+//
+// The count is always a u8 (an untyped literal count is a u8); the result
+// has the left operand's type. `<<` drops the bits that leave the type.
+// `>>` is logical (zero fill) on u8/u16 and arithmetic (sign fill) on
+// i8/i16. A count at or above the width is defined: the result is 0, or all
+// sign bits for a negative signed value. The count is never masked, so
+// `x >> 9` on a u8 is 0, not `x >> 1`.
+//
+// Constant counts pick the fastest sequence the compiler knows (T-states
+// first, then bytes); budget lines below pin the claims. Variable counts
+// run one step per count in a short loop.
+
+// --- Constant counts on bytes ------------------------------------------
+//
+// `<< 1` doubles A in place: ADD A,A (4 T).
+//! expect: dbl(0x41) == 0x82
+//! expect-tstates: dbl == 14
+//! expect-bytes: dbl == 2
+u8 dbl(u8 x) {
+    return x << 1;
+}
+
+// Six single-bit steps would be 24 T. Rotating right twice and masking is
+// cheaper:
+//
+//     RRCA
+//     RRCA
+//     AND 192       ; 15 T, 4 bytes
+//! expect: times64(3) == 0xC0
+//! expect: times64(5) == 0x40
+//! expect-tstates: times64 == 25
+//! expect-bytes: times64 == 5
+u8 times64(u8 x) {
+    return x << 6;
+}
+
+// Unsigned `>>` fills with zeros, signed `>>` copies the sign bit:
+//
+//   half_u: SRL A           ; 8 T
+//   half_i: SRA A           ; 8 T
+//! expect: half_u(0xF0) == 0x78
+//! expect: half_i(-16) == -8
+//! expect-tstates: half_u == 18
+//! expect-tstates: half_i == 18
+u8 half_u(u8 x) {
+    return x >> 1;
+}
+
+i8 half_i(i8 x) {
+    return x >> 1;
+}
+
+// i8 `>> 7` and anything larger is the sign: 0 or -1. Shift the sign into
+// carry, then subtract A from itself with the carry:
+//
+//     ADD A,A
+//     SBC A,A       ; 8 T
+//! expect: sign8(-5) == -1
+//! expect: sign8(5) == 0
+//! expect: sign8_far(-128) == -1
+//! expect-tstates: sign8 == 18
+i8 sign8(i8 x) {
+    return x >> 7;
+}
+
+i8 sign8_far(i8 x) {
+    return x >> 200;
+}
+
+// A count at or above the width: the u8 result is a constant 0, so the
+// function is XOR A / RET (LD A,0 when a flag is still needed).
+//! expect: gone(0xFF) == 0
+//! expect-bytes: gone == 2
+u8 gone(u8 x) {
+    return x << 8;
+}
+
+// --- Constant counts on words ------------------------------------------
+//
+// Small left shifts double HL: ADD HL,HL (11 T) per bit.
+//! expect: w3(0x1234) == 0x91A0
+//! expect-tstates: w3 == 43
+u16 w3(u16 x) {
+    return x << 3;
+}
+
+// A count of 8 or more moves bytes first: `<< 8` is LD H,L / LD L,0
+// (11 T), and `>> 12` is the high byte shifted in A:
+//
+//     LD A,H
+//     RRCA
+//     RRCA
+//     RRCA
+//     RRCA
+//     AND 15
+//     LD L,A
+//     LD H,0        ; 38 T, 10 bytes
+//! expect: w8(0x1234) == 0x3400
+//! expect: w12(0xABCD) == 0x000A
+//! expect-tstates: w8 == 21
+//! expect-tstates: w12 == 48
+u16 w8(u16 x) {
+    return x << 8;
+}
+
+u16 w12(u16 x) {
+    return x >> 12;
+}
+
+// `>> 7` on a word shifts left once, catching the top bit in A, then moves
+// bytes (seven SRL H / RR L pairs would be 112 T):
+//
+//     XOR A
+//     ADD HL,HL
+//     RLA
+//     LD L,H
+//     LD H,A        ; 27 T, 5 bytes
+//! expect: w7(0xFF80) == 0x01FF
+//! expect-tstates: w7 == 37
+u16 w7(u16 x) {
+    return x >> 7;
+}
+
+// Signed: `i16 >> 15` is the sign word.
+//
+//     LD A,H
+//     RLA
+//     SBC A,A
+//     LD H,A
+//     LD L,A        ; 20 T, 5 bytes
+//! expect: sign16(-300) == -1
+//! expect: sign16(300) == 0
+//! expect: sign16_far(-1) == -1
+//! expect-tstates: sign16 == 30
+i16 sign16(i16 x) {
+    return x >> 15;
+}
+
+i16 sign16_far(i16 x) {
+    return x >> 16;
+}
+
+// --- Variable counts -----------------------------------------------------
+//
+// The count goes to B; a zero count skips the loop, so DJNZ never starts at
+// B = 0 (which would mean 256 steps):
+//
+//     LD B,A        ; n arrives in A, x in HL
+//     INC B
+//     DEC B
+//     JR Z,done
+//   loop:
+//     ADD HL,HL     ; one step: 11 T
+//     DJNZ loop     ; 13 T taken, 8 T at the end
+//   done:
+//
+// Counts above the width still run every step (up to 255); once the value
+// has shifted out it stops changing, so the result is the F001 value.
+//! expect: shl16(0x0101, 0) == 0x0101
+//! expect: shl16(0x0101, 4) == 0x1010
+//! expect: shl16(0x0101, 16) == 0
+//! expect: shl16(0x0101, 255) == 0
+u16 shl16(u16 x, u8 n) {
+    return x << n;
+}
+
+//! expect: sar16(-32768, 1) == -16384
+//! expect: sar16(-32768, 15) == -1
+//! expect: sar16(-32768, 200) == -1
+//! expect: sar16(100, 200) == 0
+i16 sar16(i16 x, u8 n) {
+    return x >> n;
+}
+
+//! expect: shr8(0x80, 7) == 1
+//! expect: shr8(0x80, 8) == 0
+//! expect: sar8(-128, 3) == -16
+//! expect: sar8(-128, 9) == -1
+u8 shr8(u8 x, u8 n) {
+    return x >> n;
+}
+
+i8 sar8(i8 x, u8 n) {
+    return x >> n;
+}
+
+// --- Compound assignment and pins ---------------------------------------
+//
+// `x <<= 1` with `x @ b` shifts B where it is: SLA B (8 T, 2 bytes). Going
+// through A would be LD A,B / ADD A,A / LD B,A (12 T, 3 bytes).
+//
+//     LD B,C        ; the pin's entry move
+//     LD C,A        ; v
+//     SLA B
+//     LD A,B
+//     ADD A,C
+//     RET
+//! expect: pin_shl(1, 0x41) == 0x83
+//! expect-tstates: pin_shl == 34
+u8 pin_shl(u8 v, u8 x @ b) {
+    x <<= 1;
+    return x + v;
+}
+
+// A variable count on a pinned value runs in the pin's register too. B is
+// taken, so the count lives in E and the loop ends with DEC E / JR NZ:
+//
+//     INC E
+//     DEC E
+//     JR Z,done
+//   loop:
+//     SRL B
+//     DEC E
+//     JR NZ,loop
+//   done:
+//! expect: pin_shr(0, 3, 0x90) == 0x12
+//! expect: pin_shr(0, 0, 0x90) == 0x90
+u8 pin_shr(u8 v, u8 n, u8 x @ b) {
+    x >>= n;
+    return x + v;
+}
+
+// Shifts work on any place: a global, a struct field through a pointer.
+struct Cell {
+    u8 tag;
+    u16 bits;
+};
+
+Cell cell;
+u8 flags;
+
+// cell.bits is bytes 1..3 of cell (low byte first).
+//! expect-mem: rotate_cell(4) => cell[1..3] == 0x30, 0x12 with cell[1..3] = 0x23 0x01
+//! expect-mem: rotate_cell(4) => flags == 0x10 with flags = 0x01
+void rotate_cell(u8 n) {
+    ptr<Cell> p = &cell;
+    p->bits <<= n;
+    flags <<= n;
+}

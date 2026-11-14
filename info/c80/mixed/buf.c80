@@ -1,9 +1,13 @@
-// Shared 16-byte buffer BASIC can PEEK/POKE at @{buf::cells}.
-// USR passes one integer in HL; fill uses the low byte as the stored value.
+// Mixed BASIC/C80: a shared 16-byte buffer that BASIC can PEEK and POKE at
+// @{buf::cells}. Each USR target takes one integer in HL and returns one in
+// HL; sum() and bump() ignore their argument.
 
 pub const u16 COUNT = 16;
 pub u8 cells[16];
 
+// Stores the low byte of value into every cell and returns value.
+//! expect: fill(0x0103) == 0x0103
+//! expect-mem: fill(0x0103) => cells[0..16] == 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3
 @fastcall pub i16 fill(i16 value) {
     u8 v;
     ptr<u8> p;
@@ -19,7 +23,16 @@ pub u8 cells[16];
     return value;
 }
 
-@fastcall pub i16 sum(i16 unused) {
+// Adds the cells as u16, so 16 * 255 does not wrap.
+// Not @fastcall: with p, n and s live, `s + u16(*p)` needs one more pair
+// than the Z80 has free, so the compiler keeps s in a 2-byte static slot
+// (`; spill` in the listing). Strict @fastcall rejects that, and the USR
+// call works the same either way (same register ABI: argument and result
+// in HL).
+//! expect: sum(0) == 0
+//! expect: sum(0) == 4080 with cells[0..16] = 255 255 255 255 255 255 255 255 255 255 255 255 255 255 255 255
+//! expect: sum(0) == 6 with cells[0..3] = 1 2 3
+pub i16 sum(i16 unused) {
     ptr<u8> p;
     u8 n;
     u16 s;
@@ -34,6 +47,10 @@ pub u8 cells[16];
     return i16(s);
 }
 
+// Increments every cell in place (u8 wraps) and returns the first one.
+//! expect: bump(0) == 1
+//! expect: bump(0) == 10 with cells[0] = 9
+//! expect-mem: bump(0) => cells[0..3] == 0, 2, 1 with cells[0..2] = 255 1
 @fastcall pub i16 bump(i16 unused) {
     ptr<u8> p;
     u8 n;

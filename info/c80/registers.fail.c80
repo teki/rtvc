@@ -1,0 +1,40 @@
+// Rejected on purpose: pin and static declarations that registers.c80
+// does not allow. The test suite checks that compiling this file reports
+// exactly these codes; the comment above each function quotes its message.
+// These are found before code generation; the code-generation errors (pin
+// conflicts and strict @fastcall) are in registers_cg.fail.c80.
+//! expect-error: ty-duplicate-name
+//! expect-error: ty-mismatch
+//! expect-error: ty-not-lvalue
+//! expect-error: ty-mismatch
+//! expect-error: ty-mismatch
+
+// pin 'b @ bc' overlaps 'a @ b', which is still in scope
+u16 overlap(u8 a @ b, u16 b @ bc) {
+    return b;
+}
+
+// 'w' is u16 but 'a' is a byte register; a byte pins to a b c d e h l, a
+// word or pointer to bc de hl
+u16 width(u16 w @ a) {
+    return w;
+}
+
+// cannot take the address of 'v': it is pinned to register c; declare it
+// 'static' to give it an address
+ptr<u8> where(u8 v @ c) {
+    return &v;
+}
+
+// a static initializer must be a compile-time value; it is stored once in
+// the image, not run on each call
+u8 first(u8 v) {
+    static u8 seen = v;
+    return seen;
+}
+
+// local arrays and structs need storage; declare them 'static' (a fixed
+// address after the function), or use a global or a pointer
+void scratch() {
+    u8 tmp[4];
+}

@@ -27,6 +27,17 @@ pub struct CompilerSymbol {
     pub kind: SymbolKind,
 }
 
+/// A data word at `address` (inside global `global`) holding `target`'s
+/// address plus `addend`: `DW label+addend` in the listing (H3a).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MappedDataRef {
+    pub address: u16,
+    pub global: String,
+    pub target: String,
+    pub label: String,
+    pub addend: u16,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NoCodeSpan {
     pub span: SourceSpan,
@@ -74,6 +85,8 @@ pub struct CompilerMap {
     pub entries: Vec<MappedInstruction>,
     pub no_code: Vec<NoCodeSpan>,
     pub symbols: Vec<CompilerSymbol>,
+    /// Data words that hold a global's link-time address (H3a).
+    pub data_refs: Vec<MappedDataRef>,
     pub stack: StackReport,
     pub identity: BuildIdentity,
 }
@@ -84,6 +97,7 @@ impl CompilerMap {
             entries: Vec::new(),
             no_code: Vec::new(),
             symbols: Vec::new(),
+            data_refs: Vec::new(),
             stack: StackReport {
                 functions: Vec::new(),
             },
@@ -112,6 +126,19 @@ impl CompilerMap {
         }
         let no_code = no_code_spans(units, &entries);
         let symbols = collect_symbols(&code.functions, &code.globals);
+        let data_refs = code
+            .globals
+            .iter()
+            .flat_map(|g| {
+                g.refs.iter().map(|r| MappedDataRef {
+                    address: g.addr.wrapping_add(r.offset),
+                    global: g.name.clone(),
+                    target: r.target.clone(),
+                    label: r.label.clone(),
+                    addend: r.addend,
+                })
+            })
+            .collect();
         let stack = StackReport {
             functions: code
                 .functions
@@ -132,6 +159,7 @@ impl CompilerMap {
             entries,
             no_code,
             symbols,
+            data_refs,
             stack,
             identity: BuildIdentity {
                 crate_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -140,6 +168,13 @@ impl CompilerMap {
                 source_names: sources.files().iter().map(|f| f.name.clone()).collect(),
             },
         }
+    }
+
+    /// The address reference stored in the data word at `addr`, if any.
+    pub fn data_ref_at(&self, addr: u16) -> Option<&MappedDataRef> {
+        self.data_refs
+            .iter()
+            .find(|r| addr == r.address || addr == r.address.wrapping_add(1))
     }
 
     pub fn by_id(&self, id: AsmInstructionId) -> Option<&MappedInstruction> {
@@ -304,7 +339,7 @@ fn jump_target(entry: &MappedInstruction) -> Option<u16> {
             hi,
             ..,
         ] => Some(u16::from(*lo) | (u16::from(*hi) << 8)),
-        [0x18, e, ..] | [0x20 | 0x28 | 0x30 | 0x38, e, ..] => {
+        [0x10 | 0x18, e, ..] | [0x20 | 0x28 | 0x30 | 0x38, e, ..] => {
             let disp = *e as i8 as i16;
             Some(entry.address.wrapping_add(2).wrapping_add(disp as u16))
         }
@@ -371,6 +406,7 @@ fn data_entry_for_global(
         function: None,
         span: global.span,
         node: None,
+        inlined: Vec::new(),
     })
 }
 

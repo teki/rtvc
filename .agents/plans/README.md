@@ -31,8 +31,9 @@ implementation order, limitations, and focused validation.
 - [C80 Compiler and Integrated Source View](c80-compiler.md)
   ([Terra execution plan](c80-compiler-execution.md),
   [status](c80-compiler-progress.md), [findings](c80-compiler-findings.md))
-- [Clean Up the `laser-port1` Porting Effort](cleanup-laser-port1.md)
-  ([progress](cleanup-laser-port1-progress.md))
+- [C80 Compiler Hardening](c80-hardening.md) — correctness, spills, shifts,
+  code quality, tests, and documentation fixes from the 2026-11-12 review
+  (done; [progress](c80-hardening-progress.md))
 - [Expansion Card Abstraction and Host File Device](expansion-cards-and-host-file-device.md)
   ([progress](expansion-cards-and-host-file-device-progress.md))
 - [Frame History Debugger](frame-history-debugger.md)

@@ -27,6 +27,22 @@ Release notes start here. Older release history is intentionally not backfilled.
   compressed web download.
 - Web bundles add a build id to script URLs, so browsers load a new build
   instead of a cached one.
+- C80 (experimental) no longer miscompiles expressions that reuse a value,
+  and functions that do not fit in registers now compile: values are saved
+  with `PUSH`/`POP` or kept in static bytes after the function, marked
+  `; spill` in the listing. Recursion is still rejected.
+- C80 shifts: `<<`, `>>`, `<<=`, `>>=` with a `u8` count; counts at or above
+  the width give 0 (or the sign).
+- C80 register control: pins (`u8 n @ b`), `static` locals and local arrays,
+  strict `@fastcall` (the build fails if the body needs a spill),
+  `@preserves(...)`, and `@inline` / `@noinline`. Globals and statics can be
+  initialized with addresses (`&g`, `&a[2]`, `&s.field`).
+- C80 code is smaller and faster: conditions are branches, loops counting in
+  `B` use `DJNZ`, `CALL`+`RET` is a `JP`, and constant expressions are folded.
+  `--no-optimize` keeps the plain baseline.
+- C80 messages show `file:line:col`, the source line, and an underline; a
+  local used before assignment or an unknown name is reported once per
+  function. Function labels in listings are now `FN<id>_NAME`.
 
 ## v0.8.11 - 2026-11-05
 

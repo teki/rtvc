@@ -11,10 +11,14 @@ if not exist "%HERE%\out" mkdir "%HERE%\out"
 
 echo Compiling C80 tutorial examples into %HERE%\out
 
+rem *.fail.c80 are rejected on purpose; the test suite checks them.
 for %%F in ("%HERE%\*.c80") do (
-    echo   %%~nF
-    call :c80 build "%%F" --origin 0x8000 --emit-asm "%HERE%\out\%%~nF.asm" --emit-bin "%HERE%\out\%%~nF.bin"
-    if errorlevel 1 exit /b 1
+    echo %%~nxF | findstr /i /c:".fail.c80" >nul
+    if errorlevel 1 (
+        echo   %%~nF
+        call :c80 build "%%F" --origin 0x8000 --emit-asm "%HERE%\out\%%~nF.asm" --emit-bin "%HERE%\out\%%~nF.bin"
+        if errorlevel 1 exit /b 1
+    )
 )
 
 echo   optimize (baseline, --no-optimize)
@@ -41,6 +45,12 @@ echo   pong/rtvc-c80.toml
 call :c80 build "%HERE%\pong\rtvc-c80.toml" --emit-asm "%HERE%\out\pong.asm" --emit-segments "%HERE%\out\pong.toml"
 if errorlevel 1 exit /b 1
 call :tocas "%HERE%\out\pong.toml"
+if errorlevel 1 exit /b 1
+
+echo   selfcheck/rtvc-c80.toml
+call :c80 build "%HERE%\selfcheck\rtvc-c80.toml" --emit-asm "%HERE%\out\selfcheck.asm" --emit-segments "%HERE%\out\selfcheck.toml"
+if errorlevel 1 exit /b 1
+call :tocas "%HERE%\out\selfcheck.toml"
 if errorlevel 1 exit /b 1
 
 echo Done.

@@ -1,0 +1,212 @@
+// Taking control of registers: strict @fastcall, pins, and static locals.
+//
+// By default C80 picks registers itself and falls back to the stack or to
+// static slots when values do not fit (see spills.c80). The three tools in
+// this file let you state what you want instead, and make the compiler
+// report an error when it cannot do exactly that:
+//
+//   @fastcall      the body must fit in registers: no `; spill`, no
+//                  PUSH/POP save, no IX. CALL/RET are the only stack use.
+//   name @ reg     a pin: the value lives in that register for its whole
+//                  scope. It is never moved, spilled, or shared.
+//   static         a local with a fixed address after the function. Its
+//                  loads and stores are ordinary memory accesses.
+//
+// All three keep the default register ABI: a caller cannot tell whether a
+// function is @fastcall or has pinned parameters. The rejected forms, with
+// their exact messages, are in registers.fail.c80.
+
+// --- Strict @fastcall ---------------------------------------------------
+//
+// Three word arguments arrive in HL, DE and BC, and the sum returns in HL.
+// The body is the two additions:
+//
+//     ADD HL,DE
+//     ADD HL,BC
+//     RET
+//
+// If a later edit made this function need a spill, the build would fail
+// with "@fastcall 'add3' must fit in registers, but ..." instead of quietly
+// getting slower.
+//! expect: add3(1, 2, 3) == 6
+//! expect: add3(0xFFFF, 2, 0) == 1
+//! expect-bytes: add3 == 3
+//! expect-tstates: add3 == 32
+@fastcall u16 add3(u16 a, u16 b, u16 c) {
+    return a + b + c;
+}
+
+// --- Pins ---------------------------------------------------------------
+//
+// `n @ b` keeps the counter in B. The second byte argument arrives in C, so
+// the pin costs one entry move, LD B,C (4 T, 1 byte), before the body:
+//
+//     LD B,C        ; the pin's entry move
+//     LD C,A        ; v
+//     LD E,0        ; s
+//     LD A,B
+//     OR A          ; while (n != 0), tested once at the entry
+//     JR Z,done
+//   loop:
+//     LD A,E
+//     ADD A,C
+//     LD E,A
+//     DJNZ loop     ; n-- and the test: writes B and nothing else
+//   done:
+//     LD A,E
+//     RET
+//
+// Inside the loop, B is only written by `n--`. Code you add later cannot
+// reuse B for a temporary: it either fits around the pin or is an error.
+//! expect: times(7, 6) == 42
+//! expect: times(9, 0) == 0
+//! expect-bytes: times == 15
+u8 times(u8 v, u8 n @ b) {
+    u8 s = 0;
+    while (n != 0) {
+        s = s + v;
+        n--;
+    }
+    return s;
+}
+
+// An accumulator pinned where the instruction leaves its result. A word `+`
+// is ADD HL,rr, so `s @ hl` makes each pass one ADD HL,DE with no copy.
+// `a` arrives in HL and moves out once at entry (LD D,H / LD E,L), and n
+// arrives in A (LD B,A): 3 bytes, 12 T of entry moves for the two pins.
+//
+//     LD D,H
+//     LD E,L
+//     LD B,A
+//     LD HL,0
+//     OR A          ; n == 0 (A still holds n)
+//     JR Z,done
+//   loop:
+//     ADD HL,DE     ; s = s + a, in place
+//     DJNZ loop
+//   done:
+//     RET
+//
+// A pinned value whose old value is dead because the statement is about to
+// store a new one may be recomputed in its own register; that is what lets
+// `s = s + a` run in place. Otherwise the register is the pin's alone.
+//! expect: scale(1000, 3) == 3000
+//! expect: scale(0x1234, 0) == 0
+//! expect: scale(0x8000, 2) == 0
+//! expect-bytes: scale == 13
+@fastcall u16 scale(u16 a, u8 n @ b) {
+    u16 s @ hl = 0;
+    while (n != 0) {
+        s = s + a;
+        n--;
+    }
+    return s;
+}
+
+// A pin across a call. CALL may change every register, so in a default
+// function a pinned value that is still needed afterwards is saved with a
+// marked PUSH/POP around the call, the same way as any other value:
+//
+//     PUSH BC ; spill
+//     LD A,B
+//     CALL twice
+//     POP BC ; spill
+//
+// (twice writes C, so the pin must be saved.) In a @fastcall function the
+// same code is an error unless the callee promises to leave the register
+// alone: "'y' is live in c across the call to 'twice', which preserves only
+// b d e h l (inferred); ...". A callee's register contract, declared with
+// @preserves or inferred for a private function, is in contracts.c80.
+// (@noinline keeps the CALL: inline.c80.)
+//! expect: twice(21) == 42
+@noinline u8 twice(u8 v) {
+    return v + v;
+}
+
+//! expect: keep(5, 1) == 11
+//! expect-bytes: keep == 8
+u8 keep(u8 x, u8 y @ c) {
+    u8 a = twice(x);
+    return a + y;
+}
+
+// --- Static locals ------------------------------------------------------
+//
+// `static` gives a local a fixed address, placed right after the function's
+// code and reported as the global `next.count` (label G.._NEXT_COUNT). It
+// is initialized once, in the image, and keeps its value between calls.
+// Every access is a real load or store:
+//
+//     LD A,(G.._NEXT_COUNT)
+//     INC A
+//     LD (G.._NEXT_COUNT),A
+//     LD A,(G.._NEXT_COUNT)
+//     RET
+//   G.._NEXT_COUNT:
+//     DB 0
+//
+// A static is not reentrant: an interrupt handler that calls next() shares
+// the same byte.
+//! expect: next() == 1
+u8 next() {
+    static u8 count = 0;
+    count++;
+    return count;
+}
+
+//! expect: third() == 3
+u8 third() {
+    next();
+    next();
+    return next();
+}
+
+// A local array must be static: C80 has no stack frame for it. The
+// initializer is stored in the image (DB 0,1,4,9), so it is a compile-time
+// list, not code that runs on each call.
+//! expect: square(3) == 9
+//! expect: square(0) == 0
+@fastcall u8 square(u8 i) {
+    static u8 table[4] = {0, 1, 4, 9};
+    return table[i];
+}
+
+// Static locals make a function fit @fastcall. This loop has p (2 bytes),
+// s (2), the widened byte (2), the loaded byte in A and the counter: one
+// byte more than the seven registers. As a parameter, n would get a static
+// slot (`; spill`), which @fastcall rejects. Copying it into a static
+// counter states that choice in the source: `left` is read and written
+// with LD A,(G.._SUM_LEFT) / LD (G.._SUM_LEFT),A, and the rest stays in
+// registers. (registers_cg.fail.c80 has the version without `left`.)
+//
+// `s @ de` documents where the sum lives. The pointer arrives in HL and
+// moves to BC once, at entry: *p is read with LD A,(BC) and p++ is INC BC,
+// so HL is free for the u16 `+` (ADD HL,rr). The loop body is:
+//
+//     LD A,(BC)     ; *p
+//     LD L,A        ; u16(*p)
+//     LD H,0
+//     ADD HL,DE
+//     LD D,H        ; s = ... (a store into the pin)
+//     LD E,L
+//     INC BC        ; p++
+//     ...
+//
+// With p in HL instead, every addition into s would need HL, so p would
+// have to step aside: keep pointers you dereference in BC or DE.
+//! expect: sum(&data[0], 4) == 0x0181
+//! expect: sum(&data[0], 0) == 0
+//! expect-bytes: sum == 35
+@fastcall u16 sum(ptr<u8> p, u8 n) {
+    static u8 left;
+    left = n;
+    u16 s @ de = 0;
+    while (left != 0) {
+        s = s + u16(*p);
+        p++;
+        left--;
+    }
+    return s;
+}
+
+u8 data[4] = {0x80, 0x01, 0x80, 0x80};

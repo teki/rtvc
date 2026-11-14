@@ -33,6 +33,8 @@ tocas() {
 echo "Compiling C80 tutorial examples into $OUT"
 
 for src in "$HERE"/*.c80; do
+    # *.fail.c80 are rejected on purpose; the test suite checks them.
+    case "$src" in *.fail.c80) continue ;; esac
     stem=$(basename "$src" .c80)
     echo "  $stem"
     c80 build "$src" --origin 0x8000 \
@@ -66,5 +68,11 @@ c80 build "$HERE/pong/rtvc-c80.toml" \
     --emit-asm "$OUT/pong.asm" \
     --emit-segments "$OUT/pong.toml"
 tocas "$OUT/pong.toml"
+
+echo "  selfcheck/rtvc-c80.toml"
+c80 build "$HERE/selfcheck/rtvc-c80.toml" \
+    --emit-asm "$OUT/selfcheck.asm" \
+    --emit-segments "$OUT/selfcheck.toml"
+tocas "$OUT/selfcheck.toml"
 
 echo "Done."

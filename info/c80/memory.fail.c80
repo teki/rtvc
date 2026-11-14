@@ -1,0 +1,17 @@
+// Rejected on purpose: arrays do not decay, and automatic locals cannot be
+// arrays.
+//! expect-error: ty-mismatch
+//! expect-error: ty-mismatch
+
+u8 buf[8];
+
+// Write `return &buf[0];`.
+ptr<u8> decay() {
+    return buf;
+}
+
+// Declare the array `static` (see registers.c80) or global, or take a
+// pointer to one.
+void local() {
+    u8 tmp[4];
+}

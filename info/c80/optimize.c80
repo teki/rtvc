@@ -1,10 +1,19 @@
-// Default builds optimize: forward conditional JP may become JR, and
-// JP cc,then / JP else collapses when `then` is the next block.
-// Backward loop jumps stay JP. Compile again with --no-optimize to compare.
-// Mutable globals are not CSE'd or coalesced: writes(1,2,3) stores three times.
+// What the default optimizer does. Compare this listing with
+// optimize.unopt.asm (built with --no-optimize), which is the plain
+// lowering:
+// - a test feeds its branch directly (OR A, not CP 0, when only Z is read);
+// - a forward conditional JP may become JR; a JP to a JP goes straight to
+//   the final target, and code nothing can reach is dropped;
+// - a while loop is rotated: one conditional branch per pass;
+// - a B counter that closes its loop becomes DJNZ;
+// - CALL f directly followed by RET becomes JP f;
+// - literal-only arithmetic is folded at compile time.
+// Mutable globals are not CSE'd or coalesced: writes() stores three times.
 
 u8 g;
 
+//! expect: short_if(0) == 1
+//! expect: short_if(5) == 2
 u8 short_if(u8 x) {
     if (x == 0) {
         return 1;
@@ -12,6 +21,11 @@ u8 short_if(u8 x) {
     return 2;
 }
 
+// Rotated: the entry jumps to the test at the bottom (JR), and each pass
+// ends with one JP NZ back to the body. s took B, so the counter is in C
+// and the loop closes with DEC C / LD A,C / OR A / JP NZ.
+//! expect: count(0) == 0
+//! expect: count(3) == 3
 u8 count(u8 n) {
     u8 s = 0;
     while (n != 0) {
@@ -21,6 +35,36 @@ u8 count(u8 n) {
     return s;
 }
 
+// With the counter pinned to B, `n--` and the `n != 0` test become one
+// DJNZ. The source's guard runs once at the entry (OR A / JR Z), so a zero
+// count never reaches DJNZ. (@noinline keeps blink a function of its own
+// for `again` below.)
+//! expect: blink(0) == 0
+//! expect: blink(4) == 4
+@noinline u8 blink(u8 n @ b) {
+    u8 s = 0;
+    while (n != 0) {
+        s++;
+        n--;
+    }
+    return s;
+}
+
+// Literal-only: folded to LD A,31. The unoptimized listing computes it.
+//! expect: mask() == 31
+u8 mask() {
+    return (1 << 5) - 1;
+}
+
+// The call is the last thing before RET: a tail call, JP blink. blink's
+// RET returns straight to again's caller.
+//! expect: again(3) == 3
+u8 again(u8 n) {
+    return blink(n);
+}
+
+// Only the last store is visible afterwards; all three are in the listing.
+//! expect-mem: writes() => g == 3
 void writes() {
     g = 1;
     g = 2;

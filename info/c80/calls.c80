@@ -1,31 +1,57 @@
-// Default calls use the register ABI (@fastcall is an alias).
-// Word args: HL, DE, BC. Byte args then take A, C, B, … skipping used halves.
-// Byte results return in A; words in HL. Recursion is rejected.
+// Calls under the default register ABI.
+// Word arguments take HL, DE, BC in order. Byte arguments then take A, C, B,
+// ... skipping halves a word already uses. Byte results return in A, words
+// in HL. Recursion is rejected (calls.fail.c80).
+//
+// The helpers here are marked @noinline: an optimized build would otherwise
+// expand these small private bodies in their callers (inline.c80), and this
+// file is about what a CALL costs.
 
-u8 id(u8 x) {
+// x arrives in A and stays there.
+//! expect: id(7) == 7
+@noinline u8 id(u8 x) {
     return x;
 }
 
-u8 add8(u8 a, u8 b) {
+// a in A, b in C: ADD A,C. u8 wraps.
+//! expect: add8(200, 100) == 44
+@noinline u8 add8(u8 a, u8 b) {
     return a + b;
 }
 
-u16 add16(u16 a, u16 b) {
+// a in HL, b in DE.
+//! expect: add16(0x8000, 0x8001) == 1
+@noinline u16 add16(u16 a, u16 b) {
     return a + b;
 }
 
+// x must survive the call to id(1), which returns in A where x arrived. id
+// is private and writes only A, so the compiler moves x to C (`LD C,A
+// ; spill`, 4 T) and needs no save around the CALL and no IX frame. Compare
+// with use_tagged below.
+//! expect: nest(4) == 5
 u8 nest(u8 x) {
     return add8(x, id(1));
 }
 
+// Swapping two word arguments is one EX DE,HL before the call.
+//! expect: swapped(1, 2) == 3
 u16 swapped(u16 a, u16 b) {
     return add16(b, a);
 }
 
-@fastcall u8 tagged(u8 x) {
+// Explicit @fastcall: the same ABI as the default, and the body must fit in
+// registers (no spill, save or IX; see registers.c80).
+//! expect: tagged(9) == 10
+@noinline @fastcall u8 tagged(u8 x) {
     return x + 1;
 }
 
+// x is already in A, so the call needs no moves. The call is the last
+// thing before RET, so an optimized build makes CALL tagged / RET one JP
+// tagged (a tail call: tagged's RET returns to use_tagged's caller, and the
+// stack bound is 2 bytes lower). nest and swapped end the same way.
+//! expect: use_tagged(255) == 0
 u8 use_tagged(u8 x) {
     return tagged(x);
 }

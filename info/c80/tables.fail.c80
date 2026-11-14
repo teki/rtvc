@@ -1,0 +1,54 @@
+// Rejected on purpose: each static initializer below is a compile error.
+// The test suite checks that compiling this file reports exactly these codes.
+//! expect-error: ty-mismatch
+//! expect-error: ty-not-lvalue
+//! expect-error: ty-not-lvalue
+//! expect-error: ty-mismatch
+//! expect-error: ty-literal-range
+//! expect-error: ty-mismatch
+//! expect-error: ty-mismatch
+//! expect-error: ty-mismatch
+//! expect-error: ty-not-lvalue
+//! expect-error: ty-not-lvalue
+
+u8 grid[4];
+const u8 SIZE = 4;
+str title = "PONG";
+ptr<u8> cursor;
+
+// An array has no address of its own; name an element: &grid[0].
+ptr<u8> whole = &grid;
+
+// A const has no storage, so it has no address.
+ptr<u8> size_at = &SIZE;
+
+// A str payload is read-only; its bytes have no address to hand out.
+ptr<u8> letter = &title[1];
+
+// No arithmetic on an address, even by a constant: write &grid[2], not
+// &grid[1] + 1.
+ptr<u8> moved = &grid[1] + 1;
+
+// The constant index must be inside the array (grid has 4 elements).
+ptr<u8> past = &grid[4];
+
+// Only an array can be indexed here: a pointer's value is not known until
+// run time.
+ptr<u8> through = &cursor[1];
+
+// An address is a pointer; storing it in a u16 needs an explicit u16(...).
+u16 plain = &grid[0];
+
+// A const is folded into the code, but an address is fixed only at link
+// time; use a global.
+const ptr<u8> FIXED = &grid[0];
+
+// A function-local static is stored once in the image. An automatic local
+// has no fixed address; a pinned one lives in a register.
+u8 locals() {
+    u8 n = 1;
+    static ptr<u8> at_n = &n;
+    u8 r @ b = 2;
+    static ptr<u8> at_r = &r;
+    return n + r;
+}

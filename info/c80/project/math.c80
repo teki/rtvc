@@ -1,13 +1,23 @@
+// A unit in a multi-unit project (rtvc-c80.toml). It imports a
+// constants-only unit and reads a project built-in; boot.asm calls inc().
+
 import sizes;
 
+// A public export: x in A, result in A.
+//! expect: inc(7) == 8
+//! expect: inc(255) == 0
 pub u8 inc(u8 x) {
     return x + 1;
 }
 
+// A qualified constant from another unit is an immediate.
+//! expect: canvas() == 40
 pub u16 canvas() {
     return sizes::WIDTH;
 }
 
+// project::stack_top is (base + size) modulo 65536: 0xFF00 + 0x100 = 0.
+//! expect: stack_top() == 0
 pub u16 stack_top() {
     return project::stack_top;
 }

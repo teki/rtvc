@@ -154,10 +154,22 @@ impl Cc {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Z80Op {
     Ret,
-    Ld8Imm { dst: R8, imm: u8 },
-    Ld8 { dst: R8, src: R8 },
-    Ld16Imm { dst: Rr, imm: u16 },
-    Ld16Sym { dst: Rr, symbol: String },
+    Ld8Imm {
+        dst: R8,
+        imm: u8,
+    },
+    Ld8 {
+        dst: R8,
+        src: R8,
+    },
+    Ld16Imm {
+        dst: Rr,
+        imm: u16,
+    },
+    Ld16Sym {
+        dst: Rr,
+        symbol: String,
+    },
     AddA(AluSrc),
     Sub(AluSrc),
     And(AluSrc),
@@ -171,13 +183,36 @@ pub enum Z80Op {
     Cpl,
     Neg,
     ExDeHl,
-    Jp { cc: Option<Cc>, target: String },
-    Jr { cc: Option<Cc>, target: String },
-    LdAbs8 { dst: R8, symbol: String },
-    StAbs8 { src: R8, symbol: String },
-    LdAbs16 { dst: Rr, symbol: String },
-    StAbs16 { src: Rr, symbol: String },
-    Call { target: String },
+    Jp {
+        cc: Option<Cc>,
+        target: String,
+    },
+    Jr {
+        cc: Option<Cc>,
+        target: String,
+    },
+    LdAbs8 {
+        dst: R8,
+        symbol: String,
+    },
+    StAbs8 {
+        src: R8,
+        symbol: String,
+    },
+    LdAbs16 {
+        dst: Rr,
+        symbol: String,
+    },
+    StAbs16 {
+        src: Rr,
+        symbol: String,
+    },
+    /// `clobbers`: registers the callee may change (H2c): everything, unless
+    /// the callee has a declared or inferred contract.
+    Call {
+        target: String,
+        clobbers: Vec<R8>,
+    },
     Push(Rr),
     Pop(Rr),
     PushAf,
@@ -191,23 +226,204 @@ pub enum Z80Op {
     LdSpIx,
     IncSp,
     DecSp,
-    Ld8Ix { dst: R8, disp: i8 },
-    St8Ix { src: R8, disp: i8 },
-    Ld8IxImm { disp: i8, imm: u8 },
+    Ld8Ix {
+        dst: R8,
+        disp: i8,
+    },
+    St8Ix {
+        src: R8,
+        disp: i8,
+    },
+    Ld8IxImm {
+        disp: i8,
+        imm: u8,
+    },
     LdHl(R8),
     StHl(R8),
     IncHl,
+    /// `LD A,(BC)` / `LD A,(DE)` (H5): a byte load through a pointer that
+    /// already lives in `BC` or `DE`.
+    LdAInd(Rr),
+    /// `LD (BC),A` / `LD (DE),A`.
+    StIndA(Rr),
+    /// `INC BC` / `INC DE` (6 T, flags unchanged).
+    Inc16(Rr),
     Rla,
-    InImm { port: u8 },
-    OutImm { port: u8 },
+    InImm {
+        port: u8,
+    },
+    OutImm {
+        port: u8,
+    },
     InC,
     OutC,
     Di,
     Ei,
     Ldir,
+    /// `SLA r`, `SRL r`, `SRA r`, `RL r`, `RR r` (CB-prefixed, 8 T).
+    Sla(R8),
+    Srl(R8),
+    Sra(R8),
+    Rl8(R8),
+    Rr8(R8),
+    /// Accumulator rotates (4 T).
+    Rlca,
+    Rrca,
+    Rra,
+    Inc8(R8),
+    Dec8(R8),
+    /// `DJNZ target` (13/8 T); only emitted behind a zero-count guard.
+    Djnz {
+        target: String,
+    },
 }
 
 impl Z80Op {
+    /// General-purpose 8-bit registers this instruction may change. Flags, SP,
+    /// IX, and memory are not tracked. `CALL` writes its callee's clobbers; `OR A`,
+    /// `AND A`, `CP`, and `LD r,r` with equal operands change no register.
+    pub fn writes(&self) -> Vec<R8> {
+        fn pair(rr: Rr) -> Vec<R8> {
+            let (h, l) = rr.halves();
+            vec![h, l]
+        }
+        match self {
+            Self::Ld8 { dst, src } if dst == src => Vec::new(),
+            Self::Ld8 { dst, .. }
+            | Self::Ld8Imm { dst, .. }
+            | Self::LdAbs8 { dst, .. }
+            | Self::Ld8Ix { dst, .. }
+            | Self::LdHl(dst) => vec![*dst],
+            Self::LdAInd(_) => vec![R8::A],
+            Self::Inc16(rr) => pair(*rr),
+            Self::Ld16Imm { dst, .. }
+            | Self::Ld16Sym { dst, .. }
+            | Self::LdAbs16 { dst, .. }
+            | Self::Pop(dst) => pair(*dst),
+            Self::Or(AluSrc::Reg(R8::A)) | Self::And(AluSrc::Reg(R8::A)) => Vec::new(),
+            Self::AddA(_)
+            | Self::Sub(_)
+            | Self::And(_)
+            | Self::Xor(_)
+            | Self::Or(_)
+            | Self::SbcA(_)
+            | Self::AdcA(_)
+            | Self::Cpl
+            | Self::Neg
+            | Self::Rla
+            | Self::Rlca
+            | Self::Rrca
+            | Self::Rra
+            | Self::PopAf
+            | Self::InImm { .. }
+            | Self::InC => vec![R8::A],
+            Self::AddHl(_) | Self::SbcHl(_) | Self::AddHlSp | Self::IncHl => pair(Rr::Hl),
+            Self::ExDeHl => vec![R8::D, R8::E, R8::H, R8::L],
+            Self::Ldir => vec![R8::B, R8::C, R8::D, R8::E, R8::H, R8::L],
+            Self::Call { clobbers, .. } => clobbers.clone(),
+            Self::Sla(r)
+            | Self::Srl(r)
+            | Self::Sra(r)
+            | Self::Rl8(r)
+            | Self::Rr8(r)
+            | Self::Inc8(r)
+            | Self::Dec8(r) => vec![*r],
+            Self::Djnz { .. } => vec![R8::B],
+            Self::Ret
+            | Self::Cp(_)
+            | Self::Jp { .. }
+            | Self::Jr { .. }
+            | Self::StAbs8 { .. }
+            | Self::StAbs16 { .. }
+            | Self::Push(_)
+            | Self::PushAf
+            | Self::PushIx
+            | Self::PopIx
+            | Self::LdIxImm(_)
+            | Self::AddIxSp
+            | Self::LdSpHl
+            | Self::LdSpIx
+            | Self::IncSp
+            | Self::DecSp
+            | Self::St8Ix { .. }
+            | Self::Ld8IxImm { .. }
+            | Self::StHl(_)
+            | Self::StIndA(_)
+            | Self::OutImm { .. }
+            | Self::OutC
+            | Self::Di
+            | Self::Ei => Vec::new(),
+        }
+    }
+
+    /// T-states of the instructions fallback code emits; `None` otherwise.
+    pub fn spill_tstates(&self) -> Option<u32> {
+        Some(match self {
+            Self::LdAbs8 { .. } | Self::StAbs8 { .. } => 13,
+            Self::LdAbs16 { dst: Rr::Hl, .. } | Self::StAbs16 { src: Rr::Hl, .. } => 16,
+            Self::LdAbs16 { .. } | Self::StAbs16 { .. } => 20,
+            Self::Ld8 { .. } => 4,
+            Self::Ld8Imm { .. } => 7,
+            Self::Ld16Imm { .. } | Self::Ld16Sym { .. } => 10,
+            Self::Push(_) | Self::PushAf => 11,
+            Self::Pop(_) | Self::PopAf => 10,
+            Self::Ld8Ix { .. } | Self::St8Ix { .. } => 19,
+            _ => return None,
+        })
+    }
+
+    /// Approximate T-states (taken branches, one `LDIR` step) for comparing
+    /// alternative lowerings of one function; not a timing report.
+    pub fn approx_tstates(&self) -> u32 {
+        let alu = |src: &AluSrc| match src {
+            AluSrc::Reg(_) => 4,
+            AluSrc::Imm(_) => 7,
+        };
+        match self {
+            Self::Ld8 { .. }
+            | Self::Cpl
+            | Self::ExDeHl
+            | Self::Rla
+            | Self::Rlca
+            | Self::Rrca
+            | Self::Rra
+            | Self::Inc8(_)
+            | Self::Dec8(_)
+            | Self::Di
+            | Self::Ei => 4,
+            Self::Sla(_) | Self::Srl(_) | Self::Sra(_) | Self::Rl8(_) | Self::Rr8(_) => 8,
+            Self::Djnz { .. } => 13,
+            Self::AddA(s)
+            | Self::Sub(s)
+            | Self::And(s)
+            | Self::Xor(s)
+            | Self::Or(s)
+            | Self::Cp(s)
+            | Self::SbcA(s)
+            | Self::AdcA(s) => alu(s),
+            Self::Ld8Imm { .. }
+            | Self::LdHl(_)
+            | Self::StHl(_)
+            | Self::LdAInd(_)
+            | Self::StIndA(_) => 7,
+            Self::Neg => 8,
+            Self::Ret | Self::Ld16Imm { .. } | Self::Ld16Sym { .. } | Self::Jp { .. } => 10,
+            Self::Pop(_) | Self::PopAf | Self::LdSpIx => 10,
+            Self::AddHl(_) | Self::AddHlSp | Self::Push(_) | Self::PushAf => 11,
+            Self::InImm { .. } | Self::OutImm { .. } => 11,
+            Self::Jr { .. } | Self::InC | Self::OutC => 12,
+            Self::LdSpHl | Self::IncSp | Self::DecSp | Self::IncHl | Self::Inc16(_) => 6,
+            Self::LdAbs8 { .. } | Self::StAbs8 { .. } => 13,
+            Self::LdAbs16 { dst: Rr::Hl, .. } | Self::StAbs16 { src: Rr::Hl, .. } => 16,
+            Self::LdAbs16 { .. } | Self::StAbs16 { .. } => 20,
+            Self::LdIxImm(_) | Self::PopIx => 14,
+            Self::SbcHl(_) | Self::PushIx | Self::AddIxSp => 15,
+            Self::Call { .. } => 17,
+            Self::Ld8Ix { .. } | Self::St8Ix { .. } | Self::Ld8IxImm { .. } => 19,
+            Self::Ldir => 21,
+        }
+    }
+
     pub fn render(&self) -> String {
         match self {
             Self::Ret => "RET".to_string(),
@@ -242,7 +458,7 @@ impl Z80Op {
             Self::StAbs8 { src, symbol } => format!("LD ({}),{}", symbol, src.name()),
             Self::LdAbs16 { dst, symbol } => format!("LD {},({})", dst.name(), symbol),
             Self::StAbs16 { src, symbol } => format!("LD ({}),{}", symbol, src.name()),
-            Self::Call { target } => format!("CALL {target}"),
+            Self::Call { target, .. } => format!("CALL {target}"),
             Self::Push(rr) => format!("PUSH {}", rr.name()),
             Self::Pop(rr) => format!("POP {}", rr.name()),
             Self::PushAf => "PUSH AF".to_string(),
@@ -262,6 +478,9 @@ impl Z80Op {
             Self::LdHl(r) => format!("LD {},(HL)", r.name()),
             Self::StHl(r) => format!("LD (HL),{}", r.name()),
             Self::IncHl => "INC HL".to_string(),
+            Self::LdAInd(rr) => format!("LD A,({})", rr.name()),
+            Self::StIndA(rr) => format!("LD ({}),A", rr.name()),
+            Self::Inc16(rr) => format!("INC {}", rr.name()),
             Self::Rla => "RLA".to_string(),
             Self::InImm { port } => format!("IN A,({port})"),
             Self::OutImm { port } => format!("OUT ({port}),A"),
@@ -270,6 +489,95 @@ impl Z80Op {
             Self::Di => "DI".to_string(),
             Self::Ei => "EI".to_string(),
             Self::Ldir => "LDIR".to_string(),
+            Self::Sla(r) => format!("SLA {}", r.name()),
+            Self::Srl(r) => format!("SRL {}", r.name()),
+            Self::Sra(r) => format!("SRA {}", r.name()),
+            Self::Rl8(r) => format!("RL {}", r.name()),
+            Self::Rr8(r) => format!("RR {}", r.name()),
+            Self::Rlca => "RLCA".to_string(),
+            Self::Rrca => "RRCA".to_string(),
+            Self::Rra => "RRA".to_string(),
+            Self::Inc8(r) => format!("INC {}", r.name()),
+            Self::Dec8(r) => format!("DEC {}", r.name()),
+            Self::Djnz { target } => format!("DJNZ {target}"),
+        }
+    }
+
+    /// Encoded length in bytes, for choosing between equally fast
+    /// alternative sequences (the assembler stays the authority).
+    pub fn size_bytes(&self) -> u32 {
+        let alu = |src: &AluSrc| match src {
+            AluSrc::Reg(_) => 1,
+            AluSrc::Imm(_) => 2,
+        };
+        match self {
+            Self::Ret
+            | Self::Ld8 { .. }
+            | Self::AddHl(_)
+            | Self::Cpl
+            | Self::ExDeHl
+            | Self::Push(_)
+            | Self::Pop(_)
+            | Self::PushAf
+            | Self::PopAf
+            | Self::AddHlSp
+            | Self::LdSpHl
+            | Self::IncSp
+            | Self::DecSp
+            | Self::LdHl(_)
+            | Self::StHl(_)
+            | Self::IncHl
+            | Self::LdAInd(_)
+            | Self::StIndA(_)
+            | Self::Inc16(_)
+            | Self::Rla
+            | Self::Rlca
+            | Self::Rrca
+            | Self::Rra
+            | Self::Inc8(_)
+            | Self::Dec8(_)
+            | Self::Di
+            | Self::Ei => 1,
+            Self::AddA(s)
+            | Self::Sub(s)
+            | Self::And(s)
+            | Self::Xor(s)
+            | Self::Or(s)
+            | Self::Cp(s)
+            | Self::SbcA(s)
+            | Self::AdcA(s) => alu(s),
+            Self::Ld8Imm { .. }
+            | Self::SbcHl(_)
+            | Self::Neg
+            | Self::Jr { .. }
+            | Self::PushIx
+            | Self::PopIx
+            | Self::AddIxSp
+            | Self::LdSpIx
+            | Self::InImm { .. }
+            | Self::OutImm { .. }
+            | Self::InC
+            | Self::OutC
+            | Self::Ldir
+            | Self::Sla(_)
+            | Self::Srl(_)
+            | Self::Sra(_)
+            | Self::Rl8(_)
+            | Self::Rr8(_)
+            | Self::Djnz { .. } => 2,
+            Self::Ld16Imm { .. }
+            | Self::Ld16Sym { .. }
+            | Self::Jp { .. }
+            | Self::Call { .. }
+            | Self::LdAbs8 { .. }
+            | Self::StAbs8 { .. }
+            | Self::Ld8Ix { .. }
+            | Self::St8Ix { .. } => 3,
+            Self::LdAbs16 { dst: Rr::Hl, .. } | Self::StAbs16 { src: Rr::Hl, .. } => 3,
+            Self::LdAbs16 { .. }
+            | Self::StAbs16 { .. }
+            | Self::LdIxImm(_)
+            | Self::Ld8IxImm { .. } => 4,
         }
     }
 }
@@ -304,12 +612,16 @@ pub enum Z80Item {
         expr: Option<SourceSpan>,
         synthetic: bool,
         node: Option<NodeId>,
+        /// Listing comment (`; spill` on compiler-inserted fallback code).
+        note: Option<&'static str>,
     },
     Data {
         id: AsmInstructionId,
         text: String,
         span: SourceSpan,
         node: NodeId,
+        /// Compiler-made data (a function's static slot area).
+        synthetic: bool,
     },
     Raw {
         id: AsmInstructionId,
@@ -352,7 +664,10 @@ impl Z80Item {
     fn render_line(&self) -> String {
         match self {
             Self::Label { name, .. } => format!("{name}:"),
-            Self::Instruction { op, .. } => format!("        {}", op.render()),
+            Self::Instruction { op, note, .. } => match note {
+                Some(note) => format!("        {} ; {note}", op.render()),
+                None => format!("        {}", op.render()),
+            },
             Self::Data { text, .. } | Self::Raw { text, .. } | Self::Directive { text, .. } => {
                 format!("        {text}")
             }
@@ -404,6 +719,22 @@ pub struct MappedInstruction {
     pub function: Option<FuncId>,
     pub span: SourceSpan,
     pub node: Option<NodeId>,
+    /// Expanded calls this instruction came through, outermost first (H3i).
+    /// `span` is then in the callee's source; each frame names its call site.
+    pub inlined: Vec<super::ir::InlineFrame>,
+}
+
+/// Per-function cost of the H2 fallbacks: memory slots and saves around
+/// calls. All zero for a function that keeps every value in registers.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SpillReport {
+    /// Static slot bytes emitted after the function (zero in the image).
+    pub slot_bytes: u16,
+    /// Bytes pushed to save live registers, one entry per call, `LDIR`, or
+    /// inline `asm` site that needed a save (in listing order).
+    pub saves: Vec<u16>,
+    /// T-states of all `; spill` instructions, each counted once.
+    pub tstates: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -415,14 +746,56 @@ pub struct GeneratedFunction {
     pub addr: u16,
     pub size: u16,
     pub conv: CallConv,
+    /// Explicit `@fastcall`: the body was checked to use registers only
+    /// (H2b). The ABI is the same as the default.
+    pub strict_registers: bool,
+    /// Registers this function returns with their entry values (H2c), and
+    /// where that promise comes from. Empty with `Contract::None`.
+    pub preserves: Vec<R8>,
+    pub contract: Contract,
     pub param_homes: Vec<RegHome>,
     pub param_types: Vec<CType>,
     pub ret: Option<RegHome>,
     pub stack_bound: u16,
     pub stack_provenance: StackProvenance,
     pub frame_bytes: u16,
+    pub spill: SpillReport,
     pub instruction_ids: Vec<AsmInstructionId>,
     pub mapped: Vec<MappedInstruction>,
+    /// Calls expanded in this function (H3i), with the bytes each expansion
+    /// takes here: the inlined growth, separate from the function's own code.
+    pub inlined: Vec<InlineReport>,
+}
+
+/// One expanded call site in a function (H3i).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlineReport {
+    pub callee: String,
+    pub call: SourceSpan,
+    /// Chosen by automatic inlining, not `@inline`.
+    pub auto: bool,
+    pub bytes: u16,
+}
+
+/// Source of a function's register contract (H2c, F-028).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Contract {
+    /// No contract: callers assume every register changes.
+    None,
+    /// `@preserves(...)`, checked against the body.
+    Declared,
+    /// A private function's actual writes, used only by callers in its unit.
+    Inferred,
+}
+
+impl Contract {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Declared => "declared",
+            Self::Inferred => "inferred",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -433,6 +806,19 @@ pub struct GeneratedGlobal {
     pub size: u16,
     pub ty: super::types::CType,
     pub span: SourceSpan,
+    /// Words of the data that hold another global's address (H3a).
+    pub refs: Vec<DataRef>,
+}
+
+/// A data word holding `target`'s link-time address plus `addend` (H3a), at
+/// byte `offset` of its global; emitted as `DW label+addend`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DataRef {
+    pub offset: u16,
+    /// The target's C80 name (`fn.local` for a function-local static).
+    pub target: String,
+    pub label: String,
+    pub addend: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -478,13 +864,19 @@ pub fn bytes_in_segments(assembled: &AssembledProgram, addr: u16, len: usize) ->
 }
 
 pub fn asm_label(func_id: FuncId, name: &str) -> String {
-    let mut label = format!("F{}_{name}", func_id.0.0);
+    // Every generated label starts with a prefix holding a letter that is not
+    // a hex digit (`FN`, `G`, `IA`, `U`), so the helper assembler can never
+    // read one as a number (F-035: it drops `_` and accepts a trailing `H`
+    // or `B` radix suffix) or as a register or condition name. The id makes
+    // the label unique whatever the source name is.
+    let mut label = format!("FN{}_{name}", func_id.0.0);
     label.make_ascii_uppercase();
     label
 }
 
 pub fn asm_global_label(id: super::ir::GlobalId, name: &str) -> String {
-    let mut label = format!("G{}_{name}", id.0.0);
+    // A `static` local is named `function.local`.
+    let mut label = format!("G{}_{}", id.0.0, name.replace('.', "_"));
     label.make_ascii_uppercase();
     label
 }

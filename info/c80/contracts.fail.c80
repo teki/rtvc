@@ -1,0 +1,34 @@
+// Rejected on purpose: @preserves declarations that contracts.c80 does not
+// allow. The comment above each function quotes its message. Code that
+// breaks a valid declaration is in contracts_cg.fail.c80.
+//! expect-error: ty-mismatch
+//! expect-error: ty-mismatch
+//! expect-error: ty-mismatch
+//! expect-error: parse-expected
+//! expect-error: parse-expected
+
+// 'id' returns u8 in a, so it cannot preserve a
+//
+// The result travels in A; a word result in HL.
+@preserves(a) u8 id(u8 x) {
+    return x;
+}
+
+// 'echo' returns u16 in hl, so it cannot preserve h
+@preserves(h) u16 echo(u16 x) {
+    return x;
+}
+
+// 'x' is pinned to b, but 'pinned' declares it in @preserves; a preserved
+// register keeps the caller's value for the whole call
+@preserves(b) u8 pinned(u8 x @ b) {
+    return x;
+}
+
+// duplicate @preserves; list every register in one attribute
+@preserves(bc) @preserves(de) void twice_listed() {
+}
+
+// unknown register 'ix' in @preserves; use a b c d e h l bc de hl
+@preserves(ix) void index_reg() {
+}

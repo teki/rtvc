@@ -456,9 +456,15 @@ u8 cont(u8 n) {
     let many = execute_function(code, "count", &[5]).unwrap();
     assert_eq!(many.return_byte(), 5);
     assert!(many.tstates > one.tstates);
-    assert_eq!(zero.tstates, 48);
-    assert_eq!(one.tstates, 106);
-    assert_eq!(many.tstates, 338);
+    // H5: the loop test is `OR A`, not `CP 0` (48 -> 45), and the loop is
+    // rotated: entry `JR` to the test, one `JP NZ` per pass. That costs
+    // 10 T for zero passes and 3 T for one, and saves 7 T on every further
+    // pass (45 -> 55, 78 -> 81, 210 -> 185).
+    assert_eq!(zero.tstates, 55);
+    // H3i: `s + 1` / `n - 1` stored back are `INC`/`DEC` in place (was
+    // 106 / 338 through A).
+    assert_eq!(one.tstates, 81); // H5: 84 before `OR A`, 78 before rotation
+    assert_eq!(many.tstates, 185); // H5: 228 before `OR A`, 210 before rotation
     assert_eq!(
         execute_function(code, "nest", &[1, 1])
             .unwrap()
@@ -560,9 +566,9 @@ fn assert_ix_iy_sp(exec: &crate::harness::ExecResult) {
 fn register_calls_execute_and_leaves_stay_frame_free() {
     let result = compile_ok(
         r#"
-u8 id(u8 x) { return x; }
-u8 add8(u8 a, u8 b) { return a + b; }
-u16 add(u16 a, u16 b) { return a + b; }
+@noinline u8 id(u8 x) { return x; }
+@noinline u8 add8(u8 a, u8 b) { return a + b; }
+@noinline u16 add(u16 a, u16 b) { return a + b; }
 u8 nest(u8 x) { return add8(x, id(1)); }
 u16 swapped(u16 a, u16 b) { return add(b, a); }
 u8 sibling(u8 x) { u8 a = id(x); u8 b = id(1); return add8(a, b); }
@@ -675,6 +681,29 @@ fn stackcall_fits_rejected_register_signature() {
 
 #[test]
 fn indexed_frame_boundary_is_rejected() {
+    // Parameter 62 of a `@stackcall` function sits at IX+128.
+    let params: Vec<String> = (0..63).map(|i| format!("u16 p{i}")).collect();
+    let src = format!(
+        "@stackcall u16 f({}) {{ return p62; }}\n",
+        params.join(", ")
+    );
+    let result = compile_source("test.c80", &src);
+    assert!(result.has_errors(), "expected frame displacement error");
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("does not fit a signed displacement")),
+        "{:?}",
+        result.diagnostics
+    );
+    assert!(result.code.is_none());
+}
+
+#[test]
+fn many_word_locals_use_static_slots_not_ix() {
+    // H1 rejected this (70 word locals overflowed the IX frame); since H2a
+    // the locals that do not fit registers live in static slots.
     let mut src = String::from("u8 id(u8 x) { return x; }\nu8 f() {\n");
     for i in 0..70 {
         src.push_str(&format!("  u16 v{i} = {i};\n"));
@@ -684,14 +713,80 @@ fn indexed_frame_boundary_is_rejected() {
         src.push_str(&format!("  t = t + u8(v{i});\n"));
     }
     src.push_str("  return t;\n}\n");
-    let result = compile_source("test.c80", &src);
-    assert!(result.has_errors(), "expected frame displacement error");
+    let result = compile_ok(&src);
+    let code = result.code.as_ref().unwrap();
+    let f = code.function("f").unwrap();
+    assert!(f.spill.slot_bytes > 0, "{:?}", f.spill);
     assert!(
-        codes(&result).contains(&"cg-unsupported"),
-        "{:?}",
-        codes(&result)
+        f.mapped.iter().all(|m| !m.text.contains("IX")),
+        "unannotated function uses IX"
     );
-    assert!(result.code.is_none());
+    let exec = execute_function(code, "f", &[]).unwrap();
+    // 1 + (0 + 1 + ... + 69) = 2416, truncated to u8.
+    assert_eq!(exec.return_byte(), (2416u16 & 0xFF) as u8);
+    assert_ix_iy_sp(&exec);
+}
+
+#[test]
+fn spills_reserve_exactly_their_slots() {
+    // Nine bytes of live values in a loop: the slot area holds exactly the
+    // values without a register, and the size report includes it.
+    let src = "u16 mix(u16 a, u16 b, u8 n) { u16 s = 0; u16 t = 1;
+        while (n != 0) { s = s + a; t = t + b; a = a ^ t; n--; } return s + t; }";
+    let result = compile_ok(src);
+    let code = result.code.as_ref().unwrap();
+    let f = code.function("mix").unwrap();
+    assert_eq!(f.spill.slot_bytes, 5, "{:?}", f.spill);
+    let data: Vec<_> = f
+        .mapped
+        .iter()
+        .filter(|m| m.kind == MappedKind::Data)
+        .collect();
+    assert_eq!(data.len(), 1, "{data:?}");
+    assert!(data[0].synthetic);
+    assert_eq!(data[0].bytes, vec![0; 5]);
+    let code_bytes: usize = f.mapped.iter().map(|m| m.bytes.len()).sum();
+    assert_eq!(usize::from(f.size), code_bytes);
+    assert!(result.code.as_ref().unwrap().assembly.contains("; spill"));
+    let exec = execute_function(code, "mix", &[1, 2, 3]).unwrap();
+    assert_eq!(exec.return_word(), 0x11);
+    assert_ix_iy_sp(&exec);
+
+    // A value live across a call is pushed, not stored: no slot area.
+    let result = compile_ok(
+        "pub u8 twice(u8 v) { return v + v; }
+         u8 keep(u8 x, u8 y) { u8 a = twice(x); return a + y; }",
+    );
+    let code = result.code.as_ref().unwrap();
+    let keep = code.function("keep").unwrap();
+    assert_eq!(keep.spill.slot_bytes, 0);
+    assert_eq!(keep.spill.saves, vec![2]);
+    let exec = execute_function(code, "keep", &[5, 1]).unwrap();
+    assert_eq!(exec.return_byte(), 11);
+    assert!(exec.sp_used <= keep.stack_bound);
+    assert_eq!(keep.stack_provenance, StackProvenance::Proven);
+}
+
+#[test]
+fn stackcall_arguments_spill_when_pairs_run_out() {
+    let result = compile_ok(
+        "@stackcall u16 g(u16 a, u16 b, u16 c, u16 d) { return a - b + c - d; }
+         u16 f(u16 x, u16 y) { u16 z = x + y; u16 w = x ^ y;
+             return g(x + 1, y + 2, z + 3, w + 4) + z + w; }",
+    );
+    let code = result.code.as_ref().unwrap();
+    let f = code.function("f").unwrap();
+    assert!(f.mapped.iter().all(|m| !m.text.contains("IX")));
+    let exec = execute_function(code, "f", &[10, 3]).unwrap();
+    // z = 13, w = 9: g(11, 5, 16, 13) = 9, plus z + w.
+    assert_eq!(exec.return_word(), 31);
+    assert!(
+        exec.sp_used <= f.stack_bound,
+        "{} > {}",
+        exec.sp_used,
+        f.stack_bound
+    );
+    assert_ix_iy_sp(&exec);
 }
 
 #[test]
@@ -1087,7 +1182,7 @@ fn inline_asm_ldir_counts_and_raw_zero() {
         r#"
 u8 src[4];
 u8 dst[4];
-void copy(u16 n) {
+@noinline void copy(u16 n) {
     src[0] = 1;
     src[1] = 2;
     src[2] = 3;
@@ -1127,17 +1222,25 @@ u8 copy_get(u16 n, u8 i) {
             insn_limit: 200,
             ..ExecConfig::default()
         },
-    )
-    .expect("BC=0 LDIR may smash code and still return");
-    let extra_writes = zero
-        .accesses
-        .iter()
-        .filter(|a| a.kind == AccessKind::DataWrite)
-        .count();
-    assert!(
-        extra_writes > 8,
-        "BC=0 LDIR must copy many bytes, not skip: writes={extra_writes}"
     );
+    // BC=0 copies 64 KiB over the code, so whether the smashed function
+    // still reaches its RET depends on where the code happens to sit (it
+    // stopped returning when H5 shortened the listing). Either outcome
+    // shows the LDIR ran: a skipped one returns after the four stores.
+    match zero {
+        Ok(zero) => {
+            let extra_writes = zero
+                .accesses
+                .iter()
+                .filter(|a| a.kind == AccessKind::DataWrite)
+                .count();
+            assert!(
+                extra_writes > 8,
+                "BC=0 LDIR must copy many bytes, not skip: writes={extra_writes}"
+            );
+        }
+        Err(e) => assert!(e.0.contains("timed out"), "{e}"),
+    }
 }
 
 #[test]
@@ -1226,7 +1329,8 @@ u8 dead_local() {
     assert!(
         add1.mapped
             .iter()
-            .any(|m| m.timing == StaticTiming::Exact(7) || m.text.contains("ADD")),
+            // H5: `x + 1` before RET is `INC A` (carry is dead there).
+            .any(|m| m.timing == StaticTiming::Exact(4) && m.text == "INC A"),
         "{:?}",
         add1.mapped
     );
@@ -1303,11 +1407,18 @@ u8 inc_asm(u8 value) {
     let result = compile_ok(src);
     let map = result.map().unwrap();
     let frame_fn = result.code.as_ref().unwrap().function("frame").unwrap();
+    // `&slot` is a link-time address: the local lives in the function's
+    // static slot area, which the map shows as synthetic data.
     assert!(
         frame_fn
             .mapped
             .iter()
-            .any(|m| m.synthetic && m.text.contains("IX")),
+            .any(|m| m.synthetic && m.text.starts_with("DB ")),
+        "{:?}",
+        frame_fn.mapped
+    );
+    assert!(
+        frame_fn.mapped.iter().all(|m| !m.text.contains("IX")),
         "{:?}",
         frame_fn.mapped
     );
@@ -1325,8 +1436,8 @@ u8 inc_asm(u8 value) {
 fn call_and_repeat_timing_are_not_false_totals() {
     let result = compile_ok(
         r#"
-u8 id(u8 x) { return x; }
-u8 wrap(u8 x) { return id(x); }
+pub u8 id(u8 x) { return x; }
+u8 wrap(u8 x) { return id(x) + 1; }
 void copy(ptr<u8> d, ptr<u8> s, u16 n) {
     asm(in: hl = s, in: de = d, in: bc = n, clobber: hl, de, bc, flags, memory) {
         ldir
@@ -2167,7 +2278,7 @@ fn cpu_di_ei_ldir_emit_and_copy() {
 u8 src[4];
 u8 dst[4];
 u8 buf[4];
-void copy(u16 n) {
+@noinline void copy(u16 n) {
     src[0] = 1;
     src[1] = 2;
     src[2] = 3;
@@ -2222,17 +2333,25 @@ u8 fill_get(u8 i) {
             insn_limit: 200,
             ..ExecConfig::default()
         },
-    )
-    .expect("BC=0 LDIR may smash code and still return");
-    let extra_writes = zero
-        .accesses
-        .iter()
-        .filter(|a| a.kind == AccessKind::DataWrite)
-        .count();
-    assert!(
-        extra_writes > 8,
-        "BC=0 LDIR must copy many bytes, not skip: writes={extra_writes}"
     );
+    // BC=0 copies 64 KiB over the code, so whether the smashed function
+    // still reaches its RET depends on where the code happens to sit (it
+    // stopped returning when H5 shortened the listing). Either outcome
+    // shows the LDIR ran: a skipped one returns after the four stores.
+    match zero {
+        Ok(zero) => {
+            let extra_writes = zero
+                .accesses
+                .iter()
+                .filter(|a| a.kind == AccessKind::DataWrite)
+                .count();
+            assert!(
+                extra_writes > 8,
+                "BC=0 LDIR must copy many bytes, not skip: writes={extra_writes}"
+            );
+        }
+        Err(e) => assert!(e.0.contains("timed out"), "{e}"),
+    }
 }
 
 #[test]
@@ -2300,4 +2419,1023 @@ u8 n_down(u8 b, u8 o) {
             .return_byte(),
         1
     );
+}
+
+// ---------------------------------------------------------------------------
+// H2b: strict `@fastcall`, pinned registers, `static` locals
+// ---------------------------------------------------------------------------
+
+fn errors_of(src: &str) -> Vec<String> {
+    let result = compile_source("test.c80", src);
+    result
+        .diagnostics
+        .iter()
+        .filter(|d| d.is_error())
+        .map(|d| format!("{}: {}", d.code.as_str(), d.message))
+        .collect()
+}
+
+fn run_both(src: &str, name: &str, args: &[u16]) -> Vec<crate::harness::ExecResult> {
+    [true, false]
+        .into_iter()
+        .map(|optimize| {
+            let result = compile_opt(src, optimize);
+            assert!(!result.has_errors(), "{:?}\n{src}", result.diagnostics);
+            let code = result.code.as_ref().unwrap();
+            let exec = execute_function(code, name, args).unwrap();
+            assert_ix_iy_sp(&exec);
+            exec
+        })
+        .collect()
+}
+
+fn listing_of(src: &str, name: &str) -> Vec<String> {
+    let result = compile_ok(src);
+    result
+        .code
+        .as_ref()
+        .unwrap()
+        .function(name)
+        .unwrap()
+        .mapped
+        .iter()
+        .map(|m| m.text.clone())
+        .collect()
+}
+
+#[test]
+fn pinned_counter_stays_in_b_through_the_loop() {
+    let src = "u8 f(u8 x) { u8 n @ b = 4; u8 s = 0; while (n != 0) { s = s + x; n--; } return s; }";
+    for exec in run_both(src, "f", &[3]) {
+        assert_eq!(exec.return_byte(), 12);
+    }
+    let text = listing_of(src, "f");
+    // H5: the source's `n != 0` guard runs once at the entry (`OR A`, was
+    // `CP 0`), and `n--` closing the loop is `DJNZ` (A and flags are dead
+    // there).
+    let want = [
+        "LD C,A",
+        "LD B,4",
+        "LD E,0",
+        "LD A,B",
+        "OR A",
+        "JR Z,FN23_F_B4",
+        "LD A,E",
+        "ADD A,C",
+        "LD E,A",
+        "DJNZ FN23_F_B3",
+        "LD A,E",
+        "RET",
+    ];
+    assert_eq!(text, want, "{text:#?}");
+    // Nothing but the counter's own updates writes B.
+    let writes_b: Vec<&String> = text.iter().filter(|t| t.starts_with("LD B,")).collect();
+    assert_eq!(writes_b, ["LD B,4"], "{text:#?}");
+    assert!(text.iter().any(|t| t.starts_with("DJNZ ")), "{text:#?}");
+}
+
+#[test]
+fn pinned_parameter_gets_one_entry_move() {
+    let src = "u8 f(u8 x @ d, u8 y) { return x + y; }";
+    for exec in run_both(src, "f", &[40, 2]) {
+        assert_eq!(exec.return_byte(), 42);
+    }
+    let text = listing_of(src, "f");
+    // H5: `x` is only read once, straight from A, so the optimizer drops the
+    // `LD A,D` reload and then the dead entry move itself. Never more than one.
+    assert_eq!(text, ["ADD A,C", "RET"], "{text:#?}");
+    let unopt = compile_opt(src, false);
+    let moves = unopt
+        .code
+        .as_ref()
+        .unwrap()
+        .function("f")
+        .unwrap()
+        .mapped
+        .iter()
+        .filter(|m| m.text == "LD D,A")
+        .count();
+    assert_eq!(moves, 1);
+    let src = "@stackcall u8 g(u8 a, u8 b @ c) { return a + b; }";
+    for exec in run_both(src, "g", &[40, 2]) {
+        assert_eq!(exec.return_byte(), 42);
+    }
+}
+
+#[test]
+fn pin_conflicts_are_located_errors() {
+    let alu = errors_of("u8 f(u8 x, u8 y) { u8 n @ a = x; u8 r = y + 1; return r + n; }");
+    assert!(
+        alu.iter()
+            .any(|e| e.contains("'n' is pinned to a") && e.contains("the u8 `+`")),
+        "{alu:?}"
+    );
+    let overlap = errors_of("u8 f() { u16 w @ bc = 1; u8 n @ c = 2; return n + u8(w); }");
+    assert!(
+        overlap.iter().any(|e| e.contains("overlaps 'w @ bc'")),
+        "{overlap:?}"
+    );
+    let addr = errors_of("u8 f() { u8 n @ b = 1; ptr<u8> p = &n; return *p; }");
+    assert!(
+        addr.iter().any(|e| e.contains("pinned to register b")),
+        "{addr:?}"
+    );
+    let width = errors_of("u16 f() { u16 w @ b = 1; return w; }");
+    assert!(
+        width.iter().any(|e| e.contains("a byte register")),
+        "{width:?}"
+    );
+    let unknown = errors_of("u8 f() { u8 n @ x = 1; return n; }");
+    assert!(
+        unknown.iter().any(|e| e.contains("unknown register 'x'")),
+        "{unknown:?}"
+    );
+    let global = errors_of("u8 g @ b;\nu8 f() { return g; }");
+    assert!(
+        global
+            .iter()
+            .any(|e| e.contains("only to a local or a parameter")),
+        "{global:?}"
+    );
+}
+
+#[test]
+fn pins_in_disjoint_scopes_may_share_a_register() {
+    let src = "u8 f(u8 x) { u8 s = 0; { u8 n @ b = x; s = s + n; } { u8 m @ b = 2; s = s + m; } return s; }";
+    for exec in run_both(src, "f", &[5]) {
+        assert_eq!(exec.return_byte(), 7);
+    }
+}
+
+#[test]
+fn pinned_value_across_a_call_is_pushed_or_rejected() {
+    let plain =
+        "pub u8 g(u8 v) { return v + 1; }\nu8 f(u8 x) { u8 n @ b = x; u8 r = g(1); return r + n; }";
+    for exec in run_both(plain, "f", &[40]) {
+        assert_eq!(exec.return_byte(), 42);
+    }
+    let text = listing_of(plain, "f");
+    assert!(text.contains(&"PUSH BC".to_string()), "{text:#?}");
+    let strict = format!(
+        "@fastcall {}",
+        plain
+            .replace("u8 f(", "@fastcall u8 f(")
+            .trim_start_matches("@fastcall ")
+    );
+    let errs = errors_of(&strict);
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("'n' is live in b across the call to 'g'")
+                && e.contains("no register contract")
+                && e.contains("declare @preserves(b) on 'g'")),
+        "{errs:?}"
+    );
+}
+
+#[test]
+fn strict_fastcall_accepts_registers_and_rejects_fallbacks() {
+    let ok =
+        compile_ok("@fastcall u8 add(u8 a, u8 b) { return a + b; }\nu8 plain(u8 a) { return a; }");
+    let code = ok.code.as_ref().unwrap();
+    assert!(code.function("add").unwrap().strict_registers);
+    assert!(!code.function("plain").unwrap().strict_registers);
+    assert_eq!(code.function("add").unwrap().conv, CallConv::Register);
+
+    let addr = errors_of("@fastcall u8 f(u8 v) { u8 c = 0; ptr<u8> p = &c; *p = v; return c; }");
+    assert!(
+        addr.iter().any(
+            |e| e.starts_with("cg-unsupported: @fastcall 'f' must fit in registers")
+                && e.contains("'c' has its address taken")
+                && e.contains("'static'")
+        ),
+        "{addr:?}"
+    );
+    let stack =
+        errors_of("@stackcall u8 s(u8 a) { return a; }\n@fastcall u8 f(u8 v) { return s(v); }");
+    assert!(
+        stack.iter().any(|e| e.contains("must fit in registers")),
+        "{stack:?}"
+    );
+    // A static local is the strict way to get memory.
+    let src = "@fastcall u8 f(u8 v) { static u8 c; ptr<u8> p = &c; *p = v; return c + 1; }";
+    for exec in run_both(src, "f", &[41]) {
+        assert_eq!(exec.return_byte(), 42);
+    }
+}
+
+#[test]
+fn static_locals_persist_initialize_index_and_address() {
+    let src =
+        "u8 tick() { static u8 n = 5; n++; return n; }\nu8 f() { tick(); tick(); return tick(); }";
+    for exec in run_both(src, "f", &[]) {
+        assert_eq!(exec.return_byte(), 8);
+    }
+    let src = "u8 f(u8 i) { static u8 t[4] = {10, 20, 30}; ptr<u8> p = &t[3]; *p = i; return t[i & 3] + t[0]; }";
+    for exec in run_both(src, "f", &[1]) {
+        assert_eq!(exec.return_byte(), 30);
+    }
+    for exec in run_both(src, "f", &[3]) {
+        assert_eq!(exec.return_byte(), 13);
+    }
+    let result = compile_ok(src);
+    let code = result.code.as_ref().unwrap();
+    let g = code.global("f.t").expect("static array is reported as f.t");
+    assert_eq!(g.size, 4);
+    // Placed directly after the function.
+    let f = code.function("f").unwrap();
+    assert_eq!(g.addr, f.addr + f.size);
+}
+
+#[test]
+fn static_local_rules_are_checked() {
+    let auto = errors_of("u8 f() { u8 t[4]; t[0] = 1; return t[0]; }");
+    assert!(
+        auto.iter().any(|e| e.contains("declare them 'static'")),
+        "{auto:?}"
+    );
+    let init = errors_of("u8 f(u8 x) { static u8 n = x; return n; }");
+    assert!(
+        init.iter().any(|e| e.contains("compile-time value")),
+        "{init:?}"
+    );
+    let top = errors_of("static u8 g;\nu8 f() { return g; }");
+    assert!(
+        top.iter().any(|e| e.contains("'static' is for locals")),
+        "{top:?}"
+    );
+    let for_init =
+        errors_of("u8 f() { u8 s = 0; for (static u8 i = 0; i < 3; i++) { s++; } return s; }");
+    assert!(
+        for_init.iter().any(|e| e.contains("cannot be static")),
+        "{for_init:?}"
+    );
+    let konst = errors_of("u8 f() { static const u8 n = 1; return n; }");
+    assert!(
+        konst.iter().any(|e| e.contains("'static const'")),
+        "{konst:?}"
+    );
+    let pinned = errors_of("u8 f() { static u8 n @ b; return n; }");
+    assert!(
+        pinned.iter().any(|e| e.contains("cannot be pinned")),
+        "{pinned:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// H2c: register contracts (`@preserves`, limited inference)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn strict_caller_keeps_its_counter_in_b_across_a_preserving_leaf() {
+    let src = "@preserves(bc) pub u8 inc(u8 v) { return v + 1; }
+@fastcall u8 count(u8 n @ b) { u8 s = 0; while (n != 0) { s = inc(s); n--; } return s; }";
+    for exec in run_both(src, "count", &[5]) {
+        assert_eq!(exec.return_byte(), 5);
+    }
+    let text = listing_of(src, "count");
+    // H5: entry guard (`OR A`: A already holds n), then `DJNZ`.
+    let want = [
+        "LD B,A", "LD C,0", "OR A", "JR Z,F", "LD A,C", "CALL F", "LD C,A", "DJNZ F", "LD A,C",
+        "RET",
+    ];
+    assert_eq!(text.len(), want.len(), "{text:#?}");
+    for (got, want) in text.iter().zip(want) {
+        assert!(got.starts_with(want), "{text:#?}");
+    }
+    let code = compile_ok(src);
+    let inc = code.code.as_ref().unwrap().function("inc").unwrap();
+    assert_eq!(inc.contract, crate::Contract::Declared);
+    assert_eq!(inc.preserves, vec![R8::B, R8::C]);
+}
+
+#[test]
+fn preserves_violations_are_located_errors() {
+    // Directly: the word `+` needs HL.
+    let direct = errors_of("u16 t;\n@preserves(hl) void acc(u16 a, u16 b) { t = a + b; }");
+    assert!(
+        direct.iter().any(|e| e.starts_with(
+            "cg-unsupported: 'acc' declares @preserves(hl), but the u16 `+` needs hl"
+        )),
+        "{direct:?}"
+    );
+    // Through a callee without a contract, in a strict function.
+    let callee = errors_of(
+        "pub u8 twice(u8 v) { return v + v; }\n@fastcall @preserves(bc) u8 wrap(u8 v) { return twice(v) + 1; }",
+    );
+    assert!(
+        callee.iter().any(|e| e.contains("the caller's bc (kept by @preserves) is live in bc across the call to 'twice', which has no register contract")),
+        "{callee:?}"
+    );
+    // Through an inline asm clobber, in a strict function.
+    let asm =
+        errors_of("@fastcall @preserves(c) u8 f(u8 v) { asm (clobber: c) { LD C,0 } return v; }");
+    assert!(
+        asm.iter().any(|e| e.contains("asm block changes")),
+        "{asm:?}"
+    );
+    // Declaration errors.
+    let decl = errors_of(
+        "@preserves(a) u8 f(u8 x) { return x; }\n@preserves(h) u16 g(u16 x) { return x; }\n@preserves(bc) u8 h(u8 x @ b) { return x; }",
+    );
+    assert!(
+        decl.iter()
+            .any(|e| e.contains("'f' returns u8 in a, so it cannot preserve a")),
+        "{decl:?}"
+    );
+    assert!(
+        decl.iter()
+            .any(|e| e.contains("'g' returns u16 in hl, so it cannot preserve h")),
+        "{decl:?}"
+    );
+    assert!(
+        decl.iter()
+            .any(|e| e.contains("'x' is pinned to b, but 'h' declares it in @preserves")),
+        "{decl:?}"
+    );
+    let parse = errors_of(
+        "@preserves(bc) @preserves(de) void k() { }\n@preserves() void m() { }\n@preserves(ix) void n() { }\n@preserves(bc) u8 g;",
+    );
+    assert_eq!(parse.len(), 4, "{parse:?}");
+}
+
+#[test]
+fn default_functions_save_a_preserved_register_around_a_clobbering_call() {
+    let src = "pub u8 twice(u8 v) { return v + v; }\n@preserves(bc) u8 wrap(u8 v) { return twice(v) + 1; }";
+    for exec in run_both(src, "wrap", &[20]) {
+        assert_eq!(exec.return_byte(), 41);
+    }
+    let text = listing_of(src, "wrap");
+    assert_eq!(
+        text,
+        // H5: `+ 1` before RET is `INC A`.
+        ["PUSH BC", "CALL FN7_TWICE", "POP BC", "INC A", "RET"],
+        "{text:#?}"
+    );
+    // A parameter in a preserved register is read in place and comes back.
+    let src = "@preserves(de) u16 add(u16 a, u16 b) { return a + b; }";
+    assert_eq!(listing_of(src, "add"), ["ADD HL,DE", "RET"]);
+    for exec in run_both(src, "add", &[0x1234, 0x0101]) {
+        assert_eq!(exec.return_word(), 0x1335);
+        assert_eq!(exec.de, 0x0101);
+    }
+}
+
+#[test]
+fn inference_is_used_for_private_callees_only() {
+    let private = "@noinline u8 inc(u8 v) { return v + 1; }\nu8 f(u8 x, u8 y) { u8 a = inc(x); return a + y; }";
+    let public = private.replace("u8 inc(", "pub u8 inc(");
+    let p = compile_ok(private);
+    let inc = p.code.as_ref().unwrap().function("inc").unwrap();
+    assert_eq!(inc.contract, crate::Contract::Inferred);
+    assert_eq!(
+        inc.preserves,
+        vec![R8::B, R8::C, R8::D, R8::E, R8::H, R8::L]
+    );
+    assert!(
+        !listing_of(private, "f")
+            .iter()
+            .any(|l| l.starts_with("PUSH"))
+    );
+    let q = compile_ok(&public);
+    let inc = q.code.as_ref().unwrap().function("inc").unwrap();
+    assert_eq!(inc.contract, crate::Contract::None);
+    assert!(inc.preserves.is_empty());
+    assert!(listing_of(&public, "f").iter().any(|l| l == "PUSH BC"));
+    for src in [private.to_string(), public] {
+        for exec in run_both(&src, "f", &[5, 1]) {
+            assert_eq!(exec.return_byte(), 7);
+        }
+    }
+}
+
+#[test]
+fn inferred_contracts_do_not_depend_on_source_order() {
+    let a = "@noinline u8 inc(u8 v) { return v + 1; }\n@noinline u8 two(u8 v) { return inc(inc(v)); }\nu8 f(u8 x, u8 y) { u8 a = two(x); return a + y; }";
+    let b = "u8 f(u8 x, u8 y) { u8 a = two(x); return a + y; }\n@noinline u8 two(u8 v) { return inc(inc(v)); }\n@noinline u8 inc(u8 v) { return v + 1; }";
+    let strip = |l: Vec<String>| -> Vec<String> {
+        l.into_iter()
+            .map(|t| {
+                t.split('_')
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .filter(|c| !c.is_ascii_digit())
+                    .collect()
+            })
+            .collect()
+    };
+    for name in ["inc", "two", "f"] {
+        assert_eq!(
+            strip(listing_of(a, name)),
+            strip(listing_of(b, name)),
+            "{name}"
+        );
+    }
+    let ra = compile_ok(a);
+    let rb = compile_ok(b);
+    for name in ["inc", "two"] {
+        let fa = ra.code.as_ref().unwrap().function(name).unwrap();
+        let fb = rb.code.as_ref().unwrap().function(name).unwrap();
+        assert_eq!((fa.contract, &fa.preserves), (fb.contract, &fb.preserves));
+    }
+}
+
+#[test]
+fn the_harness_rejects_a_broken_contract() {
+    // The permanent guard: claim a register the function writes and the
+    // harness must notice, both for the entry function and a nested call.
+    let src = "u8 inc(u8 v) { u8 t = v; return t + 1; }\nu8 f(u8 x) { return inc(x); }";
+    // Unoptimized, so `inc` stays a call (optimized builds inline it, H3i).
+    let mut result = compile_opt(src, false);
+    let code = result.code.as_mut().unwrap();
+    let written: Vec<R8> = R8::ALL
+        .into_iter()
+        .filter(|r| !code.function("inc").unwrap().preserves.contains(r) && *r != R8::A)
+        .collect();
+    let inc = code.functions.iter_mut().find(|f| f.name == "inc").unwrap();
+    if let Some(&r) = written.first() {
+        inc.preserves.push(r);
+    } else {
+        // `inc` writes only A here; claim A (a result) to exercise the check.
+        inc.preserves.push(R8::A);
+    }
+    let direct = execute_function(code, "inc", &[1]).unwrap_err();
+    assert!(
+        direct.0.contains("broke its inferred register contract"),
+        "{direct:?}"
+    );
+    let nested = execute_function(code, "f", &[1]).unwrap_err();
+    assert!(nested.0.contains("'inc' broke"), "{nested:?}");
+}
+
+#[test]
+fn contracts_cross_units_only_when_declared() {
+    use crate::project::{ProjectUnitInput, UnitKind, compile_project, parse_manifest};
+    let manifest = parse_manifest(
+        "[[unit]]\nname = \"lib\"\npath = \"lib.c80\"\norigin = 0x8000\n\n[[unit]]\nname = \"main\"\npath = \"main.c80\"\norigin = 0x8100\n",
+    )
+    .unwrap();
+    let lib_plain = "pub u8 inc(u8 v) { return v + 1; }\n";
+    let lib_decl = "@preserves(bc, de, hl) pub u8 inc(u8 v) { return v + 1; }\n";
+    let main = "import lib;\nu8 f(u8 x, u8 y) { u8 a = lib::inc(x); return a + y; }\n";
+    for (lib, pushes) in [(lib_plain, true), (lib_decl, false)] {
+        let inputs = [
+            ProjectUnitInput {
+                name: "lib",
+                kind: UnitKind::C80,
+                origin: Some(0x8000),
+                text: lib,
+                source_name: "lib.c80",
+                exports: &[],
+                stack_extra: None,
+            },
+            ProjectUnitInput {
+                name: "main",
+                kind: UnitKind::C80,
+                origin: Some(0x8100),
+                text: main,
+                source_name: "main.c80",
+                exports: &[],
+                stack_extra: None,
+            },
+        ];
+        let result = compile_project(&manifest, &inputs, None);
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        let code = result.code.as_ref().unwrap();
+        let f = code.function("f").unwrap();
+        let has_push = f.mapped.iter().any(|m| m.text.starts_with("PUSH"));
+        assert_eq!(
+            has_push,
+            pushes,
+            "{:?}",
+            f.mapped.iter().map(|m| &m.text).collect::<Vec<_>>()
+        );
+        let exec = execute_function(code, "f", &[5, 1]).unwrap();
+        assert_eq!(exec.return_byte(), 7);
+    }
+}
+
+#[test]
+fn inline_asm_marker_is_a_located_user_error() {
+    let src = "void f() {\n    asm (clobber: flags) {\n        call @{main::g} ; @{not::this}\n    }\n}\n";
+    let result = compile_source("test.c80", src);
+    let errs: Vec<_> = result.diagnostics.iter().filter(|d| d.is_error()).collect();
+    assert_eq!(errs.len(), 1, "{:?}", result.diagnostics);
+    let d = errs[0];
+    assert_eq!(d.code.as_str(), "cg-unsupported");
+    assert!(
+        d.message.contains("not substituted in inline asm"),
+        "{}",
+        d.message
+    );
+    let at = src.find("@{main::g}").unwrap() as u32;
+    assert_eq!(
+        (d.span.start, d.span.end),
+        (at, at + "@{main::g}".len() as u32)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// H3: shifts
+// ---------------------------------------------------------------------------
+
+#[test]
+fn shift_ops_assemble_with_disassembler_timing() {
+    let r = |r| r;
+    let ops = [
+        (Z80Op::Sla(r(R8::B)), "8"),
+        (Z80Op::Srl(R8::A), "8"),
+        (Z80Op::Sra(R8::H), "8"),
+        (Z80Op::Rl8(R8::D), "8"),
+        (Z80Op::Rr8(R8::L), "8"),
+        (Z80Op::Rlca, "4"),
+        (Z80Op::Rrca, "4"),
+        (Z80Op::Rra, "4"),
+        (Z80Op::Inc8(R8::E), "4"),
+        (Z80Op::Dec8(R8::C), "4"),
+    ];
+    for (op, t) in ops {
+        let text = op.render();
+        let bytes = assemble_line(&text, 0x8000).expect(&text);
+        assert_eq!(bytes.len() as u32, op.size_bytes(), "{text}");
+        let mut bus = FakeBus::new();
+        bus.mem[0x8000..0x8000 + bytes.len()].copy_from_slice(&bytes);
+        let d = disassemble_at(&mut bus, 0x8000);
+        assert_eq!(
+            d.text.to_ascii_uppercase().replace(' ', ""),
+            text.replace(' ', "")
+        );
+        assert_eq!(d.t_states, Some(t), "{text}");
+        assert_eq!(op.approx_tstates().to_string(), t, "{text}");
+    }
+    // DJNZ back to itself: 13 taken / 8 not taken.
+    let bytes = assemble_line("DJNZ 8000H", 0x8000).unwrap();
+    assert_eq!(bytes, [0x10, 0xFE]);
+    let mut bus = FakeBus::new();
+    bus.mem[0x8000..0x8002].copy_from_slice(&bytes);
+    assert_eq!(disassemble_at(&mut bus, 0x8000).t_states, Some("13/8"));
+    // Every shift-family op writes exactly its operand (H1 guard).
+    assert_eq!(Z80Op::Sla(R8::B).writes(), [R8::B]);
+    assert_eq!(Z80Op::Rr8(R8::L).writes(), [R8::L]);
+    assert_eq!(Z80Op::Rra.writes(), [R8::A]);
+    assert_eq!(Z80Op::Djnz { target: "x".into() }.writes(), [R8::B]);
+}
+
+#[test]
+fn shift_by_one_is_one_instruction() {
+    let result = compile_ok("u16 w(u16 a) { return a << 1; }\nu8 b(u8 a) { return a >> 1; }");
+    assert_eq!(func_bytes(&result, "w"), &[0x29, 0xC9]); // ADD HL,HL / RET
+    assert_eq!(func_bytes(&result, "b"), &[0xCB, 0x3F, 0xC9]); // SRL A / RET
+    assert_eq!(func_tstates(&result, "w"), ["11", "10"]);
+    assert_eq!(func_tstates(&result, "b"), ["8", "10"]);
+}
+
+#[test]
+fn pinned_shift_runs_in_its_register() {
+    let src = "u8 f(u8 v, u8 x @ b) { x <<= 1; return x + v; }";
+    let text = listing_of(src, "f");
+    assert!(text.iter().any(|t| t == "SLA B"), "{text:#?}");
+    assert!(!text.iter().any(|t| t.starts_with("ADD A,A")), "{text:#?}");
+    for exec in run_both(src, "f", &[1, 0x81]) {
+        assert_eq!(exec.return_byte(), 3);
+    }
+    let src = "u8 f(u8 v, u8 n, u8 x @ b) { x >>= n; return x + v; }";
+    let text = listing_of(src, "f");
+    assert!(text.iter().any(|t| t == "SRL B"), "{text:#?}");
+    for (n, want) in [(0u16, 0x91u8), (3, 0x13), (8, 1), (255, 1)] {
+        for exec in run_both(src, "f", &[1, n, 0x90]) {
+            assert_eq!(exec.return_byte(), want, "n={n}");
+        }
+    }
+}
+
+#[test]
+fn variable_shift_guards_zero_and_runs_past_the_width() {
+    let src = "u16 f(u16 a, u8 n) { return a << n; }\n\
+               i16 g(i16 a, u8 n) { return a >> n; }\n\
+               u8 h(u8 a, u8 n) { return a >> n; }";
+    let result = compile_ok(src);
+    let code = result.code.as_ref().unwrap();
+    let text = assembly_of(&result);
+    assert!(text.contains("DJNZ"), "{text}");
+    for (n, want) in [
+        (0u16, 0x1234u16),
+        (1, 0x2468),
+        (15, 0),
+        (16, 0),
+        (17, 0),
+        (255, 0),
+    ] {
+        let want = if n == 15 { 0 } else { want };
+        let exec = execute_function(code, "f", &[0x1234, n]).unwrap();
+        assert_eq!(exec.return_word(), want, "f n={n}");
+    }
+    for (n, want) in [
+        (0u16, 0x8001u16),
+        (1, 0xC000),
+        (15, 0xFFFF),
+        (16, 0xFFFF),
+        (255, 0xFFFF),
+    ] {
+        let exec = execute_function(code, "g", &[0x8001, n]).unwrap();
+        assert_eq!(exec.return_word(), want, "g n={n}");
+    }
+    for (n, want) in [(0u16, 0x80u8), (7, 1), (8, 0), (255, 0)] {
+        let exec = execute_function(code, "h", &[0x80, n]).unwrap();
+        assert_eq!(exec.return_byte(), want, "h n={n}");
+    }
+    // A loop: the span cost is incomplete, never a single exact number.
+    let f = code.function("f").unwrap();
+    let mapped: Vec<_> = f.mapped.iter().collect();
+    let map = result.map().unwrap();
+    let cost = map.span_cost(&mapped);
+    assert!(!cost.complete && cost.has_loop, "{cost:?}");
+}
+
+#[test]
+fn strict_variable_shift_needs_a_free_counter() {
+    let ok = "@fastcall u8 f(u8 v, u8 n) { return v >> n; }";
+    for exec in run_both(ok, "f", &[0x80, 3]) {
+        assert_eq!(exec.return_byte(), 0x10);
+    }
+    // Every byte register holds a live parameter and the count stays live:
+    // the counter copy needs a spill, which strict code rejects.
+    let full = "@fastcall u8 f(u8 v, u8 n, u8 b2, u8 e, u8 d, u8 l, u8 h) {\n\
+                return (v << n) + b2 + e + d + l + h + n; }";
+    let errs = errors_of(full);
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("@fastcall 'f' must fit in registers")),
+        "{errs:?}"
+    );
+    let plain = full.replace("@fastcall ", "");
+    for exec in run_both(&plain, "f", &[1, 2, 3, 4, 5, 6, 7]) {
+        assert_eq!(exec.return_byte(), 4 + 3 + 4 + 5 + 6 + 7 + 2);
+    }
+}
+
+#[test]
+fn shifts_on_globals_fields_statics_and_pointers() {
+    let src = r#"
+struct P { u8 a; u16 w; };
+u8 g8;
+u16 g16;
+P gp;
+u8 f(u8 n) {
+    static u16 acc = 3;
+    g8 = 0x81;
+    g16 = 0x8421;
+    g8 <<= n;
+    g16 >>= 3;
+    ptr<P> p = &gp;
+    p->w = 0x0101;
+    p->w <<= n;
+    p->a = 0xF0;
+    p->a >>= 1;
+    acc = acc << n;
+    return g8 + u8(g16) + u8(p->w >> 8) + p->a + u8(acc);
+}
+"#;
+    // g8 = 0x02, g16 = 0x1084, p->w = 0x0202, p->a = 0x78, acc = 6.
+    for exec in run_both(src, "f", &[1]) {
+        assert_eq!(
+            exec.return_byte(),
+            0x02u8
+                .wrapping_add(0x84)
+                .wrapping_add(2)
+                .wrapping_add(0x78)
+                .wrapping_add(6)
+        );
+    }
+}
+
+/// H3a relies on the helper assembler resolving `DW label+n` for labels that
+/// are defined later and in another `ORG` block (another unit's segment).
+#[test]
+fn helper_assembler_resolves_forward_and_cross_org_word_references() {
+    let src = "    ORG 0x1000\nTAB:\n    DW LATER+3, OTHER+2, OTHER\nLATER:\n    DB 1,2,3,4\n    ORG 0x2000\nOTHER:\n    DB 9\n";
+    let asm = rtvc_core::asm::assemble_program(src, 0x1000).expect("assembles");
+    assert_eq!(asm.symbols["LATER"], 0x1006);
+    let seg = asm
+        .segments
+        .iter()
+        .find(|s| s.addr == 0x1000)
+        .expect("first segment");
+    assert_eq!(&seg.bytes[..6], &[0x09, 0x10, 0x02, 0x20, 0x00, 0x20]);
+}
+
+fn global_word(code: &GeneratedProgram, name: &str) -> u16 {
+    let g = code
+        .global(name)
+        .unwrap_or_else(|| panic!("no global {name}"));
+    let bytes = crate::z80::bytes_in_segments(&code.assembled, g.addr, 2).unwrap();
+    u16::from_le_bytes([bytes[0], bytes[1]])
+}
+
+/// H3a / F-023: `&array[K]`, `&array[K].field`, `&global.field`, `&global`
+/// and the `ptr<T>(...)` / `u16(...)` wrappers are link-time addresses: the
+/// image holds the target's address plus the constant byte offset.
+#[test]
+fn static_initializer_addresses_match_the_symbol_table() {
+    let src = "struct Pt { u8 x; u16 w; };\n\
+               u8 arr[8];\nPt ps[4];\nPt one = {1, 2};\n\
+               ptr<u8> p3 = &arr[3];\nptr<u16> pw = &ps[2].w;\nptr<u16> ow = &one.w;\n\
+               ptr<Pt> po = &one;\nu16 raw = u16(&arr[1]);\nptr<u8> pb = ptr<u8>(&ps[1]);\n\
+               const u8 K = 5;\nptr<u8> pk = &arr[K];\n\
+               u8 f() { return *p3; }\n";
+    let result = compile_ok(src);
+    let code = result.code.as_ref().unwrap();
+    let arr = global_addr(code, "arr");
+    let ps = global_addr(code, "ps");
+    let one = global_addr(code, "one");
+    assert_eq!(global_word(code, "p3"), arr + 3);
+    assert_eq!(global_word(code, "pw"), ps + 2 * 3 + 1);
+    assert_eq!(global_word(code, "ow"), one + 1);
+    assert_eq!(global_word(code, "po"), one);
+    assert_eq!(global_word(code, "raw"), arr + 1);
+    assert_eq!(global_word(code, "pb"), ps + 3);
+    assert_eq!(global_word(code, "pk"), arr + 5);
+    let label = |name: &str| code.global(name).unwrap().label.clone();
+    assert!(
+        code.assembly.contains(&format!("DW {}+7", label("ps"))),
+        "{}",
+        code.assembly
+    );
+    assert!(code.assembly.contains(&format!("DW {}\n", label("one"))));
+    // The map names the target of each address word.
+    let map = result.map().unwrap();
+    let pw = global_addr(code, "pw");
+    let r = map.data_ref_at(pw + 1).expect("data ref");
+    assert_eq!(
+        (r.global.as_str(), r.target.as_str(), r.addend),
+        ("pw", "ps", 7)
+    );
+    assert!(map.data_ref_at(arr).is_none());
+}
+
+/// Forward references, a self-referencing node, an address inside a struct
+/// array initializer, and a function-local `static` holding the address of
+/// another static and of a global: the data walks correctly at run time.
+#[test]
+fn static_linked_data_walks_at_run_time() {
+    let src = "struct N { u8 v; ptr<N> next; };\n\
+               N a = {1, &b};\nN b = {2, &c};\nN c = {4, ptr<N>(0)};\n\
+               N ring[2] = { {8, &ring[1]}, {16, &ring[0]} };\n\
+               u8 table[4] = {10, 20, 30, 40};\n\
+               u8 sum() { ptr<N> p = &a; u8 s = 0;\n\
+               while (u16(p) != 0) { s += p->v; p = p->next; } return s; }\n\
+               u8 hop() { ptr<N> p = ring[0].next; return p->next->v; }\n\
+               u8 local() { static u8 buf[3] = {5, 6, 7}; static ptr<u8> q = &buf[2];\n\
+               static ptr<u8> t = &table[1]; static ptr<u16> self_ref = ptr<u16>(&self_ref);\n\
+               return *q + *t + u8(u16(self_ref) - u16(&self_ref)); }\n";
+    for optimize in [true, false] {
+        let result = compile(CompileInput {
+            files: vec![SourceInput {
+                name: "t.c80",
+                text: src,
+            }],
+            origin: 0x8000,
+            optimize,
+            target: C80Target::GenericZ80,
+        });
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        let code = result.code.as_ref().unwrap();
+        assert_eq!(execute_function(code, "sum", &[]).unwrap().return_byte(), 7);
+        assert_eq!(execute_function(code, "hop", &[]).unwrap().return_byte(), 8);
+        assert_eq!(
+            execute_function(code, "local", &[]).unwrap().return_byte(),
+            27
+        );
+        assert_eq!(
+            global_word(code, "local.q"),
+            global_addr(code, "local.buf") + 2
+        );
+    }
+}
+
+/// Every rejected form has a located diagnostic; nothing is silently zero.
+#[test]
+fn static_initializer_address_rejections_are_located() {
+    let cases: &[(&str, &str, &str)] = &[
+        ("u8 arr[4];\nptr<u8> p = &arr;\n", "use &arr[0]", "&arr"),
+        (
+            "const u8 K = 1;\nptr<u8> p = &K;\n",
+            "address of a constant",
+            "&K",
+        ),
+        (
+            "str s = \"hi\";\nptr<u8> p = &s[0];\n",
+            "string payload",
+            "&s[0]",
+        ),
+        (
+            "u8 arr[4];\nptr<u8> p = &arr[1] + 1;\n",
+            "arithmetic on an address",
+            "&arr[1] + 1",
+        ),
+        (
+            "u8 arr[4];\nptr<u8> p = &arr[4];\n",
+            "outside the array",
+            "4",
+        ),
+        (
+            "ptr<u8> q;\nptr<u8> p = &q[1];\n",
+            "index only an array",
+            "q",
+        ),
+        (
+            "u8 arr[4];\nu8 i = 1;\nptr<u8> p = &arr[i];\n",
+            "constant index",
+            "i",
+        ),
+        ("u8 arr[4];\nu16 p = &arr[0];\n", "expected u16", "&arr[0]"),
+        (
+            "u8 arr[4];\nconst ptr<u8> p = &arr[0];\n",
+            "const cannot hold an address",
+            "&arr[0]",
+        ),
+        (
+            "u8 f() { u8 x = 1; static ptr<u8> q = &x; return x; }\n",
+            "automatic local 'x'",
+            "x",
+        ),
+        (
+            "u8 f() { u8 y @ b = 2; static ptr<u8> q = &y; return y; }\n",
+            "pinned to register b",
+            "&y",
+        ),
+        (
+            "struct N { u8 v; ptr<N> next; };\nN a = {1, &a + 1};\n",
+            "arithmetic on an address",
+            "&a + 1",
+        ),
+    ];
+    for (src, needle, at) in cases {
+        let result = compile_source("t.c80", src);
+        let errs: Vec<_> = result.diagnostics.iter().filter(|d| d.is_error()).collect();
+        assert_eq!(errs.len(), 1, "{src}: {:?}", result.diagnostics);
+        assert!(
+            errs[0].message.contains(needle),
+            "{src}: {}",
+            errs[0].message
+        );
+        let span = errs[0].span;
+        let text = &src[span.start as usize..span.end as usize];
+        assert_eq!(text, *at, "{src}");
+        assert!(result.code.is_none(), "{src}");
+    }
+}
+
+#[test]
+fn byte_pointers_in_bc_and_de_are_used_in_place() {
+    // H5 item 4: LD A,(BC), LD (DE),A and INC rr; HL is never touched.
+    let src = "u8 from[4] = {1, 2, 3, 250}; u8 to[4];
+        u8 f(u8 n) {
+            ptr<u8> p @ bc = &from[0];
+            ptr<u8> q @ de = &to[0];
+            while (n != 0) { *q = *p; p++; q++; n--; }
+            return to[3] + to[0];
+        }";
+    for exec in run_both(src, "f", &[4]) {
+        assert_eq!(exec.return_byte(), 251);
+    }
+    for exec in run_both(src, "f", &[3]) {
+        assert_eq!(exec.return_byte(), 1);
+    }
+    for optimize in [true, false] {
+        let result = compile_opt(src, optimize);
+        let text: Vec<String> = result
+            .code
+            .as_ref()
+            .unwrap()
+            .function("f")
+            .unwrap()
+            .mapped
+            .iter()
+            .map(|m| m.text.clone())
+            .collect();
+        for want in ["LD A,(BC)", "LD (DE),A", "INC BC", "INC DE"] {
+            assert!(text.iter().any(|t| t == want), "{want}: {text:#?}");
+        }
+        // The loop (from the load to the closing jump) never uses HL as a
+        // pointer and never steps it.
+        let start = text.iter().position(|t| t == "LD A,(BC)").unwrap();
+        let end = start
+            + text[start..]
+                .iter()
+                .position(|t| t.starts_with("JP "))
+                .unwrap();
+        assert!(
+            !text[start..end].iter().any(|t| t.contains("HL")),
+            "{text:#?}"
+        );
+    }
+}
+
+#[test]
+fn a_call_in_return_position_is_a_tail_jump_with_a_tighter_stack_bound() {
+    // H5 item 5: `CALL g / RET` -> `JP g` (optimized builds only). `g`
+    // starts at f's entry SP, so f's bound is g's, not g's + 2.
+    let src = "@noinline u8 g(u8 x) { return x + x; }
+        @noinline u8 h(u8 x) { return g(x) + 1; }
+        u8 f(u8 x) { return h(x); }";
+    for optimize in [true, false] {
+        let result = compile_opt(src, optimize);
+        let code = result.code.as_ref().unwrap();
+        let exec = execute_function(code, "f", &[20]).unwrap();
+        assert_eq!(exec.return_byte(), 41);
+        assert_ix_iy_sp(&exec);
+        let f = code.function("f").unwrap();
+        let h = code.function("h").unwrap();
+        assert!(
+            exec.sp_used <= f.stack_bound,
+            "{} > {}",
+            exec.sp_used,
+            f.stack_bound
+        );
+        let text: Vec<&str> = f.mapped.iter().map(|m| m.text.as_str()).collect();
+        if optimize {
+            assert_eq!(text, [format!("JP {}", h.label).as_str()]);
+            assert_eq!(f.stack_bound, h.stack_bound);
+            assert_eq!(exec.sp_used, f.stack_bound);
+        } else {
+            assert!(text.iter().any(|t| t.starts_with("CALL")), "{text:?}");
+            assert_eq!(f.stack_bound, h.stack_bound + 2);
+        }
+    }
+}
+
+/// Source names that a careless label scheme could turn into something the
+/// helper assembler reads as a register, a condition code, or a number
+/// (`h`, `nz`, `dead`, `beef`, `ffh`, `b1`...). F-035.
+const RISKY_NAMES: &[&str] = &[
+    "a", "b", "c", "d", "e", "h", "l", "i", "r", "af", "bc", "de", "hl", "sp", "ix", "iy", "ixh",
+    "ixl", "iyh", "iyl", "nz", "z", "nc", "po", "pe", "p", "m", "dead", "beef", "cafe", "x0f",
+    "h0", "fh", "ffh", "deadh", "abh", "eh", "ch", "dh", "b1", "ab", "bb", "b0", "fb", "fn", "fnh",
+    "f0", "s", "b3", "c1", "n", "g", "u", "ia",
+];
+
+#[test]
+fn functions_named_like_registers_conditions_and_numbers_are_called_correctly() {
+    // F-035: `F16_H` (a function `h`) assembled as the number 0xF16. Every
+    // generated label now starts with a non-hex letter prefix.
+    let mut src = String::new();
+    let mut expected = 0u8;
+    for (i, name) in RISKY_NAMES.iter().enumerate() {
+        let k = i as u8 + 1;
+        src.push_str(&format!(
+            "@noinline u8 {name}(u8 x) {{ return x + {k}; }}\n"
+        ));
+        expected = expected.wrapping_add(10u8.wrapping_add(k));
+    }
+    // A tail call (`JP label`) and a block label of each kind.
+    src.push_str("@noinline u8 tail(u8 x) { return h(x); }\n");
+    expected = expected.wrapping_add(10 + 6);
+    src.push_str("u8 entry(u8 x) { u8 s = 0;\n");
+    for name in RISKY_NAMES {
+        src.push_str(&format!("s += {name}(x);\n"));
+    }
+    src.push_str("s += tail(x); while (x != 0) { x -= 1; } return s; }\n");
+    for exec in run_both(&src, "entry", &[10]) {
+        assert_eq!(exec.return_byte(), expected, "{src}");
+    }
+}
+
+#[test]
+fn globals_and_statics_named_like_registers_conditions_and_numbers_are_distinct() {
+    let mut src = String::new();
+    for name in RISKY_NAMES {
+        src.push_str(&format!("u8 {name};\n"));
+    }
+    src.push_str("@noinline u8 bump() { static u8 h; static u8 dead; h += 1; dead += 2; return h + dead; }\n");
+    src.push_str("u8 entry(u8 x) {\n");
+    for (i, name) in RISKY_NAMES.iter().enumerate() {
+        src.push_str(&format!("{name} = x + {};\n", i + 1));
+    }
+    src.push_str("u8 acc = bump(); acc = bump() + acc;\n");
+    let mut expected = 3u8 + 6;
+    for (i, name) in RISKY_NAMES.iter().enumerate() {
+        src.push_str(&format!("acc += {name};\n"));
+        expected = expected.wrapping_add(10 + i as u8 + 1);
+    }
+    src.push_str("return acc; }\n");
+    for exec in run_both(&src, "entry", &[10]) {
+        assert_eq!(exec.return_byte(), expected, "{src}");
+    }
+}
+
+#[test]
+fn a_parallel_move_scratch_never_holds_a_live_carried_value() {
+    // F-036: restoring homes before a branch on a constant parked a byte in
+    // D, where a value carried across the second `||` still lived (the H1
+    // clobber guard rejected it). Both modes, no folding needed.
+    let src = "i8 f(i8 a, i8 b) { i8 c = a;
+        i8 d = (i8(i16(b) + i16(i8((c != 0) || true))) & i8(i16(b) - i16((b + i8(true || (c != 0))))));
+        return a & i8(c != b); }";
+    for exec in run_both(src, "f", &[5, 3]) {
+        assert_eq!(exec.return_byte(), 1);
+    }
+    for exec in run_both(src, "f", &[4, 4]) {
+        assert_eq!(exec.return_byte(), 0);
+    }
 }

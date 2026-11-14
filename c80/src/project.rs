@@ -303,6 +303,28 @@ pub fn compile_project_opt(
     basic_source: Option<&str>,
     optimize: bool,
 ) -> CompilationResult {
+    compile_project_impl(manifest, units, basic_source, optimize, false)
+}
+
+/// [`compile_project_opt`] that keeps every out-of-line body (see
+/// [`crate::compile_keeping_bodies`]).
+#[doc(hidden)]
+pub fn compile_project_keeping_bodies(
+    manifest: &Manifest,
+    units: &[ProjectUnitInput<'_>],
+    basic_source: Option<&str>,
+    optimize: bool,
+) -> CompilationResult {
+    compile_project_impl(manifest, units, basic_source, optimize, true)
+}
+
+fn compile_project_impl(
+    manifest: &Manifest,
+    units: &[ProjectUnitInput<'_>],
+    basic_source: Option<&str>,
+    optimize: bool,
+    keep_bodies: bool,
+) -> CompilationResult {
     use super::ast::CallConv;
     use super::ir::{FuncId, TypedProgram};
     use super::lower::{
@@ -401,6 +423,26 @@ pub fn compile_project_opt(
         };
     }
 
+    // H3i: every unit is in one typed program, so `@inline` and automatic
+    // inlining work across units.
+    if !super::inline_program(
+        &mut program,
+        &mut ids,
+        &mut diagnostics,
+        optimize,
+        manifest.target.into(),
+        keep_bodies,
+    ) {
+        return CompilationResult {
+            sources,
+            diagnostics,
+            units: ast_list,
+            program: Some(program),
+            code: None,
+            basic: None,
+        };
+    }
+
     let chunks = match lower_to_chunks(&program, &mut ids, &mut diagnostics, manifest.target.into())
     {
         Some(chunks) => chunks,
@@ -426,6 +468,23 @@ pub fn compile_project_opt(
     }
 
     if optimize {
+        // Labels each unit defines, so a unit that names another unit's
+        // function or global can still be assembled alone for JR
+        // shortening (F-030).
+        let defined: HashMap<FileId, Vec<String>> = chunks_by_file
+            .iter()
+            .map(|(file, chunks)| {
+                let labels = chunks
+                    .iter()
+                    .flat_map(|c| c.items().iter())
+                    .filter_map(|item| match item {
+                        super::z80::Z80Item::Label { name, .. } => Some(name.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                (*file, labels)
+            })
+            .collect();
         for (file, unit) in &parsed_units {
             if unit.kind != UnitKind::C80 {
                 continue;
@@ -439,7 +498,13 @@ pub fn compile_project_opt(
             if !chunks_emit_bytes(unit_chunks) {
                 continue;
             }
-            optimize_chunks(unit_chunks, origin, &mut diagnostics);
+            let mut externals: Vec<String> = defined
+                .iter()
+                .filter(|(other, _)| *other != file)
+                .flat_map(|(_, labels)| labels.iter().cloned())
+                .collect();
+            externals.sort();
+            let _ = optimize_chunks(unit_chunks, origin, &externals, &mut diagnostics);
         }
         if diagnostics.iter().any(Diagnostic::is_error) {
             return CompilationResult {
@@ -651,14 +716,19 @@ pub fn compile_project_opt(
             addr,
             size: 0,
             conv: CallConv::Register,
+            strict_registers: false,
+            preserves: Vec::new(),
+            contract: super::z80::Contract::None,
             param_homes: Vec::new(),
             param_types: Vec::new(),
             ret: None,
             stack_bound: extra,
             stack_provenance: super::z80::StackProvenance::Declared,
             frame_bytes: 0,
+            spill: Default::default(),
             instruction_ids: Vec::new(),
             mapped: Vec::new(),
+            inlined: Vec::new(),
         });
     }
 
@@ -1598,6 +1668,200 @@ mod tests {
         assert_eq!(BasicSpec::ORIGIN, 0x19EF);
     }
 
+    /// F-030: a unit that calls another unit is still JR-shortened (the
+    /// per-unit layout pass gives other units' labels placeholder values).
+    #[test]
+    fn unit_calling_another_unit_still_gets_jr() {
+        let main = "import lib;\nu8 f(u8 x) { if (x == 0) { x = lib::g(); } return x; }\n";
+        let res = compile_units(
+            &[
+                ProjectUnitInput {
+                    name: "main",
+                    kind: UnitKind::C80,
+                    origin: Some(0x8000),
+                    text: main,
+                    source_name: "main.c80",
+                    exports: &[],
+                    stack_extra: None,
+                },
+                ProjectUnitInput {
+                    name: "lib",
+                    kind: UnitKind::C80,
+                    origin: Some(0x8100),
+                    text: "pub u8 g() { return 1; }\n",
+                    source_name: "lib.c80",
+                    exports: &[],
+                    stack_extra: None,
+                },
+            ],
+            None,
+            Vec::new(),
+        );
+        assert!(!res.has_errors(), "{:?}", res.diagnostics);
+        let code = res.code.as_ref().unwrap();
+        let f = code.function("f").unwrap();
+        let texts: Vec<&str> = f.mapped.iter().map(|m| m.text.as_str()).collect();
+        assert!(texts.iter().any(|t| t.starts_with("JR NZ")), "{texts:?}");
+        assert!(!texts.iter().any(|t| t.starts_with("JP")), "{texts:?}");
+        assert!(texts.iter().any(|t| t.starts_with("CALL")), "{texts:?}");
+        for x in [0u16, 5] {
+            let exec = execute_function(code, "f", &[x]).unwrap();
+            assert_eq!(exec.return_byte(), if x == 0 { 1 } else { 5 });
+        }
+    }
+
+    /// H3i: one typed program for every unit, so a `pub @inline` function
+    /// is expanded in another unit's caller and still exported.
+    #[test]
+    fn pub_inline_expands_across_units() {
+        let unit = |name, origin, text, source_name| ProjectUnitInput {
+            name,
+            kind: UnitKind::C80,
+            origin: Some(origin),
+            text,
+            source_name,
+            exports: &[],
+            stack_extra: None,
+        };
+        let main = "import lib;\nu8 f(u8 x) { return lib::inc(x) + lib::inc(1); }\n";
+        let lib = "@inline pub u8 inc(u8 x) { return x + 1; }\n";
+        // An ASM unit reaches the exported copy through its marker.
+        let asm = "start:\n    LD A, 7\n    CALL @{lib::inc}\n    RET\n";
+        let asm_exports = ["start".to_string()];
+        let units = [
+            unit("main", 0x8000, main, "main.c80"),
+            unit("lib", 0x8100, lib, "lib.c80"),
+            ProjectUnitInput {
+                name: "boot",
+                kind: UnitKind::Asm,
+                origin: Some(0x8200),
+                text: asm,
+                source_name: "boot.asm",
+                exports: &asm_exports,
+                stack_extra: Some(8),
+            },
+        ];
+        let manifest = Manifest {
+            version: 1,
+            target: ProjectTarget::GenericZ80,
+            entry: None,
+            stack: None,
+            reserves: Vec::new(),
+            units: units
+                .iter()
+                .map(|u| UnitSpec {
+                    name: u.name.to_string(),
+                    path: PathBuf::from(u.source_name),
+                    kind: u.kind,
+                    origin: u.origin,
+                    exports: u.exports.to_vec(),
+                    stack_extra: u.stack_extra,
+                })
+                .collect(),
+            basic: None,
+        };
+        for optimize in [true, false] {
+            let res = compile_project_opt(&manifest, &units, None, optimize);
+            assert!(!res.has_errors(), "{:?}", res.diagnostics);
+            let code = res.code.as_ref().unwrap();
+            let f = code.function("f").unwrap();
+            assert!(
+                f.mapped.iter().all(|m| !m.text.starts_with("CALL")),
+                "{:?}",
+                f.mapped.iter().map(|m| &m.text).collect::<Vec<_>>()
+            );
+            assert_eq!(f.inlined.len(), 2);
+            assert!(f.inlined.iter().all(|r| r.callee == "inc" && !r.auto));
+            let inc = code.function("inc").expect("pub @inline keeps its body");
+            assert!(inc.addr >= 0x8100);
+            assert_eq!(execute_function(code, "f", &[4]).unwrap().return_byte(), 7);
+            assert_eq!(
+                execute_function(code, "inc", &[4]).unwrap().return_byte(),
+                5
+            );
+            let exec = execute_function(code, "start", &[]).unwrap();
+            assert_eq!(exec.return_byte(), 8);
+        }
+    }
+
+    /// H3a: a static initializer may hold another unit's public global
+    /// address (`&lib::tab[2]`, `&lib::cfg`), including from a unit placed
+    /// below the target; the linker resolves the `DW` across segments.
+    #[test]
+    fn static_address_of_another_units_global() {
+        let main = "import lib;\nptr<u8> p = &lib::tab[2];\nptr<u16> q = &lib::w;\n\
+                    u8 f() { return *p; }\n";
+        let lib = "pub u8 tab[4] = {1, 2, 3, 4};\npub u16 w = 7;\nu8 hidden;\n";
+        let res = compile_units(
+            &[
+                ProjectUnitInput {
+                    name: "main",
+                    kind: UnitKind::C80,
+                    origin: Some(0x8000),
+                    text: main,
+                    source_name: "main.c80",
+                    exports: &[],
+                    stack_extra: None,
+                },
+                ProjectUnitInput {
+                    name: "lib",
+                    kind: UnitKind::C80,
+                    origin: Some(0x8100),
+                    text: lib,
+                    source_name: "lib.c80",
+                    exports: &[],
+                    stack_extra: None,
+                },
+            ],
+            None,
+            Vec::new(),
+        );
+        assert!(!res.has_errors(), "{:?}", res.diagnostics);
+        let code = res.code.as_ref().unwrap();
+        let word = |name: &str| {
+            let g = code.global(name).unwrap();
+            let b = crate::z80::bytes_in_segments(&code.assembled, g.addr, 2).unwrap();
+            u16::from_le_bytes([b[0], b[1]])
+        };
+        assert_eq!(word("p"), code.global("tab").unwrap().addr + 2);
+        assert_eq!(word("q"), code.global("w").unwrap().addr);
+        let exec = execute_function(code, "f", &[]).unwrap();
+        assert_eq!(exec.return_byte(), 3);
+
+        let bad = "import lib;\nptr<u8> p = &lib::hidden;\n";
+        let res = compile_units(
+            &[
+                ProjectUnitInput {
+                    name: "main",
+                    kind: UnitKind::C80,
+                    origin: Some(0x8000),
+                    text: bad,
+                    source_name: "main.c80",
+                    exports: &[],
+                    stack_extra: None,
+                },
+                ProjectUnitInput {
+                    name: "lib",
+                    kind: UnitKind::C80,
+                    origin: Some(0x8100),
+                    text: lib,
+                    source_name: "lib.c80",
+                    exports: &[],
+                    stack_extra: None,
+                },
+            ],
+            None,
+            Vec::new(),
+        );
+        assert!(
+            res.diagnostics
+                .iter()
+                .any(|d| d.is_error() && d.message.contains("'lib::hidden' is private")),
+            "{:?}",
+            res.diagnostics
+        );
+    }
+
     #[test]
     fn private_symbol_is_not_visible_across_units() {
         let lib = "u8 hidden = 3;\npub u8 visible = 4;\n";
@@ -1759,8 +2023,9 @@ mod tests {
             .unwrap()
             .function_bytes("f")
             .unwrap();
-        assert_eq!(small_bytes[0], 0xCD);
-        assert_eq!(large_bytes[0], 0xCD);
+        // `CALL g` (0xCD), or `JP g` (0xC3) as a tail call (H5).
+        assert!(matches!(small_bytes[0], 0xCD | 0xC3));
+        assert!(matches!(large_bytes[0], 0xCD | 0xC3));
         let small_target = u16::from(small_bytes[1]) | (u16::from(small_bytes[2]) << 8);
         let large_target = u16::from(large_bytes[1]) | (u16::from(large_bytes[2]) << 8);
         assert_eq!(small_target, small_g);

@@ -21,6 +21,47 @@ item. It records the design discussed in the
 but is self-contained so implementation does not depend on that external page
 remaining available.
 
+## Status After Hardening (2026-11)
+
+Phase 1 (the standalone compiler) is complete and was hardened by
+[c80-hardening.md](c80-hardening.md) (H0–H6, progress in
+[c80-hardening-progress.md](c80-hardening-progress.md)). Phase 2 (editor
+and debugger integration) has not started. The current behaviour is
+documented in [info/c80.md](../../info/c80.md); this design is kept as the
+record of intent. The implementation now deliberately differs from it in
+these points:
+
+- **No IX frames for locals.** Values that do not fit in registers use a
+  marked `PUSH`/`POP` around the clobbering operation or per-function static
+  slots placed after the code. Only `@stackcall` parameters use `IX`.
+  Static slots rely on the recursion ban and make C80 code non-reentrant
+  ([F-022](c80-compiler-findings.md#f-022--register-pressure-rejects-ordinary-functions-d5)).
+- **`@fastcall` is strict**, not an optional spelling of the default: the
+  body must fit in registers, or compilation fails
+  ([F-027](c80-compiler-findings.md#f-027--spellings-for-pinned-registers-static-locals-strict-fastcall)).
+- **Register pins** (`u8 n @ b`) and **`static` locals** (including local
+  arrays, which must be `static`) were added (F-027).
+- **Register contracts:** `@preserves(...)` declares the registers a
+  function keeps; private functions get an inferred contract
+  ([F-028](c80-compiler-findings.md#f-028--spelling-and-meaning-of-preserves)).
+- **Inlining:** `@inline` (a guarantee), automatic inlining in optimized
+  builds, and `@noinline`
+  ([F-031](c80-compiler-findings.md#f-031--spelling-and-meaning-of-inline-and-noinline)).
+- **Addresses in static initializers** (`&global`, `&array[K]`,
+  `&s.field`) are allowed and emitted as `DW label+offset`
+  ([F-023](c80-compiler-findings.md#f-023--address-of-a-global-in-a-static-initializer)).
+- **Shifts** take a `u8` count with defined results for counts at or above
+  the width ([F-021](c80-compiler-findings.md#f-021--shifts-never-compile-d4)).
+- **Optimization** goes beyond the Phase 1E list: liveness-gated peepholes,
+  register tracking, jump threading, loop rotation, `DJNZ` for counters in
+  `B` (with the zero-trip case guarded), tail calls, and constant folding.
+- **Not done:** calling ASM exports from C80
+  ([F-029](c80-compiler-findings.md#f-029--c80-cannot-call-asm-unit-exports)),
+  interrupt entry, `*` by a constant, and Phase 2. See [TODO.md](../../TODO.md).
+
+Paragraphs below that the hardening contradicted carry a short
+"(Superseded: ...)" note; the rest is unchanged.
+
 ## Product Principles
 
 1. Prefer a coherent small language over a partial implementation of ISO C.
@@ -1171,9 +1212,10 @@ emitted, independently of the handler's register-preservation responsibility.
 
 Register calling (previously called fastcall) is the default C80 convention.
 Use an explicit `@stackcall` attribute when stack arguments are needed; its
-spelling is fixed by F002. An optional `@fastcall` spelling may document the
-default but is not required. Always record the resolved convention in exported
-function signatures.
+spelling is fixed by F002. (Superseded: `@fastcall` is not an optional
+spelling of the default; it keeps the register convention and requires the
+body to fit in registers, see F-027.) Always record the resolved convention
+in exported function signatures.
 
 Keep this simple stack ABI as the explicit alternative:
 
@@ -1206,11 +1248,14 @@ ABI's right-to-left slots. Freeze the register allocation and excess-argument
 policy before implementing call lowering, with byte/T-state acceptance tests
 for small leaf routines and correctness tests for nested calls.
 
-Locals that need memory initially use an IX-relative frame; pure scalar locals
-may remain in registers. Reject a frame whose offsets cannot
-be encoded safely by the selected instruction sequences. Leaf functions with
-no locals may omit the frame from the start; broader frame elimination belongs
-to the later code-generation phase.
+Locals that need memory used an IX-relative frame until hardening H2a; since
+then only `@stackcall` parameters use IX (reject a parameter list whose
+offsets do not fit a signed displacement). Values that do not fit registers
+use `PUSH`/`POP` around calls or per-function static slots placed after the
+function (see [c80-hardening.md](c80-hardening.md) H2 and
+[info/c80.md](../../info/c80.md)). Static slots rely on the recursion ban
+below; they also make a function unsafe to enter from an interrupt while it
+is running, which matters once interrupt entry exists.
 
 Reject direct and mutual recursion using the statically known call graph. This
 does not prohibit normal nested calls or interrupt entry. Generated functions
@@ -1468,8 +1513,10 @@ Prefer existing argument locations, then instruction-compatible free registers.
 When pressure requires eviction, prefer a dead value, then a value safely
 rematerializable without memory access, then the value with the farthest next
 use. Use a fixed tie-break order so identical input produces identical code.
-Spill live values to compiler-owned frame slots. Reuse slots only when liveness
-proves their lifetimes do not overlap.
+Spill live values to compiler-owned slots. Reuse slots only when liveness
+proves their lifetimes do not overlap. (Superseded: the slots are static
+bytes after the function, or a `PUSH`/`POP` around the clobbering
+operation, not an IX frame; see hardening H2a.)
 
 Pure scalar locals may remain in registers for their entire lifetime. Locals
 whose address is taken need stable storage for their source lifetime. Preserve
@@ -1481,7 +1528,8 @@ Expose spill/frame costs in the listing so users can simplify register-heavy
 code when necessary; do not hide them behind a fastcall label.
 
 Create an IX frame only when stack addressing actually needs it. A register-only
-leaf with no spills or addressable locals emits no frame. Check all byte offsets
+leaf with no spills or addressable locals emits no frame. (Superseded: only
+`@stackcall` parameters use an IX frame; locals never do.) Check all byte offsets
 of locals, spills, and stack parameters against indexed-addressing limits;
 reject unsupported frames/parameter layouts with a diagnostic. Do not truncate
 an offset into an eight-bit displacement. Keep any temporary PUSH/POP balanced
@@ -1561,7 +1609,7 @@ and timing always describe the final emitted instructions, not estimated IR.
 
 For each function, measure maximum additional stack depth below its entry SP.
 Include saved IX, frame slots, temporary pushes, argument slots, and preservation
-spills. At a call site, add the site's current depth, the two-byte CALL return
+spills. (Static slots are not on the stack and do not count.) At a call site, add the site's current depth, the two-byte CALL return
 address, and the callee's bound; take the maximum over all reachable sites and
 non-call paths. Count each allocation once, including argument slots already
 present at the call site. Analyze the acyclic C80 call graph bottom-up after
@@ -1594,7 +1642,9 @@ that remain live, observable access order/count, stack balance, and the union of
 its source provenance. Prefer fewer T-states without increasing bytes for the
 first local rewrites; record speed/size tradeoffs before adding competing modes.
 Do not implement the worked loop's DJNZ optimization until bounds, wraparound,
-register liveness, and relative-branch reach are proven.
+register liveness, and relative-branch reach are proven. (Superseded: done in
+hardening H5 for counters in `B`, with `A` and the flags dead after the test
+and the zero-trip case guarded by the loop's own entry test.)
 
 Every pass retains origin IDs; merged instructions retain all contributing
 origins and a primary display span, while eliminated operations have an explicit

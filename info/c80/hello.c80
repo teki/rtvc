@@ -1,10 +1,21 @@
-// Smallest useful C80 unit: register-leaf functions, no frame.
-// `id` is a single RET. `add` is ADD HL,DE then RET.
+// The smallest useful C80 unit: two leaf functions with no frame.
+// Look at the listing: arguments arrive in the registers the result leaves
+// in, so there is nothing to move.
 
+// x arrives in A and the byte result returns in A: the body is one RET.
+//! expect: id(42) == 42
+//! expect-bytes: id == 1
+//! expect-tstates: id == 10
 u8 id(u8 x) {
     return x;
 }
 
+// a arrives in HL, b in DE, and the word result returns in HL:
+// ADD HL,DE then RET. u16 addition wraps.
+//! expect: add(0x1234, 0x0101) == 0x1335
+//! expect: add(0xFFFF, 2) == 1
+//! expect-bytes: add == 2
+//! expect-tstates: add == 21
 u16 add(u16 a, u16 b) {
     return a + b;
 }

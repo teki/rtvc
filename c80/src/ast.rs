@@ -98,10 +98,36 @@ pub struct Function {
     pub span: SourceSpan,
     pub is_pub: bool,
     pub conv: CallConv,
+    /// Explicit `@fastcall`: the body must fit registers (H2b). Same ABI as
+    /// the default.
+    pub strict_registers: bool,
+    /// `@preserves(reg, ...)` (H2c, F-028): registers the function returns
+    /// with their entry values. `None` when not declared.
+    pub preserves: Option<Preserves>,
+    /// `@inline` (H3i, F-031): every C80 call is expanded in place. The
+    /// attribute's span when present.
+    pub inline: Option<SourceSpan>,
+    /// `@noinline` (H3i, F-031): never expanded automatically.
+    pub noinline: bool,
     pub return_ty: TypeExpr,
     pub name: Ident,
     pub params: Vec<Param>,
     pub body: Block,
+}
+
+/// `@preserves(bc, de)` on a function (F-028): each listed register in
+/// source order, and the whole attribute's span.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Preserves {
+    pub regs: Vec<Pin>,
+    pub span: SourceSpan,
+}
+
+/// A pinned register: `name @ reg` (F-027).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Pin {
+    pub reg: AsmGpr,
+    pub span: SourceSpan,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,6 +136,7 @@ pub struct Param {
     pub span: SourceSpan,
     pub ty: TypeExpr,
     pub name: Ident,
+    pub pin: Option<Pin>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,8 +162,11 @@ pub struct VarDecl {
     pub span: SourceSpan,
     pub is_pub: bool,
     pub is_const: bool,
+    /// `static` inside a function body (H2b, F-027).
+    pub is_static: bool,
     pub ty: TypeExpr,
     pub name: Ident,
+    pub pin: Option<Pin>,
     pub array_len: Option<Expr>,
     pub init: Option<Expr>,
 }

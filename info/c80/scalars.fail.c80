@@ -1,0 +1,15 @@
+// Rejected on purpose: each function below is a compile error. The test
+// suite checks that compiling this file reports exactly these codes.
+//! expect-error: parse-unsupported
+//! expect-error: ty-mismatch
+
+// There is no `*`. A power of two is a shift: `a << 3` is a * 8 (see
+// shifts.c80); other constants are shifts and adds, `(a << 2) + a`.
+u8 times(u8 a, u8 b) {
+    return a * b;
+}
+
+// No implicit widening: write `u16(a) + b`.
+u16 mixed(u8 a, u16 b) {
+    return a + b;
+}
