@@ -4,10 +4,10 @@ Plan: [rtvc-asm-workflow-improvements.md](rtvc-asm-workflow-improvements.md)
 
 ## Status
 
-Items 1–8 are done: full expressions, file-aware errors, `PHASE`/`DEPHASE`,
+Items 1–9 are done: full expressions, file-aware errors, `PHASE`/`DEPHASE`,
 `INCLUDE`/`INCBIN`/`IMPORT`, `BREAK`, runnable CAS output for any `ORG`,
-table functions, and local labels. Items 9–10 are not started. Next: item 9,
-`STRUCT`.
+table functions, local labels, and `STRUCT`. Item 10 is not started. Next:
+item 10, macros and `z80macros.inc`.
 
 ## Completed
 
@@ -69,8 +69,21 @@ table functions, and local labels. Items 9–10 are not started. Next: item 9,
   listings. `REPT` expansion first renames the locals its body defines
   (`rept_locals`, outside nested blocks) to `._Rn_c.NAME` per copy; the
   scope rewrite then prefixes the global label.
+- Item 9: `Statement::Struct { name, base }` and `Statement::Ends`. Pass 1
+  calls `define_struct` when it reaches `STRUCT`: `struct_member` reads each
+  member from the line's source text, and the layout (size plus fields,
+  nested ones flattened as `AT.Y`) is kept in a `StructLayout` map for later
+  nesting. The block's lines then become `Empty` with no labels, so pass 2
+  and listings emit nothing for them.
 
 ## Decisions
+
+- Item 9: `BLOCK n` and the base are evaluated strictly in pass 1, like
+  `EQU`, so they may only use symbols defined above. A member line's first
+  word is the field unless it is `BYTE`, `WORD` or `BLOCK` (unnamed
+  padding). A label on the `STRUCT` line is an error (the name is an
+  operand); `ORG`, `PHASE` and `REPT` inside a struct are errors. The base
+  shifts fields only, never the size.
 
 - Item 8: `EQU` does not set the scope, so constants between a routine's
   lines keep its locals reachable. A `'` after a word character is `AF'`,
@@ -142,6 +155,14 @@ table functions, and local labels. Items 9–10 are not started. Next: item 9,
   reader to `rtvc-tocas` if it is needed.
 - The debugger `asmfile` command sends source text only; sending its path
   so the debugger can resolve includes is still open.
+
+## Validation (item 9)
+
+- `cargo test --lib asm`: 48 passed (1 new: sizes, offsets, nesting, base,
+  padding, `(IX+d)`, `DS NAME*n`, and eight error cases). The reference
+  example assembles to the documented symbols and bytes.
+- `cargo test --lib`: 289 passed; CLI, C80, and ROM listings ok. Old and
+  new `rtvc-asm` give identical TOML and CAS output for all 55 sources.
 
 ## Validation (item 8)
 

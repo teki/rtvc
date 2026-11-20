@@ -663,6 +663,83 @@ MAIN:   REPT 2
 }
 
 #[test]
+fn structs_define_sizes_and_offsets() {
+    let program = assemble_program(
+        "\
+POINT   EQU 0           ; a symbol, not a struct
+        STRUCT POS
+X       BYTE
+Y:      BYTE            ; a colon is allowed
+        ENDS
+        STRUCT SPRITE
+AT      POS
+FRAME   WORD
+        BLOCK 2         ; unnamed padding
+FLAGS   BYTE
+NAME    BLOCK POS*3
+        ENDS
+        STRUCT VARS, 0B000H
+COUNT   WORD
+        ENDS
+        ORG 8000H
+        LD A,(IX+SPRITE.FLAGS)
+        LD DE,SPRITE
+        LD HL,(VARS.COUNT)
+        LD B,SPRITE.AT.Y
+TABLE:  DS SPRITE*2
+",
+        0,
+    )
+    .unwrap();
+    let symbol = |name: &str| program.symbols[name];
+    assert_eq!(symbol("POS"), 2);
+    assert_eq!(symbol("POS.Y"), 1);
+    assert_eq!(symbol("SPRITE"), 13);
+    assert_eq!(symbol("SPRITE.AT"), 0);
+    assert_eq!(symbol("SPRITE.AT.Y"), 1);
+    assert_eq!(symbol("SPRITE.FRAME"), 2);
+    assert_eq!(symbol("SPRITE.FLAGS"), 6);
+    assert_eq!(symbol("SPRITE.NAME"), 7);
+    assert_eq!(symbol("VARS"), 2);
+    assert_eq!(symbol("VARS.COUNT"), 0xB000);
+    assert_eq!(symbol("TABLE"), 0x800B);
+    assert_eq!(
+        program.bytes[..11],
+        [
+            0xDD, 0x7E, 0x06, // LD A,(IX+6)
+            0x11, 0x0D, 0x00, // LD DE,13
+            0x2A, 0x00, 0xB0, // LD HL,(0B000H)
+            0x06, 0x01, // LD B,1
+        ]
+    );
+    assert_eq!(program.bytes[11..], [0; 26]);
+    assert_eq!(program.segments.len(), 1);
+
+    for (source, message) in [
+        ("STRUCT S\nX BYTE\n", "STRUCT without ENDS"),
+        ("ENDS\n", "ENDS without STRUCT"),
+        ("STRUCT S\nX BYTE\nX WORD\nENDS\n", "duplicate field 'S.X'"),
+        (
+            "STRUCT S\nX LONG\nENDS\n",
+            "unknown STRUCT member kind 'LONG'",
+        ),
+        ("STRUCT S\nX BYTE 3\nENDS\n", "BYTE takes no operand"),
+        (
+            "STRUCT S\nREPT 2\nENDR\nENDS\n",
+            "only BYTE, WORD, BLOCK and struct members are allowed inside STRUCT",
+        ),
+        (
+            "S: STRUCT T\nENDS\n",
+            "STRUCT takes its name as an operand, not a label",
+        ),
+        ("STRUCT S\nENDS\nS: NOP\n", "duplicate label 'S'"),
+    ] {
+        let err = assemble_program(source, 0).unwrap_err();
+        assert_eq!(err.message(), message, "{source}");
+    }
+}
+
+#[test]
 fn expressions_work_in_operands_and_directives() {
     let program = assemble_program(
         r#"

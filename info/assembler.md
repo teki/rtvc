@@ -192,6 +192,7 @@ Supported directives:
 | `INCBIN` | `INCBIN "path"[, offset[, length]]` | Emits the bytes of a file. |
 | `IMPORT` | `IMPORT "module.toml"[, PREFIX]` | Defines the symbols of another module's TOML output. |
 | `BREAK` | `BREAK` | Marks the next instruction as a debugger breakpoint. See [Breakpoints](#breakpoints). |
+| `STRUCT`, `ENDS` | `STRUCT name[, base]` … `ENDS` | Defines a size and field offsets; emits no bytes. See [Structures](#structures). |
 
 String literals in `DB`/`DEFB` must be ASCII. Supported escapes are `\0`, `\n`,
 `\r`, `\t`, `\\`, `\"`, and `\'`.
@@ -235,6 +236,48 @@ String literals in `DB`/`DEFB` must be ASCII. Supported escapes are `\0`, `\n`,
 - Each copy keeps the source line number of the original line, both in error
   messages and in the TOML `[[lines]]` table.
 - Expansion is limited to 1,048,576 lines in total.
+
+## Structures
+
+`STRUCT name` … `ENDS` describes a record layout. It emits no bytes; it
+defines `name` as the size and `name.FIELD` as each member's offset, which
+suits `(IX+d)` and `(IY+d)` addressing:
+
+```asm
+        STRUCT POS
+X       BYTE
+Y       BYTE
+        ENDS
+
+        STRUCT SPRITE
+AT      POS             ; nested: SPRITE.AT, SPRITE.AT.X, SPRITE.AT.Y
+FRAME   WORD
+        BLOCK 2         ; unnamed padding
+FLAGS   BYTE
+        ENDS            ; SPRITE = 7
+
+        LD A,(IX+SPRITE.FLAGS)  ; LD A,(IX+6)
+        LD DE,SPRITE            ; the size, 7
+SPRITES: DS SPRITE*8            ; eight sprites
+```
+
+- A member line is `FIELD KIND` or `FIELD: KIND`; without a field name it
+  only reserves space. `KIND` is `BYTE` (1), `WORD` (2), `BLOCK size`, or
+  the name of a struct defined earlier, whose fields are also defined under
+  the member (`SPRITE.AT.Y`).
+- `BLOCK size` is an expression evaluated where the struct is defined, so
+  it may use symbols defined above it, including other structs' sizes.
+- `STRUCT name, base` adds `base` to every field, for fixed layouts such as
+  system variables or I/O registers: `STRUCT VARS, 0B000H` makes the first
+  field `0B000H`. The size is unchanged.
+- Names are ordinary global symbols containing a dot, so they never clash
+  with [local labels](#source-format), which start with a dot. A struct
+  name, field, or size that is already defined is a duplicate-label error.
+- Only member lines, blank lines, and comments may appear inside the block.
+- `LD A,(SPRITE.X)` is a memory operand at address `SPRITE.X`, not a field
+  of some instance; see [Parentheses and memory
+  operands](#parentheses-and-memory-operands). Write `(IX+SPRITE.X)`, or
+  `(SPRITES+SPRITE.X)` for the first instance.
 
 ## Assertions
 
@@ -435,6 +478,10 @@ immediate value, start it with `+` or `0+`:
 
 `DB`, `DW`, `EQU`, and other directives have no memory operands, so
 `DB (X+1)*2` is always an expression.
+
+A [struct](#structures) field is a number, so the same rule applies:
+`LD A,(SPRITE.X)` loads from the address equal to the field offset. Add a
+base: `LD A,(IX+SPRITE.X)` or `LD A,(PLAYER+SPRITE.X)`.
 
 In the first pass an expression that uses a symbol defined later is
 assumed to be a placeholder value, and arithmetic errors it may cause are

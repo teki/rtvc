@@ -181,6 +181,12 @@ enum Statement {
         counter: Option<String>,
     },
     Endr,
+    /// `STRUCT name[, base]`; its members are laid out in pass 1.
+    Struct {
+        name: String,
+        base: Option<String>,
+    },
+    Ends,
     Phase(String),
     Dephase,
     Break,
@@ -316,6 +322,7 @@ pub fn assemble_program_with(
     // The last global label, which `.local` labels belong to.
     let mut scope = String::new();
     let mut rept_blocks = 0usize;
+    let mut structs = BTreeMap::new();
 
     while index < parsed.len() {
         if let Some(global) = parsed[index]
@@ -353,10 +360,9 @@ pub fn assemble_program_with(
             let mut expansion = Vec::with_capacity(count * body.len() + 1);
             for copy in 0..count {
                 for line in body {
-                    let mut source = match &counter {
-                        Some(name) => Some(substitute_symbol(&line.source, name, copy)),
-                        None => None,
-                    };
+                    let mut source = counter
+                        .as_ref()
+                        .map(|name| substitute_symbol(&line.source, name, copy));
                     // Labels the body defines belong to this copy.
                     if !locals.is_empty() {
                         let text = source.as_deref().unwrap_or(&line.source);
@@ -384,6 +390,26 @@ pub fn assemble_program_with(
             }
             expansion.push(labels_only(&parsed[end]));
             parsed.splice(index..=end, expansion);
+            continue;
+        }
+
+        if let Statement::Struct { name, base } = &parsed[index].statement {
+            let end = define_struct(
+                &parsed,
+                index,
+                name,
+                base.as_deref(),
+                pc,
+                &mut symbols,
+                &mappings_by_name,
+                &mut structs,
+            )?;
+            // The block emits nothing; keep its lines for listings only.
+            for line in &mut parsed[index..=end] {
+                line.labels.clear();
+                line.statement = Statement::Empty;
+            }
+            index = end + 1;
             continue;
         }
 
@@ -505,7 +531,11 @@ pub fn assemble_program_with(
             Statement::Endr => {
                 return Err(line.error(AsmError::new("ENDR without REPT")));
             }
+            Statement::Ends => {
+                return Err(line.error(AsmError::new("ENDS without STRUCT")));
+            }
             Statement::Rept { .. } => unreachable!("REPT blocks are expanded above"),
+            Statement::Struct { .. } => unreachable!("STRUCT blocks are laid out above"),
         }
     }
     if let Some(start) = phase_line {
@@ -606,6 +636,9 @@ pub fn assemble_program_with(
             }
             Statement::Rept { .. } | Statement::Endr => {
                 unreachable!("REPT blocks are expanded in pass 1")
+            }
+            Statement::Struct { .. } | Statement::Ends => {
+                unreachable!("STRUCT blocks are laid out in pass 1")
             }
         };
 
@@ -988,6 +1021,39 @@ fn parse_statement(source: &str, labels: &[String]) -> Result<Statement, AsmErro
                 "IMPORT requires a quoted path and an optional name prefix",
             )),
         },
+        "STRUCT" => {
+            if !labels.is_empty() {
+                return Err(AsmError::new(
+                    "STRUCT takes its name as an operand, not a label",
+                ));
+            }
+            match split_operands(rest)?.as_slice() {
+                [name] | [name, _] if name.starts_with('.') => Err(AsmError::new(format!(
+                    "STRUCT name '{name}' cannot be a local label"
+                ))),
+                [name] => {
+                    validate_label(name)?;
+                    Ok(Statement::Struct {
+                        name: name.to_ascii_uppercase(),
+                        base: None,
+                    })
+                }
+                [name, base] => {
+                    validate_label(name)?;
+                    Ok(Statement::Struct {
+                        name: name.to_ascii_uppercase(),
+                        base: Some(base.clone()),
+                    })
+                }
+                _ => Err(AsmError::new("STRUCT requires a name and an optional base")),
+            }
+        }
+        "ENDS" => {
+            if !rest.trim().is_empty() {
+                return Err(AsmError::new("ENDS takes no operands"));
+            }
+            Ok(Statement::Ends)
+        }
         "BREAK" => {
             if !rest.trim().is_empty() {
                 return Err(AsmError::new("BREAK takes no operands"));
@@ -1046,6 +1112,169 @@ fn matching_endr(lines: &[ParsedLine], start: usize) -> Result<usize, AsmError> 
         }
     }
     Err(lines[start].error(AsmError::new("REPT without ENDR")))
+}
+
+/// A `STRUCT` layout: its size and every member offset from its start,
+/// including the members of nested structs (`POS.X`).
+#[derive(Debug, Clone, Default)]
+struct StructLayout {
+    size: u16,
+    fields: Vec<(String, u16)>,
+}
+
+/// Lay out the `STRUCT` block at `start` and define `NAME` as its size and
+/// `NAME.FIELD` as `base` plus each member offset. Returns the `ENDS` index.
+#[allow(clippy::too_many_arguments)]
+fn define_struct(
+    parsed: &[ParsedLine],
+    start: usize,
+    name: &str,
+    base: Option<&str>,
+    pc: u16,
+    symbols: &mut BTreeMap<String, u16>,
+    mappings: &BTreeMap<String, AsmMapping>,
+    structs: &mut BTreeMap<String, StructLayout>,
+) -> Result<usize, AsmError> {
+    let header = &parsed[start];
+    let base = match base {
+        Some(base) => {
+            eval_word(base, pc, symbols, mappings, false, 0).map_err(|err| header.error(err))?
+        }
+        None => 0,
+    };
+    let mut layout = StructLayout::default();
+    let mut index = start + 1;
+    loop {
+        let Some(line) = parsed.get(index) else {
+            return Err(header.error(AsmError::new("STRUCT without ENDS")));
+        };
+        match line.statement {
+            Statement::Ends => break,
+            Statement::Struct { .. }
+            | Statement::Rept { .. }
+            | Statement::Endr
+            | Statement::Org { .. }
+            | Statement::Phase(_)
+            | Statement::Dephase => {
+                return Err(line.error(AsmError::new(
+                    "only BYTE, WORD, BLOCK and struct members are allowed inside STRUCT",
+                )));
+            }
+            _ => {}
+        }
+        let text = strip_comment(&line.source).map_err(|err| line.error(err))?;
+        let member = struct_member(text.trim(), pc, symbols, mappings, structs)
+            .map_err(|err| line.error(err))?;
+        if let Some((field, size, nested)) = member {
+            if let Some(field) = field {
+                if layout.fields.iter().any(|(name, _)| *name == field) {
+                    return Err(
+                        line.error(AsmError::new(format!("duplicate field '{name}.{field}'")))
+                    );
+                }
+                let offset = layout.size;
+                layout.fields.push((field.clone(), offset));
+                for (inner, inner_offset) in nested.fields {
+                    layout.fields.push((
+                        format!("{field}.{inner}"),
+                        offset.wrapping_add(inner_offset),
+                    ));
+                }
+            }
+            let Some(next) = layout.size.checked_add(size) else {
+                return Err(line.error(AsmError::new(format!(
+                    "STRUCT {name} is larger than 65535 bytes"
+                ))));
+            };
+            layout.size = next;
+        }
+        index += 1;
+    }
+    insert_symbol(symbols, name, layout.size, header)?;
+    for (field, offset) in &layout.fields {
+        insert_symbol(
+            symbols,
+            &format!("{name}.{field}"),
+            base.wrapping_add(*offset),
+            &parsed[start],
+        )?;
+    }
+    structs.insert(name.to_string(), layout);
+    Ok(index)
+}
+
+/// Parse one `STRUCT` member line: `[FIELD[:]] BYTE|WORD|BLOCK n|STRUCTNAME`.
+/// Returns the field name, its size, and a nested layout; `None` for a blank
+/// line.
+fn struct_member(
+    text: &str,
+    pc: u16,
+    symbols: &BTreeMap<String, u16>,
+    mappings: &BTreeMap<String, AsmMapping>,
+    structs: &BTreeMap<String, StructLayout>,
+) -> Result<Option<(Option<String>, u16, StructLayout)>, AsmError> {
+    if text.is_empty() {
+        return Ok(None);
+    }
+    let is_kind = |word: &str| {
+        matches!(
+            word.to_ascii_uppercase().as_str(),
+            "BYTE" | "WORD" | "BLOCK"
+        )
+    };
+    let (head, rest) = split_statement_head(text);
+    let (field, kind_text) = match head.strip_suffix(':') {
+        Some(field) => (Some(field), rest.trim()),
+        None if is_kind(head) => (None, text),
+        None => (Some(head), rest.trim()),
+    };
+    let field = match field {
+        Some(field) => {
+            validate_label(field)?;
+            if field.starts_with('.') {
+                return Err(AsmError::new(format!(
+                    "field '{field}' cannot start with '.'"
+                )));
+            }
+            Some(field.to_ascii_uppercase())
+        }
+        None => None,
+    };
+    let (kind, operand) = split_statement_head(kind_text);
+    let operand = operand.trim();
+    let kind = kind.to_ascii_uppercase();
+    let no_operand = |size: u16| {
+        if operand.is_empty() {
+            Ok(size)
+        } else {
+            Err(AsmError::new(format!("{kind} takes no operand")))
+        }
+    };
+    let (size, nested) = match kind.as_str() {
+        "" => {
+            return Err(AsmError::new(
+                "STRUCT member needs BYTE, WORD, BLOCK or a struct name",
+            ));
+        }
+        "BYTE" => (no_operand(1)?, StructLayout::default()),
+        "WORD" => (no_operand(2)?, StructLayout::default()),
+        "BLOCK" => {
+            if operand.is_empty() {
+                return Err(AsmError::new("BLOCK requires a size"));
+            }
+            let size = eval_word(operand, pc, symbols, mappings, false, 0)?;
+            (size, StructLayout::default())
+        }
+        other => match structs.get(other) {
+            Some(layout) => (no_operand(layout.size)?, layout.clone()),
+            None => {
+                return Err(AsmError::new(format!(
+                    "unknown STRUCT member kind '{other}'"
+                )));
+            }
+        },
+    };
+    Ok(Some((field, size, nested)))
 }
 
 /// Local labels (`.name`) a `REPT` body defines outside nested blocks.

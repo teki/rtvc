@@ -4,6 +4,9 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+- rtvc-asm `STRUCT name[, base]` … `ENDS` defines a size and field offsets
+  (`LD A,(IX+SPRITE.FLAGS)`), with `BYTE`, `WORD`, `BLOCK n`, and nested
+  structs.
 - rtvc-asm local labels: `.loop` belongs to the last global label and is
   stored as `GLOBAL.LOOP`, so each routine can reuse short names. Inside
   `REPT`, each copy gets its own local labels.

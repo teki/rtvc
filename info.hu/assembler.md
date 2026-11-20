@@ -175,6 +175,7 @@ FILL:   LD B,C
 | `INCBIN` | `INCBIN "útvonal"[, eltolás[, hossz]]` | Egy fájl bájtjait írja ki. |
 | `IMPORT` | `IMPORT "modul.toml"[, ELŐTAG]` | Egy másik modul TOML kimenetének szimbólumait definiálja. |
 | `BREAK` | `BREAK` | A következő utasítást hibakereső-töréspontnak jelöli. Lásd: [Töréspontok](#töréspontok). |
+| `STRUCT`, `ENDS` | `STRUCT név[, bázis]` … `ENDS` | Méretet és mezőeltolásokat definiál; bájtot nem ír. Lásd: [Struktúrák](#struktúrák). |
 
 A `DB`/`DEFB` szövegliteráljai csak ASCII karaktereket tartalmazhatnak. Az
 érvényes escape-ek: `\0`, `\n`, `\r`, `\t`, `\\`, `\"` és `\'`.
@@ -218,6 +219,49 @@ A `REPT darab` … `ENDR` blokk a közrezárt sorokat `darab`-szor fordítja le:
 - Minden példány az eredeti forrássor számát viseli, a hibaüzenetekben és a
   TOML `[[lines]]` táblában is.
 - A kifejtés összesen legfeljebb 1 048 576 sort eredményezhet.
+
+## Struktúrák
+
+A `STRUCT név` … `ENDS` blokk egy rekord szerkezetét írja le. Bájtot nem
+ír; a `név` szimbólum a méret, a `név.MEZŐ` pedig az egyes tagok eltolása,
+ami az `(IX+d)` és `(IY+d)` címzéshez illik:
+
+```asm
+        STRUCT POS
+X       BYTE
+Y       BYTE
+        ENDS
+
+        STRUCT SPRITE
+AT      POS             ; beágyazva: SPRITE.AT, SPRITE.AT.X, SPRITE.AT.Y
+FRAME   WORD
+        BLOCK 2         ; névtelen kitöltés
+FLAGS   BYTE
+        ENDS            ; SPRITE = 7
+
+        LD A,(IX+SPRITE.FLAGS)  ; LD A,(IX+6)
+        LD DE,SPRITE            ; a méret, 7
+SPRITES: DS SPRITE*8            ; nyolc sprite
+```
+
+- Egy tagsor alakja `MEZŐ FAJTA` vagy `MEZŐ: FAJTA`; mezőnév nélkül csak
+  helyet foglal. A `FAJTA` lehet `BYTE` (1), `WORD` (2), `BLOCK méret`,
+  vagy egy korábban definiált struktúra neve, amelynek mezői a tag alatt is
+  létrejönnek (`SPRITE.AT.Y`).
+- A `BLOCK méret` kifejezés a struktúra definiálásakor értékelődik ki, így
+  használhatja a fölötte definiált szimbólumokat, más struktúrák méretét is.
+- A `STRUCT név, bázis` alak minden mezőhöz hozzáadja a `bázis` értéket,
+  rögzített elrendezésekhez, például rendszerváltozókhoz vagy I/O
+  regiszterekhez: a `STRUCT VARS, 0B000H` első mezője `0B000H`. A méret nem
+  változik.
+- A nevek pontot tartalmazó közönséges globális szimbólumok, így nem
+  ütköznek a ponttal kezdődő [helyi címkékkel](#forrásformátum). Már
+  definiált struktúranév, mező vagy méret ismételt címke hibát ad.
+- A blokkban csak tagsor, üres sor és megjegyzés állhat.
+- A `LD A,(SPRITE.X)` a `SPRITE.X` címen lévő memóriaoperandus, nem egy
+  példány mezője; lásd a zárójelekről szóló részt a
+  [Kifejezések](#kifejezések) fejezetben. Helyesen `(IX+SPRITE.X)`, vagy az
+  első példányra `(SPRITES+SPRITE.X)`.
 
 ## Ellenőrzések
 
@@ -415,6 +459,10 @@ memóriaoperandus: `LD A,(TABLE+4)` a `TABLE+4` címről tölt, az
 operandus, például `(2+1)*(1+1)`, kifejezés. Zárójeles konstans közvetlen
 értékként `+` vagy `0+` előtaggal írható: `LD A,+(X+1)`. A direktíváknak
 (`DB`, `DW`, `EQU` stb.) nincs memóriaoperandusa.
+
+A [struktúra](#struktúrák) mezője szám, így ugyanez a szabály érvényes: a
+`LD A,(SPRITE.X)` a mező eltolásával egyenlő címről tölt. Bázist kell
+hozzáadni: `LD A,(IX+SPRITE.X)` vagy `LD A,(PLAYER+SPRITE.X)`.
 
 A `címke@leképezés` alak az `ORG` sorban rögzített eredetből a leképezett
 címre alakít át; a későbbi `ORG` ezt nem módosítja. Az ismeretlen vagy
