@@ -1150,3 +1150,309 @@ fn toml_reader_keeps_breakpoints() {
         ]
     );
 }
+
+#[test]
+fn macros_expand_with_arguments_and_defaults() {
+    let program = assemble_program(
+        "\
+        MACRO SETPAL index, colour=0    ; palette ports 60H-63H
+        LD A,colour
+        OUT (60H+index),A
+        ENDM
+        MACRO TWICE body
+        body
+        body
+        ENDM
+        ORG 8000H
+START:  SETPAL 1, 0F0H
+        setpal 2
+        SETPAL 3,
+        TWICE <LD A,(HL)>
+        DB \"index\"
+",
+        0,
+    )
+    .unwrap();
+    assert_eq!(
+        program.bytes,
+        [
+            0x3E, 0xF0, 0xD3, 0x61, // SETPAL 1, 0F0H
+            0x3E, 0x00, 0xD3, 0x62, // SETPAL 2
+            0x3E, 0x00, 0xD3, 0x63, // an empty argument takes the default
+            0x7E, 0x7E, // TWICE <LD A,(HL)>
+            b'i', b'n', b'd', b'e', b'x',
+        ]
+    );
+    assert_eq!(program.symbols["START"], 0x8000);
+    // Expanded lines map to the call's source line.
+    let lines = program
+        .lines
+        .iter()
+        .filter(|line| line.line == 10)
+        .map(|line| line.source.trim())
+        .collect::<Vec<_>>();
+    assert_eq!(lines, ["LD A,0F0H", "OUT (60H+1),A"]);
+}
+
+#[test]
+fn macro_expansions_have_their_own_local_labels() {
+    let program = assemble_program(
+        "\
+        MACRO DELAY count
+        LD B,count
+.wait:  DJNZ .wait
+        ENDM
+        MACRO DELAY2
+        DELAY 1
+        DELAY 2
+        ENDM
+        ORG 8000H
+MAIN:   DELAY 10
+        DELAY2
+        REPT 2
+        DELAY 3
+        ENDR
+        JR .wait
+.wait:  RET
+",
+        0,
+    )
+    .unwrap();
+    assert_eq!(
+        program.bytes,
+        [
+            0x06, 10, 0x10, 0xFE, // DELAY 10
+            0x06, 1, 0x10, 0xFE, 0x06, 2, 0x10, 0xFE, // DELAY2
+            0x06, 3, 0x10, 0xFE, 0x06, 3, 0x10, 0xFE, // REPT 2 of DELAY 3
+            0x18, 0x00, // JR .wait outside the macros: MAIN.WAIT
+            0xC9,
+        ]
+    );
+    assert_eq!(program.symbols["MAIN._M1.WAIT"], 0x8002);
+    assert_eq!(program.symbols["MAIN.WAIT"], 0x8016);
+}
+
+#[test]
+fn macro_errors_name_the_call_and_the_definition() {
+    let files = MemFiles::new(&[(
+        "lib.inc",
+        b"MACRO PUT value\nLD A,value\nOUT (MISSING),A\nENDM\n",
+    )]);
+    let err = assemble_program_with(
+        "INCLUDE \"lib.inc\"\nNOP\nPUT 1\n",
+        0,
+        "game.asm",
+        Some(&files),
+    )
+    .unwrap_err();
+    assert_eq!(
+        err.display_in("game.asm"),
+        "game.asm:3: in macro PUT (lib.inc:3): unknown symbol 'MISSING'"
+    );
+
+    for (source, message) in [
+        (
+            "MACRO M a1\nENDM\nM 1,2\n",
+            "macro M takes 1 argument, got 2",
+        ),
+        (
+            "MACRO M a1, b1\nENDM\nM 1\n",
+            "macro M: missing argument 'B1'",
+        ),
+        (
+            "MACRO M\nM\nENDM\nM\n",
+            "in macro M (line 2): macro M calls itself (M -> M); recursion cannot stop without conditional assembly",
+        ),
+        (
+            "MACRO LD\nENDM\n",
+            "macro name 'LD' is a Z80 mnemonic or directive",
+        ),
+        (
+            "MACRO M hl\nENDM\n",
+            "macro parameter 'HL' is a register or condition name",
+        ),
+        ("MACRO M x, x\nENDM\n", "duplicate macro parameter 'X'"),
+        ("MACRO M\nNOP\n", "MACRO M without ENDM"),
+        ("ENDM\n", "ENDM without MACRO"),
+        ("MACRO M\nENDM\nMACRO M\nENDM\n", "duplicate macro 'M'"),
+        (
+            "MACRO M\nMACRO N\nENDM\nENDM\n",
+            "MACRO inside the body of macro M (line 2); macros cannot be defined inside macros",
+        ),
+        (
+            "MACRO M a1\nENDM\nM <1,2\n",
+            "unterminated '<' in macro arguments '<1,2'",
+        ),
+    ] {
+        let err = assemble_program(source, 0).unwrap_err();
+        assert_eq!(err.message(), message, "{source}");
+    }
+    // A macro must be defined before it is called.
+    assert!(assemble_program("LATER 1\nMACRO LATER a1\nENDM\n", 0).is_err());
+}
+
+const Z80MACROS: &[u8] = include_bytes!("../../coding/lib/z80macros.inc");
+
+/// Register names in `Z80State::r8` order.
+const R8_NAMES: [char; 8] = ['A', 'F', 'B', 'C', 'D', 'E', 'H', 'L'];
+
+/// Assemble `body` after `INCLUDE "z80macros.inc"` at 100H, run it on the
+/// Z80 core from `regs` (A, F, B, C, D, E, H, L), and return the registers,
+/// the memory, the T-states, and the code size.
+fn run_macro(body: &str, regs: [u8; 8]) -> ([u8; 8], Box<crate::bus::FakeBus>, u32, usize) {
+    let files = MemFiles::new(&[("z80macros.inc", Z80MACROS)]);
+    let source = format!("INCLUDE \"z80macros.inc\"\nORG 100H\n{body}\nDONE: HALT\n");
+    let program = assemble_program_with(&source, 0, "test.asm", Some(&files))
+        .unwrap_or_else(|err| panic!("{body}: {err}"));
+    let done = program.symbols["DONE"];
+    let mut bus = Box::new(crate::bus::FakeBus::new());
+    for segment in &program.segments {
+        let start = segment.addr as usize;
+        bus.mem[start..start + segment.bytes.len()].copy_from_slice(&segment.bytes);
+    }
+    let mut cpu = crate::z80::Z80::new();
+    cpu.state.r8[..8].copy_from_slice(&regs);
+    cpu.state.pc = 0x100;
+    cpu.state.sp = 0xFF00;
+    let mut tstates = 0;
+    while cpu.state.pc != done {
+        tstates += cpu.step(&mut *bus, 0);
+        assert!(tstates < 100_000, "{body} does not finish");
+    }
+    let mut out = [0; 8];
+    out.copy_from_slice(&cpu.state.r8[..8]);
+    (out, bus, tstates, (done - 0x100) as usize)
+}
+
+/// The documented cost line of macro `name`: `(T, bytes, changed registers)`
+/// when it is a fixed `N T, M bytes. Changes: ...` line.
+fn documented_cost(name: &str) -> Option<(u32, usize, Vec<char>)> {
+    let text = std::str::from_utf8(Z80MACROS).unwrap();
+    let lines = text.lines().collect::<Vec<_>>();
+    let header = lines
+        .iter()
+        .position(|line| line.trim().starts_with(&format!("MACRO {name}")))
+        .unwrap_or_else(|| panic!("no macro {name}"));
+    let cost = lines[..header]
+        .iter()
+        .rev()
+        .find(|line| line.contains("Changes:"))
+        .unwrap();
+    let (numbers, changes) = cost.trim_start_matches("; ").split_once(". Changes: ")?;
+    let (t, bytes) = numbers.split_once(" T, ")?;
+    let t = t.parse().ok()?;
+    let bytes = bytes.strip_suffix(" bytes")?.parse().ok()?;
+    let mut registers = Vec::new();
+    for item in changes.trim_end_matches('.').split(", ") {
+        let item = item.split(" (").next().unwrap();
+        match item {
+            "HL" | "DE" | "BC" | "AF" => registers.extend(item.chars()),
+            _ => registers.push(item.chars().next().unwrap()),
+        }
+    }
+    Some((t, bytes, registers))
+}
+
+#[test]
+fn z80macros_match_their_documented_costs() {
+    // A, F, B, C, D, E, H, L
+    let regs = [0x01, 0x00, 0x11, 0x22, 0x33, 0x44, 0x12, 0xFF];
+    let pair = |r: &[u8; 8], hi: usize| u16::from_be_bytes([r[hi], r[hi + 1]]);
+    type Check<'a> = &'a dyn Fn(&[u8; 8]) -> bool;
+    let cases: &[(&str, &str, [u8; 8], Check)] = &[
+        ("LD_HL_DE", "LD_HL_DE", regs, &|r| pair(r, 6) == 0x3344),
+        ("LD_HL_BC", "LD_HL_BC", regs, &|r| pair(r, 6) == 0x1122),
+        ("LD_DE_HL", "LD_DE_HL", regs, &|r| pair(r, 4) == 0x12FF),
+        ("LD_DE_BC", "LD_DE_BC", regs, &|r| pair(r, 4) == 0x1122),
+        ("LD_BC_HL", "LD_BC_HL", regs, &|r| pair(r, 2) == 0x12FF),
+        ("LD_BC_DE", "LD_BC_DE", regs, &|r| pair(r, 2) == 0x3344),
+        // The carry is set beforehand, and must not be subtracted.
+        (
+            "SUB16_HL",
+            "SUB16_HL DE",
+            [0, 1, 0, 0, 0, 1, 0x10, 0],
+            &|r| pair(r, 6) == 0x0FFF,
+        ),
+        ("CP16_HL", "CP16_HL DE", [0, 0, 0, 0, 0, 6, 0, 5], &|r| {
+            pair(r, 6) == 5 && r[1] & 0x01 != 0 && r[1] & 0x40 == 0
+        }),
+        ("CP16_HL", "CP16_HL DE", [0, 0, 0, 0, 0, 6, 0, 6], &|r| {
+            r[1] & 0x01 == 0 && r[1] & 0x40 != 0
+        }),
+        ("CP16_HL", "CP16_HL DE", [0, 0, 0, 0, 0, 6, 0, 7], &|r| {
+            r[1] & 0x41 == 0
+        }),
+        ("NEG_HL", "NEG_HL", [0, 0, 0, 0, 0, 0, 0x12, 0x34], &|r| {
+            pair(r, 6) == 0xEDCC
+        }),
+        ("NEG_HL", "NEG_HL", [0, 0, 0, 0, 0, 0, 0, 0], &|r| {
+            pair(r, 6) == 0
+        }),
+        ("NEG_HL", "NEG_HL", [0, 0, 0, 0, 0, 0, 0, 1], &|r| {
+            pair(r, 6) == 0xFFFF
+        }),
+        ("ADD_A_TO_HL", "ADD_A_TO_HL", regs, &|r| {
+            pair(r, 6) == 0x1300
+        }),
+        (
+            "ADD_A_TO_HL",
+            "ADD_A_TO_HL",
+            [0xFF, 0, 0, 0, 0, 0, 0xFF, 0x02],
+            &|r| pair(r, 6) == 0x0001,
+        ),
+        (
+            "ADD_A_TO_DE",
+            "ADD_A_TO_DE",
+            [0xF0, 0, 0, 0, 0x01, 0x20, 0, 0],
+            &|r| pair(r, 4) == 0x0210,
+        ),
+        (
+            "ADD_A_TO_BC",
+            "ADD_A_TO_BC",
+            [0x05, 0, 0x00, 0xFE, 0, 0, 0, 0],
+            &|r| pair(r, 2) == 0x0103,
+        ),
+    ];
+    for (name, call, start, check) in cases {
+        let (end, _, tstates, bytes) = run_macro(call, *start);
+        assert!(check(&end), "{call}: wrong result {end:02X?}");
+        let (doc_t, doc_bytes, changes) = documented_cost(name).unwrap();
+        assert_eq!(
+            (tstates, bytes),
+            (doc_t, doc_bytes),
+            "{call}: T-states and bytes"
+        );
+        for (index, register) in R8_NAMES.iter().enumerate() {
+            if !changes.contains(register) {
+                assert_eq!(start[index], end[index], "{call} changed {register}");
+            }
+        }
+    }
+
+    // DEC_BC_JR_NZ: two taken jumps and one fall-through.
+    let (end, _, tstates, bytes) = run_macro("LOOP: DEC_BC_JR_NZ LOOP", [0, 0, 0, 3, 0, 0, 0, 0]);
+    assert_eq!((pair(&end, 2), tstates, bytes), (0, 26 * 2 + 21, 5));
+
+    // DELAY_B keeps the flags, and two calls have their own `.wait`.
+    let (end, _, tstates, bytes) =
+        run_macro("DELAY_B 10\nDELAY_B 256", [0, 0xD7, 9, 0, 0, 0, 0, 0]);
+    assert_eq!(
+        (end[2], end[1], tstates, bytes),
+        (0, 0xD7, 13 * 10 + 2 + 13 * 256 + 2, 8)
+    );
+
+    // LDI_N copies, OUTI_N sends.
+    let (end, bus, tstates, bytes) = run_macro(
+        "LD HL,SRC\nLD DE,DST\nLDI_N 3\nJR DONE\nSRC: DB 1,2,3\nDST: DS 3",
+        [0, 0, 0, 3, 0, 0, 0, 0],
+    );
+    let dst = pair(&end, 4) as usize - 3;
+    assert_eq!(&bus.mem[dst..dst + 3], [1, 2, 3]);
+    assert_eq!(pair(&end, 2), 0);
+    assert_eq!(
+        (tstates, bytes),
+        (10 + 10 + 16 * 3 + 12, 3 + 3 + 2 * 3 + 2 + 6)
+    );
+    let (end, _, tstates, _) = run_macro("OUTI_N 4", [0, 0, 4, 0x60, 0, 0, 0x80, 0]);
+    assert_eq!((end[2], pair(&end, 6), tstates), (0, 0x8004, 16 * 4));
+}

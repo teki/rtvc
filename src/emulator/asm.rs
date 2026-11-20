@@ -155,6 +155,9 @@ struct ParsedLine {
     source: String,
     labels: Vec<String>,
     statement: Statement,
+    /// Where a line expanded from a macro came from, for errors:
+    /// `in macro NAME (file:line)`, outermost first.
+    context: Option<Rc<str>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,6 +184,12 @@ enum Statement {
         counter: Option<String>,
     },
     Endr,
+    /// `MACRO name params`; the loader reads the body and expands calls.
+    Macro {
+        name: String,
+        params: Vec<(String, Option<String>)>,
+    },
+    Endm,
     /// `STRUCT name[, base]`; its members are laid out in pass 1.
     Struct {
         name: String,
@@ -304,6 +313,9 @@ pub fn assemble_program_with(
     let mut loader = SourceLoader {
         files,
         names: vec![name.to_string()],
+        macros: BTreeMap::new(),
+        expansions: 0,
+        expanded_lines: 0,
     };
     let mut stack = vec![name.to_string()];
     let mut parsed = loader.load(source, 0, &mut stack)?;
@@ -375,11 +387,12 @@ pub fn assemble_program_with(
                     }
                     expansion.push(match source {
                         Some(source) => {
-                            let mut copy = parse_program_line(
+                            let mut copy = parse_line_in(
                                 line.line_no,
                                 &source,
                                 line.file,
                                 line.file_name.clone(),
+                                line.context.clone(),
                             )?;
                             keep_loaded_files(&line.statement, &mut copy.statement);
                             copy
@@ -536,6 +549,9 @@ pub fn assemble_program_with(
             }
             Statement::Rept { .. } => unreachable!("REPT blocks are expanded above"),
             Statement::Struct { .. } => unreachable!("STRUCT blocks are laid out above"),
+            Statement::Macro { .. } | Statement::Endm => {
+                unreachable!("macros are expanded when the source is loaded")
+            }
         }
     }
     if let Some(start) = phase_line {
@@ -640,6 +656,9 @@ pub fn assemble_program_with(
             Statement::Struct { .. } | Statement::Ends => {
                 unreachable!("STRUCT blocks are laid out in pass 1")
             }
+            Statement::Macro { .. } | Statement::Endm => {
+                unreachable!("macros are expanded when the source is loaded")
+            }
         };
 
         if !emitted.is_empty() {
@@ -688,6 +707,17 @@ fn parse_program_line(
     file: usize,
     file_name: Option<Rc<str>>,
 ) -> Result<ParsedLine, AsmError> {
+    parse_line_in(line_no, source, file, file_name, None)
+}
+
+/// Parse a line that may come from a macro expansion described by `context`.
+fn parse_line_in(
+    line_no: usize,
+    source: &str,
+    file: usize,
+    file_name: Option<Rc<str>>,
+    context: Option<Rc<str>>,
+) -> Result<ParsedLine, AsmError> {
     let mut line = ParsedLine {
         line_no,
         file,
@@ -695,6 +725,7 @@ fn parse_program_line(
         source: source.to_string(),
         labels: Vec::new(),
         statement: Statement::Empty,
+        context,
     };
     let clean = strip_comment(source).map_err(|err| line.error(err))?;
     let mut rest = clean.trim();
@@ -708,7 +739,12 @@ fn parse_program_line(
 
 impl ParsedLine {
     /// Attach this line, and its file when it is an included one, to an error.
-    fn error(&self, err: AsmError) -> AsmError {
+    fn error(&self, mut err: AsmError) -> AsmError {
+        if err.line.is_none()
+            && let Some(context) = &self.context
+        {
+            err.message = format!("{context}: {}", err.message);
+        }
         let mut err = line_error(self.line_no, err);
         if err.file.is_none() {
             err.file = self.file_name.as_deref().map(str::to_string);
@@ -717,15 +753,33 @@ impl ParsedLine {
     }
 }
 
-/// Reads `INCLUDE`, `INCBIN` and `IMPORT` files while parsing the source.
+/// Reads `INCLUDE`, `INCBIN` and `IMPORT` files and expands macros while
+/// parsing the source.
 struct SourceLoader<'a> {
     files: Option<&'a dyn AsmFiles>,
     names: Vec<String>,
+    macros: BTreeMap<String, Rc<MacroDef>>,
+    /// Numbers each expansion, so its local labels are its own.
+    expansions: usize,
+    expanded_lines: usize,
+}
+
+/// A macro body, kept as text and parsed again for each call.
+#[derive(Debug)]
+struct MacroDef {
+    name: String,
+    params: Vec<(String, Option<String>)>,
+    body: Vec<String>,
+    /// `file:` prefix (or `line `) and the line of the first body line,
+    /// for `in macro NAME (file:line)`.
+    place: String,
+    first_line: usize,
 }
 
 impl SourceLoader<'_> {
-    /// Parse `source`, the file at index `file`, expanding includes. `stack`
-    /// holds the names of the files being included, outermost first.
+    /// Parse `source`, the file at index `file`, expanding includes and
+    /// macros. `stack` holds the names of the files being included,
+    /// outermost first.
     fn load(
         &mut self,
         source: &str,
@@ -733,67 +787,260 @@ impl SourceLoader<'_> {
         stack: &mut Vec<String>,
     ) -> Result<Vec<ParsedLine>, AsmError> {
         let file_name: Option<Rc<str>> = (file != 0).then(|| self.names[file].as_str().into());
+        let lines = source.lines().collect::<Vec<_>>();
         let mut out = Vec::new();
-        for (index, text) in source.lines().enumerate() {
-            let mut line = parse_program_line(index + 1, text, file, file_name.clone())?;
-            match std::mem::replace(&mut line.statement, Statement::Empty) {
-                Statement::Include(path) => {
-                    let (name, bytes) = self.read(&line, &path, AsmFileKind::Source)?;
-                    if stack.contains(&name) {
-                        let chain = stack.join(" -> ");
-                        return Err(
-                            line.error(AsmError::new(format!("INCLUDE cycle: {chain} -> {name}")))
-                        );
-                    }
-                    if stack.len() > MAX_INCLUDE_DEPTH {
-                        return Err(line.error(AsmError::new(format!(
-                            "INCLUDE files nest more than {MAX_INCLUDE_DEPTH} deep"
-                        ))));
-                    }
-                    let text = String::from_utf8(bytes).map_err(|_| {
-                        line.error(AsmError::new(format!("'{name}' is not UTF-8 text")))
-                    })?;
-                    let index = match self.names.iter().position(|known| *known == name) {
-                        Some(index) => index,
-                        None => {
-                            self.names.push(name.clone());
-                            self.names.len() - 1
-                        }
+        let mut index = 0;
+        while index < lines.len() {
+            let line = parse_program_line(index + 1, lines[index], file, file_name.clone())?;
+            index += 1;
+            if let Statement::Macro { name, params } = &line.statement {
+                index = self.define_macro(&line, name, params, &lines, index, file)?;
+                continue;
+            }
+            self.process(line, &mut out, stack, &mut Vec::new())?;
+        }
+        Ok(out)
+    }
+
+    /// Read the body of the macro defined by `header`, whose first body line
+    /// is `lines[start]`. Returns the index after its `ENDM`.
+    fn define_macro(
+        &mut self,
+        header: &ParsedLine,
+        name: &str,
+        params: &[(String, Option<String>)],
+        lines: &[&str],
+        start: usize,
+        file: usize,
+    ) -> Result<usize, AsmError> {
+        if self.macros.contains_key(name) {
+            return Err(header.error(AsmError::new(format!("duplicate macro '{name}'"))));
+        }
+        let mut body = Vec::new();
+        for (offset, text) in lines[start..].iter().enumerate() {
+            let clean = strip_comment(text).map_err(|err| header.error(err))?;
+            let head = split_statement_head(clean.trim()).0.to_ascii_uppercase();
+            match head.as_str() {
+                "ENDM" => {
+                    let place = match self.names[file].as_str() {
+                        "" => "line ".to_string(),
+                        name => format!("{name}:"),
                     };
-                    // The INCLUDE line keeps its labels, which mark the
-                    // address of the included code.
-                    out.push(line);
-                    stack.push(name);
-                    out.extend(self.load(&text, index, stack)?);
-                    stack.pop();
+                    self.macros.insert(
+                        name.to_string(),
+                        Rc::new(MacroDef {
+                            name: name.to_string(),
+                            params: params.to_vec(),
+                            body,
+                            place,
+                            first_line: start + 1,
+                        }),
+                    );
+                    return Ok(start + offset + 1);
                 }
-                Statement::IncbinFile {
-                    path,
+                "MACRO" => {
+                    let line_no = start + offset + 1;
+                    return Err(header.error(AsmError::new(format!(
+                        "MACRO inside the body of macro {name} (line {line_no}); macros cannot be defined inside macros"
+                    ))));
+                }
+                _ => body.push(text.to_string()),
+            }
+        }
+        Err(header.error(AsmError::new(format!("MACRO {name} without ENDM"))))
+    }
+
+    /// Add one parsed line to `out`, reading its files and expanding it when
+    /// it calls a macro. `calls` lists the macros being expanded.
+    fn process(
+        &mut self,
+        mut line: ParsedLine,
+        out: &mut Vec<ParsedLine>,
+        stack: &mut Vec<String>,
+        calls: &mut Vec<String>,
+    ) -> Result<(), AsmError> {
+        match std::mem::replace(&mut line.statement, Statement::Empty) {
+            Statement::Include(path) => {
+                let (name, bytes) = self.read(&line, &path, AsmFileKind::Source)?;
+                if stack.contains(&name) {
+                    let chain = stack.join(" -> ");
+                    return Err(
+                        line.error(AsmError::new(format!("INCLUDE cycle: {chain} -> {name}")))
+                    );
+                }
+                if stack.len() > MAX_INCLUDE_DEPTH {
+                    return Err(line.error(AsmError::new(format!(
+                        "INCLUDE files nest more than {MAX_INCLUDE_DEPTH} deep"
+                    ))));
+                }
+                let text = String::from_utf8(bytes).map_err(|_| {
+                    line.error(AsmError::new(format!("'{name}' is not UTF-8 text")))
+                })?;
+                let index = match self.names.iter().position(|known| *known == name) {
+                    Some(index) => index,
+                    None => {
+                        self.names.push(name.clone());
+                        self.names.len() - 1
+                    }
+                };
+                // The INCLUDE line keeps its labels, which mark the
+                // address of the included code.
+                out.push(line);
+                stack.push(name);
+                out.extend(self.load(&text, index, stack)?);
+                stack.pop();
+            }
+            Statement::IncbinFile {
+                path,
+                offset,
+                length,
+            } => {
+                let (_, bytes) = self.read(&line, &path, AsmFileKind::Binary)?;
+                line.statement = Statement::Incbin {
+                    data: bytes.into(),
                     offset,
                     length,
-                } => {
-                    let (_, bytes) = self.read(&line, &path, AsmFileKind::Binary)?;
-                    line.statement = Statement::Incbin {
-                        data: bytes.into(),
-                        offset,
-                        length,
-                    };
-                    out.push(line);
+                };
+                out.push(line);
+            }
+            Statement::ImportFile { path, prefix } => {
+                let (name, bytes) = self.read(&line, &path, AsmFileKind::Symbols)?;
+                let entries = import_symbols(&name, &bytes, prefix.as_deref())
+                    .map_err(|err| line.error(err))?;
+                line.statement = Statement::Import(entries.into());
+                out.push(line);
+            }
+            Statement::Endm => return Err(line.error(AsmError::new("ENDM without MACRO"))),
+            Statement::Macro { .. } => {
+                return Err(line.error(AsmError::new(
+                    "MACRO inside a macro body; macros cannot be defined inside macros",
+                )));
+            }
+            Statement::Instruction(text) => {
+                let (head, args) = split_statement_head(&text);
+                match self.macros.get(&head.to_ascii_uppercase()).cloned() {
+                    Some(def) => self.expand(line, &def, args, out, stack, calls)?,
+                    None => {
+                        line.statement = Statement::Instruction(text);
+                        out.push(line);
+                    }
                 }
-                Statement::ImportFile { path, prefix } => {
-                    let (name, bytes) = self.read(&line, &path, AsmFileKind::Symbols)?;
-                    let entries = import_symbols(&name, &bytes, prefix.as_deref())
-                        .map_err(|err| line.error(err))?;
-                    line.statement = Statement::Import(entries.into());
-                    out.push(line);
-                }
-                statement => {
-                    line.statement = statement;
-                    out.push(line);
+            }
+            statement => {
+                line.statement = statement;
+                out.push(line);
+            }
+        }
+        Ok(())
+    }
+
+    /// Expand the call of `def` on `line` with the argument text `args`.
+    fn expand(
+        &mut self,
+        line: ParsedLine,
+        def: &MacroDef,
+        args: &str,
+        out: &mut Vec<ParsedLine>,
+        stack: &mut Vec<String>,
+        calls: &mut Vec<String>,
+    ) -> Result<(), AsmError> {
+        let name = &def.name;
+        if calls.contains(name) {
+            let chain = calls.join(" -> ");
+            return Err(line.error(AsmError::new(format!(
+                "macro {name} calls itself ({chain} -> {name}); recursion cannot stop without conditional assembly"
+            ))));
+        }
+        let args = split_macro_args(args).map_err(|err| line.error(err))?;
+        if args.len() > def.params.len() {
+            let count = def.params.len();
+            return Err(line.error(AsmError::new(format!(
+                "macro {name} takes {count} argument{}, got {}",
+                if count == 1 { "" } else { "s" },
+                args.len()
+            ))));
+        }
+        let mut values = BTreeMap::new();
+        for (index, (param, default)) in def.params.iter().enumerate() {
+            let value = match args.get(index).filter(|arg| !arg.is_empty()) {
+                Some(arg) => arg.clone(),
+                None => default.clone().ok_or_else(|| {
+                    line.error(AsmError::new(format!(
+                        "macro {name}: missing argument '{param}'"
+                    )))
+                })?,
+            };
+            values.insert(param.clone(), value);
+        }
+        self.expanded_lines = self.expanded_lines.saturating_add(def.body.len());
+        if self.expanded_lines > MAX_REPT_LINES {
+            return Err(line.error(AsmError::new(format!(
+                "macros expand to more than {MAX_REPT_LINES} lines"
+            ))));
+        }
+        self.expansions += 1;
+        let prefix = format!("._M{}", self.expansions);
+        if !line.labels.is_empty() {
+            out.push(labels_only(&line));
+        }
+
+        let mut texts = Vec::with_capacity(def.body.len());
+        let mut lines = Vec::with_capacity(def.body.len());
+        for (offset, body) in def.body.iter().enumerate() {
+            let place = format!("in macro {name} ({}{})", def.place, def.first_line + offset);
+            let context: Rc<str> = match &line.context {
+                Some(outer) => format!("{outer}: {place}").into(),
+                None => place.into(),
+            };
+            let text =
+                substitute_words(body, |word| values.get(&word.to_ascii_uppercase()).cloned());
+            let parsed = parse_line_in(
+                line.line_no,
+                &text,
+                line.file,
+                line.file_name.clone(),
+                Some(context.clone()),
+            )?;
+            texts.push((text, context));
+            lines.push(parsed);
+        }
+        // Labels the body defines belong to this expansion.
+        let mut locals = BTreeSet::new();
+        for parsed in &lines {
+            let equ = match &parsed.statement {
+                Statement::Equ { label, .. } => Some(label),
+                _ => None,
+            };
+            for label in parsed.labels.iter().chain(equ) {
+                if label.starts_with('.') {
+                    locals.insert(label.clone());
                 }
             }
         }
-        Ok(out)
+        for (index, (text, context)) in texts.into_iter().enumerate() {
+            let renamed = if locals.is_empty() {
+                None
+            } else {
+                rewrite_locals(&text, |local| {
+                    locals.contains(local).then(|| format!("{prefix}{local}"))
+                })
+            };
+            let parsed = match renamed {
+                Some(renamed) => parse_line_in(
+                    line.line_no,
+                    &renamed,
+                    line.file,
+                    line.file_name.clone(),
+                    Some(context),
+                )?,
+                None => std::mem::replace(&mut lines[index], labels_only(&line)),
+            };
+            calls.push(name.clone());
+            let result = self.process(parsed, out, stack, calls);
+            calls.pop();
+            result?;
+        }
+        Ok(())
     }
 
     fn read(
@@ -815,6 +1062,216 @@ impl SourceLoader<'_> {
         files
             .read(path, &self.names[line.file], kind)
             .map_err(|err| line.error(AsmError::new(err)))
+    }
+}
+
+/// Parse `MACRO name [param[=default], ...]`.
+fn parse_macro_header(rest: &str) -> Result<Statement, AsmError> {
+    let (name, params_text) = split_statement_head(rest.trim());
+    if name.is_empty() {
+        return Err(AsmError::new("MACRO requires a name"));
+    }
+    validate_label(name)?;
+    let name = name.to_ascii_uppercase();
+    if name.starts_with('.') || name.contains('.') {
+        return Err(AsmError::new(format!(
+            "macro name '{name}' cannot contain '.'"
+        )));
+    }
+    if RESERVED_WORDS.contains(&name.as_str()) {
+        return Err(AsmError::new(format!(
+            "macro name '{name}' is a Z80 mnemonic or directive"
+        )));
+    }
+    let mut params: Vec<(String, Option<String>)> = Vec::new();
+    for param in split_operands(params_text)? {
+        let (param, default) = match param.split_once('=') {
+            Some((param, default)) => (param.trim(), Some(default.trim().to_string())),
+            None => (param.trim(), None),
+        };
+        validate_label(param)?;
+        let param = param.to_ascii_uppercase();
+        if param.contains('.') {
+            return Err(AsmError::new(format!(
+                "macro parameter '{param}' cannot contain '.'"
+            )));
+        }
+        if OPERAND_WORDS.contains(&param.as_str()) {
+            return Err(AsmError::new(format!(
+                "macro parameter '{param}' is a register or condition name"
+            )));
+        }
+        if params.iter().any(|(known, _)| *known == param) {
+            return Err(AsmError::new(format!(
+                "duplicate macro parameter '{param}'"
+            )));
+        }
+        params.push((param, default));
+    }
+    Ok(Statement::Macro { name, params })
+}
+
+/// Words a macro may not be named: Z80 mnemonics and rtvc-asm directives.
+const RESERVED_WORDS: &[&str] = &[
+    "ADC",
+    "ADD",
+    "AND",
+    "BIT",
+    "CALL",
+    "CCF",
+    "CP",
+    "CPD",
+    "CPDR",
+    "CPI",
+    "CPIR",
+    "CPL",
+    "DAA",
+    "DEC",
+    "DI",
+    "DJNZ",
+    "EI",
+    "EX",
+    "EXX",
+    "HALT",
+    "IM",
+    "IN",
+    "INC",
+    "IND",
+    "INDR",
+    "INI",
+    "INIR",
+    "JP",
+    "JR",
+    "LD",
+    "LDD",
+    "LDDR",
+    "LDI",
+    "LDIR",
+    "NEG",
+    "NOP",
+    "OR",
+    "OTDR",
+    "OTIR",
+    "OUT",
+    "OUTD",
+    "OUTI",
+    "POP",
+    "PUSH",
+    "RES",
+    "RET",
+    "RETI",
+    "RETN",
+    "RL",
+    "RLA",
+    "RLC",
+    "RLCA",
+    "RLD",
+    "RR",
+    "RRA",
+    "RRC",
+    "RRCA",
+    "RRD",
+    "RST",
+    "SBC",
+    "SCF",
+    "SET",
+    "SLA",
+    "SLL",
+    "SRA",
+    "SRL",
+    "SUB",
+    "XOR",
+    "ORG",
+    "EQU",
+    "DB",
+    "DEFB",
+    "DW",
+    "DEFW",
+    "DS",
+    "DEFS",
+    "REPT",
+    "ENDR",
+    "ASSERT",
+    "PHASE",
+    "DEPHASE",
+    "INCLUDE",
+    "INCBIN",
+    "IMPORT",
+    "BREAK",
+    "STRUCT",
+    "ENDS",
+    "MACRO",
+    "ENDM",
+    "BASIC_START",
+    "MAP",
+    "BYTE",
+    "WORD",
+    "BLOCK",
+];
+
+/// Words a macro parameter may not be named: registers and conditions.
+const OPERAND_WORDS: &[&str] = &[
+    "A", "B", "C", "D", "E", "H", "L", "I", "R", "F", "AF", "BC", "DE", "HL", "SP", "IX", "IY",
+    "IXH", "IXL", "IYH", "IYL", "XH", "XL", "YH", "YL", "NZ", "Z", "NC", "PO", "PE", "P", "M",
+];
+
+/// Split a macro call's arguments at top-level commas. An argument written
+/// as `<...>` is taken literally, commas included.
+fn split_macro_args(text: &str) -> Result<Vec<String>, AsmError> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(Vec::new());
+    }
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.';
+    let mut args = Vec::new();
+    let mut rest = text;
+    loop {
+        rest = rest.trim_start();
+        let (arg, after) = if let Some(inner) = rest.strip_prefix('<') {
+            let Some(end) = inner.find('>') else {
+                return Err(AsmError::new(format!(
+                    "unterminated '<' in macro arguments '{text}'"
+                )));
+            };
+            let after = inner[end + 1..].trim_start();
+            if !(after.is_empty() || after.starts_with(',')) {
+                return Err(AsmError::new(format!(
+                    "text after '<...>' in macro arguments '{text}'"
+                )));
+            }
+            (inner[..end].to_string(), after)
+        } else {
+            let mut depth = 0usize;
+            let mut quote = None;
+            let mut prev = ' ';
+            let mut end = rest.len();
+            for (index, ch) in rest.char_indices() {
+                if let Some(quote_ch) = quote {
+                    if ch == quote_ch {
+                        quote = None;
+                    }
+                } else {
+                    match ch {
+                        '"' => quote = Some(ch),
+                        '\'' if !is_word(prev) => quote = Some(ch),
+                        '(' => depth += 1,
+                        ')' => depth = depth.saturating_sub(1),
+                        ',' if depth == 0 => {
+                            end = index;
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                prev = ch;
+            }
+            (rest[..end].trim().to_string(), &rest[end..])
+        };
+        args.push(arg);
+        match after.strip_prefix(',') {
+            Some(next) => rest = next,
+            None => return Ok(args),
+        }
     }
 }
 
@@ -1021,6 +1478,20 @@ fn parse_statement(source: &str, labels: &[String]) -> Result<Statement, AsmErro
                 "IMPORT requires a quoted path and an optional name prefix",
             )),
         },
+        "MACRO" => {
+            if !labels.is_empty() {
+                return Err(AsmError::new(
+                    "MACRO takes its name as an operand, not a label",
+                ));
+            }
+            parse_macro_header(rest)
+        }
+        "ENDM" => {
+            if !rest.trim().is_empty() {
+                return Err(AsmError::new("ENDM takes no operands"));
+            }
+            Ok(Statement::Endm)
+        }
         "STRUCT" => {
             if !labels.is_empty() {
                 return Err(AsmError::new(
@@ -1310,7 +1781,13 @@ fn scope_locals(line: &ParsedLine, scope: &str) -> Result<Option<ParsedLine>, As
     let Some(text) = rewrite_locals(&line.source, |name| Some(format!("{scope}{name}"))) else {
         return Ok(None);
     };
-    let mut scoped = parse_program_line(line.line_no, &text, line.file, line.file_name.clone())?;
+    let mut scoped = parse_line_in(
+        line.line_no,
+        &text,
+        line.file,
+        line.file_name.clone(),
+        line.context.clone(),
+    )?;
     keep_loaded_files(&line.statement, &mut scoped.statement);
     if line.statement == Statement::Empty {
         // An `ENDR` kept only for its labels.
@@ -1385,12 +1862,22 @@ fn labels_only(line: &ParsedLine) -> ParsedLine {
         source: line.source.clone(),
         labels: line.labels.clone(),
         statement: Statement::Empty,
+        context: line.context.clone(),
     }
 }
 
 /// Replace whole-word, case-insensitive uses of `name` outside string literals
 /// with `value`, for a `REPT` counter.
 fn substitute_symbol(source: &str, name: &str, value: usize) -> String {
+    let value = value.to_string();
+    substitute_words(source, |word| {
+        word.eq_ignore_ascii_case(name).then(|| value.clone())
+    })
+}
+
+/// Replace whole words outside double-quoted strings by what `map` returns,
+/// for `REPT` counters and macro parameters.
+fn substitute_words(source: &str, map: impl Fn(&str) -> Option<String>) -> String {
     let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.';
     let mut out = String::with_capacity(source.len());
     let mut quote = None;
@@ -1415,10 +1902,9 @@ fn substitute_symbol(source: &str, name: &str, value: usize) -> String {
         if is_word(ch) {
             let len = rest.find(|ch: char| !is_word(ch)).unwrap_or(rest.len());
             let word = &rest[..len];
-            if word.eq_ignore_ascii_case(name) {
-                out.push_str(&value.to_string());
-            } else {
-                out.push_str(word);
+            match map(word) {
+                Some(value) => out.push_str(&value),
+                None => out.push_str(word),
             }
             rest = &rest[len..];
             continue;

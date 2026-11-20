@@ -4,10 +4,13 @@ Plan: [rtvc-asm-workflow-improvements.md](rtvc-asm-workflow-improvements.md)
 
 ## Status
 
-Items 1–9 are done: full expressions, file-aware errors, `PHASE`/`DEPHASE`,
+Items 1–10 are done: full expressions, file-aware errors, `PHASE`/`DEPHASE`,
 `INCLUDE`/`INCBIN`/`IMPORT`, `BREAK`, runnable CAS output for any `ORG`,
-table functions, local labels, and `STRUCT`. Item 10 is not started. Next:
-item 10, macros and `z80macros.inc`.
+table functions, local labels, `STRUCT`, and macros with `z80macros.inc`.
+Open from the plan: migrating `tvc-ports/ports/laser-squad/build.py` to
+`PHASE`/`IMPORT`/`INCBIN` (in that repo), the known gaps below, and the
+later operand-shape macro overloads. `CYCLES`/`DELAY` stay in the timing
+plan.
 
 ## Completed
 
@@ -75,8 +78,38 @@ item 10, macros and `z80macros.inc`.
   nested ones flattened as `AT.Y`) is kept in a `StructLayout` map for later
   nesting. The block's lines then become `Empty` with no labels, so pass 2
   and listings emit nothing for them.
+- Item 10: `SourceLoader` expands macros while it reads the source, so
+  every later stage sees ordinary lines. `define_macro` keeps the body as
+  text; `process` handles each line (files, `ENDM` and `MACRO` errors,
+  macro calls); `expand` checks arguments (`split_macro_args`, with
+  `<...>`), substitutes parameters with `substitute_words` (the `REPT`
+  counter rule, now shared), renames body locals to `._Mn.NAME`, and feeds
+  each line back through `process` with the call chain for recursion
+  checks. `ParsedLine::context` (`in macro NAME (file:line)`, nested
+  outermost first) prefixes errors that do not yet have a line, and REPT
+  copies and local-label rewrites keep it.
+- Item 10: [coding/lib/z80macros.inc](../../coding/lib/z80macros.inc) with
+  pair moves (through a `LD_PAIR` helper), `SUB16_HL`, `CP16_HL`, `NEG_HL`,
+  `ADD_A_TO_*`, `DEC_BC_JR_NZ`, `DELAY_B`, `OUTI_N`, `LDI_N`.
+  `z80macros_match_their_documented_costs` runs each on the Z80 core with
+  `FakeBus`, checks results, and compares measured T-states, bytes, and
+  changed registers with each `N T, M bytes. Changes: ...` comment.
 
 ## Decisions
+
+- Item 10: macros expand at load time, not in pass 1: definitions are
+  textual and must come before use, and the debugger `assemble` command
+  (no file access) gets macros too. An expansion's lines take the call's
+  line number and file, so `[[lines]]` and breakpoints point at the call.
+- Item 10: the generic 16-bit move is not one `LD16 dst,src` macro: without
+  conditionals a macro cannot split `HL` into `H` and `L`, and `PUSH`/`POP`
+  would cost 21 T. The library uses `LD_PAIR hi,lo,hi,lo` plus named
+  `LD_HL_DE`-style wrappers, which also keeps each cost exact.
+- Item 10: an empty argument takes the default; a macro defined after its
+  call is not found (the call reports the encoder's error for an unknown
+  word). Parameter substitution, like the `REPT` counter, still applies
+  inside `'x'` character literals and comments; only double-quoted strings
+  are skipped.
 
 - Item 9: `BLOCK n` and the base are evaluated strictly in pass 1, like
   `EQU`, so they may only use symbols defined above. A member line's first
@@ -155,6 +188,18 @@ item 10, macros and `z80macros.inc`.
   reader to `rtvc-tocas` if it is needed.
 - The debugger `asmfile` command sends source text only; sending its path
   so the debugger can resolve includes is still open.
+
+## Validation (item 10)
+
+- `cargo test --lib asm`: 52 passed (4 new: arguments and defaults,
+  `<...>`, nested macros and `REPT` with per-expansion locals, errors with
+  call and definition lines through `INCLUDE`, and the library run on the
+  Z80 core). Changing one documented clobber in the library made the test
+  fail, as intended. CLI: `-I coding/lib` with `INCLUDE "z80macros.inc"`
+  assembles, and errors print as `file:6: in macro M (file:3): ...`.
+- `cargo test --lib`: 293 passed; CLI, C80, and ROM listings ok; no new
+  clippy warnings. Old and new `rtvc-asm` give identical TOML and CAS
+  output for all 55 sources.
 
 ## Validation (item 9)
 

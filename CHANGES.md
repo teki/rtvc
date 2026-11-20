@@ -4,6 +4,11 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+- rtvc-asm macros: `MACRO name param[=default], ...` … `ENDM`, with strict
+  argument checks, local labels per expansion, and errors that name the
+  call and the macro line. `coding/lib/z80macros.inc` adds 16-bit moves,
+  `CP16_HL`, `NEG_HL`, `ADD_A_TO_HL` and loop helpers, each documented with
+  its T-states, bytes, and the registers it changes.
 - rtvc-asm `STRUCT name[, base]` … `ENDS` defines a size and field offsets
   (`LD A,(IX+SPRITE.FLAGS)`), with `BYTE`, `WORD`, `BLOCK n`, and nested
   structs.

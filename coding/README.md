@@ -15,6 +15,11 @@ CPC `scroll.zip` / `hwscroll_info.zip` downloads unpack under the gitignored
 It auto-scrolls as soon as `RUN` finishes; the border flashes each frame.
 Click the Screen pane before using O/P/Q/A/Space or the cursors.
 
+[lib/z80macros.inc](lib/z80macros.inc) is a macro library for 16-bit moves,
+arithmetic, and unrolled block instructions; pass `-I coding/lib` to
+`rtvc-asm` and `INCLUDE "z80macros.inc"`. See
+[info/assembler.md](../info/assembler.md#macros).
+
 Compile numbered BASIC sources with `rtvc-basic`, and Z80 helper sources with
 `rtvc-asm --format cas`:
 

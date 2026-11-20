@@ -193,6 +193,7 @@ Supported directives:
 | `IMPORT` | `IMPORT "module.toml"[, PREFIX]` | Defines the symbols of another module's TOML output. |
 | `BREAK` | `BREAK` | Marks the next instruction as a debugger breakpoint. See [Breakpoints](#breakpoints). |
 | `STRUCT`, `ENDS` | `STRUCT name[, base]` … `ENDS` | Defines a size and field offsets; emits no bytes. See [Structures](#structures). |
+| `MACRO`, `ENDM` | `MACRO name [param[=default], ...]` … `ENDM` | Defines a macro, called by name. See [Macros](#macros). |
 
 String literals in `DB`/`DEFB` must be ASCII. Supported escapes are `\0`, `\n`,
 `\r`, `\t`, `\\`, `\"`, and `\'`.
@@ -236,6 +237,69 @@ String literals in `DB`/`DEFB` must be ASCII. Supported escapes are `\0`, `\n`,
 - Each copy keeps the source line number of the original line, both in error
   messages and in the TOML `[[lines]]` table.
 - Expansion is limited to 1,048,576 lines in total.
+
+## Macros
+
+`MACRO name params` … `ENDM` defines a block that is assembled wherever
+`name` appears in the mnemonic position:
+
+```asm
+        MACRO SETPAL index, colour=0    ; TVC palette ports 60H-63H
+        LD A,colour
+        OUT (60H+index),A
+        ENDM
+
+        SETPAL 1, 0F0H
+        SETPAL 2            ; colour defaults to 0
+```
+
+- A macro must be defined before it is called. Names are case-insensitive.
+- Each parameter is replaced in the body by the argument text, as whole
+  words, ignoring case, and not inside double-quoted strings: the same rule
+  as a [`REPT`](#repetition) counter. A parameter with `=default` may be
+  left out or passed empty (`SETPAL 3,`).
+- Arguments are split at commas outside parentheses and quotes. Wrap an
+  argument in `<…>` to pass commas: `TWICE <LD A,(HL)>`.
+- Argument counts are checked: too many arguments, or a missing one
+  without a default, is an error naming the macro and the parameter.
+- A [local label](#source-format) defined in the body belongs to that one
+  expansion, so a macro may contain loops. A `.name` the body does not
+  define means the caller's label. Expansions are stored as
+  `GLOBAL._Mn.NAME`, numbered by call.
+- A label on the call line marks the first expanded instruction.
+- Macros may call other macros and may contain `REPT` or `INCLUDE`. A macro
+  that calls itself, directly or through others, is an error: without
+  conditional assembly it could never stop. Expansion is limited to
+  1,048,576 lines in total.
+- A macro may not be named like a Z80 mnemonic or an rtvc-asm directive,
+  and a parameter may not be named like a register or condition (`A`,
+  `HL`, `IX`, `NZ`, `C`, …), so neither needs escaping. Macros cannot be
+  defined inside macros.
+- Errors inside an expansion name the call and the body line:
+  `game.asm:40: in macro SETPAL (macros.inc:3): unknown symbol 'X'`.
+- Expanded lines belong to the call's source line in the TOML `[[lines]]`
+  table and in the debugger, with the expanded text as their `source`.
+
+### The z80macros.inc library
+
+[coding/lib/z80macros.inc](../coding/lib/z80macros.inc) holds the 16-bit
+moves and arithmetic the Z80 lacks, plus loop and unrolling helpers:
+`LD_HL_DE` and the other pair moves, `SUB16_HL`, `CP16_HL`, `NEG_HL`,
+`ADD_A_TO_HL`/`DE`/`BC`, `DEC_BC_JR_NZ`, `DELAY_B`, `OUTI_N`, and `LDI_N`.
+Their names say they are macros, and each one's comment gives its T-states,
+bytes, and every register it changes, so nothing hides a cost. A test runs
+every macro on the Z80 core and checks those comments.
+
+```bash
+cargo run --bin rtvc-asm -- -I coding/lib game.asm
+```
+
+```asm
+        INCLUDE "z80macros.inc"
+        LD HL,(SCORE)
+        LD DE,(BEST)
+        CP16_HL DE          ; 30 T, 4 bytes; C when SCORE < BEST
+```
 
 ## Structures
 

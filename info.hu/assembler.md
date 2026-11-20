@@ -176,6 +176,7 @@ FILL:   LD B,C
 | `IMPORT` | `IMPORT "modul.toml"[, ELŐTAG]` | Egy másik modul TOML kimenetének szimbólumait definiálja. |
 | `BREAK` | `BREAK` | A következő utasítást hibakereső-töréspontnak jelöli. Lásd: [Töréspontok](#töréspontok). |
 | `STRUCT`, `ENDS` | `STRUCT név[, bázis]` … `ENDS` | Méretet és mezőeltolásokat definiál; bájtot nem ír. Lásd: [Struktúrák](#struktúrák). |
+| `MACRO`, `ENDM` | `MACRO név [paraméter[=alapérték], ...]` … `ENDM` | Makrót definiál, amely a nevével hívható. Lásd: [Makrók](#makrók). |
 
 A `DB`/`DEFB` szövegliteráljai csak ASCII karaktereket tartalmazhatnak. Az
 érvényes escape-ek: `\0`, `\n`, `\r`, `\t`, `\\`, `\"` és `\'`.
@@ -219,6 +220,72 @@ A `REPT darab` … `ENDR` blokk a közrezárt sorokat `darab`-szor fordítja le:
 - Minden példány az eredeti forrássor számát viseli, a hibaüzenetekben és a
   TOML `[[lines]]` táblában is.
 - A kifejtés összesen legfeljebb 1 048 576 sort eredményezhet.
+
+## Makrók
+
+A `MACRO név paraméterek` … `ENDM` egy blokkot definiál, amely mindenhol
+lefordul, ahol a `név` utasítás helyén áll:
+
+```asm
+        MACRO SETPAL index, colour=0    ; TVC palettaportok: 60H-63H
+        LD A,colour
+        OUT (60H+index),A
+        ENDM
+
+        SETPAL 1, 0F0H
+        SETPAL 2            ; a colour alapértéke 0
+```
+
+- A makrót a hívás előtt kell definiálni. A nevek nem érzékenyek a kis- és
+  nagybetűkre.
+- A törzsben minden paraméter helyére az argumentum szövege kerül, egész
+  szavanként, kis- és nagybetűtől függetlenül, idézőjeles szövegen kívül:
+  ugyanaz a szabály, mint a [`REPT`](#ismétlés) számlálójánál. Az
+  `=alapérték` paraméter elhagyható vagy üresen adható át (`SETPAL 3,`).
+- Az argumentumokat a zárójeleken és idézőjeleken kívüli vesszők
+  választják el. Vesszőt tartalmazó argumentum `<…>` közé írható:
+  `TWICE <LD A,(HL)>`.
+- A fordító ellenőrzi az argumentumok számát: a túl sok argumentum vagy
+  egy alapérték nélküli hiányzó argumentum hiba, amely megnevezi a makrót
+  és a paramétert.
+- A törzsben definiált [helyi címke](#forrásformátum) az adott kifejtéshez
+  tartozik, így a makró ciklust is tartalmazhat. A törzsben nem definiált
+  `.név` a hívó címkéje. A kifejtések neve `GLOBÁLIS._Mn.NÉV`, hívásonként
+  számozva.
+- A hívó sor címkéje az első kifejtett utasítást jelöli.
+- A makró más makrót hívhat, és tartalmazhat `REPT` vagy `INCLUDE`
+  direktívát. Az önmagát közvetlenül vagy más makrón át hívó makró hiba:
+  feltételes fordítás nélkül sosem állna meg. A kifejtés összesen
+  legfeljebb 1 048 576 sort eredményezhet.
+- Makró neve nem lehet Z80 utasítás vagy rtvc-asm direktíva, paraméter
+  neve nem lehet regiszter vagy feltétel (`A`, `HL`, `IX`, `NZ`, `C`, …),
+  ezért egyiket sem kell külön jelölni. Makrón belül nem definiálható makró.
+- A kifejtésen belüli hiba a hívást és a törzs sorát is megnevezi:
+  `game.asm:40: in macro SETPAL (macros.inc:3): unknown symbol 'X'`.
+- A kifejtett sorok a TOML `[[lines]]` táblában és a hibakeresőben a hívás
+  forrássorához tartoznak, `source` mezőjük a kifejtett szöveg.
+
+### A z80macros.inc könyvtár
+
+A [coding/lib/z80macros.inc](../coding/lib/z80macros.inc) a Z80-ból
+hiányzó 16 bites mozgatásokat és műveleteket, valamint ciklus- és
+kifejtősegédeket tartalmaz: `LD_HL_DE` és a többi regiszterpár-mozgatás,
+`SUB16_HL`, `CP16_HL`, `NEG_HL`, `ADD_A_TO_HL`/`DE`/`BC`, `DEC_BC_JR_NZ`,
+`DELAY_B`, `OUTI_N` és `LDI_N`. A nevükből látszik, hogy makrók, és mindegyik
+megjegyzése megadja az ütemszámot, a bájtszámot és minden regisztert, amelyet
+módosít, így semmi sem rejt el költséget. Egy teszt minden makrót lefuttat a
+Z80 magon, és ellenőrzi ezeket a megjegyzéseket.
+
+```cmd
+rtvc-asm -I coding/lib game.asm
+```
+
+```asm
+        INCLUDE "z80macros.inc"
+        LD HL,(SCORE)
+        LD DE,(BEST)
+        CP16_HL DE          ; 30 ütem, 4 bájt; C, ha SCORE < BEST
+```
 
 ## Struktúrák
 
