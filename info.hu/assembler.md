@@ -135,9 +135,62 @@ tartalmazhat, de nem kezdődhet számjeggyel.
 | `DB`, `DEFB` | `DB érték[, érték...]` | Bájtokat, illetve ASCII szövegeket ír ki. |
 | `DW`, `DEFW` | `DW érték[, érték...]` | Little-endian 16 bites szavakat ír ki. |
 | `DS`, `DEFS` | `DS darab[, kitöltés]` | Nulla vagy a megadott értékű kitöltőbájtokat ír ki. |
+| `REPT`, `ENDR` | `REPT darab[, számláló]` … `ENDR` | A közrezárt sorokat `darab`-szor fordítja le. Lásd: [Ismétlés](#ismétlés). |
+| `ASSERT` | `ASSERT feltétel[, "üzenet"]` | Hibával leállítja a fordítást, ha a feltétel hamis. Lásd: [Ellenőrzések](#ellenőrzések). |
 
 A `DB`/`DEFB` szövegliteráljai csak ASCII karaktereket tartalmazhatnak. Az
 érvényes escape-ek: `\0`, `\n`, `\r`, `\t`, `\\`, `\"` és `\'`.
+
+## Ismétlés
+
+A `REPT darab` … `ENDR` blokk a közrezárt sorokat `darab`-szor fordítja le:
+
+```asm
+        REPT 20
+        NOP
+        ENDR
+```
+
+- A darabszám kifejezés, amelyet a fordító a `REPT` sor elérésekor értékel
+  ki. Használhat `$`-t, `EQU` szimbólumokat és a fölötte definiált
+  címkéket, a `REPT` sor saját címkéjét is. Később definiált szimbólum hiba.
+- A nulla darabszám kihagyja a blokkot. A blokkok egymásba ágyazhatók.
+- A `REPT darab, NÉV` alakban a számláló neve minden példányban a példány
+  sorszámára cserélődik (`0`-tól `darab - 1`-ig, decimálisan). A csere
+  csak egész szavakra vonatkozik, nem érzékeny a kis- és nagybetűkre, és
+  kihagyja az idézőjeles szövegeket. A számláló nem szimbólum, és nem
+  jelenik meg a kimenetben.
+- A `REPT` sor címkéje az első példány címét, az `ENDR` sor címkéje az
+  utolsó példány utáni címet jelöli. A blokkon belüli címke példányonként
+  újra definiálódik, ezért egynél nagyobb darabszámnál ismételt címke
+  hibát ad.
+- Minden példány az eredeti forrássor számát viseli, a hibaüzenetekben és a
+  TOML `[[lines]]` táblában is.
+- A kifejtés összesen legfeljebb 1 048 576 sort eredményezhet.
+
+## Ellenőrzések
+
+Az `ASSERT feltétel[, "üzenet"]` hibával leállítja a fordítást, ha a
+feltétel hamis:
+
+```asm
+LINE_START:
+        ...
+LINE_END:
+        ASSERT LINE_END-LINE_START = 12, "megváltozott a másolóciklus mérete"
+```
+
+- A feltétel vagy két kifejezés egyetlen összehasonlítása, vagy egyetlen
+  kifejezés, amelynek nem nullának kell lennie. Az összehasonlítások: `=`
+  vagy `==`, `!=` vagy `<>`, `<`, `<=`, `>` és `>=`. A `<<` és `>>`
+  léptetés, nem összehasonlítás.
+- Az ellenőrzés a második menetben fut, amikor már minden szimbólum ismert,
+  így a forrásban később szereplő címkékre is hivatkozhat. A `$` az
+  `ASSERT` sor címe.
+- A hibaüzenet tartalmazza a sort, az üzenetet (ennek hiányában a
+  feltételt) és az összehasonlított értékeket, például
+  `line 9: assertion failed: megváltozott a másolóciklus mérete (left is
+  13, right is 12)`.
 
 ## Kifejezések
 

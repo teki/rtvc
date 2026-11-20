@@ -17,8 +17,8 @@ file-aware errors.
   parenthesised group is memory; `(2+1)*(1+1)` is an expression.
 - `ASSERT`'s comparison splitter skips `<<` and `>>`.
 - Docs: [info/assembler.md](../../info/assembler.md),
-  [info.hu/assembler.md](../../info.hu/assembler.md) (Expressions section
-  only), [CHANGES.md](../../CHANGES.md).
+  [info.hu/assembler.md](../../info.hu/assembler.md) (Expressions, plus the
+  missing `REPT` and `ASSERT` sections), [CHANGES.md](../../CHANGES.md).
 
 ## Decisions
 
@@ -45,8 +45,3 @@ file-aware errors.
   `lsqintro/intro.asm` fails an `ASSERT` ("TUNE must fill its page") and
   `knowledge/48.rom.asm` has a `%` placeholder error with both versions;
   those are pre-existing.
-
-## Known gaps
-
-- [info.hu/assembler.md](../../info.hu/assembler.md) still lacks the `REPT`
-  and `ASSERT` sections from the earlier plan.
