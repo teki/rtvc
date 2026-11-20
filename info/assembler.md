@@ -330,10 +330,34 @@ Primary values:
 - `$` as the current address;
 - `label@map` address transformations;
 - parenthesised subexpressions;
-- the functions `LOW(x)` (`x & 0FFH`) and `HIGH(x)` (`(x >> 8) & 0FFH`).
+- function calls (see [Functions](#functions)).
 
 A word that reads as a number is a number, as before: `C000H` is
 `0C000H`, not a symbol. Function names are only special directly before `(`.
+
+### Functions
+
+| Function | Value |
+| --- | --- |
+| `LOW(x)` | `x & 0FFH` |
+| `HIGH(x)` | `(x >> 8) & 0FFH` |
+| `ABS(x)` | absolute value |
+| `MIN(a, b, …)`, `MAX(a, b, …)` | smallest or largest of two or more values |
+| `SIN(angle, period, amplitude)` | `amplitude × sin(2π × angle / period)`, rounded |
+| `COS(angle, period, amplitude)` | the same with `cos` |
+
+`SIN` and `COS` measure the angle in steps of a full turn of `period` steps,
+which must be positive; angles outside one turn wrap around. Results are
+rounded half away from zero, so `SIN(1,12,1)` (sin 30° = 0.5) is `1`. They
+are computed the same way on every build, so a table assembles to the same
+bytes in the debugger and on the command line. With [`REPT`](#repetition)
+they build lookup tables:
+
+```asm
+SINE:   REPT 256, I
+        DB 128+SIN(I, 256, 127)     ; 128 ± 127 sine wave
+        ENDR
+```
 
 Operators, from highest to lowest precedence, with C meanings:
 

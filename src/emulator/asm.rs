@@ -2625,17 +2625,69 @@ impl<'a> ExprParser<'a> {
 
     fn parse_function(&mut self, name: &str) -> Result<i32, AsmError> {
         self.pos += 1;
-        let argument = self.parse_binary(0)?;
+        let mut args = vec![self.parse_binary(0)?];
+        while self.rest().starts_with(',') {
+            self.pos += 1;
+            args.push(self.parse_binary(0)?);
+        }
         if !self.rest().starts_with(')') {
             return Err(self.invalid());
         }
         self.pos += 1;
+        let arity = |count: usize| {
+            if args.len() == count {
+                Ok(())
+            } else {
+                Err(AsmError::new(format!(
+                    "{name}() takes {count} argument{}, got {}",
+                    if count == 1 { "" } else { "s" },
+                    args.len()
+                )))
+            }
+        };
         match name {
-            "LOW" => Ok(argument & 0xFF),
-            "HIGH" => Ok((argument >> 8) & 0xFF),
+            "LOW" => arity(1).map(|_| args[0] & 0xFF),
+            "HIGH" => arity(1).map(|_| (args[0] >> 8) & 0xFF),
+            "ABS" => arity(1).map(|_| args[0].wrapping_abs()),
+            "MIN" | "MAX" => {
+                if args.len() < 2 {
+                    return Err(AsmError::new(format!(
+                        "{name}() takes at least 2 arguments, got {}",
+                        args.len()
+                    )));
+                }
+                let pick = if name == "MIN" {
+                    args.iter().min()
+                } else {
+                    args.iter().max()
+                };
+                Ok(*pick.expect("at least two arguments"))
+            }
+            "SIN" | "COS" => {
+                arity(3)?;
+                let (angle, period, amplitude) = (args[0], args[1], args[2]);
+                if period <= 0 {
+                    return self.arith_error(format!("{name}() period {period} is not positive"));
+                }
+                Ok(wave(name == "COS", angle, period, amplitude))
+            }
             _ => Err(AsmError::new(format!("unknown function '{}'", name))),
         }
     }
+}
+
+/// `amplitude * sin(2 * pi * angle / period)` (or `cos`), rounded half away
+/// from zero. The angle is reduced to one period with integer arithmetic,
+/// and the product is snapped to 1e-9 before rounding, so a value that is
+/// exactly `.5` in decimal (`SIN(1, 12, 1)`) rounds up even though the
+/// `f64` result falls just short, and native and WASM builds agree.
+fn wave(cosine: bool, angle: i32, period: i32, amplitude: i32) -> i32 {
+    let turn = angle.rem_euclid(period) as f64 / period as f64;
+    let radians = turn * std::f64::consts::TAU;
+    let unit = if cosine { radians.cos() } else { radians.sin() };
+    let value = amplitude as f64 * unit;
+    let snapped = (value * 1e9).round() / 1e9;
+    snapped.round() as i32
 }
 
 fn is_label_like(value: &str) -> bool {

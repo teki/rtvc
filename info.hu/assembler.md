@@ -318,10 +318,34 @@ Alapelemek:
 - `$` mint aktuális cím;
 - `címke@leképezés` címátalakítások;
 - zárójeles részkifejezések;
-- a `LOW(x)` (`x & 0FFH`) és `HIGH(x)` (`(x >> 8) & 0FFH`) függvények.
+- függvényhívások (lásd [Függvények](#függvények)).
 
 Ami számként olvasható, az szám: a `C000H` a `0C000H` érték, nem szimbólum.
 A függvénynevek csak közvetlenül `(` előtt különlegesek.
+
+### Függvények
+
+| Függvény | Érték |
+| --- | --- |
+| `LOW(x)` | `x & 0FFH` |
+| `HIGH(x)` | `(x >> 8) & 0FFH` |
+| `ABS(x)` | abszolút érték |
+| `MIN(a, b, …)`, `MAX(a, b, …)` | két vagy több érték közül a legkisebb, illetve a legnagyobb |
+| `SIN(szög, periódus, amplitúdó)` | `amplitúdó × sin(2π × szög / periódus)`, kerekítve |
+| `COS(szög, periódus, amplitúdó)` | ugyanez `cos` függvénnyel |
+
+A `SIN` és a `COS` a szöget egy teljes kör `periódus` darab lépésében méri;
+a periódus pozitív kell legyen, az egy körön túli szög körbefordul. Az
+eredmény a feleket nullától elfelé kerekíti, így `SIN(1,12,1)`
+(sin 30° = 0,5) értéke `1`. A számítás minden változatban azonos, ezért egy
+táblázat a hibakeresőben és a parancssorban is ugyanazokat a bájtokat adja.
+A [`REPT`](#ismétlés) direktívával táblázatok készíthetők:
+
+```asm
+SINE:   REPT 256, I
+        DB 128+SIN(I, 256, 127)     ; 128 ± 127 szinuszhullám
+        ENDR
+```
 
 Műveletek a legerősebbtől a leggyengébbig, C szerinti jelentéssel:
 

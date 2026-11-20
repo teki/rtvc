@@ -537,6 +537,42 @@ fn expressions_follow_c_precedence() {
 }
 
 #[test]
+fn table_functions_compute_values() {
+    assert_eq!(eval_equ("MIN(5,3,9)"), 3);
+    assert_eq!(eval_equ("MAX(5, 3, 9)"), 9);
+    assert_eq!(eval_equ("MIN(-2,1)+10"), 8);
+    assert_eq!(eval_equ("ABS(3-10)"), 7);
+    assert_eq!(eval_equ("SIN(0,256,127)"), 0);
+    assert_eq!(eval_equ("SIN(64,256,127)"), 127);
+    assert_eq!(eval_equ("128+SIN(192,256,127)"), 1);
+    assert_eq!(eval_equ("COS(0,256,100)"), 100);
+    assert_eq!(eval_equ("100+COS(128,256,100)"), 0);
+    assert_eq!(eval_equ("10+COS(64,256,10)"), 10);
+    // sin(30 degrees) is 0.5, which rounds away from zero.
+    assert_eq!(eval_equ("SIN(1,12,1)"), 1);
+    assert_eq!(eval_equ("10+SIN(-1,12,1)"), 9);
+    // Angles wrap at the period.
+    assert_eq!(eval_equ("SIN(64+256*3,256,127)"), 127);
+
+    let program = assemble_program(
+        "SINE: REPT 8, I\nDB 128+SIN(I, 8, 100)\nENDR\nDB MAX(LATER, 1)\nLATER: NOP\n",
+        0,
+    )
+    .unwrap();
+    assert_eq!(program.bytes, [128, 199, 228, 199, 128, 57, 28, 57, 9, 0]);
+
+    for (source, message) in [
+        ("V EQU SIN(1,0,1)\n", "SIN() period 0 is not positive"),
+        ("V EQU COS(1,2)\n", "COS() takes 3 arguments, got 2"),
+        ("V EQU MIN(1)\n", "MIN() takes at least 2 arguments, got 1"),
+        ("V EQU LOW(1,2)\n", "LOW() takes 1 argument, got 2"),
+    ] {
+        let err = assemble_program(source, 0).unwrap_err();
+        assert_eq!(err.message(), message, "{source}");
+    }
+}
+
+#[test]
 fn expressions_work_in_operands_and_directives() {
     let program = assemble_program(
         r#"

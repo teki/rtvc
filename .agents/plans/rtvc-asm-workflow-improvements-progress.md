@@ -4,9 +4,9 @@ Plan: [rtvc-asm-workflow-improvements.md](rtvc-asm-workflow-improvements.md)
 
 ## Status
 
-Items 1–6 are done: full expressions, file-aware errors, `PHASE`/`DEPHASE`,
-`INCLUDE`/`INCBIN`/`IMPORT`, `BREAK`, and runnable CAS output for any `ORG`.
-Items 7–10 are not started. Next: item 7, `SIN`/`COS`/`MIN`/`MAX`/`ABS`.
+Items 1–7 are done: full expressions, file-aware errors, `PHASE`/`DEPHASE`,
+`INCLUDE`/`INCBIN`/`IMPORT`, `BREAK`, runnable CAS output for any `ORG`, and
+table functions. Items 8–10 are not started. Next: item 8, local labels.
 
 ## Completed
 
@@ -58,7 +58,20 @@ Items 7–10 are not started. Next: item 7, `SIN`/`COS`/`MIN`/`MAX`/`ABS`.
   the program at `1A3EH`. `rtvc-asm --format cas` gained `--entry NAME`;
   `rtvc-tocas` uses the same function for `.asm` inputs.
 
+- Item 7: `ExprParser::parse_function` takes comma-separated arguments
+  (`split_operands` already keeps commas inside parentheses) and checks
+  each function's argument count. `SIN`/`COS` go through `wave`.
+
 ## Decisions
+
+- Item 7: `wave` reduces the angle with `rem_euclid` before using `f64`,
+  then snaps the product to 1e-9 before rounding half away from zero.
+  Without the snap `SIN(1,12,1)` gave 0 (sin 30° is 0.49999999999999994),
+  and an ulp of difference between native and WASM `sin` could change a
+  byte. A non-positive period is an error, suppressed in pass 1 when the
+  arguments use undefined symbols.
+- Item 7: `MIN`/`MAX` take two or more arguments; `ABS` wraps like the
+  other operators.
 
 - Item 6: the destination must lie within `1A3EH`–`BFFFH`. It is never below
   the source, so `LDDR` is always a safe copy, and the stub is never
@@ -112,6 +125,14 @@ Items 7–10 are not started. Next: item 7, `SIN`/`COS`/`MIN`/`MAX`/`ABS`.
   reader to `rtvc-tocas` if it is needed.
 - The debugger `asmfile` command sends source text only; sending its path
   so the debugger can resolve includes is still open.
+
+## Validation (item 7)
+
+- `cargo test --lib asm`: 45 passed (1 new, covering values, wrap, `.5`
+  rounding, a `REPT` sine table, a forward reference, and argument
+  errors). `cargo test --lib`: 286 passed; CLI, C80, and ROM listings ok.
+- Old and new `rtvc-asm` give identical TOML and CAS output for all 55
+  sources.
 
 ## Validation (item 6)
 
