@@ -296,8 +296,9 @@ impl Pong {
         }
     }
 
-    /// VID0 holds exactly the left paddle, the right paddle and the ball at
-    /// the positions in the game's globals: 0xFF there, 0 everywhere else.
+    /// VID0 holds exactly the left paddle, the right paddle, the ball and
+    /// the score pips at the positions in the game's globals: 0xFF there,
+    /// 0 everywhere else.
     fn check_scene(&mut self, when: &str) {
         let (py, ay, bx, by) = (
             self.get("py"),
@@ -305,12 +306,17 @@ impl Pong {
             self.get("bx"),
             self.get("by"),
         );
+        let (ps, sa) = (self.get("pscore"), self.get("ascore"));
         let mut wrong = Vec::new();
         for row in 0u16..240 {
             for col in 0u16..64 {
                 let paddle = |top: u8| row >= u16::from(top) && row < u16::from(top) + 24;
+                // Score pip n (1..=score) covers rows [8n, 8n + 4).
+                let pips = |score: u8| row >= 8 && row % 8 < 4 && row / 8 <= u16::from(score);
                 let lit = (col == 2 && paddle(py))
                     || (col == 61 && paddle(ay))
+                    || (col == 0 && pips(ps))
+                    || (col == 63 && pips(sa))
                     || (col == u16::from(bx) && row >= u16::from(by) && row < u16::from(by) + 4);
                 let got = self.tvc.bus.r8(0x8000 + row * 64 + col);
                 let want = if lit { 0xFF } else { 0 };
@@ -345,7 +351,22 @@ fn start_pong(optimize: bool) -> Pong {
                 .address
         }
     };
-    let in_c80 = c80_code_map(&code);
+    // The frame interrupt runs the JP at 0038H and the handler in irq.asm,
+    // so those addresses count as the game's code too.
+    let mut in_c80 = c80_code_map(&code);
+    let sym = |name: &str| {
+        *code
+            .assembled
+            .symbols
+            .get(name)
+            .unwrap_or_else(|| panic!("no symbol {name}"))
+    };
+    for a in sym("U1_FRAME")..sym("U1_SAVED") {
+        in_c80[usize::from(a)] = true;
+    }
+    for a in 0x38..0x3B {
+        in_c80[a] = true;
+    }
     let mut tvc = boot_with_cas(&cas);
     type_line(&mut tvc, "RUN");
     let ball = 0x8000 + 118 * 64 + 32;
@@ -367,6 +388,7 @@ fn play_pong(optimize: bool) {
     let mut p = start_pong(optimize);
     let mode = if optimize { "opt" } else { "base" };
     assert_eq!(p.tvc.bus.mmu.get_map_val(), 0x50, "[{mode}] VID0 at 8000H");
+    assert_eq!(p.tvc.bus.r8(0x38), 0xC3, "[{mode}] JP at the IM 1 vector");
     // The start layout from play(): paddles at raster 108, ball centred.
     assert_eq!(
         (
@@ -469,6 +491,79 @@ fn play_pong(optimize: bool) {
         p.in_c80[usize::from(pc)],
         "[{mode}] PC {pc:04X} outside pong"
     );
+
+    // Miss on purpose: keep the paddle away from the ball until the AI
+    // scores, then check its pip and the re-centred ball.
+    let lost = p.get("ascore");
+    let mut held: Option<u32> = None;
+    let mut missed = false;
+    for _ in 0..1000 {
+        let (by, state) = (p.get("by"), p.get("state"));
+        let want = if state == 0 {
+            32
+        } else if by < 120 {
+            40
+        } else {
+            38
+        };
+        if held != Some(want) {
+            if let Some(k) = held {
+                p.tvc.key_up(k);
+            }
+            p.tvc.key_down(want);
+            held = Some(want);
+        }
+        p.next_pass();
+        if p.get("ascore") != lost {
+            missed = true;
+            break;
+        }
+    }
+    if let Some(k) = held {
+        p.tvc.key_up(k);
+    }
+    assert!(missed, "[{mode}] the AI never scored");
+    assert_eq!(p.get("ascore"), lost + 1);
+    p.check_scene(&format!("[{mode}] after a miss"));
+
+    // Keep missing until the AI wins. play() then returns through irq.asm,
+    // which puts the ROM stub back at 0038H (PUSH AF) and EIs, and BASIC
+    // runs again with U2 mapped.
+    let mut held: Option<u32> = None;
+    let mut over = false;
+    for _ in 0..3000 {
+        if p.tvc.bus.mmu.get_map_val() == 0x70 {
+            over = true;
+            break;
+        }
+        let (by, state) = (p.get("by"), p.get("state"));
+        let want = if state == 0 {
+            32
+        } else if by < 120 {
+            40
+        } else {
+            38
+        };
+        if held != Some(want) {
+            if let Some(k) = held {
+                p.tvc.key_up(k);
+            }
+            p.tvc.key_down(want);
+            held = Some(want);
+        }
+        p.tvc.run_for_a_frame();
+    }
+    if let Some(k) = held {
+        p.tvc.key_up(k);
+    }
+    assert!(over, "[{mode}] the game did not end");
+    assert_eq!(p.get("state"), 3, "[{mode}] the AI won");
+    assert_eq!(p.get("ascore"), 5);
+    assert_eq!(p.tvc.bus.r8(0x38), 0xF5, "[{mode}] ROM stub restored");
+    for _ in 0..10 {
+        p.tvc.run_for_a_frame();
+    }
+    assert_ne!(p.tvc.z80.state.iff1, 0, "[{mode}] interrupts back on");
     eprintln!(
         "pong [{mode}]: {PONG_PASSES} autopilot passes, {points} points, score {}:{}, {:.2} s",
         score.0,

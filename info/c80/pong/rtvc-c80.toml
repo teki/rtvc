@@ -8,3 +8,13 @@ path = "main.bas"
 name = "pong"
 path = "pong.c80"
 origin = 0x3000
+
+# USR entry and the frame interrupt handler (C80 has no interrupt entry).
+[[unit]]
+name = "irq"
+kind = "asm"
+path = "irq.asm"
+origin = 0x2FC0
+exports = ["start"]
+# CALL play (2) plus the frame interrupt taken inside play (2).
+stack_extra = 4

@@ -639,20 +639,36 @@ unchanged. `compile.sh` writes `out/tvc-usr.cas`.
 
 ## 20. Pong: BASIC starts, C80 plays
 
-Source: [pong/pong.c80](pong/pong.c80). Listing: [expected/pong.asm](expected/pong.asm).
+Source: [pong/pong.c80](pong/pong.c80) and [pong/irq.asm](pong/irq.asm). Listing: [expected/pong.asm](expected/pong.asm).
 
 [pong/](pong/) is a complete (chunky) game. BASIC is only the launch:
 
 ```basic
-10 LET R=USR(@{pong::play},0)
+10 LET R=USR(@{irq::start},0)
 20 PRINT R
 ```
 
-`play` does not return until someone reaches `WIN` (5). It maps video RAM,
-disables interrupts so the ROM cursor does not stamp the bitmap, programs the
-CRTC cursor to the last visible byte (`0x0EFF`) so port `59H` bit 4 ticks at
-50 Hz (VT-DOS otherwise leaves that IRQ on raster 175), then restores map
-`70H` and `EI`. `PRINT` is `1` if you won and `-1` if the AI won.
+The game draws everything and scans the keyboard itself, so it takes over
+the frame interrupt: no ROM code runs while it plays. `irq.asm` is the
+`USR` entry. With interrupts off it saves the first three bytes of the IM 1
+stub at `0038H`, writes `JP FRAME` there, and calls `pong::play`; when
+`play` returns it puts the bytes back and `EI`s. `FRAME` is `OUT (07H),A`
+(acknowledge) and `RET`. The handler and the hook are assembly because C80
+has no interrupt entry and cannot take a function's address; ASM can call
+C80, not the other way.
+
+`play` does not return until someone reaches `WIN` (5). It maps video RAM and
+programs the CRTC cursor to the last visible byte (`0x0EFF`) so port `59H`
+bit 4 ticks at 50 Hz (VT-DOS otherwise leaves that IRQ on raster 175). The
+game logic runs with interrupts disabled; `wait_frame` is `EI` / `HALT`, the
+only window where one is taken. The request is latched, so a frame that ends
+while the logic still runs wakes the next `HALT` at once, and `EI`'s one
+instruction delay keeps it from landing between `EI` and `HALT`. `PRINT` is
+`1` if you won and `-1` if the AI won.
+
+Magic numbers are `const` (folded, no storage): state codes, sizes, columns,
+ports. C80 folds `ROWS - PAD_H - P_STEP`, but `py + PAD_H - P_STEP` is
+`(py + 24) - 2` at run time; write `py + (PAD_H - P_STEP)`.
 
 Controls: TVC joystick up/down (keyboard row 8, the same matrix as the cursor
 keys) moves the left paddle. Space serves. The right paddle tracks the ball a
@@ -664,11 +680,13 @@ byte of a raster) and `read_row` (one keyboard row) are `@inline`, so the
 drawing loop in `fill_rows` has no `CALL`. Vertical
 motion writes only the new edge and clears the old one (two rows for the
 player, one for the AI, one for the ball). A horizontal ball step erases the
-old four bytes and stamps the new column.
+old four bytes and stamps the new column. The ball bounces or scores on the
+column next to a paddle, so it never overlaps one, and each point adds a pip
+in column 0 (you) or 63 (the AI), outside the ball's reach.
 
 Same cassette layout as the mixed example: BASIC at `19EFH`, C80 at
-`3000H`. `--emit-segments` writes `out/pong.toml`; `rtvc-tocas` writes
-`out/pong.cas`. Rebuild that file after editing `pong.c80` (`./compile.sh`).
+`3000H`, and `irq.asm` just below at `2FC0H`. `--emit-segments` writes
+`out/pong.toml`; `rtvc-tocas` writes `out/pong.cas`. Rebuild that file after editing `pong.c80` or `irq.asm` (`./compile.sh`).
 From the repo root:
 
 ```bash
