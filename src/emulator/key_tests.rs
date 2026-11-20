@@ -96,7 +96,11 @@ fn press_char_is_independent_of_cached_host_key_mappings() {
     assert_all_released(&key);
 
     let code = key.press_char('A');
-    assert_eq!(key.state[6] & (1 << 3), 0, "uppercase needs synthesized Shift");
+    assert_eq!(
+        key.state[6] & (1 << 3),
+        0,
+        "uppercase needs synthesized Shift"
+    );
     key.key_up(code);
     assert_all_released(&key);
 }

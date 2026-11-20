@@ -2985,8 +2985,8 @@ impl eframe::App for EmuApp {
             // Run every frame that is due, so a late or uneven repaint (phone
             // browsers, 30 Hz power saving) does not slow the TVC down. Only
             // the last frame is shown.
-            let due = ((self.emu_frame_accumulator / TVC_FRAME_DT) as u32)
-                .clamp(1, MAX_CATCH_UP_FRAMES);
+            let due =
+                ((self.emu_frame_accumulator / TVC_FRAME_DT) as u32).clamp(1, MAX_CATCH_UP_FRAMES);
             let mut ran = 0;
             // Warp runs extra frames within a host-time budget while a tape
             // loads; their audio is dropped instead of queued.

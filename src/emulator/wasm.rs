@@ -322,9 +322,10 @@ impl WebHandle {
         // Without a saved choice, touch devices start in Fast frame: phones
         // have less headroom, and some (Safari with Lockdown Mode) run
         // WebAssembly without a compiler, where Interleaved misses 50 FPS.
-        let vid_model = app_state_file.state.vid_model.or_else(|| {
-            is_touch_device(&web_sys::window()?).then_some(VidModel::FastFrame)
-        });
+        let vid_model = app_state_file
+            .state
+            .vid_model
+            .or_else(|| is_touch_device(&web_sys::window()?).then_some(VidModel::FastFrame));
         if let Some(vid_model) = vid_model {
             emu.set_vid_model(vid_model);
         }
@@ -405,7 +406,9 @@ fn load_startup_launch() -> Result<Option<crate::emu::WasmRecentFile>, String> {
     if let Some(error) = get("error").and_then(|value| value.as_string()) {
         return Err(error);
     }
-    let name = get("name").and_then(|value| value.as_string()).unwrap_or_default();
+    let name = get("name")
+        .and_then(|value| value.as_string())
+        .unwrap_or_default();
     let bytes = get("bytes")
         .filter(|value| value.is_object())
         .map(|value| js_sys::Uint8Array::new(&value).to_vec())
