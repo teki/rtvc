@@ -80,6 +80,18 @@ Open issues and planned improvements for the TVC emulator.
   - Start with keyboard-based BASIC transfer into the emulated machine.
   - Start with sequential assembly into mapped writable memory.
 
+- [ ] Grow rtvc-asm into a port and demo build tool. See the
+  [rtvc-asm Workflow Improvements plan](.agents/plans/rtvc-asm-workflow-improvements.md).
+  - Full expressions with precedence, `LOW`/`HIGH`, and file-aware errors.
+  - `PHASE`/`DEPHASE`, `INCLUDE`, `INCBIN`, and importing another module's
+    symbols, replacing address glue in port build scripts.
+  - `BREAK` breakpoints and source-line data shared by `loadasm` and the
+    future assembly editor, and runnable CAS output for any `ORG`.
+  - Table functions, local labels, `STRUCT`, and macros with a documented
+    Z80 macro library.
+  - Cycle counting and `DELAY` stay in the
+    [repetition and timing plan](.agents/plans/rtvc-asm-repetition-and-timing.md).
+
 - [ ] Mature the C80 compiler. See the
   [C80 Compiler and Integrated Source View plan](.agents/plans/c80-compiler.md).
   - [x] Phase 1: `rtvc-c80` command-line compiler with inline assembly,

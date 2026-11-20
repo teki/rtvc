@@ -43,4 +43,8 @@ implementation order, limitations, and focused validation.
 - [Multi-System Architecture](multi-system-architecture.md)
 - [rtvc-asm Repetition and Cycle Timing](rtvc-asm-repetition-and-timing.md)
   ([progress](rtvc-asm-repetition-and-timing-progress.md))
+- [rtvc-asm Workflow Improvements](rtvc-asm-workflow-improvements.md) —
+  expressions, `PHASE`, includes and symbol import, debugger breakpoints,
+  CAS output, local labels, structs, and macros, ranked from a survey of
+  popular 8-bit assemblers
 - [TVC Video Signal Pipeline and Television Sync](tvc-video-signal-pipeline.md)
