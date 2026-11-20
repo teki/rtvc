@@ -910,9 +910,11 @@ which prints progress until no load has been active for 2 s. Started with
 Laser Squad's main program in about 8 s instead of about 4.5 minutes.
 
 The `assemble` command uses rtvc's built-in two-pass helper assembler. It
-supports labels, `ORG` with persistent named address mappings, `EQU`,
-`DB`/`DEFB`, `DW`/`DEFW`, `DS`/`DEFS`, simple `+`/`-` expressions, and `$` as
-the current address. Responses keep the single-line compatibility fields
+supports the full source language of [assembler.md](assembler.md), including
+labels, `ORG` with persistent named address mappings, `EQU`, data directives,
+`REPT`, `ASSERT`, `PHASE`/`DEPHASE`, C-precedence expressions, and `$` as the
+current address. Each returned line has `addr` (load address) and `run_addr`
+(run address, different only inside `PHASE`). Responses keep the single-line compatibility fields
 (`addr`, `len`, `bytes`, `next_addr`) and also include `segments`, `symbols`,
 and emitted line-address metadata for multi-line source; mapping declarations
 are returned in `mappings`. See

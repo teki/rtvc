@@ -4,8 +4,9 @@ Plan: [rtvc-asm-workflow-improvements.md](rtvc-asm-workflow-improvements.md)
 
 ## Status
 
-Items 1 (full expressions) and 2 (file-aware errors) are done. Items 3–10
-are not started. Next: item 3, `PHASE`/`DEPHASE`.
+Items 1 (full expressions), 2 (file-aware errors) and 3 (`PHASE`/`DEPHASE`)
+are done. Items 4–10 are not started. Next: item 4, `INCLUDE`, `INCBIN` and
+`IMPORT`.
 
 ## Completed
 
@@ -26,11 +27,22 @@ are not started. Next: item 3, `PHASE`/`DEPHASE`.
   errors (assembler and `%NAME%`) bare as `file:line: message`; other
   failures keep `rtvc-asm:`. `Display` is unchanged, so the debugger,
   `rtvc-tocas`, and C80 messages read as before.
+- Item 3: `PHASE address` / `DEPHASE`. Both passes track `pc` (run
+  address, seen by labels and `$`) and `load` (where bytes go); they differ
+  only inside a block. Segments are emitted at `load`. `AssembledLine` gained
+  `run_addr`; the TOML writes `run_addr` only when it differs from `addr`,
+  and the debugger `assemble` JSON always includes it.
 
 ## Decisions
 
 - Item 2: file names and columns are not stored in `AsmError` yet; that
   waits for `INCLUDE` (item 4), when a line can belong to another file.
+- Item 3: a label on the `PHASE` line is the load address, one on
+  `DEPHASE` the run address past the block (labels are bound before the
+  directive acts). No implicit symbols such as a block length; write
+  `END-RUN` with labels.
+- Item 3: `PHASE` cannot nest; `ORG` and `BASIC_START` inside a block are
+  errors, and an unclosed block is reported at its `PHASE` line.
 - Values are `i32` with wrapping arithmetic; range checks stay at the point
   of use (`eval_byte`, `eval_word`).
 - A word that parses as a number is a number before it is a symbol
@@ -43,6 +55,14 @@ are not started. Next: item 3, `PHASE`/`DEPHASE`.
   before `(` is an error.
 - `assemble_line` (the single-instruction debugger path) still accepts
   numbers only; expressions need `assemble_program`, as before.
+
+## Validation (item 3)
+
+- `cargo test --lib asm`: 36 passed (3 new `PHASE` tests).
+  `cargo test --lib`: 277 passed. `cargo test -p rtvc-c80` and
+  `cargo test --bin rtvc-asm`: all passed. ROM listings ok.
+- The previous and new `rtvc-asm` give identical output for all 43 sources
+  in `coding/`, `info/c80/out/`, `roms/`, and `tvc-ports`.
 
 ## Validation (item 2)
 

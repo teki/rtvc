@@ -278,6 +278,9 @@ fn render_toml(
         out.push("[[lines]]".to_string());
         out.push(format!("line = {}", line.line));
         out.push(format!("addr = {}", hex16(line.addr)));
+        if line.run_addr != line.addr {
+            out.push(format!("run_addr = {}", hex16(line.run_addr)));
+        }
         out.push(format!("len = {}", line.len));
         out.push(format!("source = {}", toml_string(&line.source)));
     }

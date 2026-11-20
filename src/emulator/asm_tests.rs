@@ -632,3 +632,102 @@ fn errors_carry_their_source_line() {
     assert_eq!(err.line(), None);
     assert_eq!(err.display_in("x.asm"), format!("x.asm: {}", err.message()));
 }
+
+#[test]
+fn phase_assembles_code_for_its_run_address() {
+    let program = assemble_program(
+        r#"
+                ORG 8000H
+        COPY:   LD HL,BLOCK_LOAD
+                LD DE,BLOCK_RUN
+                LD BC,BLOCK_LEN
+                LDIR
+                JP BLOCK_RUN
+        BLOCK_LOAD:
+                PHASE 2000H
+        BLOCK_RUN:
+                LD A,(DATA)
+        LOOP:   JR LOOP
+        DATA:   DB $-BLOCK_RUN
+        BLOCK_END:
+                DEPHASE
+        BLOCK_LEN EQU BLOCK_END-BLOCK_RUN
+        AFTER:  NOP
+                ASSERT AFTER = BLOCK_LOAD+BLOCK_LEN
+            "#,
+        0,
+    )
+    .unwrap();
+
+    assert_eq!(program.symbols["BLOCK_LOAD"], 0x800E);
+    assert_eq!(program.symbols["BLOCK_RUN"], 0x2000);
+    assert_eq!(program.symbols["LOOP"], 0x2003);
+    assert_eq!(program.symbols["DATA"], 0x2005);
+    assert_eq!(program.symbols["BLOCK_LEN"], 6);
+    assert_eq!(program.symbols["AFTER"], 0x8014);
+    assert_eq!(program.next_addr, 0x8015);
+
+    // One contiguous segment at the load address.
+    assert_eq!(program.segments.len(), 1);
+    assert_eq!(program.segments[0].addr, 0x8000);
+    assert_eq!(
+        program.bytes[0x0E..],
+        [
+            0x3A, 0x05, 0x20, // LD A,(2005H)
+            0x18, 0xFE, // JR LOOP, relative to the run address
+            0x05, // DB $-BLOCK_RUN
+            0x00, // NOP after DEPHASE
+        ]
+    );
+
+    let block: Vec<_> = program
+        .lines
+        .iter()
+        .map(|line| (line.addr, line.run_addr))
+        .collect();
+    assert_eq!(block[0], (0x8000, 0x8000));
+    assert_eq!(block[5], (0x800E, 0x2000));
+    assert_eq!(block[7], (0x8013, 0x2005));
+    assert_eq!(block[8], (0x8014, 0x8014));
+}
+
+#[test]
+fn phase_reports_structure_errors() {
+    let err = assemble_program("PHASE 2000H\nNOP\n", 0).unwrap_err();
+    assert_eq!(err.to_string(), "line 1: PHASE without DEPHASE");
+
+    let err = assemble_program("NOP\nDEPHASE\n", 0).unwrap_err();
+    assert_eq!(err.to_string(), "line 2: DEPHASE without PHASE");
+
+    let err = assemble_program("PHASE 2000H\nPHASE 3000H\nDEPHASE\n", 0).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "line 2: PHASE inside PHASE; the block from line 1 has no DEPHASE"
+    );
+
+    let err = assemble_program("PHASE 2000H\nORG 3000H\nDEPHASE\n", 0).unwrap_err();
+    assert!(err.to_string().starts_with("line 2: ORG inside PHASE"));
+
+    let err = assemble_program("PHASE 2000H\nBASIC_START\nDEPHASE\n", 0).unwrap_err();
+    assert_eq!(err.to_string(), "line 2: BASIC_START inside PHASE");
+
+    let err = assemble_program("PHASE\n", 0).unwrap_err();
+    assert_eq!(err.to_string(), "line 1: PHASE requires a run address");
+
+    let err = assemble_program("PHASE LATER\nDEPHASE\nLATER EQU 2000H\n", 0).unwrap_err();
+    assert_eq!(err.to_string(), "line 1: unknown symbol 'LATER'");
+}
+
+#[test]
+fn phase_labels_on_the_directive_lines() {
+    // A label on PHASE is the load address; one on DEPHASE is the run address
+    // just past the block.
+    let program = assemble_program(
+        "ORG 8000H\nLOAD: PHASE 0C000H\nNOP\nNOP\nRUN_END: DEPHASE\nNEXT: NOP\n",
+        0,
+    )
+    .unwrap();
+    assert_eq!(program.symbols["LOAD"], 0x8000);
+    assert_eq!(program.symbols["RUN_END"], 0xC002);
+    assert_eq!(program.symbols["NEXT"], 0x8002);
+}

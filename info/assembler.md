@@ -156,6 +156,7 @@ Supported directives:
 | `DS`, `DEFS` | `DS count[, fill]` | Emits `count` bytes, filled with zero or `fill`. |
 | `REPT`, `ENDR` | `REPT count[, counter]` … `ENDR` | Assembles the enclosed lines `count` times. See [Repetition](#repetition). |
 | `ASSERT` | `ASSERT condition[, "message"]` | Fails assembly when the condition is false. See [Assertions](#assertions). |
+| `PHASE`, `DEPHASE` | `PHASE address` … `DEPHASE` | Assembles the enclosed code for a run address while its bytes stay at the load address. See [Assembling for a Run Address](#assembling-for-a-run-address). |
 
 String literals in `DB`/`DEFB` must be ASCII. Supported escapes are `\0`, `\n`,
 `\r`, `\t`, `\\`, `\"`, and `\'`.
@@ -208,6 +209,44 @@ LINE_END:
 - The error names the line, the message (or the condition when there is no
   message), and the values compared, for example
   `line 9: assertion failed: copy loop changed size (left is 13, right is 12)`.
+
+## Assembling for a Run Address
+
+Code that is copied before it runs can be assembled where it runs while its
+bytes stay where they are loaded. `PHASE address` starts such a block and
+`DEPHASE` ends it:
+
+```asm
+        ORG 8000H
+COPY:   LD HL,SUPPORT_LOAD
+        LD DE,SUPPORT_RUN
+        LD BC,SUPPORT_LEN
+        LDIR
+        JP SUPPORT_RUN
+
+SUPPORT_LOAD:
+        PHASE 21BCH
+SUPPORT_RUN:
+        LD A,(FLAGS)        ; FLAGS is a 21BCH-based address
+        ...
+FLAGS:  DB 0
+SUPPORT_END:
+        DEPHASE
+SUPPORT_LEN EQU SUPPORT_END-SUPPORT_RUN
+```
+
+- Inside the block, `$` and every label are run addresses. The bytes go on
+  at the load address, in the same output segment as the code around them.
+- After `DEPHASE`, assembly continues at the load address just past the
+  block: in the example, the byte after `FLAGS`.
+- A label on the `PHASE` line is the load address of the block; a label on
+  the `DEPHASE` line is the run address just past it.
+- The run address may use symbols defined above the `PHASE` line only.
+- `PHASE` cannot nest. `ORG` and `BASIC_START` inside a block, `DEPHASE`
+  without `PHASE`, and a `PHASE` with no `DEPHASE` are errors.
+- `label@map` applies to the run address, like any other label value.
+- In the TOML `[[lines]]` table, lines inside the block have
+  `run_addr` next to `addr`, which stays the load address.
 
 ## Expressions
 
@@ -367,7 +406,7 @@ Fields:
 | `segments` | Addressed byte ranges. Multiple ranges appear when source uses non-contiguous `ORG` values. |
 | `symbols` | Uppercase symbol names mapped to 16-bit values. |
 | `mappings` | Named `ORG` transformations with `name`, `source_base`, and `mapped_base`. |
-| `lines` | Emitted source lines with source line number, output address, and byte length. |
+| `lines` | Emitted source lines with source line number, output address (`addr`), byte length, and `run_addr` when the line is inside a `PHASE` block. |
 
 `segments[].bytes` is the canonical data for loaders. `segments[].len` must
 match the length of `segments[].bytes`.

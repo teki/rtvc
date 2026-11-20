@@ -554,6 +554,7 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                                 serde_json::json!({
                                     "line": line.line,
                                     "addr": line.addr,
+                                    "run_addr": line.run_addr,
                                     "len": line.len,
                                     "source": line.source
                                 })

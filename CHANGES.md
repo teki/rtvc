@@ -7,6 +7,8 @@ Release notes start here. Older release history is intentionally not backfilled.
 - rtvc-asm expressions have C operator precedence, parentheses, `*`, `/`,
   `%`, `<<`, `>>`, `&`, `|`, `^`, `~`, `!`, and `LOW()`/`HIGH()`, so sizes
   like `GLYPHS*64` no longer have to be written out by hand.
+- rtvc-asm `PHASE address` … `DEPHASE` assembles code for the address it
+  runs at after being copied, while its bytes stay at the load address.
 - rtvc-asm reports source errors as `file:line: message`, which editors can
   jump to, instead of `rtvc-asm: line N: message`.
 - The Gamebase details pane shows a Web link that opens and starts the

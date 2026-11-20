@@ -137,6 +137,7 @@ tartalmazhat, de nem kezdődhet számjeggyel.
 | `DS`, `DEFS` | `DS darab[, kitöltés]` | Nulla vagy a megadott értékű kitöltőbájtokat ír ki. |
 | `REPT`, `ENDR` | `REPT darab[, számláló]` … `ENDR` | A közrezárt sorokat `darab`-szor fordítja le. Lásd: [Ismétlés](#ismétlés). |
 | `ASSERT` | `ASSERT feltétel[, "üzenet"]` | Hibával leállítja a fordítást, ha a feltétel hamis. Lásd: [Ellenőrzések](#ellenőrzések). |
+| `PHASE`, `DEPHASE` | `PHASE cím` … `DEPHASE` | A közrezárt kódot futási címre fordítja, a bájtok a betöltési címen maradnak. Lásd: [Fordítás futási címre](#fordítás-futási-címre). |
 
 A `DB`/`DEFB` szövegliteráljai csak ASCII karaktereket tartalmazhatnak. Az
 érvényes escape-ek: `\0`, `\n`, `\r`, `\t`, `\\`, `\"` és `\'`.
@@ -191,6 +192,46 @@ LINE_END:
   feltételt) és az összehasonlított értékeket, például
   `line 9: assertion failed: megváltozott a másolóciklus mérete (left is
   13, right is 12)`.
+
+## Fordítás futási címre
+
+A futás előtt átmásolt kód a futási címére fordítható, miközben a bájtjai a
+betöltési címen maradnak. A blokkot a `PHASE cím` kezdi és a `DEPHASE`
+zárja:
+
+```asm
+        ORG 8000H
+COPY:   LD HL,SUPPORT_LOAD
+        LD DE,SUPPORT_RUN
+        LD BC,SUPPORT_LEN
+        LDIR
+        JP SUPPORT_RUN
+
+SUPPORT_LOAD:
+        PHASE 21BCH
+SUPPORT_RUN:
+        LD A,(FLAGS)        ; a FLAGS 21BCH-hoz képest számított cím
+        ...
+FLAGS:  DB 0
+SUPPORT_END:
+        DEPHASE
+SUPPORT_LEN EQU SUPPORT_END-SUPPORT_RUN
+```
+
+- A blokkon belül a `$` és minden címke futási cím. A bájtok a betöltési
+  címen folytatódnak, a környező kóddal azonos kimeneti szegmensben.
+- A `DEPHASE` után a fordítás a blokk utáni betöltési címen folytatódik: a
+  példában a `FLAGS` utáni bájton.
+- A `PHASE` sor címkéje a blokk betöltési címe, a `DEPHASE` sor címkéje a
+  blokk utáni futási cím.
+- A futási cím csak a `PHASE` sor fölött definiált szimbólumokat
+  használhatja.
+- A `PHASE` nem ágyazható egymásba. Hiba a blokkon belüli `ORG` és
+  `BASIC_START`, a `PHASE` nélküli `DEPHASE` és a lezáratlan `PHASE`.
+- A `címke@leképezés` a futási címre vonatkozik, mint bármely más
+  címkeérték.
+- A TOML `[[lines]]` táblában a blokk sorainál az `addr` (betöltési cím)
+  mellett `run_addr` is szerepel.
 
 ## Kifejezések
 
@@ -336,7 +377,7 @@ bytes = [
 | `segments` | Címzett bájttartományok; nem folytonos `ORG` esetén több elem. |
 | `symbols` | Nagybetűs szimbólumnevek és 16 bites értékeik. |
 | `mappings` | Az `ORG` sorok névvel ellátott leképezései: `name`, `source_base`, `mapped_base`. |
-| `lines` | A kibocsátott forrássorok sorszáma, címe és bájthossza. |
+| `lines` | A kibocsátott forrássorok sorszáma, címe (`addr`), bájthossza, és `PHASE` blokkon belül a futási cím (`run_addr`). |
 
 A betöltők számára a `segments[].bytes` a mérvadó adat. A `segments[].len`
 értékének egyeznie kell a bájttömb hosszával.

@@ -80,7 +80,10 @@ pub struct AssembledSegment {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssembledLine {
     pub line: usize,
+    /// Address the bytes are loaded at.
     pub addr: u16,
+    /// Address the bytes run at: `addr` except inside `PHASE`.
+    pub run_addr: u16,
     pub len: usize,
     pub source: String,
 }
@@ -117,6 +120,8 @@ enum Statement {
         counter: Option<String>,
     },
     Endr,
+    Phase(String),
+    Dephase,
     Assert {
         condition: String,
         message: Option<String>,
@@ -208,7 +213,11 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
     let mut symbols = BTreeMap::new();
     let mut mappings = Vec::new();
     let mut mappings_by_name = BTreeMap::new();
+    // `pc` is the address code runs at, which labels and `$` see; `load` is
+    // where its bytes go. They differ only between PHASE and DEPHASE.
     let mut pc = origin;
+    let mut load = origin;
+    let mut phase_line = None;
     let mut index = 0;
     let mut repeated_lines = 0usize;
 
@@ -264,8 +273,15 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
                 address,
                 mappings: declarations,
             } => {
+                if phase_line.is_some() {
+                    return Err(line_error(
+                        line.line_no,
+                        AsmError::new("ORG inside PHASE; end the block with DEPHASE first"),
+                    ));
+                }
                 pc = eval_word(address, pc, &symbols, &mappings_by_name, false, 0)
                     .map_err(|err| line_error(line.line_no, err))?;
+                load = pc;
                 for (name, mapped_address) in declarations {
                     if mappings_by_name.contains_key(name) {
                         return Err(line_error(
@@ -286,6 +302,13 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
                 }
             }
             Statement::BasicStart => {
+                if phase_line.is_some() {
+                    return Err(line_error(
+                        line.line_no,
+                        AsmError::new("BASIC_START inside PHASE"),
+                    ));
+                }
+                load = TVC_BASIC_USR_ENTRY;
                 insert_symbol(
                     &mut symbols,
                     "BASIC_START",
@@ -300,15 +323,20 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
                 insert_symbol(&mut symbols, label, value, line.line_no)?;
             }
             Statement::Bytes(values) => {
-                pc = pc.wrapping_add(byte_values_len(values)? as u16);
+                let len = byte_values_len(values)? as u16;
+                pc = pc.wrapping_add(len);
+                load = load.wrapping_add(len);
             }
             Statement::Words(values) => {
-                pc = pc.wrapping_add(values.len().wrapping_mul(2) as u16);
+                let len = values.len().wrapping_mul(2) as u16;
+                pc = pc.wrapping_add(len);
+                load = load.wrapping_add(len);
             }
             Statement::Space { count, .. } => {
                 let count = eval_nonnegative(count, pc, &symbols, &mappings_by_name, false, 0)
                     .map_err(|err| line_error(line.line_no, err))?;
                 pc = pc.wrapping_add(count as u16);
+                load = load.wrapping_add(count as u16);
             }
             Statement::Instruction(statement) => {
                 let rendered = render_instruction(statement, pc, &symbols, &mappings_by_name, true)
@@ -316,6 +344,29 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
                 let bytes =
                     assemble_line(&rendered, pc).map_err(|err| line_error(line.line_no, err))?;
                 pc = pc.wrapping_add(bytes.len() as u16);
+                load = load.wrapping_add(bytes.len() as u16);
+            }
+            Statement::Phase(address) => {
+                if let Some(start) = phase_line {
+                    return Err(line_error(
+                        line.line_no,
+                        AsmError::new(format!(
+                            "PHASE inside PHASE; the block from line {start} has no DEPHASE"
+                        )),
+                    ));
+                }
+                pc = eval_word(address, pc, &symbols, &mappings_by_name, false, 0)
+                    .map_err(|err| line_error(line.line_no, err))?;
+                phase_line = Some(line.line_no);
+            }
+            Statement::Dephase => {
+                if phase_line.take().is_none() {
+                    return Err(line_error(
+                        line.line_no,
+                        AsmError::new("DEPHASE without PHASE"),
+                    ));
+                }
+                pc = load;
             }
             Statement::Assert { .. } => {}
             Statement::Endr => {
@@ -324,24 +375,39 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
             Statement::Rept { .. } => unreachable!("REPT blocks are expanded above"),
         }
     }
+    if let Some(start) = phase_line {
+        return Err(line_error(start, AsmError::new("PHASE without DEPHASE")));
+    }
 
     let mut bytes = Vec::new();
     let mut segments = Vec::new();
     let mut lines = Vec::new();
     pc = origin;
+    load = origin;
 
     for line in &parsed {
-        let addr = pc;
+        let (addr, run_addr) = (load, pc);
         let emitted = match &line.statement {
             Statement::Empty => Vec::new(),
             Statement::Org { address, .. } => {
                 pc = eval_word(address, pc, &symbols, &mappings_by_name, false, 0)
                     .map_err(|err| line_error(line.line_no, err))?;
+                load = pc;
                 Vec::new()
             }
             Statement::BasicStart => {
                 pc = TVC_BASIC_LOAD_ADDR;
+                load = TVC_BASIC_LOAD_ADDR;
                 tvc_basic_start_bytes()
+            }
+            Statement::Phase(address) => {
+                pc = eval_word(address, pc, &symbols, &mappings_by_name, false, 0)
+                    .map_err(|err| line_error(line.line_no, err))?;
+                Vec::new()
+            }
+            Statement::Dephase => {
+                pc = load;
+                Vec::new()
             }
             Statement::Equ { .. } => Vec::new(),
             Statement::Bytes(values) => emit_byte_values(values, pc, &symbols, &mappings_by_name)
@@ -388,20 +454,22 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
         };
 
         if !emitted.is_empty() {
-            emit_segment(&mut segments, pc, &emitted);
+            emit_segment(&mut segments, load, &emitted);
             bytes.extend_from_slice(&emitted);
-            let line_addr = if matches!(line.statement, Statement::BasicStart) {
-                TVC_BASIC_LOAD_ADDR
+            let (line_addr, line_run_addr) = if matches!(line.statement, Statement::BasicStart) {
+                (TVC_BASIC_LOAD_ADDR, TVC_BASIC_LOAD_ADDR)
             } else {
-                addr
+                (addr, run_addr)
             };
             lines.push(AssembledLine {
                 line: line.line_no,
                 addr: line_addr,
+                run_addr: line_run_addr,
                 len: emitted.len(),
                 source: line.source.clone(),
             });
             pc = pc.wrapping_add(emitted.len() as u16);
+            load = load.wrapping_add(emitted.len() as u16);
         }
     }
 
@@ -528,6 +596,18 @@ fn parse_statement(source: &str, labels: &[String]) -> Result<Statement, AsmErro
                 return Err(AsmError::new("ENDR takes no operands"));
             }
             Ok(Statement::Endr)
+        }
+        "PHASE" => {
+            if rest.trim().is_empty() {
+                return Err(AsmError::new("PHASE requires a run address"));
+            }
+            Ok(Statement::Phase(rest.trim().to_string()))
+        }
+        "DEPHASE" => {
+            if !rest.trim().is_empty() {
+                return Err(AsmError::new("DEPHASE takes no operands"));
+            }
+            Ok(Statement::Dephase)
         }
         "ASSERT" => {
             let operands = split_operands(rest)?;
