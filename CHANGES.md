@@ -4,6 +4,9 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+- rtvc-asm local labels: `.loop` belongs to the last global label and is
+  stored as `GLOBAL.LOOP`, so each routine can reuse short names. Inside
+  `REPT`, each copy gets its own local labels.
 - rtvc-asm `SIN()`, `COS()`, `MIN()`, `MAX()` and `ABS()` compute values in
   expressions; with `REPT` they build lookup tables such as a sine wave.
 - rtvc-asm `--format cas` runs a program assembled at any `ORG` from

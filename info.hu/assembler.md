@@ -135,6 +135,31 @@ A címkék `név:` alakúak és nem érzékenyek a kis- és nagybetűkre; tárol
 nagybetűssé válnak. A név ASCII betűt, számjegyet, `_` és `.` karaktert
 tartalmazhat, de nem kezdődhet számjeggyel.
 
+A `.` karakterrel kezdődő címke helyi: a fölötte álló utolsó globális
+címkéhez tartozik, vagyis az utolsó olyan `név:` címkéhez, amelynek neve nem
+`.` karakterrel kezdődik. Tárolt neve `GLOBÁLIS.HELYI`, és a kifejezésben
+írt `.helyi` ugyanezt a nevet jelenti, így minden rutinnak lehet saját
+`.loop` címkéje. Máshonnan a teljes névvel hivatkozható:
+
+```asm
+CLEAR:  LD B,0
+.loop:  LD (HL),A           ; CLEAR.LOOP
+        INC HL
+        DJNZ .loop
+        RET
+FILL:   LD B,C
+.loop:  LD (HL),A           ; FILL.LOOP, egy másik címke
+        ...
+        JP CLEAR.loop
+```
+
+- Az `EQU` konstans nem kezd új hatókört; a `.név EQU érték` helyi
+  konstanst definiál.
+- A fordító a `.név` alakot szövegekben, karakterkonstansokban és
+  megjegyzésekben nem cseréli. A listák a `.név` alakot mutatják, a
+  hibaüzenetek és a szimbólumok a teljes nevet.
+- Az első globális címke előtti helyi címke `.név` alakban marad.
+
 | Direktíva | Alak | Megjegyzés |
 | --- | --- | --- |
 | `ORG` | `ORG kifejezés[, név, leképezett-cím ...]` | Beállítja az aktuális címet; a név/cím párok tartós címleképezéseket definiálnak erről az eredetről. Több `ORG` több kimeneti szegmenst hoz létre. |
@@ -174,9 +199,22 @@ A `REPT darab` … `ENDR` blokk a közrezárt sorokat `darab`-szor fordítja le:
   kihagyja az idézőjeles szövegeket. A számláló nem szimbólum, és nem
   jelenik meg a kimenetben.
 - A `REPT` sor címkéje az első példány címét, az `ENDR` sor címkéje az
-  utolsó példány utáni címet jelöli. A blokkon belüli címke példányonként
-  újra definiálódik, ezért egynél nagyobb darabszámnál ismételt címke
-  hibát ad.
+  utolsó példány utáni címet jelöli. A blokkon belüli globális címke
+  példányonként újra definiálódik, ezért egynél nagyobb darabszámnál
+  ismételt címke hibát ad.
+- A blokkon belül definiált [helyi címke](#forrásformátum) a saját
+  példányához tartozik, így ciklusok is ismételhetők. Egy példányon belül a
+  `.név` a példány saját címkéje; a blokkban nem definiált `.név` a
+  befoglaló rutin címkéje. A példányok neve `GLOBÁLIS._Rn_c.NÉV`, ahol `n` a
+  helyi címkét tartalmazó `REPT` blokkok sorszáma, `c` a példányé:
+
+  ```asm
+  WAIT3:  REPT 3
+          LD B,40
+  .delay: DJNZ .delay         ; WAIT3._R1_0.DELAY, WAIT3._R1_1.DELAY, ...
+          ENDR
+          RET
+  ```
 - Minden példány az eredeti forrássor számát viseli, a hibaüzenetekben és a
   TOML `[[lines]]` táblában is.
 - A kifejtés összesen legfeljebb 1 048 576 sort eredményezhet.

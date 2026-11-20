@@ -152,6 +152,29 @@ Labels use `name:` syntax and are case-insensitive. Stored symbol names are
 uppercase. Valid label characters are ASCII letters, digits, `_`, and `.`; a
 label must start with an ASCII letter, `_`, or `.`.
 
+A label that starts with `.` is local to the last global label above it,
+the last `name:` label whose name does not start with `.`. It is stored as
+`GLOBAL.LOCAL`, and `.local` in an expression means the same name, so each
+routine can have its own `.loop`. From elsewhere, use the full name:
+
+```asm
+CLEAR:  LD B,0
+.loop:  LD (HL),A           ; CLEAR.LOOP
+        INC HL
+        DJNZ .loop
+        RET
+FILL:   LD B,C
+.loop:  LD (HL),A           ; FILL.LOOP, a different label
+        ...
+        JP CLEAR.loop
+```
+
+- An `EQU` constant does not start a new scope; `.name EQU value` defines a
+  local constant.
+- `.name` is not replaced inside strings, character literals, or comments.
+  Listings keep the `.name` spelling; errors and symbols use the full name.
+- A local label before the first global label keeps its `.name`.
+
 Supported directives:
 
 | Directive | Forms | Notes |
@@ -193,9 +216,22 @@ String literals in `DB`/`DEFB` must be ASCII. Supported escapes are `\0`, `\n`,
   whole words, ignores case, and skips double-quoted strings. The counter is
   not a symbol and does not appear in the output.
 - A label on the `REPT` line marks the first copy; a label on the `ENDR` line
-  marks the address after the last copy. A label inside the block is defined
-  once per copy, so it is a duplicate-label error when the count is more than
-  one.
+  marks the address after the last copy. A global label inside the block is
+  defined once per copy, so it is a duplicate-label error when the count is
+  more than one.
+- A [local label](#source-format) defined inside the block belongs to its
+  copy, so loops can be repeated. Within a copy, `.name` means that copy's
+  label; a `.name` the block does not define means the enclosing routine's
+  label. The copies are stored as `GLOBAL._Rn_c.NAME`, where `n` numbers the
+  `REPT` blocks that have local labels and `c` is the copy:
+
+  ```asm
+  WAIT3:  REPT 3
+          LD B,40
+  .delay: DJNZ .delay         ; WAIT3._R1_0.DELAY, WAIT3._R1_1.DELAY, ...
+          ENDR
+          RET
+  ```
 - Each copy keeps the source line number of the original line, both in error
   messages and in the TOML `[[lines]]` table.
 - Expansion is limited to 1,048,576 lines in total.

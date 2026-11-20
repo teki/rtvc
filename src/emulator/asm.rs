@@ -313,8 +313,22 @@ pub fn assemble_program_with(
     let mut phase_line: Option<ParsedLine> = None;
     let mut index = 0;
     let mut repeated_lines = 0usize;
+    // The last global label, which `.local` labels belong to.
+    let mut scope = String::new();
+    let mut rept_blocks = 0usize;
 
     while index < parsed.len() {
+        if let Some(global) = parsed[index]
+            .labels
+            .iter()
+            .rev()
+            .find(|label| !label.starts_with('.'))
+        {
+            scope = global.clone();
+        }
+        if let Some(scoped) = scope_locals(&parsed[index], &scope)? {
+            parsed[index] = scoped;
+        }
         // A REPT block is expanded when pass 1 reaches it, so its count may use
         // any symbol defined above it. The copies are then assembled in turn.
         if let Statement::Rept { count, counter } = &parsed[index].statement {
@@ -326,6 +340,10 @@ pub fn assemble_program_with(
             let counter = counter.clone();
             let end = matching_endr(&parsed, index)?;
             let body = &parsed[index + 1..end];
+            let locals = rept_locals(body);
+            if !locals.is_empty() {
+                rept_blocks += 1;
+            }
             repeated_lines = repeated_lines.saturating_add(count.saturating_mul(body.len()));
             if repeated_lines > MAX_REPT_LINES {
                 return Err(parsed[index].error(AsmError::new(format!(
@@ -335,11 +353,25 @@ pub fn assemble_program_with(
             let mut expansion = Vec::with_capacity(count * body.len() + 1);
             for copy in 0..count {
                 for line in body {
-                    expansion.push(match &counter {
-                        Some(name) => {
+                    let mut source = match &counter {
+                        Some(name) => Some(substitute_symbol(&line.source, name, copy)),
+                        None => None,
+                    };
+                    // Labels the body defines belong to this copy.
+                    if !locals.is_empty() {
+                        let text = source.as_deref().unwrap_or(&line.source);
+                        let prefix = format!("._R{rept_blocks}_{copy}");
+                        if let Some(renamed) = rewrite_locals(text, |name| {
+                            locals.contains(name).then(|| format!("{prefix}{name}"))
+                        }) {
+                            source = Some(renamed);
+                        }
+                    }
+                    expansion.push(match source {
+                        Some(source) => {
                             let mut copy = parse_program_line(
                                 line.line_no,
-                                &substitute_symbol(&line.source, name, copy),
+                                &source,
                                 line.file,
                                 line.file_name.clone(),
                             )?;
@@ -1014,6 +1046,105 @@ fn matching_endr(lines: &[ParsedLine], start: usize) -> Result<usize, AsmError> 
         }
     }
     Err(lines[start].error(AsmError::new("REPT without ENDR")))
+}
+
+/// Local labels (`.name`) a `REPT` body defines outside nested blocks.
+fn rept_locals(body: &[ParsedLine]) -> BTreeSet<String> {
+    let mut locals = BTreeSet::new();
+    let mut depth = 0usize;
+    for line in body {
+        if matches!(line.statement, Statement::Endr) {
+            depth = depth.saturating_sub(1);
+        }
+        if depth == 0 {
+            let equ = match &line.statement {
+                Statement::Equ { label, .. } => Some(label),
+                _ => None,
+            };
+            for label in line.labels.iter().chain(equ) {
+                if label.starts_with('.') {
+                    locals.insert(label.clone());
+                }
+            }
+        }
+        if matches!(line.statement, Statement::Rept { .. }) {
+            depth += 1;
+        }
+    }
+    locals
+}
+
+/// Rewrite the line's `.local` labels and references as `SCOPE.LOCAL`.
+/// Returns `None` when the line has none. The source text shown in listings
+/// keeps the `.local` spelling.
+fn scope_locals(line: &ParsedLine, scope: &str) -> Result<Option<ParsedLine>, AsmError> {
+    let Some(text) = rewrite_locals(&line.source, |name| Some(format!("{scope}{name}"))) else {
+        return Ok(None);
+    };
+    let mut scoped = parse_program_line(line.line_no, &text, line.file, line.file_name.clone())?;
+    keep_loaded_files(&line.statement, &mut scoped.statement);
+    if line.statement == Statement::Empty {
+        // An `ENDR` kept only for its labels.
+        scoped.statement = Statement::Empty;
+    }
+    scoped.source = line.source.clone();
+    Ok(Some(scoped))
+}
+
+/// Replace each `.name` word in the code part of `source` (not in strings,
+/// character literals, or the comment) by what `map` returns for its
+/// upper-case spelling. Returns `None` when nothing changed.
+fn rewrite_locals(source: &str, mut map: impl FnMut(&str) -> Option<String>) -> Option<String> {
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.';
+    let mut out = String::with_capacity(source.len());
+    let mut changed = false;
+    let mut quote = None;
+    let mut prev = ' ';
+    let mut rest = source;
+    while let Some(ch) = rest.chars().next() {
+        if let Some(quote_ch) = quote {
+            out.push(ch);
+            rest = &rest[ch.len_utf8()..];
+            if ch == '\\' {
+                if let Some(escaped) = rest.chars().next() {
+                    out.push(escaped);
+                    rest = &rest[escaped.len_utf8()..];
+                }
+            } else if ch == quote_ch {
+                quote = None;
+            }
+            prev = ch;
+            continue;
+        }
+        if ch == ';' {
+            out.push_str(rest);
+            break;
+        }
+        // `'` after a word character is `AF'`, not a quote.
+        if ch == '"' || (ch == '\'' && !is_word(prev)) {
+            quote = Some(ch);
+        }
+        if is_word(ch) {
+            let len = rest.find(|ch: char| !is_word(ch)).unwrap_or(rest.len());
+            let word = &rest[..len];
+            let local = word.starts_with('.')
+                && word[1..].starts_with(|ch: char| ch.is_ascii_alphabetic() || ch == '_');
+            match local.then(|| map(&word.to_ascii_uppercase())).flatten() {
+                Some(replacement) => {
+                    out.push_str(&replacement);
+                    changed = true;
+                }
+                None => out.push_str(word),
+            }
+            prev = word.chars().last().unwrap_or(ch);
+            rest = &rest[len..];
+            continue;
+        }
+        out.push(ch);
+        prev = ch;
+        rest = &rest[ch.len_utf8()..];
+    }
+    changed.then_some(out)
 }
 
 /// Keep an `ENDR` line's labels, which mark the address after the block.

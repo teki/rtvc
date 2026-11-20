@@ -573,6 +573,96 @@ fn table_functions_compute_values() {
 }
 
 #[test]
+fn local_labels_belong_to_the_last_global_label() {
+    let program = assemble_program(
+        "\
+ORG 8000H
+FIRST:  LD B,2
+.loop:  DJNZ .loop
+        JR .done
+.done:  RET
+SECOND: LD B,3
+.loop:  DJNZ .Loop      ; case-insensitive
+        JP FIRST.done
+.x      EQU 5
+        DB .x, '.', \".loop\"
+",
+        0,
+    )
+    .unwrap();
+    assert_eq!(program.symbols["FIRST.LOOP"], 0x8002);
+    assert_eq!(program.symbols["FIRST.DONE"], 0x8006);
+    assert_eq!(program.symbols["SECOND.LOOP"], 0x8009);
+    assert_eq!(program.symbols["SECOND.X"], 5);
+    assert_eq!(
+        program.bytes,
+        [
+            0x06, 0x02, 0x10, 0xFE, 0x18, 0x00, 0xC9, // FIRST
+            0x06, 0x03, 0x10, 0xFE, 0xC3, 0x06, 0x80, // SECOND
+            0x05, b'.', b'.', b'l', b'o', b'o', b'p',
+        ]
+    );
+    // Listings keep the source spelling.
+    assert!(
+        program
+            .lines
+            .iter()
+            .any(|line| line.source.contains(".loop:  DJNZ .loop"))
+    );
+    assert!(
+        !program
+            .lines
+            .iter()
+            .any(|line| line.source.contains("FIRST.LOOP"))
+    );
+
+    let err = assemble_program("A: NOP\nB: JR .missing\n", 0).unwrap_err();
+    assert_eq!(err.message(), "unknown symbol 'B.MISSING'");
+    let err = assemble_program("A:\n.x: NOP\n.x: NOP\n", 0).unwrap_err();
+    assert_eq!(err.message(), "duplicate label 'A.X'");
+    // EX AF,AF' is not a character literal.
+    assemble_program("A: EX AF,AF'\n.x: JR .x\n", 0).unwrap();
+}
+
+#[test]
+fn rept_copies_have_their_own_local_labels() {
+    let program = assemble_program(
+        "\
+ORG 8000H
+MAIN:   REPT 2
+        LD B,4
+.wait:  DJNZ .wait
+        JR .out
+        ENDR
+.out:   RET
+",
+        0,
+    )
+    .unwrap();
+    assert_eq!(
+        program.bytes,
+        [
+            0x06, 0x04, 0x10, 0xFE, 0x18, 0x06, // copy 0, JR .out
+            0x06, 0x04, 0x10, 0xFE, 0x18, 0x00, // copy 1
+            0xC9,
+        ]
+    );
+    assert_eq!(program.symbols["MAIN._R1_0.WAIT"], 0x8002);
+    assert_eq!(program.symbols["MAIN._R1_1.WAIT"], 0x8008);
+    assert_eq!(program.symbols["MAIN.OUT"], 0x800C);
+
+    // Nested blocks and a counter.
+    let program = assemble_program(
+        "ORG 0\nT:\nREPT 2, I\nREPT 2\n.l: DB I\nENDR\n.e: DB 0FFH\nENDR\n",
+        0,
+    )
+    .unwrap();
+    assert_eq!(program.bytes, [0, 0, 0xFF, 1, 1, 0xFF]);
+    assert_eq!(program.symbols["T._R1_0.E"], 2);
+    assert_eq!(program.symbols["T._R1_1.E"], 5);
+}
+
+#[test]
 fn expressions_work_in_operands_and_directives() {
     let program = assemble_program(
         r#"

@@ -4,9 +4,10 @@ Plan: [rtvc-asm-workflow-improvements.md](rtvc-asm-workflow-improvements.md)
 
 ## Status
 
-Items 1–7 are done: full expressions, file-aware errors, `PHASE`/`DEPHASE`,
-`INCLUDE`/`INCBIN`/`IMPORT`, `BREAK`, runnable CAS output for any `ORG`, and
-table functions. Items 8–10 are not started. Next: item 8, local labels.
+Items 1–8 are done: full expressions, file-aware errors, `PHASE`/`DEPHASE`,
+`INCLUDE`/`INCBIN`/`IMPORT`, `BREAK`, runnable CAS output for any `ORG`,
+table functions, and local labels. Items 9–10 are not started. Next: item 9,
+`STRUCT`.
 
 ## Completed
 
@@ -61,8 +62,24 @@ table functions. Items 8–10 are not started. Next: item 8, local labels.
 - Item 7: `ExprParser::parse_function` takes comma-separated arguments
   (`split_operands` already keeps commas inside parentheses) and checks
   each function's argument count. `SIN`/`COS` go through `wave`.
+- Item 8: pass 1 tracks `scope`, the last colon label not starting with
+  `.`. `scope_locals` rewrites `.name` words in a line's source
+  (`rewrite_locals` skips strings, character literals, and the comment) to
+  `SCOPE.NAME`, re-parses it, and restores the original `source` for
+  listings. `REPT` expansion first renames the locals its body defines
+  (`rept_locals`, outside nested blocks) to `._Rn_c.NAME` per copy; the
+  scope rewrite then prefixes the global label.
 
 ## Decisions
+
+- Item 8: `EQU` does not set the scope, so constants between a routine's
+  lines keep its locals reachable. A `'` after a word character is `AF'`,
+  not a character literal. Locals before any global label keep `.NAME`.
+  `REPT` copy names are stored in the symbol table, so the debugger sees
+  them.
+- Item 8: renamed `REPT` copies keep the renamed text in `source`, like
+  counter copies keep the substituted text, because a nested `REPT` is
+  re-parsed from it.
 
 - Item 7: `wave` reduces the angle with `rem_euclid` before using `f64`,
   then snaps the product to 1e-9 before rounding half away from zero.
@@ -125,6 +142,15 @@ table functions. Items 8–10 are not started. Next: item 8, local labels.
   reader to `rtvc-tocas` if it is needed.
 - The debugger `asmfile` command sends source text only; sending its path
   so the debugger can resolve includes is still open.
+
+## Validation (item 8)
+
+- `cargo test --lib asm`: 47 passed (2 new: scopes, case, `EQU` locals,
+  strings, `AF'`, errors with full names, `REPT` copies with nesting and a
+  counter). No source in `coding/`, `info/c80/out/`, `roms/`, or `tvc-ports`
+  starts a label or operand word with `.` (re-checked 2026-11-21).
+- `cargo test --lib`: 288 passed; CLI, C80, and ROM listings ok. Old and
+  new `rtvc-asm` give identical TOML and CAS output for all 55 sources.
 
 ## Validation (item 7)
 
