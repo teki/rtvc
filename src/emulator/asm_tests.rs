@@ -894,3 +894,56 @@ MAIN_ENTRY = 0x2000
             .starts_with("line 1: cannot import 'bad.toml'")
     );
 }
+
+#[test]
+fn break_records_debugger_breakpoints_at_run_addresses() {
+    let files = MemFiles::new(&[("loop.inc", b" BREAK\n NOP\n")]);
+    let program = assemble_with(
+        "BREAK\nSTART: LD A,1\nPHASE 2000H\nRUN: BREAK\n NOP\nDEPHASE\nREPT 2\nBREAK\nNOP\nENDR\nINCLUDE \"loop.inc\"\n",
+        &files,
+    )
+    .unwrap();
+    let marks: Vec<_> = program
+        .breakpoints
+        .iter()
+        .map(|mark| (mark.addr, mark.file, mark.line))
+        .collect();
+    assert_eq!(
+        marks,
+        [
+            (0x8000, 0, 1),
+            (0x2000, 0, 4), // the run address inside PHASE
+            (0x8003, 0, 8),
+            (0x8004, 0, 8),
+            (0x8005, 1, 1),
+        ]
+    );
+    // BREAK emits nothing.
+    assert_eq!(program.bytes, vec![0x3E, 0x01, 0x00, 0x00, 0x00, 0x00]);
+
+    let err = assemble_program("BREAK 1\n", 0).unwrap_err();
+    assert_eq!(err.to_string(), "line 1: BREAK takes no operands");
+}
+
+#[test]
+fn toml_reader_keeps_breakpoints() {
+    let program = parse_rtvc_asm_v1(
+        "format = \"rtvc-asm-v1\"\norigin = 0x8000\nnext_addr = 0x8001\n\n[[breakpoints]]\naddr = 0x8000\nline = 3\n\n[[breakpoints]]\naddr = 0x9000\nfile = 2\nline = 7\n",
+    )
+    .unwrap();
+    assert_eq!(
+        program.breakpoints,
+        [
+            AsmBreakpoint {
+                addr: 0x8000,
+                file: 0,
+                line: 3
+            },
+            AsmBreakpoint {
+                addr: 0x9000,
+                file: 2,
+                line: 7
+            },
+        ]
+    );
+}

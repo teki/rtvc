@@ -18,6 +18,7 @@ struct Options {
     format: OutputFormat,
     defines: BTreeMap<String, String>,
     include_dirs: Vec<PathBuf>,
+    no_breakpoints: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,8 +79,11 @@ fn run() -> Result<(), CliError> {
         include_dirs: &options.include_dirs,
         defines: &options.defines,
     };
-    let assembled = assemble_program_with(&source, options.origin, &source_name, Some(&files))
+    let mut assembled = assemble_program_with(&source, options.origin, &source_name, Some(&files))
         .map_err(|err| CliError::Source(err.display_in(&source_name)))?;
+    if options.no_breakpoints {
+        assembled.breakpoints.clear();
+    }
 
     let output = render_output(&source_name, &options, &assembled)?;
     Ok(write_output(options.output.as_deref(), &output)?)
@@ -92,6 +96,7 @@ fn parse_args(program: &str, args: &[String]) -> Result<Options, String> {
     let mut format = OutputFormat::Toml;
     let mut defines = BTreeMap::new();
     let mut include_dirs = Vec::new();
+    let mut no_breakpoints = false;
     let mut index = 0;
 
     while index < args.len() {
@@ -127,6 +132,7 @@ fn parse_args(program: &str, args: &[String]) -> Result<Options, String> {
                     return Err(format!("duplicate definition '{name}'"));
                 }
             }
+            "--no-breakpoints" => no_breakpoints = true,
             "-I" | "--include-dir" => {
                 index += 1;
                 let value = args
@@ -182,12 +188,13 @@ fn parse_args(program: &str, args: &[String]) -> Result<Options, String> {
         format,
         defines,
         include_dirs,
+        no_breakpoints,
     })
 }
 
 fn usage(program: &str) -> String {
     format!(
-        "usage: {program} [--origin <addr>] [--format toml|cas|bin] [-d NAME=VALUE] [-I <dir>] [-o <output>] <input.asm>\n\
+        "usage: {program} [--origin <addr>] [--format toml|cas|bin] [-d NAME=VALUE] [-I <dir>] [--no-breakpoints] [-o <output>] <input.asm>\n\
          use '-' as input to read source from stdin; omit -o to write output to stdout"
     )
 }
@@ -359,6 +366,16 @@ fn render_toml(
         }
         out.push(format!("len = {}", line.len));
         out.push(format!("source = {}", toml_string(&line.source)));
+    }
+
+    for breakpoint in &assembled.breakpoints {
+        out.push(String::new());
+        out.push("[[breakpoints]]".to_string());
+        out.push(format!("addr = {}", hex16(breakpoint.addr)));
+        if breakpoint.file != 0 {
+            out.push(format!("file = {}", breakpoint.file));
+        }
+        out.push(format!("line = {}", breakpoint.line));
     }
 
     for segment in &assembled.segments {
@@ -607,6 +624,20 @@ mod tests {
         assert_eq!(options.output, Some(PathBuf::from("out.bin")));
         assert_eq!(options.input, Input::Path(PathBuf::from("helper.asm")));
         assert!(options.defines.is_empty());
+    }
+
+    #[test]
+    fn writes_breakpoints_unless_disabled() {
+        let assembled = assemble_program("ORG 8000H\nNOP\nBREAK\nRET\n", 0).unwrap();
+        let toml = render_toml("x.asm", 0, &assembled);
+        assert!(toml.contains("[[breakpoints]]\naddr = 0x8001\nline = 3\n"));
+        let parsed = rtvc_core::asm::parse_rtvc_asm_v1(&toml).unwrap();
+        assert_eq!(parsed.breakpoints, assembled.breakpoints);
+
+        let args = vec!["--no-breakpoints".to_string(), "x.asm".to_string()];
+        assert!(parse_args("rtvc-asm", &args).unwrap().no_breakpoints);
+        let args = vec!["x.asm".to_string()];
+        assert!(!parse_args("rtvc-asm", &args).unwrap().no_breakpoints);
     }
 
     #[test]

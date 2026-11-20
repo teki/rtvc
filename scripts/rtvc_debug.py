@@ -382,7 +382,8 @@ class RtvcShell(cmd.Cmd):
     def do_asmfile(self, arg):
         """Assemble a source file and write it to mapped memory.
         Usage: asmfile <path> [origin]
-        The source may use labels, ORG, EQU, DB/DEFB, DW/DEFW, and DS/DEFS.
+        The source may use the full rtvc-asm language except INCLUDE, INCBIN,
+        and IMPORT. BREAK lines become debugger breakpoints.
         """
         try:
             parts = shlex.split(arg)
@@ -433,11 +434,13 @@ class RtvcShell(cmd.Cmd):
             return
 
         self._print_symbols(resp.get("symbols", {}))
+        self._set_asm_breakpoints(resp.get("breakpoints", []))
         print(f"Assembled {total} byte(s); next address 0x{resp.get('next_addr', origin):04X}.")
 
     def do_loadasm(self, arg):
         """Load rtvc-asm TOML/JSON and write its segments to mapped memory.
         Usage: loadasm <path.toml>
+        BREAK lines in the source become debugger breakpoints.
         """
         try:
             parts = shlex.split(arg)
@@ -463,6 +466,7 @@ class RtvcShell(cmd.Cmd):
             return
 
         self._print_symbols(asm_json.get("symbols", {}))
+        self._set_asm_breakpoints(asm_json.get("breakpoints", []))
         next_addr = asm_json.get("next_addr")
         if isinstance(next_addr, int) and 0 <= next_addr <= 0xFFFF:
             print(f"Loaded {total} byte(s); next address 0x{next_addr:04X}.")
@@ -681,6 +685,25 @@ class RtvcShell(cmd.Cmd):
             }
             ]
         )
+
+    def _set_asm_breakpoints(self, breakpoints):
+        """Add the debugger breakpoints that BREAK lines recorded."""
+        if not isinstance(breakpoints, list):
+            print("Error: breakpoints must be a list.")
+            return
+        added = []
+        for breakpoint in breakpoints:
+            addr = breakpoint.get("addr") if isinstance(breakpoint, dict) else None
+            if not isinstance(addr, int) or not 0 <= addr <= 0xFFFF:
+                print(f"Error: invalid breakpoint {breakpoint!r}.")
+                continue
+            resp = self._send_cmd({"cmd": "breakpoint_add", "addr": addr})
+            if resp and resp.get("status") == "ok":
+                added.append(addr)
+            elif resp:
+                print(f"Error: breakpoint 0x{addr:04X}: {resp.get('message')}")
+        if added:
+            print("Breakpoints set: " + ", ".join(f"0x{addr:04X}" for addr in added))
 
     def _segments_from_asm_json(self, asm_json):
         if not isinstance(asm_json, dict):

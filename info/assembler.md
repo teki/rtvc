@@ -50,6 +50,7 @@ Options:
 | `--origin <addr>` | Initial assembly address before source-level `ORG`; defaults to `0`. |
 | `--format <toml\|cas\|bin>` | Output format; defaults to `toml`. `cas` expects a single `BASIC_START` segment, and `bin` expects one contiguous segment. |
 | `-d <NAME=VALUE>`, `--define <NAME=VALUE>` | Replace `%NAME%` placeholders in assembly code before assembly. Repeat for multiple values; a missing placeholder value is an error. |
+| `--no-breakpoints` | Leave [`BREAK`](#breakpoints) marks out of the output. |
 | `-I <dir>`, `--include-dir <dir>` | Also look for `INCLUDE`, `INCBIN`, and `IMPORT` files in `dir`, after the directory of the file that names them. Repeat for several directories. |
 | `-o <path>`, `--output <path>` | Write output to a file; omitted means stdout. |
 | `-`, as input path | Read source from stdin. |
@@ -133,6 +134,7 @@ loadasm helper.toml
   returned segments to mapped memory.
 - `loadasm` loads `rtvc-asm-v1` TOML from disk and writes every segment to
   mapped memory.
+- Both add the breakpoints that [`BREAK`](#breakpoints) lines recorded.
 
 ## Source Format
 
@@ -165,6 +167,7 @@ Supported directives:
 | `INCLUDE` | `INCLUDE "path"` | Assembles another source file in place. See [Files](#files-include-incbin-and-import). |
 | `INCBIN` | `INCBIN "path"[, offset[, length]]` | Emits the bytes of a file. |
 | `IMPORT` | `IMPORT "module.toml"[, PREFIX]` | Defines the symbols of another module's TOML output. |
+| `BREAK` | `BREAK` | Marks the next instruction as a debugger breakpoint. See [Breakpoints](#breakpoints). |
 
 String literals in `DB`/`DEFB` must be ASCII. Supported escapes are `\0`, `\n`,
 `\r`, `\t`, `\\`, `\"`, and `\'`.
@@ -217,6 +220,26 @@ LINE_END:
 - The error names the line, the message (or the condition when there is no
   message), and the values compared, for example
   `line 9: assertion failed: copy loop changed size (left is 13, right is 12)`.
+
+## Breakpoints
+
+`BREAK` marks the next instruction as a debugger breakpoint. It emits no
+bytes:
+
+```asm
+START:  LD HL,TABLE
+        BREAK               ; stop here when loaded through the debugger
+        LD A,(HL)
+```
+
+- The breakpoint address is the run address at the `BREAK` line, so a
+  `BREAK` inside `PHASE` stops where the copied code runs.
+- Each `BREAK` is listed in the TOML `[[breakpoints]]` table with `addr`,
+  `line`, and `file` for an included file, and in the debugger `assemble`
+  reply.
+- `asmfile` and `loadasm` in the debugger client add these breakpoints
+  after writing the code; `bp list` shows them and `bp rm` removes them.
+- `rtvc-asm --no-breakpoints` leaves them out, for release builds.
 
 ## Files: INCLUDE, INCBIN, and IMPORT
 
@@ -450,6 +473,7 @@ Fields:
 | `segments` | Addressed byte ranges. Multiple ranges appear when source uses non-contiguous `ORG` values. |
 | `symbols` | Uppercase symbol names mapped to 16-bit values. |
 | `mappings` | Named `ORG` transformations with `name`, `source_base`, and `mapped_base`. |
+| `breakpoints` | `BREAK` marks with `addr`, `line`, and `file` when the line is in an included file. Omitted with `--no-breakpoints`. |
 | `lines` | Emitted source lines with source line number, output address (`addr`), byte length, and `run_addr` when the line is inside a `PHASE` block. |
 
 `segments[].bytes` is the canonical data for loaders. `segments[].len` must

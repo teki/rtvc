@@ -104,6 +104,18 @@ pub struct AssembledProgram {
     /// file in the order it was first included. `AssembledLine::file`
     /// indexes this list.
     pub files: Vec<String>,
+    /// Addresses marked with `BREAK`, in source order.
+    pub breakpoints: Vec<AsmBreakpoint>,
+}
+
+/// A `BREAK` mark: a debugger breakpoint at the run address of the next
+/// instruction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AsmBreakpoint {
+    pub addr: u16,
+    /// Index into `AssembledProgram::files`; 0 is the main source.
+    pub file: usize,
+    pub line: usize,
 }
 
 /// A named address transformation captured at an `ORG` declaration.
@@ -171,6 +183,7 @@ enum Statement {
     Endr,
     Phase(String),
     Dephase,
+    Break,
     /// `INCLUDE`, replaced by the included lines when the source is loaded.
     Include(String),
     /// `INCBIN` before its file is read.
@@ -456,7 +469,7 @@ pub fn assemble_program_with(
             Statement::Include(_) | Statement::IncbinFile { .. } | Statement::ImportFile { .. } => {
                 unreachable!("files are read when the source is loaded")
             }
-            Statement::Assert { .. } => {}
+            Statement::Assert { .. } | Statement::Break => {}
             Statement::Endr => {
                 return Err(line.error(AsmError::new("ENDR without REPT")));
             }
@@ -470,6 +483,7 @@ pub fn assemble_program_with(
     let mut bytes = Vec::new();
     let mut segments = Vec::new();
     let mut lines = Vec::new();
+    let mut breakpoints = Vec::new();
     pc = origin;
     load = origin;
 
@@ -508,6 +522,14 @@ pub fn assemble_program_with(
                 data[start..end].to_vec()
             }
             Statement::Import(_) => Vec::new(),
+            Statement::Break => {
+                breakpoints.push(AsmBreakpoint {
+                    addr: pc,
+                    file: line.file,
+                    line: line.line_no,
+                });
+                Vec::new()
+            }
             Statement::Include(_) | Statement::IncbinFile { .. } | Statement::ImportFile { .. } => {
                 unreachable!("files are read when the source is loaded")
             }
@@ -591,6 +613,7 @@ pub fn assemble_program_with(
         lines,
         next_addr: pc,
         files: loader.names,
+        breakpoints,
     })
 }
 
@@ -933,6 +956,12 @@ fn parse_statement(source: &str, labels: &[String]) -> Result<Statement, AsmErro
                 "IMPORT requires a quoted path and an optional name prefix",
             )),
         },
+        "BREAK" => {
+            if !rest.trim().is_empty() {
+                return Err(AsmError::new("BREAK takes no operands"));
+            }
+            Ok(Statement::Break)
+        }
         "PHASE" => {
             if rest.trim().is_empty() {
                 return Err(AsmError::new("PHASE requires a run address"));
@@ -2622,6 +2651,23 @@ pub fn parse_rtvc_asm_v1(text: &str) -> Result<AssembledProgram, String> {
             segments.push(AssembledSegment { addr, bytes });
         }
     }
+    let mut breakpoints = Vec::new();
+    if let Some(rows) = value.get("breakpoints").and_then(|v| v.as_array()) {
+        for (i, row) in rows.iter().enumerate() {
+            let addr = toml_u16(row.get("addr"), &format!("breakpoints[{i}].addr"))?;
+            let index = |key: &str| {
+                row.get(key)
+                    .and_then(|v| v.as_integer())
+                    .and_then(|v| usize::try_from(v).ok())
+                    .unwrap_or(0)
+            };
+            breakpoints.push(AsmBreakpoint {
+                addr,
+                file: index("file"),
+                line: index("line"),
+            });
+        }
+    }
     let flat: Vec<u8> = segments
         .iter()
         .flat_map(|s| s.bytes.iter().copied())
@@ -2635,6 +2681,7 @@ pub fn parse_rtvc_asm_v1(text: &str) -> Result<AssembledProgram, String> {
         lines: Vec::new(),
         next_addr,
         files: Vec::new(),
+        breakpoints,
     })
 }
 

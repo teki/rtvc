@@ -4,9 +4,9 @@ Plan: [rtvc-asm-workflow-improvements.md](rtvc-asm-workflow-improvements.md)
 
 ## Status
 
-Items 1–4 are done: full expressions, file-aware errors, `PHASE`/`DEPHASE`,
-and `INCLUDE`/`INCBIN`/`IMPORT`. Items 5–10 are not started. Next: item 5,
-debugger integration (`BREAK`).
+Items 1–5 are done: full expressions, file-aware errors, `PHASE`/`DEPHASE`,
+`INCLUDE`/`INCBIN`/`IMPORT`, and `BREAK`. Items 6–10 are not started. Next:
+item 6, runnable CAS output for any `ORG`.
 
 ## Completed
 
@@ -44,6 +44,13 @@ debugger integration (`BREAK`).
   `AsmError` gained `file()`; `AssembledProgram` gained `files`,
   `AssembledLine` gained `file`; the TOML writes `files` and `file` only
   when something was included.
+- Item 5: `BREAK` records the run address (`pc`) in pass 2 as an
+  `AsmBreakpoint { addr, file, line }` in `AssembledProgram::breakpoints`.
+  The TOML writes `[[breakpoints]]` (`file` only when nonzero),
+  `parse_rtvc_asm_v1` reads them back, and the debugger `assemble` reply
+  has `breakpoints`. `rtvc-asm --no-breakpoints` clears them. In
+  [rtvc_debug.py](../../scripts/rtvc_debug.py), `asmfile` and `loadasm`
+  call `breakpoint_add` for each after writing the segments.
 
 ## Decisions
 
@@ -64,6 +71,9 @@ debugger integration (`BREAK`).
 - Item 4: `IMPORT` uses `parse_rtvc_asm_v1`, so it needs the `asm-toml`
   feature (on in native and CLI builds); without it the directive is an
   error.
+- Item 5: the debugger `assemble` command stays pure (it neither writes
+  memory nor sets breakpoints); the client does both, so a future editor
+  pane can decide for itself.
 - Values are `i32` with wrapping arithmetic; range checks stay at the point
   of use (`eval_byte`, `eval_word`).
 - A word that parses as a number is a number before it is a symbol
@@ -85,6 +95,16 @@ debugger integration (`BREAK`).
   reader to `rtvc-tocas` if it is needed.
 - The debugger `asmfile` command sends source text only; sending its path
   so the debugger can resolve includes is still open.
+
+## Validation (item 5)
+
+- `cargo test --lib asm`: 43 passed (2 new); `cargo test --bin rtvc-asm`:
+  11 passed (1 new). `cargo test --lib`: 284 passed. C80, `rtvc-tocas`,
+  and ROM listings ok.
+- Live: a headless `rtvc --port` session took `asmfile` (breakpoint at the
+  instruction after `BREAK`) and `loadasm` of a TOML with `[[breakpoints]]`;
+  `bp list` showed both.
+- The previous and new `rtvc-asm` give identical output for all 43 sources.
 
 ## Validation (item 4)
 

@@ -571,12 +571,23 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                                 })
                             })
                             .collect();
+                        let breakpoints: Vec<_> = program
+                            .breakpoints
+                            .iter()
+                            .map(|breakpoint| {
+                                serde_json::json!({
+                                    "addr": breakpoint.addr,
+                                    "line": breakpoint.line
+                                })
+                            })
+                            .collect();
                         serde_json::json!({
                             "status": "ok",
                             "addr": program.origin,
                             "len": program.bytes.len(),
                             "bytes": program.bytes,
                             "next_addr": program.next_addr,
+                            "breakpoints": breakpoints,
                             "segments": segments,
                             "symbols": program.symbols,
                             "mappings": mappings,

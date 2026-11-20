@@ -7,6 +7,9 @@ Release notes start here. Older release history is intentionally not backfilled.
 - rtvc-asm expressions have C operator precedence, parentheses, `*`, `/`,
   `%`, `<<`, `>>`, `&`, `|`, `^`, `~`, `!`, and `LOW()`/`HIGH()`, so sizes
   like `GLYPHS*64` no longer have to be written out by hand.
+- rtvc-asm `BREAK` marks a debugger breakpoint in the source; the debugger
+  client's `asmfile` and `loadasm` set it. `--no-breakpoints` leaves the
+  marks out.
 - rtvc-asm `INCLUDE`, `INCBIN` and `IMPORT` assemble other source files, emit
   file bytes, and use another module's symbols from its TOML output. `-I`
   adds search directories.

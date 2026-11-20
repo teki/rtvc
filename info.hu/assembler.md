@@ -45,6 +45,7 @@ kimenet a szabványos kimenetre kerül.
 | `--origin <cím>` | Kezdő fordítási cím a forrásbeli `ORG` előtt; alapértéke `0`. |
 | `--format <toml\|cas\|bin>` | Kimeneti formátum; alapértéke `toml`. A `cas` egyetlen `BASIC_START` szegmenst, a `bin` egy összefüggő szegmenst vár. |
 | `-d <NÉV=ÉRTÉK>`, `--define <NÉV=ÉRTÉK>` | Fordítás előtt lecseréli az assembly kódban lévő `%NÉV%` helyőrzőket. Többször is megadható; a hiányzó érték hiba. |
+| `--no-breakpoints` | Kihagyja a kimenetből a [`BREAK`](#töréspontok) jelöléseket. |
 | `-I <könyvtár>`, `--include-dir <könyvtár>` | Az `INCLUDE`, `INCBIN` és `IMPORT` fájlokat a megnevező fájl könyvtára után ebben a könyvtárban is keresi. Többször is megadható. |
 | `-o <útvonal>`, `--output <útvonal>` | Kimeneti fájl. |
 | `-` bemenetként | Olvasás a szabványos bemenetről. |
@@ -116,6 +117,7 @@ loadasm helper.toml
 - Az `asmfile` elküldi a forrást a hibakereső assemblerének, majd a
   szegmenseket a leképezett memóriába írja.
 - A `loadasm` egy `rtvc-asm-v1` TOML fájl összes szegmensét tölti be.
+- Mindkettő felveszi a [`BREAK`](#töréspontok) sorok töréspontjait.
 
 ## Forrásformátum
 
@@ -146,6 +148,7 @@ tartalmazhat, de nem kezdődhet számjeggyel.
 | `INCLUDE` | `INCLUDE "útvonal"` | Másik forrásfájlt fordít le a helyén. Lásd: [Fájlok](#fájlok-include-incbin-és-import). |
 | `INCBIN` | `INCBIN "útvonal"[, eltolás[, hossz]]` | Egy fájl bájtjait írja ki. |
 | `IMPORT` | `IMPORT "modul.toml"[, ELŐTAG]` | Egy másik modul TOML kimenetének szimbólumait definiálja. |
+| `BREAK` | `BREAK` | A következő utasítást hibakereső-töréspontnak jelöli. Lásd: [Töréspontok](#töréspontok). |
 
 A `DB`/`DEFB` szövegliteráljai csak ASCII karaktereket tartalmazhatnak. Az
 érvényes escape-ek: `\0`, `\n`, `\r`, `\t`, `\\`, `\"` és `\'`.
@@ -200,6 +203,28 @@ LINE_END:
   feltételt) és az összehasonlított értékeket, például
   `line 9: assertion failed: megváltozott a másolóciklus mérete (left is
   13, right is 12)`.
+
+## Töréspontok
+
+A `BREAK` a következő utasítást hibakereső-töréspontnak jelöli. Bájtot nem
+ír ki:
+
+```asm
+START:  LD HL,TABLE
+        BREAK               ; itt áll meg, ha a hibakeresőn át töltjük be
+        LD A,(HL)
+```
+
+- A töréspont címe a `BREAK` sor futási címe, így a `PHASE` blokkon belüli
+  `BREAK` ott állít meg, ahol az átmásolt kód fut.
+- Minden `BREAK` szerepel a TOML `[[breakpoints]]` táblájában (`addr`,
+  `line`, beillesztett fájlnál `file`), és a hibakereső `assemble`
+  válaszában is.
+- A hibakereső kliens `asmfile` és `loadasm` parancsa a kód beírása után
+  felveszi ezeket a töréspontokat; a `bp list` kilistázza, a `bp rm`
+  törli őket.
+- Az `rtvc-asm --no-breakpoints` kihagyja őket, például kiadott
+  buildekhez.
 
 ## Fájlok: INCLUDE, INCBIN és IMPORT
 
@@ -422,6 +447,7 @@ bytes = [
 | `segments` | Címzett bájttartományok; nem folytonos `ORG` esetén több elem. |
 | `symbols` | Nagybetűs szimbólumnevek és 16 bites értékeik. |
 | `mappings` | Az `ORG` sorok névvel ellátott leképezései: `name`, `source_base`, `mapped_base`. |
+| `breakpoints` | A `BREAK` jelölések: `addr`, `line`, beillesztett fájlnál `file`. A `--no-breakpoints` kihagyja. |
 | `lines` | A kibocsátott forrássorok sorszáma, címe (`addr`), bájthossza, és `PHASE` blokkon belül a futási cím (`run_addr`). |
 
 A betöltők számára a `segments[].bytes` a mérvadó adat. A `segments[].len`
