@@ -31,9 +31,9 @@ of option C (`CYCLES`, instruction T-states, listing column) and option D
   label scope.
 - Copies keep the original source line number in errors and in the TOML
   `[[lines]]` table, which therefore has one entry per copy.
-- Comparisons are parsed only by `ASSERT`; general expressions still have
-  only left-to-right `+` and `-`. Option C's `CYCLES` work will need `*`,
-  `/` and parentheses.
+- Comparisons are parsed only by `ASSERT`. Full expressions (precedence,
+  `*`, `/`, parentheses) arrived with item 1 of the
+  [workflow improvements plan](rtvc-asm-workflow-improvements-progress.md).
 
 ## Validation
 

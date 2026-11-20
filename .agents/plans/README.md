@@ -47,4 +47,5 @@ implementation order, limitations, and focused validation.
   expressions, `PHASE`, includes and symbol import, debugger breakpoints,
   CAS output, local labels, structs, and macros, ranked from a survey of
   popular 8-bit assemblers
+  ([progress](rtvc-asm-workflow-improvements-progress.md))
 - [TVC Video Signal Pipeline and Television Sync](tvc-video-signal-pipeline.md)

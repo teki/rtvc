@@ -211,7 +211,11 @@ LINE_END:
 
 ## Expressions
 
-Expressions are intentionally limited:
+Values are 32-bit signed integers while an expression is evaluated, and are
+range-checked where they are used (a byte operand must be `0..255`, a word
+`0..65535`).
+
+Primary values:
 
 - decimal numbers;
 - `0x1234`, `$1234`, and `1234H` hexadecimal;
@@ -219,11 +223,56 @@ Expressions are intentionally limited:
 - labels and `EQU` symbols;
 - `$` as the current address;
 - `label@map` address transformations;
-- `+` and `-` operators.
+- parenthesised subexpressions;
+- the functions `LOW(x)` (`x & 0FFH`) and `HIGH(x)` (`(x >> 8) & 0FFH`).
 
-There is no operator precedence beyond left-to-right `+`/`-`, and there are no
-parenthesized arithmetic expressions. Parentheses are still used for Z80 memory
-operands such as `(4000H)` and `(IX+2)`.
+A word that reads as a number is a number, as before: `C000H` is
+`0C000H`, not a symbol. Function names are only special directly before `(`.
+
+Operators, from highest to lowest precedence, with C meanings:
+
+| Precedence | Operators | Notes |
+| --- | --- | --- |
+| 1 | unary `-`, `+`, `~`, `!` | `~` is bitwise not; `!x` is 1 when `x` is 0, otherwise 0 |
+| 2 | `*`, `/`, `%` | `/` and `%` truncate towards zero; dividing by zero is an error |
+| 3 | `+`, `-` | |
+| 4 | `<<`, `>>` | shift count must be `0..31`; `>>` keeps the sign |
+| 5 | `&` | |
+| 6 | `^` | |
+| 7 | `\|` | |
+
+Binary operators of equal precedence group left to right, so `10-4-3` is
+`3`. Comparisons are not general operators; they belong to
+[`ASSERT`](#assertions).
+
+```asm
+GLYPHS      EQU 89
+GLYPHS_SIZE EQU GLYPHS*64          ; 1640H
+TABLE       EQU 0B000H
+TABLE_PAGE  EQU HIGH(TABLE)        ; 0B0H
+            LD A,(TABLE+2*2)       ; memory operand
+            OUT (60H+INDEX),A
+```
+
+### Parentheses and memory operands
+
+An operand whose whole text is one parenthesised group is a Z80 memory
+operand: `LD A,(TABLE+4)` loads from `TABLE+4`, and `OUT (60H+1),A` writes
+port `61H`. An operand that only starts and ends with parentheses, such as
+`(2+1)*(1+1)`, is an expression. To use a parenthesised constant as an
+immediate value, start it with `+` or `0+`:
+
+```asm
+        LD A,(X+1)      ; load from address X+1
+        LD A,+(X+1)     ; load the value X+1
+```
+
+`DB`, `DW`, `EQU`, and other directives have no memory operands, so
+`DB (X+1)*2` is always an expression.
+
+In the first pass an expression that uses a symbol defined later is
+assumed to be a placeholder value, and arithmetic errors it may cause are
+ignored; the second pass evaluates it with every symbol known.
 
 ## Runnable TVC BASIC Programs
 

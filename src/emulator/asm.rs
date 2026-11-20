@@ -615,6 +615,9 @@ fn split_comparison(condition: &str) -> Result<Option<(&str, &str, &str)>, AsmEr
             }
         } else if ch == '"' || ch == '\'' {
             quote = Some(ch);
+        } else if rest.starts_with("<<") || rest.starts_with(">>") {
+            index += 2;
+            continue;
         } else if let Some(op) = COMPARISONS.iter().find(|op| rest.starts_with(**op)) {
             if found.is_some() {
                 return Err(AsmError::new(format!(
@@ -922,7 +925,7 @@ fn render_operand(
         return Ok(operand);
     }
 
-    if operand.starts_with('(') && operand.ends_with(')') {
+    if is_wrapped(&operand) {
         let inner = &operand[1..operand.len() - 1];
         if let Some(rendered) =
             render_indexed_operand(inner, pc, symbols, mappings, allow_undefined)?
@@ -949,6 +952,29 @@ fn render_operand(
     } else {
         Ok(format!("{:X}H", value))
     }
+}
+
+/// Whether the whole operand is one parenthesised group, which makes it a
+/// memory operand such as `(LABEL+1)`, rather than an expression that starts
+/// and ends with parentheses, such as `(A+1)*(B+1)`.
+fn is_wrapped(operand: &str) -> bool {
+    if !operand.starts_with('(') || !operand.ends_with(')') {
+        return false;
+    }
+    let mut depth = 0usize;
+    for (index, ch) in operand.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return index == operand.len() - 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 fn is_fixed_operand(operand: &str) -> bool {
@@ -1788,6 +1814,11 @@ fn eval_nonnegative(
         .map_err(|_| AsmError::new(format!("count '{}' must be non-negative", value)))
 }
 
+/// Evaluate an expression with C-like precedence.
+///
+/// With `allow_undefined` (pass 1), an unknown symbol or mapping makes the
+/// whole expression evaluate to `unknown_value`, and arithmetic errors that
+/// may be caused by the placeholder are suppressed.
 fn eval_expr(
     value: &str,
     pc: u16,
@@ -1796,115 +1827,242 @@ fn eval_expr(
     allow_undefined: bool,
     unknown_value: u16,
 ) -> Result<i32, AsmError> {
-    let value = normalize(value);
-    if value.is_empty() {
+    let text = normalize(value);
+    if text.is_empty() {
         return Err(AsmError::new("empty expression"));
     }
-
-    let bytes = value.as_bytes();
-    let mut index = 0usize;
-    let mut total = 0i32;
-    let mut expect_term = true;
-    let mut sign = 1i32;
-
-    while index < bytes.len() {
-        match bytes[index] as char {
-            '+' if expect_term => {
-                sign = 1;
-                index += 1;
-            }
-            '-' if expect_term => {
-                sign = -1;
-                index += 1;
-            }
-            '+' | '-' => {
-                sign = if bytes[index] as char == '-' { -1 } else { 1 };
-                expect_term = true;
-                index += 1;
-            }
-            _ => {
-                let start = index;
-                while index < bytes.len() {
-                    let ch = bytes[index] as char;
-                    if ch == '+' || ch == '-' {
-                        break;
-                    }
-                    index += 1;
-                }
-                let term = &value[start..index];
-                if term.is_empty() {
-                    return Err(AsmError::new(format!("invalid expression '{}'", value)));
-                }
-                total +=
-                    sign * eval_term(term, pc, symbols, mappings, allow_undefined, unknown_value)?;
-                expect_term = false;
-                sign = 1;
-            }
-        }
+    let mut parser = ExprParser {
+        text: &text,
+        pos: 0,
+        pc,
+        symbols,
+        mappings,
+        allow_undefined,
+        undefined: false,
+    };
+    let result = parser.parse_binary(0)?;
+    if parser.pos != text.len() {
+        return Err(AsmError::new(format!("invalid expression '{}'", text)));
     }
-
-    if expect_term {
-        return Err(AsmError::new(format!("invalid expression '{}'", value)));
-    }
-    Ok(total)
-}
-
-fn eval_term(
-    term: &str,
-    pc: u16,
-    symbols: &BTreeMap<String, u16>,
-    mappings: &BTreeMap<String, AsmMapping>,
-    allow_undefined: bool,
-    unknown_value: u16,
-) -> Result<i32, AsmError> {
-    if let Some((source_term, mapping_name)) = term.split_once('@') {
-        if source_term.is_empty() || mapping_name.is_empty() || mapping_name.contains('@') {
-            return Err(AsmError::new(format!(
-                "invalid mapped expression '{}'",
-                term
-            )));
-        }
-        let Some(mapping) = mappings.get(mapping_name) else {
-            if allow_undefined {
-                return Ok(unknown_value as i32);
-            }
-            return Err(AsmError::new(format!("unknown mapping '{}'", mapping_name)));
-        };
-        let source_value = if allow_undefined
-            && is_label_like(source_term)
-            && !symbols.contains_key(source_term)
-            && number(source_term).is_err()
-        {
-            return Ok(unknown_value as i32);
-        } else {
-            eval_plain_term(source_term, pc, symbols, allow_undefined, unknown_value)?
-        };
-        return Ok(source_value - mapping.source_base as i32 + mapping.mapped_base as i32);
-    }
-
-    eval_plain_term(term, pc, symbols, allow_undefined, unknown_value)
-}
-
-fn eval_plain_term(
-    term: &str,
-    pc: u16,
-    symbols: &BTreeMap<String, u16>,
-    allow_undefined: bool,
-    unknown_value: u16,
-) -> Result<i32, AsmError> {
-    if term == "$" {
-        return Ok(pc as i32);
-    }
-    if let Ok(value) = number(term) {
-        return Ok(value);
-    }
-    if let Some(value) = symbols.get(term) {
-        return Ok(*value as i32);
-    }
-    if allow_undefined && is_label_like(term) {
+    if parser.undefined {
         return Ok(unknown_value as i32);
     }
-    Err(AsmError::new(format!("unknown symbol '{}'", term)))
+    Ok(result)
+}
+
+/// Binary operators from lowest to highest precedence level.
+const BINARY_LEVELS: [&[&str]; 6] = [
+    &["|"],
+    &["^"],
+    &["&"],
+    &["<<", ">>"],
+    &["+", "-"],
+    &["*", "/", "%"],
+];
+
+struct ExprParser<'a> {
+    text: &'a str,
+    pos: usize,
+    pc: u16,
+    symbols: &'a BTreeMap<String, u16>,
+    mappings: &'a BTreeMap<String, AsmMapping>,
+    allow_undefined: bool,
+    undefined: bool,
+}
+
+impl<'a> ExprParser<'a> {
+    fn rest(&self) -> &str {
+        &self.text[self.pos..]
+    }
+
+    fn invalid(&self) -> AsmError {
+        AsmError::new(format!("invalid expression '{}'", self.text))
+    }
+
+    fn parse_binary(&mut self, level: usize) -> Result<i32, AsmError> {
+        if level == BINARY_LEVELS.len() {
+            return self.parse_unary();
+        }
+        let mut left = self.parse_binary(level + 1)?;
+        loop {
+            let rest = self.rest();
+            let Some(op) = BINARY_LEVELS[level]
+                .iter()
+                .copied()
+                .find(|op| rest.starts_with(op))
+            else {
+                return Ok(left);
+            };
+            self.pos += op.len();
+            let right = self.parse_binary(level + 1)?;
+            left = self.apply(op, left, right)?;
+        }
+    }
+
+    fn apply(&self, op: &str, left: i32, right: i32) -> Result<i32, AsmError> {
+        Ok(match op {
+            "|" => left | right,
+            "^" => left ^ right,
+            "&" => left & right,
+            "+" => left.wrapping_add(right),
+            "-" => left.wrapping_sub(right),
+            "*" => left.wrapping_mul(right),
+            "<<" | ">>" => {
+                let Ok(count) = u32::try_from(right) else {
+                    return self.arith_error(format!("shift count {right} is negative"));
+                };
+                if count > 31 {
+                    return self.arith_error(format!("shift count {right} is larger than 31"));
+                }
+                if op == "<<" {
+                    left.wrapping_shl(count)
+                } else {
+                    left >> count
+                }
+            }
+            "/" | "%" => {
+                if right == 0 {
+                    return self.arith_error(format!("division by zero in '{}'", self.text));
+                }
+                if op == "/" {
+                    left.wrapping_div(right)
+                } else {
+                    left.wrapping_rem(right)
+                }
+            }
+            _ => unreachable!("BINARY_LEVELS lists every operator"),
+        })
+    }
+
+    /// Report an arithmetic error, unless an undefined symbol in pass 1 may
+    /// have caused it.
+    fn arith_error(&self, message: String) -> Result<i32, AsmError> {
+        if self.undefined {
+            Ok(0)
+        } else {
+            Err(AsmError::new(message))
+        }
+    }
+
+    fn parse_unary(&mut self) -> Result<i32, AsmError> {
+        let Some(ch) = self.rest().chars().next() else {
+            return Err(self.invalid());
+        };
+        match ch {
+            '+' => {
+                self.pos += 1;
+                self.parse_unary()
+            }
+            '-' => {
+                self.pos += 1;
+                Ok(self.parse_unary()?.wrapping_neg())
+            }
+            '~' => {
+                self.pos += 1;
+                Ok(!self.parse_unary()?)
+            }
+            '!' => {
+                self.pos += 1;
+                Ok((self.parse_unary()? == 0) as i32)
+            }
+            _ => self.parse_primary(),
+        }
+    }
+
+    fn parse_primary(&mut self) -> Result<i32, AsmError> {
+        if self.rest().starts_with('(') {
+            self.pos += 1;
+            let value = self.parse_binary(0)?;
+            if !self.rest().starts_with(')') {
+                return Err(self.invalid());
+            }
+            self.pos += 1;
+            return Ok(value);
+        }
+
+        let word = self.take_word();
+        if word.is_empty() {
+            return Err(self.invalid());
+        }
+        if self.rest().starts_with('(') {
+            return self.parse_function(word);
+        }
+
+        let value = self.word_value(word)?;
+        if self.rest().starts_with('@') {
+            self.pos += 1;
+            let name = self.take_word();
+            if name.is_empty() || !is_label_like(name) || self.rest().starts_with('@') {
+                return Err(AsmError::new(format!(
+                    "invalid mapped expression '{}'",
+                    self.text
+                )));
+            }
+            let Some(mapping) = self.mappings.get(name) else {
+                if self.allow_undefined {
+                    self.undefined = true;
+                    return Ok(0);
+                }
+                return Err(AsmError::new(format!("unknown mapping '{}'", name)));
+            };
+            return Ok(value
+                .wrapping_sub(mapping.source_base as i32)
+                .wrapping_add(mapping.mapped_base as i32));
+        }
+        Ok(value)
+    }
+
+    /// Take a number, symbol, or `$` token.
+    fn take_word(&mut self) -> &'a str {
+        let text = self.text;
+        let rest = &text[self.pos..];
+        let mut len = 0;
+        for (index, ch) in rest.char_indices() {
+            let word_char = ch.is_ascii_alphanumeric() || ch == '_' || ch == '.';
+            if !(word_char || (index == 0 && ch == '$')) {
+                break;
+            }
+            len = index + ch.len_utf8();
+        }
+        let start = self.pos;
+        self.pos += len;
+        &text[start..start + len]
+    }
+
+    fn word_value(&mut self, word: &str) -> Result<i32, AsmError> {
+        if word == "$" {
+            return Ok(self.pc as i32);
+        }
+        // Numbers win over symbols, as before: `C000H` is a number.
+        if let Ok(value) = number(word) {
+            return Ok(value);
+        }
+        if word.starts_with('$') || word.starts_with(|ch: char| ch.is_ascii_digit()) {
+            return number(word);
+        }
+        if let Some(value) = self.symbols.get(word) {
+            return Ok(*value as i32);
+        }
+        if self.allow_undefined && is_label_like(word) {
+            self.undefined = true;
+            return Ok(0);
+        }
+        Err(AsmError::new(format!("unknown symbol '{}'", word)))
+    }
+
+    fn parse_function(&mut self, name: &str) -> Result<i32, AsmError> {
+        self.pos += 1;
+        let argument = self.parse_binary(0)?;
+        if !self.rest().starts_with(')') {
+            return Err(self.invalid());
+        }
+        self.pos += 1;
+        match name {
+            "LOW" => Ok(argument & 0xFF),
+            "HIGH" => Ok((argument >> 8) & 0xFF),
+            _ => Err(AsmError::new(format!("unknown function '{}'", name))),
+        }
+    }
 }
 
 fn is_label_like(value: &str) -> bool {

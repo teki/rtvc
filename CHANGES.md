@@ -4,6 +4,9 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+- rtvc-asm expressions have C operator precedence, parentheses, `*`, `/`,
+  `%`, `<<`, `>>`, `&`, `|`, `^`, `~`, `!`, and `LOW()`/`HIGH()`, so sizes
+  like `GLYPHS*64` no longer have to be written out by hand.
 - The Gamebase details pane shows a Web link that opens and starts the
   selected game in the web emulator at teki.one/rtvc.
 - Web on phones: a keyboard button on touch screens opens the phone's

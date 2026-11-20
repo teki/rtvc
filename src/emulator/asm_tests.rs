@@ -510,3 +510,102 @@ fn assert_checks_comparisons_and_values_after_all_symbols_are_known() {
     let err = assemble_program("ASSERT 1, 2\n", 0).unwrap_err();
     assert!(err.to_string().contains("optional quoted message"));
 }
+
+fn eval_equ(expr: &str) -> u16 {
+    let program = assemble_program(&format!("V EQU {expr}\n"), 0).unwrap();
+    program.symbols["V"]
+}
+
+#[test]
+fn expressions_follow_c_precedence() {
+    assert_eq!(eval_equ("2+3*4"), 14);
+    assert_eq!(eval_equ("(2+3)*4"), 20);
+    assert_eq!(eval_equ("89*64"), 0x1640);
+    assert_eq!(eval_equ("100/7"), 14);
+    assert_eq!(eval_equ("100%7"), 2);
+    assert_eq!(eval_equ("1<<4+1"), 32);
+    assert_eq!(eval_equ("0F0H|0FH&3"), 0xF3);
+    assert_eq!(eval_equ("0FFH^0FH"), 0xF0);
+    assert_eq!(eval_equ("~0&0FFH"), 0xFF);
+    assert_eq!(eval_equ("!0+!5"), 1);
+    assert_eq!(eval_equ("-(-3)"), 3);
+    assert_eq!(eval_equ("8000H>>4"), 0x800);
+    assert_eq!(eval_equ("10-4-3"), 3);
+    assert_eq!(eval_equ("LOW(1234H)"), 0x34);
+    assert_eq!(eval_equ("HIGH(0B000H)"), 0xB0);
+    assert_eq!(eval_equ("HIGH(LOW(1234H)*256)+1"), 0x35);
+}
+
+#[test]
+fn expressions_work_in_operands_and_directives() {
+    let program = assemble_program(
+        r#"
+        GLYPHS  EQU 89
+        SIZE    EQU GLYPHS*64
+                ORG 8000H
+        START:  LD BC,SIZE
+                LD A,HIGH(TABLE)
+                LD A,(TABLE+2*2)
+                LD A,(2+1)*(1+1)
+                LD (IX+2*3),A
+                OUT (60H+1*2),A
+                DB LOW(START), HIGH(START), (1+1)*3
+                DW TABLE+SIZE/GLYPHS
+        TABLE:
+                ASSERT SIZE = 1640H
+                ASSERT 1<<3 = 8
+            "#,
+        0,
+    )
+    .unwrap();
+    let table = program.symbols["TABLE"];
+    let table_bytes = table.to_le_bytes();
+    let plus_64 = (table + 64).to_le_bytes();
+    let plus_4 = (table + 4).to_le_bytes();
+    #[rustfmt::skip]
+    let expected = vec![
+            0x01, 0x40, 0x16, // LD BC,1640H
+            0x3E, table_bytes[1], // LD A,HIGH(TABLE)
+            0x3A, plus_4[0], plus_4[1], // LD A,(TABLE+4)
+            0x3E, 6, // LD A,(2+1)*(1+1): an expression, not memory
+            0xDD, 0x77, 6, // LD (IX+6),A
+            0xD3, 0x62, // OUT (62H),A
+            0x00, 0x80, 6, // DB
+            plus_64[0], plus_64[1], // DW
+    ];
+    assert_eq!(program.bytes, expected);
+}
+
+#[test]
+fn forward_references_in_expressions_resolve_in_pass_two() {
+    let program = assemble_program(
+        "LD A,HIGH(LATER)*2/WIDTH\nDB LOW(LATER)/WIDTH\nORG 1234H\nLATER: NOP\nWIDTH EQU 2\n",
+        0,
+    )
+    .unwrap();
+    assert_eq!(program.bytes[..3], [0x3E, 0x12, 0x1A]);
+}
+
+#[test]
+fn expressions_report_errors() {
+    let err = assemble_program("V EQU 1/0\n", 0).unwrap_err();
+    assert_eq!(err.to_string(), "line 1: division by zero in '1/0'");
+
+    let err = assemble_program("V EQU 5%(2-2)\n", 0).unwrap_err();
+    assert!(err.to_string().contains("division by zero"));
+
+    let err = assemble_program("V EQU 1<<32\n", 0).unwrap_err();
+    assert!(err.to_string().contains("larger than 31"));
+
+    let err = assemble_program("V EQU (1+2\n", 0).unwrap_err();
+    assert_eq!(err.to_string(), "line 1: invalid expression '(1+2'");
+
+    let err = assemble_program("V EQU 2*\n", 0).unwrap_err();
+    assert!(err.to_string().contains("invalid expression"));
+
+    let err = assemble_program("V EQU MID(1)\n", 0).unwrap_err();
+    assert_eq!(err.to_string(), "line 1: unknown function 'MID'");
+
+    let err = assemble_program("LD A,HIGH(1234H)*16\n", 0).unwrap_err();
+    assert!(err.to_string().contains("outside 0..255"));
+}

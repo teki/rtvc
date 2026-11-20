@@ -141,7 +141,11 @@ A `DB`/`DEFB` szövegliteráljai csak ASCII karaktereket tartalmazhatnak. Az
 
 ## Kifejezések
 
-A támogatott elemek:
+A kifejezések kiértékelése 32 bites előjeles egészekkel történik; a
+tartományt a felhasználás helye ellenőrzi (bájtoperandus `0..255`, szó
+`0..65535`).
+
+Alapelemek:
 
 - decimális számok;
 - `0x1234`, `$1234` és `1234H` hexadecimális számok;
@@ -149,13 +153,50 @@ A támogatott elemek:
 - címkék és `EQU` szimbólumok;
 - `$` mint aktuális cím;
 - `címke@leképezés` címátalakítások;
-- `+` és `-` műveletek.
+- zárójeles részkifejezések;
+- a `LOW(x)` (`x & 0FFH`) és `HIGH(x)` (`(x >> 8) & 0FFH`) függvények.
 
-A `+` és `-` balról jobbra értékelődik; zárójeles aritmetika nincs. A Z80
-memóriaoperandusai, például `(4000H)` és `(IX+2)`, természetesen használnak
-zárójelet. A `címke@leképezés` alak az `ORG` sorban rögzített eredetből a
-leképezett címre alakít át; a későbbi `ORG` ezt nem módosítja. Az ismeretlen
-vagy ismételten definiált leképezés assemblerhiba.
+Ami számként olvasható, az szám: a `C000H` a `0C000H` érték, nem szimbólum.
+A függvénynevek csak közvetlenül `(` előtt különlegesek.
+
+Műveletek a legerősebbtől a leggyengébbig, C szerinti jelentéssel:
+
+| Erősség | Műveletek | Megjegyzés |
+| --- | --- | --- |
+| 1 | egyoperandusú `-`, `+`, `~`, `!` | `~` bitenkénti tagadás; `!x` értéke 1, ha `x` nulla, különben 0 |
+| 2 | `*`, `/`, `%` | `/` és `%` nulla felé csonkol; nullával osztás hiba |
+| 3 | `+`, `-` | |
+| 4 | `<<`, `>>` | a léptetés száma `0..31`; a `>>` megtartja az előjelet |
+| 5 | `&` | |
+| 6 | `^` | |
+| 7 | `\|` | |
+
+Az azonos erősségű műveletek balról jobbra kötnek, így `10-4-3` értéke `3`.
+Összehasonlítás csak az `ASSERT` direktívában van.
+
+```asm
+GLYPHS      EQU 89
+GLYPHS_SIZE EQU GLYPHS*64          ; 1640H
+TABLE       EQU 0B000H
+TABLE_PAGE  EQU HIGH(TABLE)        ; 0B0H
+            LD A,(TABLE+2*2)       ; memóriaoperandus
+            OUT (60H+INDEX),A
+```
+
+Ha egy operandus teljes szövege egyetlen zárójeles csoport, az Z80
+memóriaoperandus: `LD A,(TABLE+4)` a `TABLE+4` címről tölt, az
+`OUT (60H+1),A` a `61H` portra ír. A csak zárójellel kezdődő és végződő
+operandus, például `(2+1)*(1+1)`, kifejezés. Zárójeles konstans közvetlen
+értékként `+` vagy `0+` előtaggal írható: `LD A,+(X+1)`. A direktíváknak
+(`DB`, `DW`, `EQU` stb.) nincs memóriaoperandusa.
+
+A `címke@leképezés` alak az `ORG` sorban rögzített eredetből a leképezett
+címre alakít át; a későbbi `ORG` ezt nem módosítja. Az ismeretlen vagy
+ismételten definiált leképezés assemblerhiba.
+
+Az első menetben a később definiált szimbólumot használó kifejezés
+helykitöltő értéket kap, és az esetleges aritmetikai hibái nem számítanak; a
+második menet minden szimbólum ismeretében értékel.
 
 ## Futtatható TVC BASIC programok
 
