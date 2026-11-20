@@ -4,8 +4,8 @@ Plan: [rtvc-asm-workflow-improvements.md](rtvc-asm-workflow-improvements.md)
 
 ## Status
 
-Item 1 (full expressions) is done. Items 2–10 are not started. Next: item 2,
-file-aware errors.
+Items 1 (full expressions) and 2 (file-aware errors) are done. Items 3–10
+are not started. Next: item 3, `PHASE`/`DEPHASE`.
 
 ## Completed
 
@@ -19,9 +19,18 @@ file-aware errors.
 - Docs: [info/assembler.md](../../info/assembler.md),
   [info.hu/assembler.md](../../info.hu/assembler.md) (Expressions, plus the
   missing `REPT` and `ASSERT` sections), [CHANGES.md](../../CHANGES.md).
+- Item 2: `AsmError` stores `message` and `line: Option<usize>`.
+  `line_error` sets the line only when it is missing, so the innermost line
+  wins and the old double `line N: line N:` prefix cannot happen.
+  `display_in(file)` renders `file:N: message`. `rtvc-asm` prints source
+  errors (assembler and `%NAME%`) bare as `file:line: message`; other
+  failures keep `rtvc-asm:`. `Display` is unchanged, so the debugger,
+  `rtvc-tocas`, and C80 messages read as before.
 
 ## Decisions
 
+- Item 2: file names and columns are not stored in `AsmError` yet; that
+  waits for `INCLUDE` (item 4), when a line can belong to another file.
 - Values are `i32` with wrapping arithmetic; range checks stay at the point
   of use (`eval_byte`, `eval_word`).
 - A word that parses as a number is a number before it is a symbol
@@ -35,7 +44,14 @@ file-aware errors.
 - `assemble_line` (the single-instruction debugger path) still accepts
   numbers only; expressions need `assemble_program`, as before.
 
-## Validation
+## Validation (item 2)
+
+- `cargo test --lib asm`: 33 passed. `cargo test --bin rtvc-asm`: 8 passed.
+- Manual: file, stdin (`-:1:`), placeholder, and option errors print as
+  documented. No script in `scripts/`, `xtask/`, or `tvc-ports` parsed the
+  old `rtvc-asm: line N:` text.
+
+## Validation (item 1)
 
 - `cargo test --lib asm`: 32 passed (4 new expression tests).
 - `cargo test --lib`: 273 passed. `cargo test -p rtvc-c80`: all passed.

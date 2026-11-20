@@ -5,22 +5,48 @@ const TVC_BASIC_USR_ENTRY: u16 = 0x1A30;
 /// Upper bound on the source lines `REPT` blocks may expand to.
 const MAX_REPT_LINES: usize = 1 << 20;
 
+/// An assembler error. `line` is the 1-based source line when the error
+/// belongs to one; `Display` renders it as `line N: message`, and
+/// [`AsmError::display_in`] as `file:N: message` for editors and the CLI.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AsmError {
     message: String,
+    line: Option<usize>,
 }
 
 impl AsmError {
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            line: None,
+        }
+    }
+
+    /// The error text without any line prefix.
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// The 1-based source line, when the error belongs to one.
+    pub fn line(&self) -> Option<usize> {
+        self.line
+    }
+
+    /// Render as `file:line: message`, or `file: message` without a line.
+    pub fn display_in(&self, file: &str) -> String {
+        match self.line {
+            Some(line) => format!("{file}:{line}: {}", self.message),
+            None => format!("{file}: {}", self.message),
         }
     }
 }
 
 impl fmt::Display for AsmError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
+        match self.line {
+            Some(line) => write!(f, "line {line}: {}", self.message),
+            None => f.write_str(&self.message),
+        }
     }
 }
 
@@ -1071,16 +1097,18 @@ fn insert_symbol(
     line_no: usize,
 ) -> Result<(), AsmError> {
     if symbols.insert(label.to_string(), value).is_some() {
-        return Err(AsmError::new(format!(
-            "line {}: duplicate label '{}'",
-            line_no, label
-        )));
+        return Err(line_error(
+            line_no,
+            AsmError::new(format!("duplicate label '{}'", label)),
+        ));
     }
     Ok(())
 }
 
-fn line_error(line_no: usize, err: AsmError) -> AsmError {
-    AsmError::new(format!("line {}: {}", line_no, err))
+/// Attach a source line to an error, keeping a line it already has.
+fn line_error(line_no: usize, mut err: AsmError) -> AsmError {
+    err.line.get_or_insert(line_no);
+    err
 }
 
 fn split_operands(source: &str) -> Result<Vec<String>, AsmError> {

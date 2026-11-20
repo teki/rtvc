@@ -609,3 +609,26 @@ fn expressions_report_errors() {
     let err = assemble_program("LD A,HIGH(1234H)*16\n", 0).unwrap_err();
     assert!(err.to_string().contains("outside 0..255"));
 }
+
+#[test]
+fn errors_carry_their_source_line() {
+    let err = assemble_program("NOP\nNOP\nLD A,MISSING\n", 0).unwrap_err();
+    assert_eq!(err.line(), Some(3));
+    assert_eq!(err.message(), "unknown symbol 'MISSING'");
+    assert_eq!(err.to_string(), "line 3: unknown symbol 'MISSING'");
+    assert_eq!(
+        err.display_in("game.asm"),
+        "game.asm:3: unknown symbol 'MISSING'"
+    );
+
+    let err = assemble_program("A: NOP\nA: NOP\n", 0).unwrap_err();
+    assert_eq!(err.display_in("-"), "-:2: duplicate label 'A'");
+
+    // An error inside a REPT copy keeps the line of the original source line.
+    let err = assemble_program("REPT 2\nNOP\nLD A,BAD\nENDR\n", 0).unwrap_err();
+    assert_eq!(err.line(), Some(3));
+
+    let err = assemble_line("LD A,", 0).unwrap_err();
+    assert_eq!(err.line(), None);
+    assert_eq!(err.display_in("x.asm"), format!("x.asm: {}", err.message()));
+}

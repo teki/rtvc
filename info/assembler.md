@@ -446,12 +446,27 @@ For the TVC BASIC 1.2 ROM set, the common mappings are:
 
 ## Error Behavior
 
-Assembler errors include source line numbers for `assemble_program`:
+`rtvc-asm` reports source errors as `file:line: message` on standard error,
+with no program-name prefix, so editors and build tools can jump to the line.
+Standard input is named `-`. `%NAME%` placeholder errors use the same form:
 
 ```text
-line 2: unknown symbol 'MISSING'
-line 4: relative target 9000H is out of range from 8000H
+helper.asm:2: unknown symbol 'MISSING'
+helper.asm:4: relative target 9000H is out of range from 8000H
+helper.asm:7: missing definition for %BLOCK_SIZE%
+-:1: unknown symbol 'Q'
 ```
+
+Other failures, such as bad options or an output format the program does not
+fit, keep the `rtvc-asm:` prefix.
+
+The debugger `assemble` command has no file name and reports
+`line 2: unknown symbol 'MISSING'`.
+
+In the Rust API, `AsmError` keeps the parts apart: `message()` is the text,
+`line()` is the 1-based source line when there is one, `Display` renders
+`line N: message`, and `display_in(file)` renders `file:N: message`. A line
+inside a `REPT` copy is the line of the original source line.
 
 `loadasm` validates that TOML has `format = "rtvc-asm-v1"`, at least one segment,
 16-bit segment addresses, byte arrays containing integers in `0..255`, and

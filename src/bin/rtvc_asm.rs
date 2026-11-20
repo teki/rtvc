@@ -32,14 +32,34 @@ enum OutputFormat {
     Bin,
 }
 
-fn main() {
-    if let Err(err) = run() {
-        eprintln!("rtvc-asm: {err}");
-        std::process::exit(1);
+/// A CLI failure. Source errors print as bare `file:line: message` so
+/// editors can match them; other failures get the `rtvc-asm:` prefix.
+enum CliError {
+    Source(String),
+    Other(String),
+}
+
+impl From<String> for CliError {
+    fn from(message: String) -> Self {
+        CliError::Other(message)
     }
 }
 
-fn run() -> Result<(), String> {
+fn main() {
+    match run() {
+        Ok(()) => {}
+        Err(CliError::Source(err)) => {
+            eprintln!("{err}");
+            std::process::exit(1);
+        }
+        Err(CliError::Other(err)) => {
+            eprintln!("rtvc-asm: {err}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn run() -> Result<(), CliError> {
     let args = env::args().collect::<Vec<_>>();
     let program = args.first().map(String::as_str).unwrap_or("rtvc-asm");
     if args[1..]
@@ -51,11 +71,13 @@ fn run() -> Result<(), String> {
     }
     let options = parse_args(program, &args[1..])?;
     let (source_name, source) = read_source(&options.input)?;
-    let source = apply_defines(&source, &options.defines)?;
-    let assembled = assemble_program(&source, options.origin).map_err(|err| err.to_string())?;
+    let source = apply_defines(&source, &options.defines)
+        .map_err(|(line, err)| CliError::Source(format!("{source_name}:{line}: {err}")))?;
+    let assembled = assemble_program(&source, options.origin)
+        .map_err(|err| CliError::Source(err.display_in(&source_name)))?;
 
     let output = render_output(&source_name, &options, &assembled)?;
-    write_output(options.output.as_deref(), &output)
+    Ok(write_output(options.output.as_deref(), &output)?)
 }
 
 fn parse_args(program: &str, args: &[String]) -> Result<Options, String> {
@@ -354,12 +376,17 @@ fn parse_define(value: &str) -> Result<(String, String), String> {
     Ok((name, value.to_string()))
 }
 
-fn apply_defines(source: &str, defines: &BTreeMap<String, String>) -> Result<String, String> {
+/// Substitute `%NAME%` placeholders. An error carries its 1-based line.
+fn apply_defines(
+    source: &str,
+    defines: &BTreeMap<String, String>,
+) -> Result<String, (usize, String)> {
     let mut output = String::with_capacity(source.len());
-    for line in source.split_inclusive('\n') {
+    for (index, line) in source.split_inclusive('\n').enumerate() {
         let comment_start = find_comment_start(line);
         let (code, comment) = line.split_at(comment_start);
-        output.push_str(&apply_defines_to_code(code, defines)?);
+        let code = apply_defines_to_code(code, defines).map_err(|err| (index + 1, err))?;
+        output.push_str(&code);
         output.push_str(comment);
     }
     Ok(output)
@@ -526,8 +553,8 @@ mod tests {
             "LD BC,0748H\nLD DE,7530H\n"
         );
         assert_eq!(
-            apply_defines("LD BC,%MISSING%", &defines).unwrap_err(),
-            "missing definition for %MISSING%"
+            apply_defines("NOP\nLD BC,%MISSING%", &defines).unwrap_err(),
+            (2, "missing definition for %MISSING%".to_string())
         );
     }
 

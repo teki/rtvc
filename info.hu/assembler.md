@@ -404,12 +404,28 @@ ismételten definiált leképezés assemblerhibát okoz.
 
 ## Hibák
 
-A programfordítási hibák tartalmazzák a forrás sorszámát:
+Az `rtvc-asm` a forráshibákat `fájl:sor: üzenet` alakban írja a
+szabványos hibakimenetre, programnév-előtag nélkül, így a szerkesztők és a
+build eszközök a hibás sorra ugorhatnak. A szabványos bemenet neve `-`. A
+`%NÉV%` helyőrzők hibái ugyanígy jelennek meg:
 
 ```text
-line 2: unknown symbol 'MISSING'
-line 4: relative target 9000H is out of range from 8000H
+helper.asm:2: unknown symbol 'MISSING'
+helper.asm:4: relative target 9000H is out of range from 8000H
+helper.asm:7: missing definition for %BLOCK_SIZE%
+-:1: unknown symbol 'Q'
 ```
+
+A többi hiba (hibás opció, a kimeneti formátumnak nem megfelelő program)
+megtartja az `rtvc-asm:` előtagot.
+
+A hibakereső `assemble` parancsának nincs fájlneve, ezért ott
+`line 2: unknown symbol 'MISSING'` alakú a hiba.
+
+A Rust API-ban az `AsmError` külön tárolja a részeket: a `message()` a
+szöveg, a `line()` az 1-től számozott forrássor (ha van), a `Display`
+`line N: üzenet`, a `display_in(fájl)` pedig `fájl:N: üzenet` alakot ad. A
+`REPT` példányain belüli hiba az eredeti forrássor számát kapja.
 
 A `loadasm` ellenőrzi az `rtvc-asm-v1` formátumot, a legalább egy szegmenst, a
 16 bites szegmenscímeket, a `0..255` tartományú bájtokat és – ha jelen van – a
