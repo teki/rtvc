@@ -1173,6 +1173,96 @@ fn tvc_basic_start_bytes() -> Vec<u8> {
     out
 }
 
+/// Length of the copy stub a relocating CAS places at `BASIC_START`.
+const TVC_CAS_STUB_LEN: u16 = 14;
+/// First address a relocated program may be copied to: just past the stub.
+pub const TVC_CAS_MIN_DEST: u16 = TVC_BASIC_USR_ENTRY + TVC_CAS_STUB_LEN;
+/// Largest program BASIC 1.2 loads on an unreserved 64K TVC.
+pub const TVC_CAS_MAX_PAYLOAD: usize = 42_256;
+/// One past the last address of the cold BASIC map's user RAM (`HIMEM` + 1).
+const TVC_CAS_DEST_END: u32 = 0xC000;
+
+/// The bytes BASIC loads at `19EFH` for a single-segment program.
+///
+/// A program that starts with `BASIC_START` is returned as it is. Any other
+/// `ORG` gets a BASIC line that calls `USR` into a stub at `1A30H`; the stub
+/// copies the program to its address with `LDDR` and jumps to `entry`
+/// (default `START`, else the first byte). The copy runs downwards because
+/// the destination is never below the source. A `RET` from the program
+/// returns to BASIC.
+pub fn tvc_cas_payload(program: &AssembledProgram, entry: Option<&str>) -> Result<Vec<u8>, String> {
+    if program.segments.len() != 1 {
+        return Err(format!(
+            "CAS output requires one contiguous segment, got {}",
+            program.segments.len()
+        ));
+    }
+    let segment = &program.segments[0];
+    let payload = if segment.addr == TVC_BASIC_LOAD_ADDR {
+        if entry.is_some() {
+            return Err("--entry does not apply to a BASIC_START program".to_string());
+        }
+        segment.bytes.clone()
+    } else {
+        relocating_payload(program, segment, entry)?
+    };
+    if payload.len() > TVC_CAS_MAX_PAYLOAD {
+        return Err(format!(
+            "CAS payload is {} bytes, more than BASIC loads ({TVC_CAS_MAX_PAYLOAD})",
+            payload.len()
+        ));
+    }
+    Ok(payload)
+}
+
+fn relocating_payload(
+    program: &AssembledProgram,
+    segment: &AssembledSegment,
+    entry: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    let dest = segment.addr;
+    let len = segment.bytes.len();
+    let end = dest as u32 + len as u32;
+    if len == 0 {
+        return Err("CAS output has no bytes to load".to_string());
+    }
+    if dest < TVC_CAS_MIN_DEST || end > TVC_CAS_DEST_END {
+        return Err(format!(
+            "CAS output can relocate to {TVC_CAS_MIN_DEST:04X}H-BFFFH, got {dest:04X}H-{:04X}H",
+            end - 1
+        ));
+    }
+    let entry_addr = match entry {
+        Some(name) => *program
+            .symbols
+            .get(name)
+            .or_else(|| program.symbols.get(&name.to_ascii_uppercase()))
+            .ok_or_else(|| format!("unknown entry symbol '{name}'"))?,
+        None => program.symbols.get("START").copied().unwrap_or(dest),
+    };
+    if (entry_addr as u32) < dest as u32 || entry_addr as u32 >= end {
+        return Err(format!(
+            "entry {entry_addr:04X}H is outside the program {dest:04X}H-{:04X}H",
+            end - 1
+        ));
+    }
+    let src_last = TVC_CAS_MIN_DEST + (len as u16 - 1);
+    let dest_last = (end - 1) as u16;
+    let mut out = tvc_basic_start_bytes();
+    out.push(0x21); // LD HL,src_last
+    out.extend_from_slice(&src_last.to_le_bytes());
+    out.push(0x11); // LD DE,dest_last
+    out.extend_from_slice(&dest_last.to_le_bytes());
+    out.push(0x01); // LD BC,len
+    out.extend_from_slice(&(len as u16).to_le_bytes());
+    out.extend_from_slice(&[0xED, 0xB8]); // LDDR
+    out.push(0xC3); // JP entry
+    out.extend_from_slice(&entry_addr.to_le_bytes());
+    debug_assert_eq!(out.len(), (TVC_CAS_MIN_DEST - TVC_BASIC_LOAD_ADDR) as usize);
+    out.extend_from_slice(&segment.bytes);
+    Ok(out)
+}
+
 fn strip_comment(source: &str) -> Result<String, AsmError> {
     let mut quote = None;
     let mut escape = false;

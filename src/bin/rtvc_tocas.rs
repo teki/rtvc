@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use rtvc_core::asm::assemble_program;
+use rtvc_core::asm::{assemble_program, tvc_cas_payload};
 use rtvc_core::basic::tokenize_program;
 use rtvc_core::cas::{TVC_CAS_LOAD_ADDR, TVC_CAS_TYPE_BASIC, encode_tvc_cas, flatten_cas_image};
 
@@ -114,20 +114,9 @@ fn convert_source(kind: SourceKind, source: &str) -> Result<(Vec<u8>, Option<Str
 
 fn convert_asm(source: &str) -> Result<Vec<u8>, String> {
     let assembled = assemble_program(source, 0).map_err(|err| err.to_string())?;
-    if assembled.segments.len() != 1 {
-        return Err(
-            "asm CAS output requires exactly one contiguous BASIC_START segment".to_string(),
-        );
-    }
-    let segment = &assembled.segments[0];
-    if segment.addr != TVC_BASIC_LOAD_ADDR {
-        return Err(format!(
-            "asm CAS output requires a BASIC_START segment at {TVC_BASIC_LOAD_ADDR:04X}H, got {:04X}H",
-            segment.addr
-        ));
-    }
+    let payload = tvc_cas_payload(&assembled, None)?;
     Ok(encode_tvc_cas(
-        &segment.bytes,
+        &payload,
         TVC_CAS_TYPE_BASIC,
         0xFF,
         TVC_BASIC_LOAD_ADDR,
@@ -256,11 +245,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_asm_without_basic_start() {
-        let error = convert_source(SourceKind::Asm, "ORG 8000H\nRET\n")
+    fn relocates_asm_without_basic_start() {
+        let (cas, _) = convert_source(SourceKind::Asm, "ORG 8000H\nRET\n").unwrap();
+        assert_eq!(cas[0x90 + 0x41], 0x21);
+        assert_eq!(*cas.last().unwrap(), 0xC9);
+        let error = convert_source(SourceKind::Asm, "ORG 1000H\nRET\n")
             .err()
             .unwrap();
-        assert!(error.contains("BASIC_START"));
+        assert!(error.contains("relocate"));
     }
 
     #[cfg(feature = "asm-toml")]

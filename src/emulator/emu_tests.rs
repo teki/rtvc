@@ -677,6 +677,30 @@ fn existing_cas_program_loads_through_the_host_file_card() {
 }
 
 #[test]
+fn relocating_asm_cas_runs_at_its_org() {
+    let source =
+        "ORG A000H\nSTART: LD (SPSAVE),SP\nLD A,5AH\nLD (MARK),A\nRET\nSPSAVE: DW 0\nMARK: DB 0\n";
+    let program = crate::asm::assemble_program(source, 0).unwrap();
+    let payload = crate::asm::tvc_cas_payload(&program, None).unwrap();
+    let cas = crate::cas::encode_tvc_cas(&payload, crate::cas::TVC_CAS_TYPE_BASIC, 0xFF, 0x19EF);
+    let (mut emu, dir) = host_file_emu("reloc", false);
+    std::fs::write(dir.join("RELOC.CAS"), &cas).unwrap();
+    run_frames(&mut emu, 300);
+    emu.type_text("LOAD \"reloc\"\r");
+    run_frames(&mut emu, 300);
+    // Autostart runs the BASIC line, whose USR call copies and enters the code.
+    let code = &program.segments[0].bytes;
+    let copied = emu.read_raw_bank("u2", 0x2000, code.len()).unwrap();
+    assert_eq!(&copied[..10], &code[..10], "program copied to A000H");
+    assert_eq!(copied[12], 0x5A, "program ran");
+    let sp = u16::from_le_bytes([copied[10], copied[11]]);
+    // The BASIC stack sits below the program text, so a copy anywhere from
+    // the stub's end to BFFFH leaves it intact.
+    assert!(sp < 0x19EF, "SP during USR is {sp:04X}H");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn vt_dos_system_disk_lists_a_directory() {
     let mut emu =
         Emu::new(MachineType::standard(true, RomVersion::V2_2, true).with_cart("VT-DOS12-CART"));

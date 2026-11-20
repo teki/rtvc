@@ -626,15 +626,16 @@ and tokenization rules.
 `cargo run --bin rtvc-tocas -- input.bas helper.asm out.toml` converts one or more
 `.bas`, `.asm`, and `rtvc-asm-v1` TOML sources to sibling `.cas` files. `.bas`
 inputs use the same path as `rtvc-basic`; `.asm` inputs use the same path as
-`rtvc-asm --format cas`. TOML inputs are sorted by address and flattened from
+`rtvc-asm --format cas`, including the copy stub for programs outside
+`BASIC_START`. TOML inputs are sorted by address and flattened from
 `19EFH` through the highest exclusive end, with gaps zero-filled. The first
 segment must start at `19EFH` and contain a tokenized BASIC program or launch
 stub (trailing machine code after the `00H` terminator is allowed). Relocated
 BASIC-only images at `4000H` are rejected; exclusive end must be at most
 `C000H`. The CAS header uses the ASM autostart profile (`FFH`, load `19EFH`).
 The command prints payload versus padding sizes. The linear payload owns the
-whole span: zeroes in gaps are part of the cassette image. There is no
-relocating loader. The output path is the source path with the extension
+whole span: zeroes in gaps are part of the cassette image. TOML inputs get
+no relocating loader. The output path is the source path with the extension
 replaced by `.cas`. Files with any other extension are printed and skipped.
 
 ## ZX Spectrum TAP Conversion

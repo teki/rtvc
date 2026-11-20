@@ -4,7 +4,7 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
-use rtvc_core::asm::{AsmFileKind, AsmFiles, assemble_program_with};
+use rtvc_core::asm::{AsmFileKind, AsmFiles, assemble_program_with, tvc_cas_payload};
 use rtvc_core::cas::{TVC_CAS_TYPE_BASIC, encode_tvc_cas};
 
 const FORMAT_VERSION: &str = "rtvc-asm-v1";
@@ -19,6 +19,7 @@ struct Options {
     defines: BTreeMap<String, String>,
     include_dirs: Vec<PathBuf>,
     no_breakpoints: bool,
+    entry: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,6 +98,7 @@ fn parse_args(program: &str, args: &[String]) -> Result<Options, String> {
     let mut defines = BTreeMap::new();
     let mut include_dirs = Vec::new();
     let mut no_breakpoints = false;
+    let mut entry = None;
     let mut index = 0;
 
     while index < args.len() {
@@ -133,6 +135,16 @@ fn parse_args(program: &str, args: &[String]) -> Result<Options, String> {
                 }
             }
             "--no-breakpoints" => no_breakpoints = true,
+            "--entry" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--entry requires a symbol".to_string())?;
+                entry = Some(value.clone());
+            }
+            value if value.starts_with("--entry=") => {
+                entry = Some(value["--entry=".len()..].to_string());
+            }
             "-I" | "--include-dir" => {
                 index += 1;
                 let value = args
@@ -189,12 +201,13 @@ fn parse_args(program: &str, args: &[String]) -> Result<Options, String> {
         defines,
         include_dirs,
         no_breakpoints,
+        entry,
     })
 }
 
 fn usage(program: &str) -> String {
     format!(
-        "usage: {program} [--origin <addr>] [--format toml|cas|bin] [-d NAME=VALUE] [-I <dir>] [--no-breakpoints] [-o <output>] <input.asm>\n\
+        "usage: {program} [--origin <addr>] [--format toml|cas|bin] [-d NAME=VALUE] [-I <dir>] [--no-breakpoints] [--entry <symbol>] [-o <output>] <input.asm>\n\
          use '-' as input to read source from stdin; omit -o to write output to stdout"
     )
 }
@@ -286,7 +299,7 @@ fn render_output(
 ) -> Result<Vec<u8>, String> {
     match options.format {
         OutputFormat::Toml => Ok(render_toml(source_name, options.origin, assembled).into_bytes()),
-        OutputFormat::Cas => render_cas(assembled),
+        OutputFormat::Cas => render_cas(assembled, options.entry.as_deref()),
         OutputFormat::Bin => render_bin(assembled),
     }
 }
@@ -298,19 +311,13 @@ fn render_bin(assembled: &rtvc_core::asm::AssembledProgram) -> Result<Vec<u8>, S
     Ok(assembled.segments[0].bytes.clone())
 }
 
-fn render_cas(assembled: &rtvc_core::asm::AssembledProgram) -> Result<Vec<u8>, String> {
-    if assembled.segments.len() != 1 {
-        return Err("--format cas requires exactly one contiguous BASIC_START segment".to_string());
-    }
-    let segment = &assembled.segments[0];
-    if segment.addr != TVC_BASIC_LOAD_ADDR {
-        return Err(format!(
-            "--format cas requires a BASIC_START segment at {TVC_BASIC_LOAD_ADDR:04X}H, got {:04X}H",
-            segment.addr
-        ));
-    }
+fn render_cas(
+    assembled: &rtvc_core::asm::AssembledProgram,
+    entry: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    let payload = tvc_cas_payload(assembled, entry)?;
     Ok(encode_tvc_cas(
-        &segment.bytes,
+        &payload,
         TVC_CAS_TYPE_BASIC,
         0xFF,
         TVC_BASIC_LOAD_ADDR,
@@ -769,7 +776,7 @@ mod tests {
     #[test]
     fn renders_cas_output() {
         let assembled = assemble_program("BASIC_START\nRET\n", 0).unwrap();
-        let cas = render_cas(&assembled).unwrap();
+        let cas = render_cas(&assembled, None).unwrap();
         assert_eq!(cas[0], 0x11);
         assert_eq!(&cas[0x80..0x85], &[0x00, 0x01, 0x42, 0x00, 0xFF]);
         assert_eq!(&cas[0x87..0x89], &[0xEF, 0x19]);
@@ -789,9 +796,63 @@ mod tests {
     }
 
     #[test]
-    fn rejects_cas_without_basic_start() {
-        let assembled = assemble_program("ORG 8000H\nRET\n", 0).unwrap();
-        let error = render_cas(&assembled).unwrap_err();
-        assert!(error.contains("BASIC_START"));
+    fn renders_relocating_cas_for_any_org() {
+        let assembled = assemble_program("ORG 8000H\nNOP\nSTART: RET\n", 0).unwrap();
+        let cas = render_cas(&assembled, None).unwrap();
+        let payload = &cas[0x90..];
+        assert_eq!(&payload[..5], &[0x0F, 0x0A, 0x00, 0x43, 0x9A]);
+        assert_eq!(
+            &payload[0x41..0x4F],
+            &[
+                0x21, 0x3F, 0x1A, 0x11, 0x01, 0x80, 0x01, 0x02, 0x00, 0xED, 0xB8, 0xC3, 0x01, 0x80
+            ]
+        );
+        assert_eq!(&payload[0x4F..], &[0x00, 0xC9]);
+    }
+
+    #[test]
+    fn cas_entry_names_a_symbol() {
+        let assembled = assemble_program("ORG 8000H\nRET\nGO: RET\n", 0).unwrap();
+        let cas = render_cas(&assembled, Some("go")).unwrap();
+        assert_eq!(&cas[0x90 + 0x4D..0x90 + 0x4F], &[0x01, 0x80]);
+        let cas = render_cas(&assembled, None).unwrap();
+        assert_eq!(&cas[0x90 + 0x4D..0x90 + 0x4F], &[0x00, 0x80]);
+        let error = render_cas(&assembled, Some("MISSING")).unwrap_err();
+        assert!(error.contains("unknown entry"));
+    }
+
+    #[test]
+    fn rejects_cas_that_cannot_be_relocated() {
+        for source in ["ORG 1000H\nRET\n", "ORG 1A30H\nRET\n", "ORG BFFFH\nDW 0\n"] {
+            let assembled = assemble_program(source, 0).unwrap();
+            let error = render_cas(&assembled, None).unwrap_err();
+            assert!(error.contains("relocate"), "{source}: {error}");
+        }
+        let assembled = assemble_program("ORG 8000H\nRET\nORG 9000H\nRET\n", 0).unwrap();
+        assert!(
+            render_cas(&assembled, None)
+                .unwrap_err()
+                .contains("contiguous")
+        );
+        let assembled = assemble_program("BASIC_START\nRET\n", 0).unwrap();
+        assert!(render_cas(&assembled, Some("X")).is_err());
+    }
+
+    #[test]
+    fn parses_entry_option() {
+        let args = vec![
+            "--entry".to_string(),
+            "MAIN".to_string(),
+            "x.asm".to_string(),
+        ];
+        assert_eq!(
+            parse_args("rtvc-asm", &args).unwrap().entry.as_deref(),
+            Some("MAIN")
+        );
+        let args = vec!["--entry=GO".to_string(), "x.asm".to_string()];
+        assert_eq!(
+            parse_args("rtvc-asm", &args).unwrap().entry.as_deref(),
+            Some("GO")
+        );
     }
 }

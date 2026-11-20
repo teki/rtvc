@@ -633,6 +633,13 @@ result = USR(address [, param])
 Call a machine-code subroutine at `address`. `param` is placed in HL before
 the call. The result is the final value of HL interpreted as a signed integer.
 
+The Z80 stack lives below the program text: the ROM sets SP to `16ACH`, and
+the routine starts with SP near `1698H` on a cold BASIC 1.2 machine.
+Overwriting RAM from the end of the program up to `HIMEM` therefore leaves
+the stack and system variables intact. A routine that returns to BASIC must
+not have overwritten the program text or the variable area that follows it,
+because BASIC stores the result there.
+
 ---
 
 ## Functions

@@ -4,6 +4,9 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+- rtvc-asm `--format cas` runs a program assembled at any `ORG` from
+  `1A3EH` to `BFFFH`: a BASIC line and a copy stub move it into place and
+  jump to `START`, or to the label `--entry` names.
 - rtvc-asm expressions have C operator precedence, parentheses, `*`, `/`,
   `%`, `<<`, `>>`, `&`, `|`, `^`, `~`, `!`, and `LOW()`/`HIGH()`, so sizes
   like `GLYPHS*64` no longer have to be written out by hand.

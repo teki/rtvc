@@ -263,7 +263,7 @@ This skill provides step-by-step instructions and references for compiling, exec
   ```
   - Uses the built-in two-pass helper assembler from [src/emulator/asm.rs](../../../src/emulator/asm.rs).
   - Emits `rtvc-asm-v1` TOML with segments, symbols, source line metadata, and `next_addr`.
-  - Pass `--format cas` for a runnable TVC CAS program assembled from a `BASIC_START` source, or `--format bin` for raw contiguous machine-code bytes.
+  - Pass `--format cas` for a runnable TVC CAS program, or `--format bin` for raw contiguous machine-code bytes. A `BASIC_START` source loads as it is; one contiguous segment at any `ORG` from `1A3EH` to `BFFFH` gets a copy stub that jumps to `START`, or to `--entry NAME`.
   - Pass repeatable `-d NAME=VALUE` options to replace `%NAME%` placeholders before assembly; unresolved placeholders are errors.
   - Pass repeatable `-I <dir>` options to search directories for `INCLUDE`, `INCBIN`, and `IMPORT` files after the including file's own directory. Source errors print as `file:line: message`. `--no-breakpoints` drops `BREAK` marks from the output.
   - Use `-` as the input path to read source from stdin; omit `-o` to write TOML to stdout.

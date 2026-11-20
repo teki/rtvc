@@ -43,9 +43,10 @@ kimenet a szabványos kimenetre kerül.
 | Opció | Jelentés |
 | --- | --- |
 | `--origin <cím>` | Kezdő fordítási cím a forrásbeli `ORG` előtt; alapértéke `0`. |
-| `--format <toml\|cas\|bin>` | Kimeneti formátum; alapértéke `toml`. A `cas` egyetlen `BASIC_START` szegmenst, a `bin` egy összefüggő szegmenst vár. |
+| `--format <toml\|cas\|bin>` | Kimeneti formátum; alapértéke `toml`. A `cas` egy összefüggő szegmenst vár: `BASIC_START` programot, vagy bármely `ORG` címet `1A3EH` és `BFFFH` között. A `bin` egy összefüggő szegmenst vár. |
 | `-d <NÉV=ÉRTÉK>`, `--define <NÉV=ÉRTÉK>` | Fordítás előtt lecseréli az assembly kódban lévő `%NÉV%` helyőrzőket. Többször is megadható; a hiányzó érték hiba. |
 | `--no-breakpoints` | Kihagyja a kimenetből a [`BREAK`](#töréspontok) jelöléseket. |
+| `--entry <szimbólum>` | `--format cas` esetén a címke, amelyre a másolórutin ugrik; alapértéke `START`, vagy az első bájt. |
 | `-I <könyvtár>`, `--include-dir <könyvtár>` | Az `INCLUDE`, `INCBIN` és `IMPORT` fájlokat a megnevező fájl könyvtára után ebben a könyvtárban is keresi. Többször is megadható. |
 | `-o <útvonal>`, `--output <útvonal>` | Kimeneti fájl. |
 | `-` bemenetként | Olvasás a szabványos bemenetről. |
@@ -380,6 +381,29 @@ Közvetlen CAS-kimenet:
 ```cmd
 rtvc-asm --format cas experiment.asm -o experiment.cas
 ```
+
+Bármely más `ORG` címre fordított program is futtatható CAS-fájl lesz. Az
+rtvc-asm ugyanazt a BASIC sort teszi elé, utána `1A30H`-n egy 14 bájtos
+rutint, amely a programot az `ORG` címére másolja, és oda ugrik:
+
+```asm
+        ORG 8000H
+START:  LD A,02H
+FLASH:  OUT (00H),A
+        XOR 0AH
+        JP FLASH
+```
+
+- A program egyetlen összefüggő szegmens legyen `1A3EH` (közvetlenül a
+  másolórutin után) és `BFFFH` között. A BASIC verem és a rendszerváltozók
+  `19EFH` alatt vannak, így ez a tartomány a BASIC futása közben szabad.
+- A CAS tartalma a BASIC sorral és a másolórutinnal együtt legfeljebb
+  42 256 bájt lehet.
+- A másolórutin a `START` címkére ugrik, ha az létezik, különben az első
+  bájtra. A `--entry NÉV` a programon belül más címkét választ.
+- A `RET` visszatér a BASIC-be, amely a `USR` eredményét a betöltött
+  tartalom után tárolja. `RET` csak akkor használható, ha a program ezt a
+  területet nem írja felül.
 
 A `toml` formátum a hibakereső `loadasm` parancsához, a `bin` formátum pedig
 az összefüggő nyers gépi kódhoz használható.

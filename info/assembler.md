@@ -48,9 +48,10 @@ Options:
 | Option | Meaning |
 | --- | --- |
 | `--origin <addr>` | Initial assembly address before source-level `ORG`; defaults to `0`. |
-| `--format <toml\|cas\|bin>` | Output format; defaults to `toml`. `cas` expects a single `BASIC_START` segment, and `bin` expects one contiguous segment. |
+| `--format <toml\|cas\|bin>` | Output format; defaults to `toml`. `cas` expects one contiguous segment: a `BASIC_START` program, or any `ORG` from `1A3EH` to `BFFFH` (see [Runnable TVC BASIC Programs](#runnable-tvc-basic-programs)). `bin` expects one contiguous segment. |
 | `-d <NAME=VALUE>`, `--define <NAME=VALUE>` | Replace `%NAME%` placeholders in assembly code before assembly. Repeat for multiple values; a missing placeholder value is an error. |
 | `--no-breakpoints` | Leave [`BREAK`](#breakpoints) marks out of the output. |
+| `--entry <symbol>` | With `--format cas`, the label the copy stub jumps to; defaults to `START`, or the first byte. |
 | `-I <dir>`, `--include-dir <dir>` | Also look for `INCLUDE`, `INCBIN`, and `IMPORT` files in `dir`, after the directory of the file that names them. Repeat for several directories. |
 | `-o <path>`, `--output <path>` | Write output to a file; omitted means stdout. |
 | `-`, as input path | Read source from stdin. |
@@ -399,6 +400,27 @@ Assemble directly to CAS:
 ```bash
 cargo run --bin rtvc-asm -- --format cas experiment.asm -o experiment.cas
 ```
+
+A program assembled at any other `ORG` also becomes a runnable CAS. rtvc-asm
+puts the same BASIC line in front of it, followed at `1A30H` by a 14-byte stub
+that copies the program to its `ORG` and jumps to it:
+
+```asm
+        ORG 8000H
+START:  LD A,02H
+FLASH:  OUT (00H),A
+        XOR 0AH
+        JP FLASH
+```
+
+- The program must be one contiguous segment between `1A3EH` (just after the
+  stub) and `BFFFH`. The BASIC stack and system variables are below `19EFH`,
+  so this range is free while BASIC is running.
+- The CAS payload, BASIC line and stub included, can be at most 42,256 bytes.
+- The stub jumps to `START` when it is defined, otherwise to the first byte.
+  `--entry NAME` picks another label inside the program.
+- A `RET` returns to BASIC, which then stores the `USR` result just after the
+  loaded payload. Use `RET` only when the program leaves that area alone.
 
 Use `--format toml` when the emitted TOML should be loaded through the debugger
 with `loadasm`, and `--format bin` when only the contiguous machine-code bytes

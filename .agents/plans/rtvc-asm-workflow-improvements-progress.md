@@ -4,9 +4,9 @@ Plan: [rtvc-asm-workflow-improvements.md](rtvc-asm-workflow-improvements.md)
 
 ## Status
 
-Items 1–5 are done: full expressions, file-aware errors, `PHASE`/`DEPHASE`,
-`INCLUDE`/`INCBIN`/`IMPORT`, and `BREAK`. Items 6–10 are not started. Next:
-item 6, runnable CAS output for any `ORG`.
+Items 1–6 are done: full expressions, file-aware errors, `PHASE`/`DEPHASE`,
+`INCLUDE`/`INCBIN`/`IMPORT`, `BREAK`, and runnable CAS output for any `ORG`.
+Items 7–10 are not started. Next: item 7, `SIN`/`COS`/`MIN`/`MAX`/`ABS`.
 
 ## Completed
 
@@ -51,8 +51,25 @@ item 6, runnable CAS output for any `ORG`.
   has `breakpoints`. `rtvc-asm --no-breakpoints` clears them. In
   [rtvc_debug.py](../../scripts/rtvc_debug.py), `asmfile` and `loadasm`
   call `breakpoint_add` for each after writing the segments.
+- Item 6: `tvc_cas_payload` in [src/emulator/asm.rs](../../src/emulator/asm.rs)
+  builds the bytes BASIC loads at `19EFH`. A `BASIC_START` segment is used
+  as it is. Any other single segment gets the `BASIC_START` line plus a
+  14-byte stub at `1A30H` (`LD HL / LD DE / LD BC / LDDR / JP entry`) and
+  the program at `1A3EH`. `rtvc-asm --format cas` gained `--entry NAME`;
+  `rtvc-tocas` uses the same function for `.asm` inputs.
 
 ## Decisions
+
+- Item 6: the destination must lie within `1A3EH`–`BFFFH`. It is never below
+  the source, so `LDDR` is always a safe copy, and the stub is never
+  overwritten. The ROM's stack top is `16ACH`; SP was `1698H` inside `USR` in
+  the boot test, so the range cannot touch the stack. No `DI` and no new SP:
+  interrupts keep running, and a `RET` goes back to BASIC.
+- Item 6: the entry must be inside the copied program; it defaults to
+  `START`, else the first byte. Only one contiguous segment is supported, and
+  the whole payload must fit in 42,256 bytes. `--entry` with `BASIC_START` is
+  an error.
+- Item 6: TOML inputs to `rtvc-tocas` still have no relocating loader.
 
 - Item 2: file names and columns are not stored in `AsmError` yet; that
   waits for `INCLUDE` (item 4), when a line can belong to another file.
@@ -95,6 +112,16 @@ item 6, runnable CAS output for any `ORG`.
   reader to `rtvc-tocas` if it is needed.
 - The debugger `asmfile` command sends source text only; sending its path
   so the debugger can resolve includes is still open.
+
+## Validation (item 6)
+
+- `cargo test --bin rtvc-asm`: 14 passed (4 new); `rtvc-tocas`: 8 passed.
+  `cargo test --lib`: 285 passed, including
+  `relocating_asm_cas_runs_at_its_org`. That test loads a CAS at `A000H`
+  through the host-file card; it autostarts, the code is copied and runs,
+  and SP is below `19EFH`. C80 and ROM listings ok.
+- Old and new `rtvc-asm`: TOML identical for all 55 sources. CAS differs only
+  in error wording, and `lasersqd_ls_7530.asm` (`ORG 7530H`) now builds.
 
 ## Validation (item 5)
 
