@@ -7,6 +7,9 @@ Release notes start here. Older release history is intentionally not backfilled.
 - rtvc-asm expressions have C operator precedence, parentheses, `*`, `/`,
   `%`, `<<`, `>>`, `&`, `|`, `^`, `~`, `!`, and `LOW()`/`HIGH()`, so sizes
   like `GLYPHS*64` no longer have to be written out by hand.
+- rtvc-asm `INCLUDE`, `INCBIN` and `IMPORT` assemble other source files, emit
+  file bytes, and use another module's symbols from its TOML output. `-I`
+  adds search directories.
 - rtvc-asm `PHASE address` … `DEPHASE` assembles code for the address it
   runs at after being copied, while its bytes stay at the load address.
 - rtvc-asm reports source errors as `file:line: message`, which editors can

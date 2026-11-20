@@ -14,13 +14,17 @@ makróassembler.
 
 ### Rust API
 
-Az `asm.rs` két belépési pontot ad:
+Az `asm.rs` a következő belépési pontokat adja:
 
 - az `assemble_line(source, pc)` egyetlen utasítást vagy `DB`/`DEFB` sort
   fordít le a megadott programszámlálónál;
 - az `assemble_program(source, origin)` lefuttatja a kétmenetes assemblert, és
   visszaadja a szegmenseket, szimbólumokat, forrássor-metaadatokat, az
-  összefűzött bájtokat és a `next_addr` értéket.
+  összefűzött bájtokat és a `next_addr` értéket; fájlokhoz nem fér hozzá;
+- az `assemble_program_with(source, origin, name, files)` ugyanezt teszi a
+  `name` nevű forrással, és az `INCLUDE`, `INCBIN`, `IMPORT` fájlokat egy
+  `AsmFiles` megvalósításon keresztül olvassa. Maga az assembler sosem nyúl
+  a fájlrendszerhez, így a hibakeresőben és WebAssembly buildben is fut.
 
 A TCP hibakereső `assemble` parancsa az `assemble_program` függvényt használja,
 így egy kérés egy utasítást vagy egy kis forrásblokkot is tartalmazhat.
@@ -41,6 +45,7 @@ kimenet a szabványos kimenetre kerül.
 | `--origin <cím>` | Kezdő fordítási cím a forrásbeli `ORG` előtt; alapértéke `0`. |
 | `--format <toml\|cas\|bin>` | Kimeneti formátum; alapértéke `toml`. A `cas` egyetlen `BASIC_START` szegmenst, a `bin` egy összefüggő szegmenst vár. |
 | `-d <NÉV=ÉRTÉK>`, `--define <NÉV=ÉRTÉK>` | Fordítás előtt lecseréli az assembly kódban lévő `%NÉV%` helyőrzőket. Többször is megadható; a hiányzó érték hiba. |
+| `-I <könyvtár>`, `--include-dir <könyvtár>` | Az `INCLUDE`, `INCBIN` és `IMPORT` fájlokat a megnevező fájl könyvtára után ebben a könyvtárban is keresi. Többször is megadható. |
 | `-o <útvonal>`, `--output <útvonal>` | Kimeneti fájl. |
 | `-` bemenetként | Olvasás a szabványos bemenetről. |
 
@@ -138,6 +143,9 @@ tartalmazhat, de nem kezdődhet számjeggyel.
 | `REPT`, `ENDR` | `REPT darab[, számláló]` … `ENDR` | A közrezárt sorokat `darab`-szor fordítja le. Lásd: [Ismétlés](#ismétlés). |
 | `ASSERT` | `ASSERT feltétel[, "üzenet"]` | Hibával leállítja a fordítást, ha a feltétel hamis. Lásd: [Ellenőrzések](#ellenőrzések). |
 | `PHASE`, `DEPHASE` | `PHASE cím` … `DEPHASE` | A közrezárt kódot futási címre fordítja, a bájtok a betöltési címen maradnak. Lásd: [Fordítás futási címre](#fordítás-futási-címre). |
+| `INCLUDE` | `INCLUDE "útvonal"` | Másik forrásfájlt fordít le a helyén. Lásd: [Fájlok](#fájlok-include-incbin-és-import). |
+| `INCBIN` | `INCBIN "útvonal"[, eltolás[, hossz]]` | Egy fájl bájtjait írja ki. |
+| `IMPORT` | `IMPORT "modul.toml"[, ELŐTAG]` | Egy másik modul TOML kimenetének szimbólumait definiálja. |
 
 A `DB`/`DEFB` szövegliteráljai csak ASCII karaktereket tartalmazhatnak. Az
 érvényes escape-ek: `\0`, `\n`, `\r`, `\t`, `\\`, `\"` és `\'`.
@@ -192,6 +200,42 @@ LINE_END:
   feltételt) és az összehasonlított értékeket, például
   `line 9: assertion failed: megváltozott a másolóciklus mérete (left is
   13, right is 12)`.
+
+## Fájlok: INCLUDE, INCBIN és IMPORT
+
+```asm
+        INCLUDE "tvc-ports.inc"          ; másik forrás fordítása itt
+        IMPORT "boot.toml", BOOT_        ; másik modul szimbólumai
+        ORG 8000H
+START:  CALL BOOT_KEY_SCAN
+FONT:   INCBIN "font.bin"                ; a teljes fájl
+GLYPH:  INCBIN "font.bin", 64*3, 64      ; 192-es eltolás, 64 bájt
+```
+
+- Az `INCLUDE "útvonal"` egy másik forrásfájl sorait fordítja le az
+  `INCLUDE` sor helyén. Az `INCLUDE` sor címkéje a beillesztett kód címét
+  jelöli. A beillesztett fájlok további fájlokat illeszthetnek be, legfeljebb
+  32 mélységig; az önmagát közvetlenül vagy közvetve beillesztő fájl hiba. A
+  `%NÉV%` helyőrzők a beillesztett fájlokra is vonatkoznak.
+- Az `INCBIN "útvonal"[, eltolás[, hossz]]` egy fájl bájtjait írja ki. Az
+  eltolás és a hossz kifejezés, amely a sor fölött definiált szimbólumokat
+  és `REPT` számlálót is használhat: `REPT 4, I` … `INCBIN "font.bin",
+  I*64, 8` … `ENDR`. Hossz nélkül a fájl hátralévő része kerül ki. A fájl
+  végén túlnyúló tartomány hiba.
+- Az `IMPORT "modul.toml"[, ELŐTAG]` egy `rtvc-asm` által írt
+  `rtvc-asm-v1` TOML fájl minden szimbólumát konstansként definiálja.
+  Előtaggal a `KEY` név `ELŐTAGKEY` lesz, így a `BOOT_` előtag `BOOT_KEY`
+  nevet ad. A szimbólumok az első menetben az `IMPORT` sor alatt, a
+  másodikban mindenhol használhatók. A már definiált név hiba. Az importált
+  szimbólumok nem kerülnek a modul saját `[symbols]` táblájába.
+- A relatív útvonalat a fordító az őt megnevező fájl mellett, majd sorban
+  minden `-I` könyvtárban keresi. Az abszolút útvonal változatlanul
+  használatos.
+- A beillesztett fájlok a TOML `files` tömbjében szerepelnek, soraikat a
+  `[[lines]]` `file` mezője jelöli; a bennük talált hibák az adott fájlt
+  nevezik meg: `tvc-ports.inc:12: unknown symbol 'PORT'`.
+- A hibakereső `assemble` parancsa nem fér hozzá fájlokhoz, ezért ott ezek
+  a direktívák hibát adnak.
 
 ## Fordítás futási címre
 
@@ -341,7 +385,7 @@ operandussal vagy a másik indexregiszter felével, mert az előtag
 megváltoztatná a jelentésüket.
 
 A nem támogatott mnemonikok és operandusalakok hibát adnak. Nincsenek makrók,
-include-ok, feltételes fordítás, lokális címketartományok, relokációs rekordok,
+feltételes fordítás, lokális címketartományok, relokációs rekordok,
 listafájlok vagy más assemblerekkel kompatibilis szintaxis.
 
 ## TOML-kimenet
@@ -374,6 +418,7 @@ bytes = [
 | `requested_origin` | A CLI/API kezdőcíme a forrásbeli `ORG` előtt. |
 | `origin` | Az első kibocsátott szegmens címe, üres kimenetnél a kért kezdőcím. |
 | `next_addr` | Az utolsó utasítás vagy `ORG` utáni aktuális cím. |
+| `files` | Csak beillesztett fájlok esetén: a fő forrás, majd minden beillesztett fájl. A beillesztett fájlból származó `[[lines]]` bejegyzéseknek `file` mezőjük van, amely ennek a tömbnek az indexe. |
 | `segments` | Címzett bájttartományok; nem folytonos `ORG` esetén több elem. |
 | `symbols` | Nagybetűs szimbólumnevek és 16 bites értékeik. |
 | `mappings` | Az `ORG` sorok névvel ellátott leképezései: `name`, `source_base`, `mapped_base`. |

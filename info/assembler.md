@@ -14,13 +14,17 @@ macro assembler.
 
 ### Rust API
 
-[src/emulator/asm.rs](../src/emulator/asm.rs) exposes two entry points:
+[src/emulator/asm.rs](../src/emulator/asm.rs) exposes these entry points:
 
 - `assemble_line(source, pc)` assembles one instruction or `DB`/`DEFB` line at
   the given program counter.
 - `assemble_program(source, origin)` runs the two-pass helper assembler and
   returns emitted segments, symbols, emitted source-line metadata, flattened
-  bytes, and `next_addr`.
+  bytes, and `next_addr`. It has no file access.
+- `assemble_program_with(source, origin, name, files)` does the same for the
+  source called `name`, reading `INCLUDE`, `INCBIN`, and `IMPORT` files
+  through an `AsmFiles` implementation. The assembler itself never touches
+  the file system, so it also runs in the debugger and in WebAssembly builds.
 
 The TCP debugger uses `assemble_program` for its `assemble` command, so a single
 debugger request may contain either one instruction or a small source block.
@@ -46,6 +50,7 @@ Options:
 | `--origin <addr>` | Initial assembly address before source-level `ORG`; defaults to `0`. |
 | `--format <toml\|cas\|bin>` | Output format; defaults to `toml`. `cas` expects a single `BASIC_START` segment, and `bin` expects one contiguous segment. |
 | `-d <NAME=VALUE>`, `--define <NAME=VALUE>` | Replace `%NAME%` placeholders in assembly code before assembly. Repeat for multiple values; a missing placeholder value is an error. |
+| `-I <dir>`, `--include-dir <dir>` | Also look for `INCLUDE`, `INCBIN`, and `IMPORT` files in `dir`, after the directory of the file that names them. Repeat for several directories. |
 | `-o <path>`, `--output <path>` | Write output to a file; omitted means stdout. |
 | `-`, as input path | Read source from stdin. |
 
@@ -157,6 +162,9 @@ Supported directives:
 | `REPT`, `ENDR` | `REPT count[, counter]` … `ENDR` | Assembles the enclosed lines `count` times. See [Repetition](#repetition). |
 | `ASSERT` | `ASSERT condition[, "message"]` | Fails assembly when the condition is false. See [Assertions](#assertions). |
 | `PHASE`, `DEPHASE` | `PHASE address` … `DEPHASE` | Assembles the enclosed code for a run address while its bytes stay at the load address. See [Assembling for a Run Address](#assembling-for-a-run-address). |
+| `INCLUDE` | `INCLUDE "path"` | Assembles another source file in place. See [Files](#files-include-incbin-and-import). |
+| `INCBIN` | `INCBIN "path"[, offset[, length]]` | Emits the bytes of a file. |
+| `IMPORT` | `IMPORT "module.toml"[, PREFIX]` | Defines the symbols of another module's TOML output. |
 
 String literals in `DB`/`DEFB` must be ASCII. Supported escapes are `\0`, `\n`,
 `\r`, `\t`, `\\`, `\"`, and `\'`.
@@ -209,6 +217,41 @@ LINE_END:
 - The error names the line, the message (or the condition when there is no
   message), and the values compared, for example
   `line 9: assertion failed: copy loop changed size (left is 13, right is 12)`.
+
+## Files: INCLUDE, INCBIN, and IMPORT
+
+```asm
+        INCLUDE "tvc-ports.inc"          ; assemble another source here
+        IMPORT "boot.toml", BOOT_        ; another module's symbols
+        ORG 8000H
+START:  CALL BOOT_KEY_SCAN
+FONT:   INCBIN "font.bin"                ; the whole file
+GLYPH:  INCBIN "font.bin", 64*3, 64      ; offset 192, 64 bytes
+```
+
+- `INCLUDE "path"` assembles the lines of another source file in place of
+  the `INCLUDE` line. A label on the `INCLUDE` line marks the address of
+  the included code. Included files may include others, up to 32 deep; a
+  file that includes itself, directly or not, is an error. `%NAME%`
+  placeholders apply to included files as to the main source.
+- `INCBIN "path"[, offset[, length]]` emits the bytes of a file. Offset and
+  length are expressions that may use symbols defined above the line, and
+  a `REPT` counter: `REPT 4, I` … `INCBIN "font.bin", I*64, 8` … `ENDR`.
+  Without a length the rest of the file is emitted. A range past the end of
+  the file is an error.
+- `IMPORT "module.toml"[, PREFIX]` defines every symbol of an `rtvc-asm-v1`
+  TOML file, as written by `rtvc-asm`, as a constant. With a prefix, `KEY`
+  becomes `PREFIXKEY`, so `BOOT_` gives `BOOT_KEY`. The symbols can be
+  used below the `IMPORT` line in the first pass and everywhere in the
+  second. A name that is already defined is an error. Imported symbols are
+  not written to this module's `[symbols]`.
+- A relative path is looked up next to the file that names it, then in
+  each `-I` directory in order. An absolute path is used as it is.
+- Lines from included files are listed in the TOML `files` array and
+  marked with `file` in `[[lines]]`; errors in them name that file:
+  `tvc-ports.inc:12: unknown symbol 'PORT'`.
+- The debugger `assemble` command has no file access, so these
+  directives are errors there.
 
 ## Assembling for a Run Address
 
@@ -365,7 +408,7 @@ half of the other index register, because the prefix would change their
 meaning.
 
 Unsupported mnemonics or unsupported operand forms are errors. The assembler
-does not implement macros, includes, conditional assembly, local-scope rules,
+does not implement macros, conditional assembly, local-scope rules,
 relocation records, listing files, or third-party assembler compatibility
 syntax.
 
@@ -403,6 +446,7 @@ Fields:
 | `requested_origin` | CLI/API origin before any source-level `ORG`. |
 | `origin` | Address of the first emitted segment, or the requested origin if nothing is emitted. |
 | `next_addr` | Current assembly address after the final emitted statement or `ORG`. |
+| `files` | Present when files were included: the main source, then each included file. `[[lines]]` entries from an included file have `file`, an index into this array. |
 | `segments` | Addressed byte ranges. Multiple ranges appear when source uses non-contiguous `ORG` values. |
 | `symbols` | Uppercase symbol names mapped to 16-bit values. |
 | `mappings` | Named `ORG` transformations with `name`, `source_base`, and `mapped_base`. |

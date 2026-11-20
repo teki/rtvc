@@ -4,9 +4,9 @@ Plan: [rtvc-asm-workflow-improvements.md](rtvc-asm-workflow-improvements.md)
 
 ## Status
 
-Items 1 (full expressions), 2 (file-aware errors) and 3 (`PHASE`/`DEPHASE`)
-are done. Items 4–10 are not started. Next: item 4, `INCLUDE`, `INCBIN` and
-`IMPORT`.
+Items 1–4 are done: full expressions, file-aware errors, `PHASE`/`DEPHASE`,
+and `INCLUDE`/`INCBIN`/`IMPORT`. Items 5–10 are not started. Next: item 5,
+debugger integration (`BREAK`).
 
 ## Completed
 
@@ -32,6 +32,18 @@ are done. Items 4–10 are not started. Next: item 4, `INCLUDE`, `INCBIN` and
   only inside a block. Segments are emitted at `load`. `AssembledLine` gained
   `run_addr`; the TOML writes `run_addr` only when it differs from `addr`,
   and the debugger `assemble` JSON always includes it.
+- Item 4: `SourceLoader` reads files while the source is parsed, before
+  pass 1: `INCLUDE` is replaced by the included lines (its own line stays,
+  with its labels), `INCBIN` and `IMPORT` keep the file contents in the
+  statement. File access goes through the `AsmFiles` trait and
+  `assemble_program_with`; `assemble_program` has none, so the debugger
+  rejects the directives. `rtvc-asm` implements the trait as `CliFiles`
+  with `-I`, and applies `%NAME%` placeholders to included sources.
+  `ParsedLine` carries its file index and name, and every pass error goes
+  through `ParsedLine::error`, so errors in included files name the file.
+  `AsmError` gained `file()`; `AssembledProgram` gained `files`,
+  `AssembledLine` gained `file`; the TOML writes `files` and `file` only
+  when something was included.
 
 ## Decisions
 
@@ -43,6 +55,15 @@ are done. Items 4–10 are not started. Next: item 4, `INCLUDE`, `INCBIN` and
   `END-RUN` with labels.
 - Item 3: `PHASE` cannot nest; `ORG` and `BASIC_START` inside a block are
   errors, and an unclosed block is reported at its `PHASE` line.
+- Item 4: imported symbols are not written to the importing module's
+  `[symbols]`, so modules do not re-export each other's names. `IMPORT`
+  files do not appear in `files`, which lists sources only.
+- Item 4: a `REPT` copy with a counter is parsed again from its text;
+  `keep_loaded_files` gives it the file contents already read, so
+  `INCBIN "f", I*8, 8` works inside `REPT`.
+- Item 4: `IMPORT` uses `parse_rtvc_asm_v1`, so it needs the `asm-toml`
+  feature (on in native and CLI builds); without it the directive is an
+  error.
 - Values are `i32` with wrapping arithmetic; range checks stay at the point
   of use (`eval_byte`, `eval_word`).
 - A word that parses as a number is a number before it is a symbol
@@ -55,6 +76,26 @@ are done. Items 4–10 are not started. Next: item 4, `INCLUDE`, `INCBIN` and
   before `(` is an error.
 - `assemble_line` (the single-instruction debugger path) still accepts
   numbers only; expressions need `assemble_program`, as before.
+
+## Known gaps
+
+- `rtvc-tocas` assembles `.asm` with `assemble_program`, which has no file
+  access, so `INCLUDE`, `INCBIN`, and `IMPORT` fail there. Use
+  `rtvc-asm --format cas` for such sources, or pass a `CliFiles`-style
+  reader to `rtvc-tocas` if it is needed.
+- The debugger `asmfile` command sends source text only; sending its path
+  so the debugger can resolve includes is still open.
+
+## Validation (item 4)
+
+- `cargo test --lib asm`: 41 passed (5 new). `cargo test --bin rtvc-asm`:
+  10 passed (2 new, including `CliFiles` lookup on a temporary directory).
+  `cargo test --lib`: 282 passed. C80, `rtvc-tocas`, and ROM listings ok;
+  `--no-default-features` builds without new warnings.
+- Manual CLI run: `INCLUDE` via `-I`, `IMPORT` of a TOML written by
+  `rtvc-asm`, `INCBIN` with an offset, and an error inside an included
+  file reported as `lib/bad.inc:2: …`.
+- The previous and new `rtvc-asm` give identical output for all 43 sources.
 
 ## Validation (item 3)
 

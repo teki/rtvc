@@ -4,7 +4,7 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
-use rtvc_core::asm::assemble_program;
+use rtvc_core::asm::{AsmFileKind, AsmFiles, assemble_program_with};
 use rtvc_core::cas::{TVC_CAS_TYPE_BASIC, encode_tvc_cas};
 
 const FORMAT_VERSION: &str = "rtvc-asm-v1";
@@ -17,6 +17,7 @@ struct Options {
     origin: u16,
     format: OutputFormat,
     defines: BTreeMap<String, String>,
+    include_dirs: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,7 +74,11 @@ fn run() -> Result<(), CliError> {
     let (source_name, source) = read_source(&options.input)?;
     let source = apply_defines(&source, &options.defines)
         .map_err(|(line, err)| CliError::Source(format!("{source_name}:{line}: {err}")))?;
-    let assembled = assemble_program(&source, options.origin)
+    let files = CliFiles {
+        include_dirs: &options.include_dirs,
+        defines: &options.defines,
+    };
+    let assembled = assemble_program_with(&source, options.origin, &source_name, Some(&files))
         .map_err(|err| CliError::Source(err.display_in(&source_name)))?;
 
     let output = render_output(&source_name, &options, &assembled)?;
@@ -86,6 +91,7 @@ fn parse_args(program: &str, args: &[String]) -> Result<Options, String> {
     let mut origin = 0u16;
     let mut format = OutputFormat::Toml;
     let mut defines = BTreeMap::new();
+    let mut include_dirs = Vec::new();
     let mut index = 0;
 
     while index < args.len() {
@@ -120,6 +126,19 @@ fn parse_args(program: &str, args: &[String]) -> Result<Options, String> {
                 if defines.insert(name.clone(), number).is_some() {
                     return Err(format!("duplicate definition '{name}'"));
                 }
+            }
+            "-I" | "--include-dir" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--include-dir requires a directory".to_string())?;
+                include_dirs.push(PathBuf::from(value));
+            }
+            value if value.starts_with("-I") && value.len() > 2 => {
+                include_dirs.push(PathBuf::from(&value[2..]));
+            }
+            value if value.starts_with("--include-dir=") => {
+                include_dirs.push(PathBuf::from(&value["--include-dir=".len()..]));
             }
             value if value.starts_with("--origin=") => {
                 origin = parse_number(&value["--origin=".len()..])?;
@@ -162,14 +181,60 @@ fn parse_args(program: &str, args: &[String]) -> Result<Options, String> {
         origin,
         format,
         defines,
+        include_dirs,
     })
 }
 
 fn usage(program: &str) -> String {
     format!(
-        "usage: {program} [--origin <addr>] [--format toml|cas|bin] [-d NAME=VALUE] [-o <output>] <input.asm>\n\
+        "usage: {program} [--origin <addr>] [--format toml|cas|bin] [-d NAME=VALUE] [-I <dir>] [-o <output>] <input.asm>\n\
          use '-' as input to read source from stdin; omit -o to write output to stdout"
     )
+}
+
+/// Reads `INCLUDE`, `INCBIN` and `IMPORT` files. A relative path is looked
+/// up next to the file that names it, then in each `-I` directory.
+struct CliFiles<'a> {
+    include_dirs: &'a [PathBuf],
+    defines: &'a BTreeMap<String, String>,
+}
+
+impl AsmFiles for CliFiles<'_> {
+    fn read(&self, path: &str, from: &str, kind: AsmFileKind) -> Result<(String, Vec<u8>), String> {
+        let wanted = Path::new(path);
+        let candidates: Vec<PathBuf> = if wanted.is_absolute() {
+            vec![wanted.to_path_buf()]
+        } else {
+            let base = if from == "-" {
+                Path::new("")
+            } else {
+                Path::new(from).parent().unwrap_or(Path::new(""))
+            };
+            std::iter::once(base.join(wanted))
+                .chain(self.include_dirs.iter().map(|dir| dir.join(wanted)))
+                .collect()
+        };
+        let Some(found) = candidates.iter().find(|candidate| candidate.is_file()) else {
+            let searched: Vec<_> = candidates
+                .iter()
+                .map(|candidate| candidate.display().to_string())
+                .collect();
+            return Err(format!(
+                "cannot find '{path}' (looked for {})",
+                searched.join(", ")
+            ));
+        };
+        let name = found.display().to_string();
+        let bytes = fs::read(found).map_err(|err| format!("failed to read {name}: {err}"))?;
+        if kind != AsmFileKind::Source {
+            return Ok((name, bytes));
+        }
+        // %NAME% placeholders apply to included source as to the main file.
+        let text = String::from_utf8(bytes).map_err(|_| format!("'{name}' is not UTF-8 text"))?;
+        let text = apply_defines(&text, self.defines)
+            .map_err(|(line, err)| format!("{name}:{line}: {err}"))?;
+        Ok((name, text.into_bytes()))
+    }
 }
 
 fn read_source(input: &Input) -> Result<(String, String), String> {
@@ -256,6 +321,14 @@ fn render_toml(
     out.push(format!("requested_origin = {}", hex16(requested_origin)));
     out.push(format!("origin = {}", hex16(assembled.origin)));
     out.push(format!("next_addr = {}", hex16(assembled.next_addr)));
+    if assembled.files.len() > 1 {
+        let files: Vec<_> = assembled
+            .files
+            .iter()
+            .map(|file| toml_string(file))
+            .collect();
+        out.push(format!("files = [{}]", files.join(", ")));
+    }
 
     if !assembled.symbols.is_empty() {
         out.push(String::new());
@@ -276,6 +349,9 @@ fn render_toml(
     for line in &assembled.lines {
         out.push(String::new());
         out.push("[[lines]]".to_string());
+        if line.file != 0 {
+            out.push(format!("file = {}", line.file));
+        }
         out.push(format!("line = {}", line.line));
         out.push(format!("addr = {}", hex16(line.addr)));
         if line.run_addr != line.addr {
@@ -512,6 +588,7 @@ fn single_quote_starts_statement_string(source: &str, index: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rtvc_core::asm::assemble_program;
 
     #[test]
     fn parses_cli_options() {
@@ -530,6 +607,82 @@ mod tests {
         assert_eq!(options.output, Some(PathBuf::from("out.bin")));
         assert_eq!(options.input, Input::Path(PathBuf::from("helper.asm")));
         assert!(options.defines.is_empty());
+    }
+
+    #[test]
+    fn parses_include_directories() {
+        let args = vec![
+            "-I".to_string(),
+            "lib".to_string(),
+            "-Iinc".to_string(),
+            "--include-dir=share/asm".to_string(),
+            "main.asm".to_string(),
+        ];
+        let options = parse_args("rtvc-asm", &args).unwrap();
+        assert_eq!(
+            options.include_dirs,
+            [
+                PathBuf::from("lib"),
+                PathBuf::from("inc"),
+                PathBuf::from("share/asm")
+            ]
+        );
+    }
+
+    #[test]
+    fn reads_files_next_to_the_includer_then_from_include_dirs() {
+        let root = std::env::temp_dir().join(format!("rtvc-asm-files-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src/parts")).unwrap();
+        fs::create_dir_all(root.join("lib")).unwrap();
+        fs::write(root.join("src/parts/local.inc"), "LD A,%VALUE%\n").unwrap();
+        fs::write(root.join("lib/shared.inc"), "NOP\n").unwrap();
+        fs::write(root.join("lib/font.bin"), [1, 2, 3]).unwrap();
+
+        let include_dirs = vec![root.join("lib")];
+        let defines = BTreeMap::from([("VALUE".to_string(), "42".to_string())]);
+        let files = CliFiles {
+            include_dirs: &include_dirs,
+            defines: &defines,
+        };
+        let main = root.join("src/main.asm").display().to_string();
+
+        let (name, bytes) = files
+            .read("parts/local.inc", &main, AsmFileKind::Source)
+            .unwrap();
+        assert_eq!(name, root.join("src/parts/local.inc").display().to_string());
+        assert_eq!(bytes, b"LD A,42\n");
+
+        // Relative to the file that names it, not to the main source.
+        let (name, _) = files
+            .read("../../lib/shared.inc", &name, AsmFileKind::Source)
+            .unwrap();
+        assert!(name.ends_with("shared.inc"));
+
+        let (_, bytes) = files.read("font.bin", &main, AsmFileKind::Binary).unwrap();
+        assert_eq!(bytes, [1, 2, 3]);
+
+        let err = files
+            .read("none.inc", &main, AsmFileKind::Source)
+            .unwrap_err();
+        assert!(err.starts_with("cannot find 'none.inc' (looked for "));
+
+        let no_defines = BTreeMap::new();
+        let files = CliFiles {
+            include_dirs: &include_dirs,
+            defines: &no_defines,
+        };
+        let err = files
+            .read("parts/local.inc", &main, AsmFileKind::Source)
+            .unwrap_err();
+        assert!(err.ends_with("local.inc:1: missing definition for %VALUE%"));
+
+        // Binary files are not touched by placeholder substitution.
+        fs::write(root.join("lib/data.bin"), b"%X%").unwrap();
+        let (_, bytes) = files.read("data.bin", &main, AsmFileKind::Binary).unwrap();
+        assert_eq!(bytes, b"%X%");
+
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

@@ -1,9 +1,36 @@
-use std::{collections::BTreeMap, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    rc::Rc,
+};
 
 const TVC_BASIC_LOAD_ADDR: u16 = 0x19EF;
 const TVC_BASIC_USR_ENTRY: u16 = 0x1A30;
 /// Upper bound on the source lines `REPT` blocks may expand to.
 const MAX_REPT_LINES: usize = 1 << 20;
+/// Upper bound on nested `INCLUDE` files.
+const MAX_INCLUDE_DEPTH: usize = 32;
+
+/// What a file is read for, so a reader can treat source text differently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AsmFileKind {
+    /// `INCLUDE`: assembly source text.
+    Source,
+    /// `INCBIN`: raw bytes.
+    Binary,
+    /// `IMPORT`: `rtvc-asm-v1` TOML.
+    Symbols,
+}
+
+/// File access for `INCLUDE`, `INCBIN` and `IMPORT`.
+///
+/// The assembler itself has no file system access, so it also runs in the
+/// debugger and in WebAssembly builds; callers that have files provide this.
+pub trait AsmFiles {
+    /// Read `path` as written in the source file named `from`. Returns the
+    /// name to report for the file and its bytes.
+    fn read(&self, path: &str, from: &str, kind: AsmFileKind) -> Result<(String, Vec<u8>), String>;
+}
 
 /// An assembler error. `line` is the 1-based source line when the error
 /// belongs to one; `Display` renders it as `line N: message`, and
@@ -12,6 +39,8 @@ const MAX_REPT_LINES: usize = 1 << 20;
 pub struct AsmError {
     message: String,
     line: Option<usize>,
+    /// The included file the line belongs to; `None` for the main source.
+    file: Option<String>,
 }
 
 impl AsmError {
@@ -19,6 +48,7 @@ impl AsmError {
         Self {
             message: message.into(),
             line: None,
+            file: None,
         }
     }
 
@@ -32,8 +62,16 @@ impl AsmError {
         self.line
     }
 
+    /// The included file the error belongs to, or `None` for the main source.
+    pub fn file(&self) -> Option<&str> {
+        self.file.as_deref()
+    }
+
     /// Render as `file:line: message`, or `file: message` without a line.
+    /// `file` names the main source; an error in an included file names that
+    /// file instead.
     pub fn display_in(&self, file: &str) -> String {
+        let file = self.file.as_deref().unwrap_or(file);
         match self.line {
             Some(line) => format!("{file}:{line}: {}", self.message),
             None => format!("{file}: {}", self.message),
@@ -43,9 +81,10 @@ impl AsmError {
 
 impl fmt::Display for AsmError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.line {
-            Some(line) => write!(f, "line {line}: {}", self.message),
-            None => f.write_str(&self.message),
+        match (&self.file, self.line) {
+            (Some(file), Some(line)) => write!(f, "{file}:{line}: {}", self.message),
+            (_, Some(line)) => write!(f, "line {line}: {}", self.message),
+            (_, None) => f.write_str(&self.message),
         }
     }
 }
@@ -61,6 +100,10 @@ pub struct AssembledProgram {
     pub mappings: Vec<AsmMapping>,
     pub lines: Vec<AssembledLine>,
     pub next_addr: u16,
+    /// Source file names: index 0 is the main source, then each included
+    /// file in the order it was first included. `AssembledLine::file`
+    /// indexes this list.
+    pub files: Vec<String>,
 }
 
 /// A named address transformation captured at an `ORG` declaration.
@@ -79,6 +122,8 @@ pub struct AssembledSegment {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssembledLine {
+    /// Index into `AssembledProgram::files`; 0 is the main source.
+    pub file: usize,
     pub line: usize,
     /// Address the bytes are loaded at.
     pub addr: u16,
@@ -91,6 +136,10 @@ pub struct AssembledLine {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ParsedLine {
     line_no: usize,
+    /// Index into the program's file list; 0 is the main source.
+    file: usize,
+    /// Name of an included file, for errors; `None` for the main source.
+    file_name: Option<Rc<str>>,
     source: String,
     labels: Vec<String>,
     statement: Statement,
@@ -122,6 +171,25 @@ enum Statement {
     Endr,
     Phase(String),
     Dephase,
+    /// `INCLUDE`, replaced by the included lines when the source is loaded.
+    Include(String),
+    /// `INCBIN` before its file is read.
+    IncbinFile {
+        path: String,
+        offset: Option<String>,
+        length: Option<String>,
+    },
+    Incbin {
+        data: Rc<[u8]>,
+        offset: Option<String>,
+        length: Option<String>,
+    },
+    /// `IMPORT` before its file is read.
+    ImportFile {
+        path: String,
+        prefix: Option<String>,
+    },
+    Import(Rc<[(String, u16)]>),
     Assert {
         condition: String,
         message: Option<String>,
@@ -196,19 +264,31 @@ pub fn assemble_line(source: &str, pc: u16) -> Result<Vec<u8>, AsmError> {
     Ok(bytes)
 }
 
-/// Assemble a small Z80 source block at `origin`.
+/// Assemble a Z80 source block at `origin`, without file access.
 ///
-/// This two-pass layer is intended for debugger helper code and porting shims,
-/// not as a full macro assembler. It supports labels, `ORG` with named address
-/// mappings, `EQU`, `DB`/`DEFB`, `DW`/`DEFW`, `DS`/`DEFS`, `REPT`/`ENDR`,
-/// `ASSERT`, simple `+`/`-` expressions, and `$` as the current address.
-/// Instruction encoding is delegated to [`assemble_line`].
+/// `INCLUDE`, `INCBIN` and `IMPORT` are errors; use
+/// [`assemble_program_with`] to provide files. See `info/assembler.md` for
+/// the source language. Instruction encoding is delegated to
+/// [`assemble_line`].
 pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, AsmError> {
-    let mut parsed: Vec<_> = source
-        .lines()
-        .enumerate()
-        .map(|(index, line)| parse_program_line(index + 1, line))
-        .collect::<Result<_, _>>()?;
+    assemble_program_with(source, origin, "", None)
+}
+
+/// Assemble the source named `name` at `origin`, reading `INCLUDE`,
+/// `INCBIN` and `IMPORT` files through `files`.
+pub fn assemble_program_with(
+    source: &str,
+    origin: u16,
+    name: &str,
+    files: Option<&dyn AsmFiles>,
+) -> Result<AssembledProgram, AsmError> {
+    let mut loader = SourceLoader {
+        files,
+        names: vec![name.to_string()],
+    };
+    let mut stack = vec![name.to_string()];
+    let mut parsed = loader.load(source, 0, &mut stack)?;
+    let mut imported = BTreeSet::new();
 
     let mut symbols = BTreeMap::new();
     let mut mappings = Vec::new();
@@ -217,7 +297,7 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
     // where its bytes go. They differ only between PHASE and DEPHASE.
     let mut pc = origin;
     let mut load = origin;
-    let mut phase_line = None;
+    let mut phase_line: Option<ParsedLine> = None;
     let mut index = 0;
     let mut repeated_lines = 0usize;
 
@@ -226,30 +306,33 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
         // any symbol defined above it. The copies are then assembled in turn.
         if let Statement::Rept { count, counter } = &parsed[index].statement {
             for label in &parsed[index].labels {
-                insert_symbol(&mut symbols, label, pc, parsed[index].line_no)?;
+                insert_symbol(&mut symbols, label, pc, &parsed[index])?;
             }
             let count = eval_nonnegative(count, pc, &symbols, &mappings_by_name, false, 0)
-                .map_err(|err| line_error(parsed[index].line_no, err))?;
+                .map_err(|err| parsed[index].error(err))?;
             let counter = counter.clone();
             let end = matching_endr(&parsed, index)?;
             let body = &parsed[index + 1..end];
             repeated_lines = repeated_lines.saturating_add(count.saturating_mul(body.len()));
             if repeated_lines > MAX_REPT_LINES {
-                return Err(line_error(
-                    parsed[index].line_no,
-                    AsmError::new(format!(
-                        "REPT blocks expand to more than {MAX_REPT_LINES} lines"
-                    )),
-                ));
+                return Err(parsed[index].error(AsmError::new(format!(
+                    "REPT blocks expand to more than {MAX_REPT_LINES} lines"
+                ))));
             }
             let mut expansion = Vec::with_capacity(count * body.len() + 1);
             for copy in 0..count {
                 for line in body {
                     expansion.push(match &counter {
-                        Some(name) => parse_program_line(
-                            line.line_no,
-                            &substitute_symbol(&line.source, name, copy),
-                        )?,
+                        Some(name) => {
+                            let mut copy = parse_program_line(
+                                line.line_no,
+                                &substitute_symbol(&line.source, name, copy),
+                                line.file,
+                                line.file_name.clone(),
+                            )?;
+                            keep_loaded_files(&line.statement, &mut copy.statement);
+                            copy
+                        }
                         None => line.clone(),
                     });
                 }
@@ -263,7 +346,7 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
         index += 1;
         if !matches!(line.statement, Statement::Equ { .. }) {
             for label in &line.labels {
-                insert_symbol(&mut symbols, label, pc, line.line_no)?;
+                insert_symbol(&mut symbols, label, pc, line)?;
             }
         }
 
@@ -274,24 +357,22 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
                 mappings: declarations,
             } => {
                 if phase_line.is_some() {
-                    return Err(line_error(
-                        line.line_no,
-                        AsmError::new("ORG inside PHASE; end the block with DEPHASE first"),
-                    ));
+                    return Err(line.error(AsmError::new(
+                        "ORG inside PHASE; end the block with DEPHASE first",
+                    )));
                 }
                 pc = eval_word(address, pc, &symbols, &mappings_by_name, false, 0)
-                    .map_err(|err| line_error(line.line_no, err))?;
+                    .map_err(|err| line.error(err))?;
                 load = pc;
                 for (name, mapped_address) in declarations {
                     if mappings_by_name.contains_key(name) {
-                        return Err(line_error(
-                            line.line_no,
-                            AsmError::new(format!("duplicate mapping '{name}'")),
-                        ));
+                        return Err(
+                            line.error(AsmError::new(format!("duplicate mapping '{name}'")))
+                        );
                     }
                     let mapped_base =
                         eval_word(mapped_address, pc, &symbols, &mappings_by_name, false, 0)
-                            .map_err(|err| line_error(line.line_no, err))?;
+                            .map_err(|err| line.error(err))?;
                     let mapping = AsmMapping {
                         name: name.clone(),
                         source_base: pc,
@@ -303,27 +384,19 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
             }
             Statement::BasicStart => {
                 if phase_line.is_some() {
-                    return Err(line_error(
-                        line.line_no,
-                        AsmError::new("BASIC_START inside PHASE"),
-                    ));
+                    return Err(line.error(AsmError::new("BASIC_START inside PHASE")));
                 }
                 load = TVC_BASIC_USR_ENTRY;
-                insert_symbol(
-                    &mut symbols,
-                    "BASIC_START",
-                    TVC_BASIC_USR_ENTRY,
-                    line.line_no,
-                )?;
+                insert_symbol(&mut symbols, "BASIC_START", TVC_BASIC_USR_ENTRY, line)?;
                 pc = TVC_BASIC_USR_ENTRY;
             }
             Statement::Equ { label, expr } => {
                 let value = eval_word(expr, pc, &symbols, &mappings_by_name, false, 0)
-                    .map_err(|err| line_error(line.line_no, err))?;
-                insert_symbol(&mut symbols, label, value, line.line_no)?;
+                    .map_err(|err| line.error(err))?;
+                insert_symbol(&mut symbols, label, value, line)?;
             }
             Statement::Bytes(values) => {
-                let len = byte_values_len(values)? as u16;
+                let len = byte_values_len(values).map_err(|err| line.error(err))? as u16;
                 pc = pc.wrapping_add(len);
                 load = load.wrapping_add(len);
             }
@@ -334,49 +407,64 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
             }
             Statement::Space { count, .. } => {
                 let count = eval_nonnegative(count, pc, &symbols, &mappings_by_name, false, 0)
-                    .map_err(|err| line_error(line.line_no, err))?;
+                    .map_err(|err| line.error(err))?;
                 pc = pc.wrapping_add(count as u16);
                 load = load.wrapping_add(count as u16);
             }
             Statement::Instruction(statement) => {
                 let rendered = render_instruction(statement, pc, &symbols, &mappings_by_name, true)
-                    .map_err(|err| line_error(line.line_no, err))?;
-                let bytes =
-                    assemble_line(&rendered, pc).map_err(|err| line_error(line.line_no, err))?;
+                    .map_err(|err| line.error(err))?;
+                let bytes = assemble_line(&rendered, pc).map_err(|err| line.error(err))?;
                 pc = pc.wrapping_add(bytes.len() as u16);
                 load = load.wrapping_add(bytes.len() as u16);
             }
             Statement::Phase(address) => {
-                if let Some(start) = phase_line {
-                    return Err(line_error(
-                        line.line_no,
-                        AsmError::new(format!(
-                            "PHASE inside PHASE; the block from line {start} has no DEPHASE"
-                        )),
-                    ));
+                if let Some(start) = &phase_line {
+                    return Err(line.error(AsmError::new(format!(
+                        "PHASE inside PHASE; the block from line {} has no DEPHASE",
+                        start.line_no
+                    ))));
                 }
                 pc = eval_word(address, pc, &symbols, &mappings_by_name, false, 0)
-                    .map_err(|err| line_error(line.line_no, err))?;
-                phase_line = Some(line.line_no);
+                    .map_err(|err| line.error(err))?;
+                phase_line = Some(labels_only(line));
             }
             Statement::Dephase => {
                 if phase_line.take().is_none() {
-                    return Err(line_error(
-                        line.line_no,
-                        AsmError::new("DEPHASE without PHASE"),
-                    ));
+                    return Err(line.error(AsmError::new("DEPHASE without PHASE")));
                 }
                 pc = load;
             }
+            Statement::Incbin {
+                data,
+                offset,
+                length,
+            } => {
+                let (start, end) =
+                    incbin_range(data, offset, length, pc, &symbols, &mappings_by_name)
+                        .map_err(|err| line.error(err))?;
+                let len = (end - start) as u16;
+                pc = pc.wrapping_add(len);
+                load = load.wrapping_add(len);
+            }
+            Statement::Import(entries) => {
+                for (name, value) in entries.iter() {
+                    insert_symbol(&mut symbols, name, *value, line)?;
+                    imported.insert(name.clone());
+                }
+            }
+            Statement::Include(_) | Statement::IncbinFile { .. } | Statement::ImportFile { .. } => {
+                unreachable!("files are read when the source is loaded")
+            }
             Statement::Assert { .. } => {}
             Statement::Endr => {
-                return Err(line_error(line.line_no, AsmError::new("ENDR without REPT")));
+                return Err(line.error(AsmError::new("ENDR without REPT")));
             }
             Statement::Rept { .. } => unreachable!("REPT blocks are expanded above"),
         }
     }
     if let Some(start) = phase_line {
-        return Err(line_error(start, AsmError::new("PHASE without DEPHASE")));
+        return Err(start.error(AsmError::new("PHASE without DEPHASE")));
     }
 
     let mut bytes = Vec::new();
@@ -391,7 +479,7 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
             Statement::Empty => Vec::new(),
             Statement::Org { address, .. } => {
                 pc = eval_word(address, pc, &symbols, &mappings_by_name, false, 0)
-                    .map_err(|err| line_error(line.line_no, err))?;
+                    .map_err(|err| line.error(err))?;
                 load = pc;
                 Vec::new()
             }
@@ -402,31 +490,45 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
             }
             Statement::Phase(address) => {
                 pc = eval_word(address, pc, &symbols, &mappings_by_name, false, 0)
-                    .map_err(|err| line_error(line.line_no, err))?;
+                    .map_err(|err| line.error(err))?;
                 Vec::new()
             }
             Statement::Dephase => {
                 pc = load;
                 Vec::new()
             }
+            Statement::Incbin {
+                data,
+                offset,
+                length,
+            } => {
+                let (start, end) =
+                    incbin_range(data, offset, length, pc, &symbols, &mappings_by_name)
+                        .map_err(|err| line.error(err))?;
+                data[start..end].to_vec()
+            }
+            Statement::Import(_) => Vec::new(),
+            Statement::Include(_) | Statement::IncbinFile { .. } | Statement::ImportFile { .. } => {
+                unreachable!("files are read when the source is loaded")
+            }
             Statement::Equ { .. } => Vec::new(),
             Statement::Bytes(values) => emit_byte_values(values, pc, &symbols, &mappings_by_name)
-                .map_err(|err| line_error(line.line_no, err))?,
+                .map_err(|err| line.error(err))?,
             Statement::Words(values) => {
                 let mut out = Vec::with_capacity(values.len() * 2);
                 for value in values {
                     let value = eval_word(value, pc, &symbols, &mappings_by_name, false, 0)
-                        .map_err(|err| line_error(line.line_no, err))?;
+                        .map_err(|err| line.error(err))?;
                     push_word(&mut out, value);
                 }
                 out
             }
             Statement::Space { count, fill } => {
                 let count = eval_nonnegative(count, pc, &symbols, &mappings_by_name, false, 0)
-                    .map_err(|err| line_error(line.line_no, err))?;
+                    .map_err(|err| line.error(err))?;
                 let fill = match fill {
                     Some(fill) => eval_byte(fill, pc, &symbols, &mappings_by_name, false, 0)
-                        .map_err(|err| line_error(line.line_no, err))?,
+                        .map_err(|err| line.error(err))?,
                     None => 0,
                 };
                 vec![fill; count]
@@ -434,8 +536,8 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
             Statement::Instruction(statement) => {
                 let rendered =
                     render_instruction(statement, pc, &symbols, &mappings_by_name, false)
-                        .map_err(|err| line_error(line.line_no, err))?;
-                assemble_line(&rendered, pc).map_err(|err| line_error(line.line_no, err))?
+                        .map_err(|err| line.error(err))?;
+                assemble_line(&rendered, pc).map_err(|err| line.error(err))?
             }
             Statement::Assert { condition, message } => {
                 check_assert(
@@ -445,7 +547,7 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
                     &symbols,
                     &mappings_by_name,
                 )
-                .map_err(|err| line_error(line.line_no, err))?;
+                .map_err(|err| line.error(err))?;
                 Vec::new()
             }
             Statement::Rept { .. } | Statement::Endr => {
@@ -462,6 +564,7 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
                 (addr, run_addr)
             };
             lines.push(AssembledLine {
+                file: line.file,
                 line: line.line_no,
                 addr: line_addr,
                 run_addr: line_run_addr,
@@ -472,6 +575,9 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
             load = load.wrapping_add(emitted.len() as u16);
         }
     }
+
+    // Imported symbols belong to the module they came from.
+    symbols.retain(|name, _| !imported.contains(name));
 
     Ok(AssembledProgram {
         origin: segments
@@ -484,26 +590,226 @@ pub fn assemble_program(source: &str, origin: u16) -> Result<AssembledProgram, A
         mappings,
         lines,
         next_addr: pc,
+        files: loader.names,
     })
 }
 
-fn parse_program_line(line_no: usize, source: &str) -> Result<ParsedLine, AsmError> {
-    let clean = strip_comment(source)?;
+fn parse_program_line(
+    line_no: usize,
+    source: &str,
+    file: usize,
+    file_name: Option<Rc<str>>,
+) -> Result<ParsedLine, AsmError> {
+    let mut line = ParsedLine {
+        line_no,
+        file,
+        file_name,
+        source: source.to_string(),
+        labels: Vec::new(),
+        statement: Statement::Empty,
+    };
+    let clean = strip_comment(source).map_err(|err| line.error(err))?;
     let mut rest = clean.trim();
-    let mut labels = Vec::new();
-
-    while let Some((label, after)) = take_colon_label(rest)? {
-        labels.push(label);
+    while let Some((label, after)) = take_colon_label(rest).map_err(|err| line.error(err))? {
+        line.labels.push(label);
         rest = after.trim_start();
     }
+    line.statement = parse_statement(rest, &line.labels).map_err(|err| line.error(err))?;
+    Ok(line)
+}
 
-    let statement = parse_statement(rest, &labels).map_err(|err| line_error(line_no, err))?;
-    Ok(ParsedLine {
-        line_no,
-        source: source.to_string(),
-        labels,
-        statement,
-    })
+impl ParsedLine {
+    /// Attach this line, and its file when it is an included one, to an error.
+    fn error(&self, err: AsmError) -> AsmError {
+        let mut err = line_error(self.line_no, err);
+        if err.file.is_none() {
+            err.file = self.file_name.as_deref().map(str::to_string);
+        }
+        err
+    }
+}
+
+/// Reads `INCLUDE`, `INCBIN` and `IMPORT` files while parsing the source.
+struct SourceLoader<'a> {
+    files: Option<&'a dyn AsmFiles>,
+    names: Vec<String>,
+}
+
+impl SourceLoader<'_> {
+    /// Parse `source`, the file at index `file`, expanding includes. `stack`
+    /// holds the names of the files being included, outermost first.
+    fn load(
+        &mut self,
+        source: &str,
+        file: usize,
+        stack: &mut Vec<String>,
+    ) -> Result<Vec<ParsedLine>, AsmError> {
+        let file_name: Option<Rc<str>> = (file != 0).then(|| self.names[file].as_str().into());
+        let mut out = Vec::new();
+        for (index, text) in source.lines().enumerate() {
+            let mut line = parse_program_line(index + 1, text, file, file_name.clone())?;
+            match std::mem::replace(&mut line.statement, Statement::Empty) {
+                Statement::Include(path) => {
+                    let (name, bytes) = self.read(&line, &path, AsmFileKind::Source)?;
+                    if stack.contains(&name) {
+                        let chain = stack.join(" -> ");
+                        return Err(
+                            line.error(AsmError::new(format!("INCLUDE cycle: {chain} -> {name}")))
+                        );
+                    }
+                    if stack.len() > MAX_INCLUDE_DEPTH {
+                        return Err(line.error(AsmError::new(format!(
+                            "INCLUDE files nest more than {MAX_INCLUDE_DEPTH} deep"
+                        ))));
+                    }
+                    let text = String::from_utf8(bytes).map_err(|_| {
+                        line.error(AsmError::new(format!("'{name}' is not UTF-8 text")))
+                    })?;
+                    let index = match self.names.iter().position(|known| *known == name) {
+                        Some(index) => index,
+                        None => {
+                            self.names.push(name.clone());
+                            self.names.len() - 1
+                        }
+                    };
+                    // The INCLUDE line keeps its labels, which mark the
+                    // address of the included code.
+                    out.push(line);
+                    stack.push(name);
+                    out.extend(self.load(&text, index, stack)?);
+                    stack.pop();
+                }
+                Statement::IncbinFile {
+                    path,
+                    offset,
+                    length,
+                } => {
+                    let (_, bytes) = self.read(&line, &path, AsmFileKind::Binary)?;
+                    line.statement = Statement::Incbin {
+                        data: bytes.into(),
+                        offset,
+                        length,
+                    };
+                    out.push(line);
+                }
+                Statement::ImportFile { path, prefix } => {
+                    let (name, bytes) = self.read(&line, &path, AsmFileKind::Symbols)?;
+                    let entries = import_symbols(&name, &bytes, prefix.as_deref())
+                        .map_err(|err| line.error(err))?;
+                    line.statement = Statement::Import(entries.into());
+                    out.push(line);
+                }
+                statement => {
+                    line.statement = statement;
+                    out.push(line);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    fn read(
+        &self,
+        line: &ParsedLine,
+        path: &str,
+        kind: AsmFileKind,
+    ) -> Result<(String, Vec<u8>), AsmError> {
+        let directive = match kind {
+            AsmFileKind::Source => "INCLUDE",
+            AsmFileKind::Binary => "INCBIN",
+            AsmFileKind::Symbols => "IMPORT",
+        };
+        let Some(files) = self.files else {
+            return Err(line.error(AsmError::new(format!(
+                "{directive} needs file access, which this assembler call does not have"
+            ))));
+        };
+        files
+            .read(path, &self.names[line.file], kind)
+            .map_err(|err| line.error(AsmError::new(err)))
+    }
+}
+
+/// A `REPT` copy with a counter is parsed again from its text; give it the
+/// file contents its original line already read.
+fn keep_loaded_files(original: &Statement, copy: &mut Statement) {
+    match (original, &mut *copy) {
+        (Statement::Incbin { data, .. }, Statement::IncbinFile { offset, length, .. }) => {
+            *copy = Statement::Incbin {
+                data: data.clone(),
+                offset: offset.take(),
+                length: length.take(),
+            };
+        }
+        (Statement::Import(entries), Statement::ImportFile { .. }) => {
+            *copy = Statement::Import(entries.clone());
+        }
+        // The included lines follow the INCLUDE line already.
+        (_, Statement::Include(_)) => *copy = Statement::Empty,
+        _ => {}
+    }
+}
+
+/// The byte range an `INCBIN` emits.
+fn incbin_range(
+    data: &[u8],
+    offset: &Option<String>,
+    length: &Option<String>,
+    pc: u16,
+    symbols: &BTreeMap<String, u16>,
+    mappings: &BTreeMap<String, AsmMapping>,
+) -> Result<(usize, usize), AsmError> {
+    let start = match offset {
+        Some(offset) => eval_nonnegative(offset, pc, symbols, mappings, false, 0)?,
+        None => 0,
+    };
+    if start > data.len() {
+        return Err(AsmError::new(format!(
+            "INCBIN offset {start} is past the end of the {}-byte file",
+            data.len()
+        )));
+    }
+    let end = match length {
+        Some(length) => start + eval_nonnegative(length, pc, symbols, mappings, false, 0)?,
+        None => data.len(),
+    };
+    if end > data.len() {
+        return Err(AsmError::new(format!(
+            "INCBIN range {start}..{end} is past the end of the {}-byte file",
+            data.len()
+        )));
+    }
+    Ok((start, end))
+}
+
+/// Read the symbols of an `rtvc-asm-v1` TOML module for `IMPORT`.
+#[cfg(feature = "asm-toml")]
+fn import_symbols(
+    name: &str,
+    bytes: &[u8],
+    prefix: Option<&str>,
+) -> Result<Vec<(String, u16)>, AsmError> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| AsmError::new(format!("'{name}' is not UTF-8 text")))?;
+    let module = parse_rtvc_asm_v1(text)
+        .map_err(|err| AsmError::new(format!("cannot import '{name}': {err}")))?;
+    let prefix = prefix.unwrap_or("");
+    Ok(module
+        .symbols
+        .into_iter()
+        .map(|(symbol, value)| (format!("{prefix}{symbol}"), value))
+        .collect())
+}
+
+#[cfg(not(feature = "asm-toml"))]
+fn import_symbols(
+    _name: &str,
+    _bytes: &[u8],
+    _prefix: Option<&str>,
+) -> Result<Vec<(String, u16)>, AsmError> {
+    Err(AsmError::new(
+        "IMPORT needs a build with the asm-toml feature",
+    ))
 }
 
 fn parse_statement(source: &str, labels: &[String]) -> Result<Statement, AsmError> {
@@ -597,6 +903,36 @@ fn parse_statement(source: &str, labels: &[String]) -> Result<Statement, AsmErro
             }
             Ok(Statement::Endr)
         }
+        "INCLUDE" => match split_operands(rest)?.as_slice() {
+            [path] => Ok(Statement::Include(parse_path(path)?)),
+            _ => Err(AsmError::new("INCLUDE requires one quoted path")),
+        },
+        "INCBIN" => match split_operands(rest)?.as_slice() {
+            [path, rest @ ..] if rest.len() <= 2 => Ok(Statement::IncbinFile {
+                path: parse_path(path)?,
+                offset: rest.first().cloned(),
+                length: rest.get(1).cloned(),
+            }),
+            _ => Err(AsmError::new(
+                "INCBIN requires a quoted path, an optional offset and an optional length",
+            )),
+        },
+        "IMPORT" => match split_operands(rest)?.as_slice() {
+            [path] => Ok(Statement::ImportFile {
+                path: parse_path(path)?,
+                prefix: None,
+            }),
+            [path, prefix] => {
+                validate_label(prefix)?;
+                Ok(Statement::ImportFile {
+                    path: parse_path(path)?,
+                    prefix: Some(prefix.to_ascii_uppercase()),
+                })
+            }
+            _ => Err(AsmError::new(
+                "IMPORT requires a quoted path and an optional name prefix",
+            )),
+        },
         "PHASE" => {
             if rest.trim().is_empty() {
                 return Err(AsmError::new("PHASE requires a run address"));
@@ -648,16 +984,15 @@ fn matching_endr(lines: &[ParsedLine], start: usize) -> Result<usize, AsmError> 
             _ => {}
         }
     }
-    Err(line_error(
-        lines[start].line_no,
-        AsmError::new("REPT without ENDR"),
-    ))
+    Err(lines[start].error(AsmError::new("REPT without ENDR")))
 }
 
 /// Keep an `ENDR` line's labels, which mark the address after the block.
 fn labels_only(line: &ParsedLine) -> ParsedLine {
     ParsedLine {
         line_no: line.line_no,
+        file: line.file,
+        file_name: line.file_name.clone(),
         source: line.source.clone(),
         labels: line.labels.clone(),
         statement: Statement::Empty,
@@ -921,6 +1256,20 @@ fn parse_byte_values(source: &str) -> Result<Vec<ByteValue>, AsmError> {
         .collect()
 }
 
+/// A quoted file path operand.
+fn parse_path(value: &str) -> Result<String, AsmError> {
+    if !is_quoted(value) {
+        return Err(AsmError::new(format!(
+            "expected a quoted path, got {value}"
+        )));
+    }
+    let path = String::from_utf8(parse_string_literal(value)?).expect("ASCII string literal");
+    if path.is_empty() {
+        return Err(AsmError::new("empty path"));
+    }
+    Ok(path)
+}
+
 fn is_quoted(value: &str) -> bool {
     value.len() >= 2
         && ((value.starts_with('"') && value.ends_with('"'))
@@ -1174,13 +1523,10 @@ fn insert_symbol(
     symbols: &mut BTreeMap<String, u16>,
     label: &str,
     value: u16,
-    line_no: usize,
+    line: &ParsedLine,
 ) -> Result<(), AsmError> {
     if symbols.insert(label.to_string(), value).is_some() {
-        return Err(line_error(
-            line_no,
-            AsmError::new(format!("duplicate label '{}'", label)),
-        ));
+        return Err(line.error(AsmError::new(format!("duplicate label '{}'", label))));
     }
     Ok(())
 }
@@ -2288,6 +2634,7 @@ pub fn parse_rtvc_asm_v1(text: &str) -> Result<AssembledProgram, String> {
         mappings: Vec::new(),
         lines: Vec::new(),
         next_addr,
+        files: Vec::new(),
     })
 }
 

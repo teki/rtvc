@@ -731,3 +731,166 @@ fn phase_labels_on_the_directive_lines() {
     assert_eq!(program.symbols["RUN_END"], 0xC002);
     assert_eq!(program.symbols["NEXT"], 0x8002);
 }
+
+/// In-memory files for INCLUDE, INCBIN and IMPORT tests. Paths are looked up
+/// as written; `from` is recorded to check what the assembler passes.
+struct MemFiles(std::collections::BTreeMap<&'static str, Vec<u8>>);
+
+impl MemFiles {
+    fn new(files: &[(&'static str, &[u8])]) -> Self {
+        Self(
+            files
+                .iter()
+                .map(|(name, bytes)| (*name, bytes.to_vec()))
+                .collect(),
+        )
+    }
+}
+
+impl AsmFiles for MemFiles {
+    fn read(
+        &self,
+        path: &str,
+        _from: &str,
+        _kind: AsmFileKind,
+    ) -> Result<(String, Vec<u8>), String> {
+        self.0
+            .get(path)
+            .map(|bytes| (path.to_string(), bytes.clone()))
+            .ok_or_else(|| format!("cannot find '{path}'"))
+    }
+}
+
+fn assemble_with(source: &str, files: &MemFiles) -> Result<AssembledProgram, AsmError> {
+    assemble_program_with(source, 0x8000, "main.asm", Some(files))
+}
+
+#[test]
+fn include_assembles_other_files_in_place() {
+    let files = MemFiles::new(&[
+        ("ports.inc", b"PORT_PAL EQU 60H\nINCLUDE \"deeper.inc\"\n"),
+        ("deeper.inc", b"SETUP: LD A,1\n OUT (PORT_PAL),A\n"),
+    ]);
+    let program = assemble_with("START: INCLUDE \"ports.inc\"\n JP SETUP\n", &files).unwrap();
+    assert_eq!(program.symbols["START"], 0x8000);
+    assert_eq!(program.symbols["SETUP"], 0x8000);
+    assert_eq!(program.symbols["PORT_PAL"], 0x60);
+    assert_eq!(
+        program.bytes,
+        vec![0x3E, 0x01, 0xD3, 0x60, 0xC3, 0x00, 0x80]
+    );
+    assert_eq!(program.files, ["main.asm", "ports.inc", "deeper.inc"]);
+    let lines: Vec<_> = program
+        .lines
+        .iter()
+        .map(|line| (line.file, line.line))
+        .collect();
+    assert_eq!(lines, [(2, 1), (2, 2), (0, 2)]);
+}
+
+#[test]
+fn include_reports_errors_in_the_included_file() {
+    let files = MemFiles::new(&[("bad.inc", b"NOP\nLD A,NOPE\n")]);
+    let err = assemble_with("NOP\nINCLUDE \"bad.inc\"\n", &files).unwrap_err();
+    assert_eq!(err.file(), Some("bad.inc"));
+    assert_eq!(err.line(), Some(2));
+    assert_eq!(err.to_string(), "bad.inc:2: unknown symbol 'NOPE'");
+    assert_eq!(
+        err.display_in("main.asm"),
+        "bad.inc:2: unknown symbol 'NOPE'"
+    );
+
+    let err = assemble_with("NOP\nINCLUDE \"missing.inc\"\n", &files).unwrap_err();
+    assert_eq!(
+        err.display_in("main.asm"),
+        "main.asm:2: cannot find 'missing.inc'"
+    );
+
+    let files = MemFiles::new(&[
+        ("a.inc", b"INCLUDE \"b.inc\"\n"),
+        ("b.inc", b"INCLUDE \"a.inc\"\n"),
+    ]);
+    let err = assemble_with("INCLUDE \"a.inc\"\n", &files).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "b.inc:1: INCLUDE cycle: main.asm -> a.inc -> b.inc -> a.inc"
+    );
+
+    let err = assemble_program("INCLUDE \"a.inc\"\n", 0).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "line 1: INCLUDE needs file access, which this assembler call does not have"
+    );
+
+    let err = assemble_program("INCLUDE a.inc\n", 0).unwrap_err();
+    assert_eq!(err.to_string(), "line 1: expected a quoted path, got a.inc");
+}
+
+#[test]
+fn include_inside_rept_repeats_the_included_lines() {
+    let files = MemFiles::new(&[("row.inc", b" DB I*2\n")]);
+    let program = assemble_with("REPT 3, I\nINCLUDE \"row.inc\"\nENDR\n", &files).unwrap();
+    assert_eq!(program.bytes, vec![0, 2, 4]);
+}
+
+#[test]
+fn incbin_emits_file_bytes() {
+    let files = MemFiles::new(&[("font.bin", &[1, 2, 3, 4, 5, 6, 7, 8])]);
+    let program = assemble_with(
+        "ALL: INCBIN \"font.bin\"\nPART: INCBIN \"font.bin\", 2, 3\nTAIL: INCBIN \"font.bin\", 6\nEND: NOP\n",
+        &files,
+    )
+    .unwrap();
+    assert_eq!(program.symbols["PART"], 0x8008);
+    assert_eq!(program.symbols["TAIL"], 0x800B);
+    assert_eq!(program.symbols["END"], 0x800D);
+    assert_eq!(
+        program.bytes,
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 3, 4, 5, 7, 8, 0x00]
+    );
+
+    // Offsets can use a REPT counter, for example to interleave a table.
+    let program = assemble_with("REPT 4, I\nINCBIN \"font.bin\", I*2, 1\nENDR\n", &files).unwrap();
+    assert_eq!(program.bytes, vec![1, 3, 5, 7]);
+
+    let err = assemble_with("INCBIN \"font.bin\", 9\n", &files).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "line 1: INCBIN offset 9 is past the end of the 8-byte file"
+    );
+    let err = assemble_with("INCBIN \"font.bin\", 4, 5\n", &files).unwrap_err();
+    assert!(err.to_string().contains("range 4..9 is past the end"));
+}
+
+#[test]
+fn import_defines_another_modules_symbols() {
+    let module = br#"format = "rtvc-asm-v1"
+source = "boot.asm"
+requested_origin = 0x0000
+origin = 0x2000
+next_addr = 0x2010
+
+[symbols]
+KEY_SCAN = 0x21BC
+MAIN_ENTRY = 0x2000
+"#;
+    let files = MemFiles::new(&[("boot.toml", module)]);
+    let program = assemble_with(
+        "IMPORT \"boot.toml\"\nIMPORT \"boot.toml\", BOOT_\nSTART: CALL KEY_SCAN\n JP BOOT_MAIN_ENTRY\n",
+        &files,
+    )
+    .unwrap();
+    assert_eq!(program.bytes, vec![0xCD, 0xBC, 0x21, 0xC3, 0x00, 0x20]);
+    // Imported symbols belong to their own module and are not exported.
+    assert_eq!(program.symbols.keys().collect::<Vec<_>>(), ["START"]);
+
+    let err = assemble_with("KEY_SCAN EQU 1\nIMPORT \"boot.toml\"\n", &files).unwrap_err();
+    assert_eq!(err.to_string(), "line 2: duplicate label 'KEY_SCAN'");
+
+    let files = MemFiles::new(&[("bad.toml", b"format = \"other\"\n")]);
+    let err = assemble_with("IMPORT \"bad.toml\"\n", &files).unwrap_err();
+    assert!(
+        err.to_string()
+            .starts_with("line 1: cannot import 'bad.toml'")
+    );
+}

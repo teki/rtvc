@@ -914,7 +914,9 @@ supports the full source language of [assembler.md](assembler.md), including
 labels, `ORG` with persistent named address mappings, `EQU`, data directives,
 `REPT`, `ASSERT`, `PHASE`/`DEPHASE`, C-precedence expressions, and `$` as the
 current address. Each returned line has `addr` (load address) and `run_addr`
-(run address, different only inside `PHASE`). Responses keep the single-line compatibility fields
+(run address, different only inside `PHASE`). The debugger has no file
+access, so `INCLUDE`, `INCBIN`, and `IMPORT` are errors there; assemble such
+sources with `rtvc-asm` and load the TOML with `loadasm`. Responses keep the single-line compatibility fields
 (`addr`, `len`, `bytes`, `next_addr`) and also include `segments`, `symbols`,
 and emitted line-address metadata for multi-line source; mapping declarations
 are returned in `mappings`. See
