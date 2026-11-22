@@ -4,6 +4,9 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+- rtvc-asm and rtvc-c80 TOML quote symbol names that contain a dot
+  (`"F1.LOOP" = 0x8002`). Local labels and struct fields wrote bare dotted
+  keys before, which made the TOML invalid for `IMPORT` and other readers.
 - rtvc-asm macros: `MACRO name param[=default], ...` … `ENDM`, with strict
   argument checks, local labels per expansion, and errors that name the
   call and the macro line. `coding/lib/z80macros.inc` adds 16-bit moves,

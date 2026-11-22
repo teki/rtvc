@@ -610,9 +610,10 @@ fordul vissza. Indexregiszter-fél nem kombinálható a `H`, `L`, `(HL)`
 operandussal vagy a másik indexregiszter felével, mert az előtag
 megváltoztatná a jelentésüket.
 
-A nem támogatott mnemonikok és operandusalakok hibát adnak. Nincsenek makrók,
-feltételes fordítás, lokális címketartományok, relokációs rekordok,
-listafájlok vagy más assemblerekkel kompatibilis szintaxis.
+A nem támogatott mnemonikok és operandusalakok hibát adnak. Vannak
+[makrók](#makrók), [helyi címkék](#forrásformátum) és
+[struktúrák](#struktúrák), de nincs feltételes fordítás, relokációs rekord,
+listafájl vagy más assemblerekkel kompatibilis szintaxis.
 
 ## TOML-kimenet
 
@@ -646,7 +647,7 @@ bytes = [
 | `next_addr` | Az utolsó utasítás vagy `ORG` utáni aktuális cím. |
 | `files` | Csak beillesztett fájlok esetén: a fő forrás, majd minden beillesztett fájl. A beillesztett fájlból származó `[[lines]]` bejegyzéseknek `file` mezőjük van, amely ennek a tömbnek az indexe. |
 | `segments` | Címzett bájttartományok; nem folytonos `ORG` esetén több elem. |
-| `symbols` | Nagybetűs szimbólumnevek és 16 bites értékeik. |
+| `symbols` | Nagybetűs szimbólumnevek és 16 bites értékeik. A pontot tartalmazó név, például helyi címke vagy struktúramező, idézőjeles kulcs (`"F1.LOOP" = 0x8002`), mert a csupasz pont TOML-táblákat hozna létre. |
 | `mappings` | Az `ORG` sorok névvel ellátott leképezései: `name`, `source_base`, `mapped_base`. |
 | `breakpoints` | A `BREAK` jelölések: `addr`, `line`, beillesztett fájlnál `file`. A `--no-breakpoints` kihagyja. |
 | `lines` | A kibocsátott forrássorok sorszáma, címe (`addr`), bájthossza, és `PHASE` blokkon belül a futási cím (`run_addr`). |

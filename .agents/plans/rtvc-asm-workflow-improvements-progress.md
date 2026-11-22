@@ -180,6 +180,15 @@ plan.
 - `assemble_line` (the single-instruction debugger path) still accepts
   numbers only; expressions need `assemble_program`, as before.
 
+## Fixes after item 10
+
+- 2026-11-22: the TOML writers in `rtvc-asm`, `rtvc-c80` and
+  `scripts/rtvc_toml.py` wrote dotted symbol names (local labels, struct
+  fields) as bare keys such as `F1.X = ...`, which TOML reads as nested
+  tables, so the file was invalid for `IMPORT` and other readers. All three
+  now quote any key that is not `[A-Za-z0-9_-]+`; the xtask symbol scanner
+  strips the quotes. Test: `dotted_symbols_round_trip_through_toml`.
+
 ## Known gaps
 
 - `rtvc-tocas` assembles `.asm` with `assemble_program`, which has no file

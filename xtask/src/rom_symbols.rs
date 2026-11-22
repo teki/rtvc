@@ -272,8 +272,14 @@ fn parse_toml_symbols(toml: &str, asm: &str) -> Result<(u16, Vec<(String, u16)>)
             let (name, value) = line.split_once('=').ok_or_else(|| {
                 format!("{asm}: cannot parse symbols line `{line}`")
             })?;
+            // rtvc-asm quotes keys that are not bare, such as `"F1.X"`.
+            let name = name.trim();
+            let name = name
+                .strip_prefix('"')
+                .and_then(|name| name.strip_suffix('"'))
+                .unwrap_or(name);
             symbols.push((
-                name.trim().to_string(),
+                name.to_string(),
                 parse_0x_number(value.trim()).ok_or_else(|| {
                     format!("{asm}: cannot parse symbol value `{line}`")
                 })?,

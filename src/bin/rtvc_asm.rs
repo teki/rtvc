@@ -348,7 +348,7 @@ fn render_toml(
         out.push(String::new());
         out.push("[symbols]".to_string());
         for (name, value) in &assembled.symbols {
-            out.push(format!("{name} = {}", hex16(*value)));
+            out.push(format!("{} = {}", toml_key(name), hex16(*value)));
         }
     }
 
@@ -420,6 +420,20 @@ fn emit_bytes_toml(out: &mut Vec<String>, key: &str, bytes: &[u8]) {
         ));
     }
     out.push("]".to_string());
+}
+
+/// A TOML key: bare when it may be, quoted otherwise. A bare `.` would split
+/// the key into tables, so `F1.X` (a local label or struct field) is quoted.
+fn toml_key(name: &str) -> String {
+    let bare = !name.is_empty()
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-');
+    if bare {
+        name.to_string()
+    } else {
+        toml_string(name)
+    }
 }
 
 fn toml_string(value: &str) -> String {
@@ -782,6 +796,23 @@ mod tests {
         assert_eq!(&cas[0x87..0x89], &[0xEF, 0x19]);
         assert_eq!(&cas[0x90..0xA0], &assembled.segments[0].bytes[..16]);
         assert_eq!(cas[0x90 + 0x41], 0xC9);
+    }
+
+    #[test]
+    fn dotted_symbols_round_trip_through_toml() {
+        let assembled = assemble_program(
+            "ORG 8000H\nF1: NOP\n.x: JR .x\n STRUCT SPR\nX BYTE\n ENDS\n",
+            0,
+        )
+        .unwrap();
+        let toml = render_toml("local.asm", 0, &assembled);
+        assert!(toml.contains("\nF1 = 0x8000\n"));
+        assert!(toml.contains("\n\"F1.X\" = 0x8001\n"));
+        assert!(toml.contains("\n\"SPR.X\" = 0x0000\n"));
+        let parsed = rtvc_core::asm::parse_rtvc_asm_v1(&toml).unwrap();
+        assert_eq!(parsed.symbols, assembled.symbols);
+        assert_eq!(toml_key("A-1_b"), "A-1_b");
+        assert_eq!(toml_key("A\"B"), "\"A\\\"B\"");
     }
 
     #[test]

@@ -624,9 +624,9 @@ half of the other index register, because the prefix would change their
 meaning.
 
 Unsupported mnemonics or unsupported operand forms are errors. The assembler
-does not implement macros, conditional assembly, local-scope rules,
-relocation records, listing files, or third-party assembler compatibility
-syntax.
+has [macros](#macros), [local labels](#source-format), and
+[structures](#structures), but no conditional assembly, relocation records,
+listing files, or third-party assembler compatibility syntax.
 
 ## TOML Output
 
@@ -664,7 +664,7 @@ Fields:
 | `next_addr` | Current assembly address after the final emitted statement or `ORG`. |
 | `files` | Present when files were included: the main source, then each included file. `[[lines]]` entries from an included file have `file`, an index into this array. |
 | `segments` | Addressed byte ranges. Multiple ranges appear when source uses non-contiguous `ORG` values. |
-| `symbols` | Uppercase symbol names mapped to 16-bit values. |
+| `symbols` | Uppercase symbol names mapped to 16-bit values. A name with a dot, such as a local label or a struct field, is a quoted key (`"F1.LOOP" = 0x8002`), because a bare dot would make TOML tables. |
 | `mappings` | Named `ORG` transformations with `name`, `source_base`, and `mapped_base`. |
 | `breakpoints` | `BREAK` marks with `addr`, `line`, and `file` when the line is in an included file. Omitted with `--no-breakpoints`. |
 | `lines` | Emitted source lines with source line number, output address (`addr`), byte length, and `run_addr` when the line is inside a `PHASE` block. |

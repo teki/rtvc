@@ -30,6 +30,13 @@ def inline_array(values):
     return "[" + ", ".join(scalar(value) for value in values) + "]"
 
 
+def toml_key(key):
+    """A TOML key, quoted unless it is bare; a bare dot would nest tables."""
+    if key and all(ch.isascii() and (ch.isalnum() or ch in "_-") for ch in key):
+        return key
+    return '"' + key.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def append_key(lines, key, value):
     if value is None:
         return
@@ -118,7 +125,7 @@ def document_to_toml(document):
         lines.append("")
         lines.append("[symbols]")
         for key, value in sorted(symbols.items()):
-            append_key(lines, key, value)
+            append_key(lines, toml_key(key), value)
 
     warnings = document.get("warnings")
     if isinstance(warnings, list):

@@ -1474,10 +1474,13 @@ pub fn render_rtvc_asm_v1(
     out.join("\n") + "\n"
 }
 
+/// A TOML key: bare when it may be, quoted otherwise. A bare `.` would split
+/// the key into tables, so dotted symbol names are quoted.
 fn toml_key(name: &str) -> String {
-    if name
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.')
+    if !name.is_empty()
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
     {
         name.to_string()
     } else {
