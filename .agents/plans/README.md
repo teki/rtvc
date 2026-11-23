@@ -34,6 +34,10 @@ implementation order, limitations, and focused validation.
 - [C80 Compiler Hardening](c80-hardening.md) — correctness, spills, shifts,
   code quality, tests, and documentation fixes from the 2026-11-12 review
   (done; [progress](c80-hardening-progress.md))
+- [Integrated Editors (IDE A: and IDE B:)](editors.md) — PICO-8-style IDE
+  panes on the host file card's A:/B: folders, one rtvc root folder, a
+  two-panel file manager with DSK support, a dev boot snapshot for Run, and
+  later image, sound, and source-level debugging (design)
 - [Expansion Card Abstraction and Host File Device](expansion-cards-and-host-file-device.md)
   ([progress](expansion-cards-and-host-file-device-progress.md))
 - [Frame History Debugger](frame-history-debugger.md)

@@ -70,15 +70,15 @@ Open issues and planned improvements for the TVC emulator.
   - Keep emulator preferences and general workspace layout independent from
     project-specific state.
 
-- [ ] Add persistent BASIC and assembly editor panes after the debugger
-  interfaces have stabilized.
+- [ ] Add IDE A: and IDE B: editor panes for BASIC and assembly on the host
+  file card's drive folders. See the
+  [Integrated Editors plan](.agents/plans/editors.md).
   - Keep the default user experience as a simple emulator screen.
-  - Reuse the existing dock workspace and persistence model.
   - Support both native and full-web builds without adding the egui workspace
     to lightweight WASM builds.
   - Ensure open editor panes do not prevent real-time 50 Hz emulation.
-  - Start with keyboard-based BASIC transfer into the emulated machine.
-  - Start with sequential assembly into mapped writable memory.
+  - Run from an embedded 64K+ BASIC 1.2 dev boot snapshot.
+  - Later: TVC image and sound editors, and a source-level debugger.
 
 - [ ] Grow rtvc-asm into a port and demo build tool. See the
   [rtvc-asm Workflow Improvements plan](.agents/plans/rtvc-asm-workflow-improvements.md).
@@ -210,11 +210,17 @@ Open issues and planned improvements for the TVC emulator.
   - Support UPM cartridges.
   - [x] Support cartridge-based games.
 
-- [ ] Allow the user to select a custom media directory.
-  - Let the user point to a directory containing their own CAS and DSK files.
-  - Show files from the selected directory in the Tape and Disk menus alongside
-    or instead of the built-in `progs/` list.
-  - Persist the selected directory path across sessions.
+- [ ] Add one rtvc root folder for user files, native and web, with `A/`,
+  `B/`, and Gamebase downloads under it. See the
+  [Integrated Editors plan](.agents/plans/editors.md#storage).
+  - Give the host file card two drives, A: and B:, backed by folders chosen
+    in the Disk menu.
+  - Add a two-panel file manager that copies and deletes files and folders
+    and opens DSK images as folders.
+  - Move the DSK code out of `rtvc-dsk` into a shared library.
+
+- [ ] Reduce the full web bundle size before upgrading egui; the code editor
+  crates need egui 0.34 or later.
 
 ## Web On Phones
 
