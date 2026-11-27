@@ -4,6 +4,9 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+- Files without an extension (download links such as
+  `?run=https://example.com/game-cas`) are recognised by content as CAS,
+  DSK or ZIP.
 - The emulation keeps each machine's real frame rate: a TVC step is now one
   TV picture (49.76 Hz for a standard field) instead of a fixed 1/50 s, and
   the desktop, headless and web hosts pace by the time each step covered. No

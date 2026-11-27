@@ -1833,6 +1833,17 @@ pub fn classify_dropped_media(
     name: &str,
     bytes: &[u8],
 ) -> Result<DroppedMedia, Box<dyn std::error::Error>> {
+    // A name without an extension (a download link such as
+    // `.../dust-off-tvc-cas`) is typed by its content instead.
+    let sniffed;
+    let name = if has_extension(name) {
+        name
+    } else if let Some(ext) = sniff_media_extension(bytes) {
+        sniffed = format!("{name}.{ext}");
+        &sniffed
+    } else {
+        return Err(format!("Unsupported file: {name} (not a CAS, DSK, or ZIP image)").into());
+    };
     let lower = name.to_ascii_lowercase();
     if lower.ends_with(".z80") {
         return Ok(DroppedMedia::Z80(bytes.to_vec()));
@@ -1871,6 +1882,47 @@ pub fn classify_dropped_media(
         }
     }
     Err(format!("{name} contains no .rtvcsnap, .cas, or .dsk file").into())
+}
+
+fn has_extension(name: &str) -> bool {
+    let file_name = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    file_name
+        .rsplit_once('.')
+        .is_some_and(|(stem, ext)| !stem.is_empty() && !ext.is_empty())
+}
+
+/// Smallest raw disk image (40 tracks, 1 side, 8 sectors of 512 bytes).
+const MIN_DSK_BYTES: usize = 160 * 1024;
+
+/// Guesses `zip`, `cas`, or `dsk` from file content. ZIP has a signature; a
+/// CAS starts with file type 11H or 01H and its header's block count and
+/// final block size give the file's length, allowing up to 127 bytes of
+/// trailing padding; a raw DSK has no header,
+/// so any other whole number of 512-byte sectors of at least 160 KB is taken
+/// as one.
+pub fn sniff_media_extension(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"PK\x03\x04") || bytes.starts_with(b"PK\x05\x06") {
+        return Some("zip");
+    }
+    if bytes.len() >= crate::cas::TVC_CAS_HEADER_LEN
+        && matches!(
+            bytes[0],
+            crate::cas::TVC_CAS_TYPE_UNBUFFERED | crate::cas::TVC_CAS_TYPE_BUFFERED
+        )
+    {
+        let blocks = usize::from(u16::from_le_bytes([bytes[2], bytes[3]]));
+        let last = usize::from(u16::from_le_bytes([bytes[4], bytes[5]]));
+        let size = blocks * 128 + last;
+        // Some files are padded past the header's size, mostly to a whole
+        // 128-byte block.
+        if size >= crate::cas::TVC_CAS_HEADER_LEN && (size..size + 128).contains(&bytes.len()) {
+            return Some("cas");
+        }
+    }
+    if bytes.len() >= MIN_DSK_BYTES && bytes.len() % 512 == 0 {
+        return Some("dsk");
+    }
+    None
 }
 
 /// Tape image extensions the given system loads.

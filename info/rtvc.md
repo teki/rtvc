@@ -617,6 +617,12 @@ A `.cas` is injected and a `.dsk` is attached to drive A:. A ZIP resolves to
 its first `.rtvcsnap` member as a snapshot, otherwise to its first `.cas` or
 `.dsk` member. `.rtvcsnap` and `.z80` files load as states without a reboot;
 an `.rtvcsnap` switches to the TVC, Zx82, or CPC it was saved on.
+A name with no extension, such as a `?run=` download link, is typed by
+content (`sniff_media_extension`): a ZIP signature; a CAS whose type byte is
+11H or 01H and whose header block count and final block size give the file
+length, allowing up to 127 bytes of trailing padding (some files are padded to
+a whole 128-byte block); otherwise a raw DSK of whole 512-byte sectors and at least 160 KB.
+Anything else is rejected, and named files are still typed by extension only.
 Native `.cas`/`.dsk` drops stay file-backed like Disk menu selections; web
 drops are added to the IndexedDB recent lists. Classification lives in
 `classify_dropped_media` in [emu.rs](../src/emulator/emu.rs).

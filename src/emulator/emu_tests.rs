@@ -420,6 +420,44 @@ fn dropped_files_classify_by_extension() {
 }
 
 #[test]
+fn dropped_files_without_extension_classify_by_content() {
+    let mut cas = vec![0; 27_745];
+    cas[0] = 0x11;
+    cas[2..4].copy_from_slice(&216u16.to_le_bytes());
+    cas[4] = 97;
+    let Ok(DroppedMedia::Launch { name, .. }) = classify_dropped_media("dust-off-tvc-cas", &cas)
+    else {
+        panic!("expected a CAS launch");
+    };
+    assert_eq!(name, "dust-off-tvc-cas.cas");
+
+    let Ok(DroppedMedia::Launch { name, .. }) =
+        classify_dropped_media("disk", &vec![0; 720 * 1024])
+    else {
+        panic!("expected a DSK launch");
+    };
+    assert_eq!(name, "disk.dsk");
+
+    let zip = game_archive(&[("GAME.CAS", &cas)]);
+    let Ok(DroppedMedia::Launch { name, .. }) = classify_dropped_media("download", &zip) else {
+        panic!("expected the ZIP's CAS");
+    };
+    assert_eq!(name, "GAME.CAS");
+
+    // Padding past the header's size is accepted, as in TVBALL.CAS.
+    let mut padded = cas.clone();
+    padded.resize(27_745 + 95, 0);
+    assert!(matches!(
+        classify_dropped_media("padded", &padded),
+        Ok(DroppedMedia::Launch { .. })
+    ));
+    // A CAS whose header size does not match is not guessed.
+    assert!(classify_dropped_media("broken", &cas[..1000]).is_err());
+    // Named files keep extension-based typing.
+    assert!(classify_dropped_media("notes.txt", &cas).is_err());
+}
+
+#[test]
 fn dropped_cas_bytes_boot_vtdos_and_queue_run() {
     let mut emu = Emu::new(MachineType::standard(false, RomVersion::V2_2, false));
     let mut cas = vec![0; 145];
