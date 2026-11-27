@@ -159,10 +159,19 @@ Pitfalls of the probe:
 ## Sources
 
 - The ROM images and the code: authoritative.
-- OCR'd books in `/Users/teki/dev/tvcdocs`: `KL-tvcrom/KL-tvcrom.md`
-  (Kaszanyiczki: per-line Hungarian comments, good for routine purposes) and
-  `TVC_ROM/TVC_ROM.md` (Lüdányi: explanations; leaves some routines, such as
-  `PAINT`, unexplained). OCR quality is poor; use them as hints.
+- [books/tvc_rom-kaszanyiczki.md](../../../books/tvc_rom-kaszanyiczki.md):
+  Kaszanyiczki's commented ROM listing, with per-line Hungarian comments that
+  are good for routine purposes. It is proofread against the scans, so
+  addresses, bytes and comments are reliable as a transcription. The author's
+  claims still need checking against the code. Find an address with
+  `grep -n '^C4D0 ' books/tvc_rom-kaszanyiczki.md`.
+- [books/tvchardver/tvchardver.md](../../../books/tvchardver/tvchardver.md):
+  the TVC hardware book (ports, paging, interrupts, timing, CRTC, Z80 tables).
+  Corrections to the print are in `books/tvchardver/ERRATA.md`. See
+  [books/README.md](../../../books/README.md) for how both are laid out.
+- `/Users/teki/dev/tvcdocs/TVC_ROM/TVC_ROM.md` (Lüdányi: explanations; leaves
+  some routines, such as `PAINT`, unexplained). This is a raw OCR conversion of
+  poor quality, so use it only as a hint.
 - [info/tvc.md](../../../info/tvc.md) for hardware ports and formats.
 
 ## Tracing code boundaries

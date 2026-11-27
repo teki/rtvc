@@ -14,6 +14,7 @@ Refer to the following resources for detailed documentation on the system:
 - [C80 Tutorial](info/c80/tutorial.md) — walkthrough of implemented language features with compilable examples and `compile.sh` / `compile.bat`.
 - [rtvc Assembler Reference](info/assembler.md) — Built-in Z80 helper assembler syntax, `rtvc-asm` TOML output, and debugger loading workflow.
 - [Hungarian rtvc Assembler Reference](info.hu/assembler.md) — Hungarian-language reference for the helper assembler, disassembler, output formats, and debugger workflow.
+- [Reference Books](books/README.md) — Proofread Markdown conversions of two Hungarian TVC books: Kaszanyiczki's commented system ROM listing ([books/tvc_rom-kaszanyiczki.md](books/tvc_rom-kaszanyiczki.md)) and Benedek–Monok's *TV-Computer hardver* ([books/tvchardver/tvchardver.md](books/tvchardver/tvchardver.md)), with figures, tables and an errata list. They are secondary sources: verified facts belong in `info/tvc.md`.
 - [rtvc Developer Notes](info/developer.md) — Practical repo-specific findings, experimental workflows, debugger tricks, and development sharp edges that should be preserved but do not belong in hardware references.
 - [User README](README.md) — User-facing run, snapshot, and web bundle commands.
 - [Release Notes](CHANGES.md) — Concise release notes starting with the next release; older releases are intentionally not backfilled.

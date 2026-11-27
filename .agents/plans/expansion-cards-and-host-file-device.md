@@ -22,7 +22,7 @@ or ROM bytes may be copied.
 
 ### What the hardware gives a card
 
-From the TVC hardware book (`tvchardver`, sections on the memory pager, I/O
+From the TVC hardware book ([books/tvchardver/tvchardver.md](../../books/tvchardver/tvchardver.md), sections on the memory pager, I/O
 decoding, and table 5 "Bővítő egységek") and the existing
 [TVC reference](../../info/tvc.md#expansion-system):
 
@@ -44,7 +44,7 @@ card instances, and card firmware must discover which slot it lives in.
 
 ### How the TVC OS discovers cards
 
-From the commented system ROM listing (`KL-tvcrom`, `F050`-`F13A`, plus
+From the commented system ROM listing ([books/tvc_rom-kaszanyiczki.md](../../books/tvc_rom-kaszanyiczki.md), `F050`-`F13A`, plus
 `EXP_DIRECT` at `C4D0` and `SLOT_NUM` at `C50E`):
 
 1. The boot code reads `0x5A`, then for each slot pages the slot into IOMEM

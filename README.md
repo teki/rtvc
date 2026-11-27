@@ -53,6 +53,12 @@ More historical background is available on the
   (work in progress).
 - [rtvc Assembler Reference](info/assembler.md) — helper assembler and
   disassembler syntax, formats, and debugger workflow.
+- [Reference Books (Hungarian)](books/README.md) — proofread Markdown
+  editions of two classic TVC books:
+  - Kaszanyiczki László's commented system ROM listing
+    ([*A Videoton TV-Computer ROM listája*](books/tvc_rom-kaszanyiczki.md));
+  - Benedek–Monok's [*TV-Computer hardver*](books/tvchardver/tvchardver.md),
+    with its schematics, timing diagrams, tables and an errata list.
 
 ## Download
 

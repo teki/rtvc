@@ -84,8 +84,13 @@ workflow findings.
 
 ## OCR reference corpus
 
-Scanned manuals converted with a local OCR model live in the sibling
-[`tvcdocs`](https://github.com/teki/tvcdocs) repository, not in this tree.
-Treat that text as a working notebook. A fact used by the emulator belongs
+Two books are in this tree, proofread against their scans, in
+[books/](../books/README.md):
+- the commented system ROM listing (Kaszanyiczki);
+- the TVC hardware book (Benedek–Monok), with its figures and an errata list.
+
+Other scanned manuals, converted with a local OCR model and not proofread,
+live in the sibling [`tvcdocs`](https://github.com/teki/tvcdocs) repository.
+Treat all of this text as a working notebook. A fact used by the emulator belongs
 in [info/tvc.md](tvc.md) after it has been checked against the hardware or
 the ROM.

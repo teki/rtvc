@@ -193,7 +193,7 @@ opcode fetch (M1)      4 - ((h + 3) & 3)  half T-states
 
 Every video RAM access costs between half a T-state and two T-states, and code
 running from video RAM settles at six T-states per `NOP`. Other memory and I/O
-cycles are not stretched. Source: Benedek–Monok, *TV-Computer hardver* (1988),
+cycles are not stretched. Source: Benedek–Monok, *TV-Computer hardver* (1988; [books/tvchardver](../books/tvchardver/tvchardver.md)),
 section 2.2.4 and figures 18–22 (clock-stretch circuit and its timing
 diagrams); ep128emu implements the same rule.
 

@@ -32,7 +32,7 @@ Primary implementation evidence:
 - Motorola MC6845 functional block diagram and CRTC description supplied for
   this work;
 - the TVC hardware description in
-  `../../../tvcdocs/TVC_HARDVER/tvchardver.md`, especially its display-unit,
+  [books/tvchardver/tvchardver.md](../../books/tvchardver/tvchardver.md), especially its display-unit,
   border, sync-shaping, video-register, and PAL-encoder sections;
 - [info/tvc.md](../../info/tvc.md#video-system), which remains the rtvc
   repository's authoritative hardware reference.

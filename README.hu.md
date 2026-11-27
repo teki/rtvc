@@ -276,6 +276,12 @@ A teljes fejlesztési munkafolyamathoz lásd:
 - [Kazettatámogatás](info.hu/cas.md)
 - [HBF floppy kártya és FD1793 vezérlő](info.hu/hbf.md)
 - [Socket hibakereső](info.hu/dbg.md)
+- [Könyvek](books/README.md): két klasszikus TVC-könyv a szkennelt
+  oldalakkal összeolvasott, javított Markdown-kiadásban:
+  - Kaszanyiczki László: [*A Videoton TV-Computer ROM listája*](books/tvc_rom-kaszanyiczki.md)
+    (a rendszer-ROM kommentált listája);
+  - Benedek–Monok: [*TV-Computer hardver*](books/tvchardver/tvchardver.md),
+    kapcsolási rajzokkal, idődiagramokkal, táblázatokkal és hibajegyzékkel.
 
 ## Közreműködés
 
