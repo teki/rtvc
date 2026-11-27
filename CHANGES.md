@@ -4,6 +4,16 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+- Games that reprogram the CRTC into short split-screen segments no longer
+  lose sync: the TV model ignores VSYNC pulses that come too early, as a
+  real TV's vertical hold does. Dust Off showed rolling stripes for about
+  three seconds when a level started; it now shows the black setup screen.
+- TCP debugger: `video_state` reports the TVC CRTC registers and the TV
+  model's sync lock, and `stats` adds synced and unsynced frame counts. Large
+  replies such as `instruction_trace_list` no longer hang the client.
+- TCP debugger: `run_frames` runs a given number of frames at full speed and
+  replies when they are done (`frames` in `rtvc_debug.py`). Headless mode now
+  holds 50 FPS; on macOS it ran at about 39.
 - rtvc-asm and rtvc-c80 TOML quote symbol names that contain a dot
   (`"F1.LOOP" = 0x8002`). Local labels and struct fields wrote bare dotted
   keys before, which made the TOML invalid for `IMPORT` and other readers.

@@ -65,6 +65,12 @@ This skill provides step-by-step instructions and references for compiling, exec
     cargo run --bin rtvc -- --headless --port 8080 path/to/game.z80
     python3 scripts/rtvc_debug.py --port 8080
     ```
+    `video` (TCP `video_state`) shows the TVC CRTC registers, the TV model's
+    sync lock and periods, and synced/unsynced frame counters; `stats` adds
+    the counters. Use it when a program shows the lost-sync stripes.
+    To advance time in a script, prefer `frames <count>` (TCP
+    `{"cmd":"run_frames","count":250}`) to sleeping: it runs exactly that
+    many frames at full host speed (about 30x real time) and replies when done.
     For deterministic automation, `key_press <keycode> <duration_frames>` (or
     `kp`) holds a key for the requested number of 50 Hz emulator frames. The
     equivalent TCP request is

@@ -553,6 +553,31 @@ fn missing_hsync_does_not_complete_a_frame() {
 }
 
 #[test]
+fn vsync_pulses_inside_the_vertical_hold_period_are_ignored() {
+    // Dust Off leaves the CRTC in a 66-line split segment (R4=14, R5=6,
+    // R9=3, R7=4) while it sets up a level. The receiver must skip the early
+    // VSYNC edges and lock on the fifth (330 lines), as a TV's vertical hold.
+    let mut video = firmware_vid();
+    no_cursor(&mut video);
+    for (register, value) in [(4, 14), (5, 6), (6, 15), (7, 4), (9, 3)] {
+        video.set_reg_idx(register);
+        video.set_reg(value);
+    }
+    let vram = vec![0u8; 0x4000];
+    let mut framebuffer = vec![0u32; FRAMEBUFFER_WIDTH * FRAMEBUFFER_HEIGHT];
+    let mut complete = false;
+    for _ in 0..4 {
+        video.stream_some(&vram, 66_000);
+        complete |= video.render_stream(&mut framebuffer, FRAMEBUFFER_WIDTH);
+    }
+    assert!(complete, "66-line VSYNCs must lock every fifth pulse");
+    let state = video.debug_state();
+    assert_eq!(state.measured_v_period, Some(330));
+    assert!(state.stats.early_vsyncs > 0);
+    assert_eq!(state.stats.bad_v_periods, 0);
+}
+
+#[test]
 fn line_period_outside_pal_tolerance_does_not_complete_a_frame() {
     let mut video = firmware_vid();
     no_cursor(&mut video);

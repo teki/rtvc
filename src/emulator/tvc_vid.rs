@@ -264,6 +264,10 @@ struct TelevisionReceiver {
     lines_since_vsync: usize,
     measured_h_period: Option<usize>,
     measured_v_period: Option<usize>,
+    // Raw periods last observed, plausible or not (debugger only).
+    last_h_period: usize,
+    last_v_period: usize,
+    stats: VideoStats,
     stable_h_periods: u8,
     horizontal_locked: bool,
     vertical_origin_seen: bool,
@@ -282,6 +286,9 @@ impl TelevisionReceiver {
             lines_since_vsync: 0,
             measured_h_period: None,
             measured_v_period: None,
+            last_h_period: 0,
+            last_v_period: 0,
+            stats: VideoStats::default(),
             stable_h_periods: 0,
             horizontal_locked: false,
             vertical_origin_seen: false,
@@ -293,6 +300,9 @@ impl TelevisionReceiver {
     }
 
     fn lose_vertical_lock(&mut self) {
+        if self.vertical_locked {
+            self.stats.v_lock_losses += 1;
+        }
         self.measured_v_period = None;
         self.vertical_origin_seen = false;
         self.vertical_locked = false;
@@ -300,6 +310,9 @@ impl TelevisionReceiver {
     }
 
     fn lose_lock(&mut self) {
+        if self.horizontal_locked {
+            self.stats.h_lock_losses += 1;
+        }
         self.previous_hsync = false;
         self.previous_vsync = false;
         self.clocks_since_hsync = 0;
@@ -350,7 +363,11 @@ impl TelevisionReceiver {
     }
 
     fn observe_horizontal_period(&mut self, period: usize) {
+        self.last_h_period = period;
         if !(MIN_H_PERIOD..=MAX_H_PERIOD).contains(&period) {
+            if self.horizontal_locked {
+                self.stats.h_lock_losses += 1;
+            }
             self.measured_h_period = None;
             self.stable_h_periods = 0;
             self.horizontal_locked = false;
@@ -363,6 +380,9 @@ impl TelevisionReceiver {
         if stable {
             self.stable_h_periods = self.stable_h_periods.saturating_add(1);
         } else {
+            if self.horizontal_locked {
+                self.stats.h_lock_losses += 1;
+            }
             self.stable_h_periods = 1;
             self.lose_vertical_lock();
         }
@@ -385,7 +405,21 @@ impl TelevisionReceiver {
             return;
         }
         let period = self.lines_since_vsync;
+        self.last_v_period = period;
+        // Vertical hold: the deflection oscillator can only be triggered near
+        // the end of its free-running period, so an earlier pulse is ignored
+        // and the count runs on to a later one.
+        if period < MIN_V_PERIOD {
+            self.stats.early_vsyncs += 1;
+            return;
+        }
         let plausible = (MIN_V_PERIOD..=MAX_V_PERIOD).contains(&period);
+        if !plausible {
+            self.stats.bad_v_periods += 1;
+            if self.vertical_locked {
+                self.stats.v_lock_losses += 1;
+            }
+        }
         self.vertical_locked = plausible;
         self.measured_v_period = plausible.then_some(period);
         self.lines_since_vsync = 0;
@@ -419,8 +453,50 @@ impl TelevisionReceiver {
             }
         }
         self.output_y += 1;
-        self.output_y == FRAMEBUFFER_HEIGHT
+        let complete = self.output_y == FRAMEBUFFER_HEIGHT;
+        if complete {
+            self.stats.synced_frames += 1;
+        }
+        complete
     }
+}
+
+/// Running video counters for the debugger, since reset.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct VideoStats {
+    /// Frames the television receiver completed (locked to sync).
+    pub synced_frames: u64,
+    /// Host frames in which the receiver completed no frame.
+    pub unsynced_host_frames: u64,
+    pub host_frames: u64,
+    /// Horizontal lock lost (line period out of range or changing).
+    pub h_lock_losses: u64,
+    /// Vertical lock lost while horizontally locked or on a bad frame period.
+    pub v_lock_losses: u64,
+    /// Rejected vertical periods (more than 340 lines between VSYNCs).
+    pub bad_v_periods: u64,
+    /// VSYNC edges ignored because they came under 310 lines after the
+    /// previous accepted one.
+    pub early_vsyncs: u64,
+}
+
+/// CRTC and television-receiver state for the debugger.
+#[derive(Clone, Debug)]
+pub struct VideoDebugState {
+    pub registers: [u8; 18],
+    pub selected_register: u8,
+    /// Current CRTC (row, raster, horizontal count).
+    pub position: (u16, u16, u16),
+    pub horizontal_locked: bool,
+    pub vertical_locked: bool,
+    /// Accepted periods: character clocks per line, lines per frame.
+    pub measured_h_period: Option<usize>,
+    pub measured_v_period: Option<usize>,
+    /// Last periods observed between sync edges, accepted or not.
+    pub last_h_period: usize,
+    pub last_v_period: usize,
+    pub lines_since_vsync: usize,
+    pub stats: VideoStats,
 }
 
 pub struct Vid {
@@ -450,6 +526,7 @@ impl Vid {
         self.generator = TvcVideoGenerator::new();
         self.ring.clear();
         self.television.lose_lock();
+        self.television.stats = VideoStats::default();
         self.run_for = 0;
         self.cursor_pulse = false;
     }
@@ -579,6 +656,36 @@ impl Vid {
             }
         }
         false
+    }
+
+    pub fn debug_state(&self) -> VideoDebugState {
+        let tv = &self.television;
+        VideoDebugState {
+            registers: *self.crtc.registers(),
+            selected_register: self.crtc.selected(),
+            position: self.crtc.position(),
+            horizontal_locked: tv.horizontal_locked,
+            vertical_locked: tv.vertical_locked,
+            measured_h_period: tv.measured_h_period,
+            measured_v_period: tv.measured_v_period,
+            last_h_period: tv.last_h_period,
+            last_v_period: tv.last_v_period,
+            lines_since_vsync: tv.lines_since_vsync,
+            stats: tv.stats,
+        }
+    }
+
+    pub fn stats(&self) -> VideoStats {
+        self.television.stats
+    }
+
+    /// Records the end of one host frame for [`VideoStats`].
+    pub fn note_host_frame(&mut self, frame_complete: bool) {
+        let stats = &mut self.television.stats;
+        stats.host_frames += 1;
+        if !frame_complete {
+            stats.unsynced_host_frames += 1;
+        }
     }
 
     #[cfg(test)]

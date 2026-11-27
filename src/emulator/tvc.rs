@@ -1137,6 +1137,9 @@ impl Tvc {
             }
         };
 
+        if self.vid_model == VidModel::Interleaved {
+            self.bus.vid.note_host_frame(frame_complete);
+        }
         if frame_complete {
             self.sync_timeout_frames = 0;
             self.frame_complete = true;

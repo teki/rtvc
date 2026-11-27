@@ -262,7 +262,12 @@ The television stage can see only final IGRB video, blanking, HSYNC, and VSYNC.
 It measures repeated sync edges and accepts PAL-like horizontal periods of
 90-110 character clocks and vertical periods of 310-340 lines. The first
 observed VSYNC is only a measurement origin; vertical lock requires a later
-period inside that window. Capture starts 22 lines after VSYNC and fills 288
+period inside that window. A VSYNC edge that arrives fewer than 310 lines after
+the last accepted one is ignored, as a TV's vertical hold ignores a pulse
+before its oscillator is near the end of its period, and the count runs on to
+a later edge. Dust Off leaves the CRTC in a 66-line split-screen segment while
+it sets up a level; the receiver then locks on every fifth VSYNC (330 lines)
+instead of losing sync. Capture starts 22 lines after VSYNC and fills 288
 lines, so periods shorter than 310 cannot complete the public surface. A
 discontinuity, missing sync, or dropped ring samples invalidates lock and
 discards the partial raster. It cannot complete a frame without both
@@ -861,8 +866,10 @@ an emulator instance running without its debugger socket.
 | Command | Purpose |
 | --- | --- |
 | `status` | CPU registers, clock, run/HALT state, tape progress, loading and warp state |
-| `stats` | rolling host-time FPS |
+| `stats` | rolling host-time FPS; on the TVC also `video` counters (below) |
+| `video_state` | TVC CRTC registers and position, receiver lock and periods, and `video_stats` |
 | `step` | execute one or more complete machine instructions |
+| `run_frames` | run `count` frames (at most 30,000) as fast as the host allows and reply with `frames`, `elapsed_cycles`, `breakpoint` (PC or `null`) and `host_ms` |
 | `continue`, `pause`, `reset` | execution control |
 | `breakpoint_add`, `breakpoint_remove`, `breakpoint_list` | breakpoints |
 | `read_memory` | mapped memory or raw `u0`-`u3`, `vid0`-`vid3`, `sys`, `cart`, `exth` |
@@ -878,7 +885,29 @@ an emulator instance running without its debugger socket.
 | `instruction_trace_list` | return the newest captured instructions, including registers and writes |
 | `close_app` | normal application shutdown |
 
-Requests and responses are one JSON object per line. A running emulator emits
+The TVC video counters run from reset: `synced_frames` (frames the
+television receiver completed), `host_frames` and `unsynced_host_frames`
+(host frames in which none completed; Interleaved only), `h_lock_losses`,
+`v_lock_losses`, `bad_v_periods` (more than 340 lines between VSYNCs) and
+`early_vsyncs` (VSYNC edges ignored by the vertical hold). A host frame is
+62,500 T-states and a 314-line TV frame 62,800, so a locked picture still
+shows about one unsynced host frame in 200. `video_state` also gives
+`h_period`/`v_period` (accepted) and `last_h_period`/`last_v_period` (last
+observed, accepted or not). The interactive client's `video` command prints
+it.
+
+`run_frames` measures time in emulated frames, so a script gets the same
+result on any host and does not wait in real time. It runs whether or not the
+machine is paused, keeps the earlier run state, and stops early (paused) on a
+breakpoint, which it reports in the reply instead of as an event. Frames run
+while the reply is pending, so the GUI does not redraw meanwhile. When left
+running, headless mode paces frames on a fixed 20 ms grid: a late wake from
+the host sleep is made up by the next frames (up to five back to back), so it
+holds 50 FPS instead of slowing to the sleep's overshoot.
+
+Requests and responses are one JSON object per line. A reply is written in
+full even when it is larger than the socket send buffer (a long
+`instruction_trace_list`). A running emulator emits
 `{"event":"breakpoint","pc":...}` asynchronously when a breakpoint is hit.
 
 Typed text is queued and each character is pressed and released over completed

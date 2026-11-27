@@ -54,6 +54,9 @@ enum DebuggerCommand {
     WritePort { port: u8, value: u8 },
     #[serde(rename = "run_to_interrupt")]
     RunToInterrupt,
+    /// Runs `count` frames as fast as the host allows, then replies.
+    #[serde(rename = "run_frames")]
+    RunFrames { count: u32 },
     #[serde(rename = "disassemble")]
     Disassemble { addr: u16, len: usize },
     #[serde(rename = "assemble")]
@@ -62,6 +65,9 @@ enum DebuggerCommand {
     SaveSnapshot { path: String },
     #[serde(rename = "load_snapshot")]
     LoadSnapshot { path: String },
+    /// TVC CRTC registers and television-receiver sync lock.
+    #[serde(rename = "video_state")]
+    VideoState,
     #[serde(rename = "save_screenshot")]
     SaveScreenshot { path: String },
     #[serde(rename = "key")]
@@ -216,6 +222,18 @@ pub fn start_debugger_server_from(port: u16) -> std::io::Result<(DebuggerInterfa
     }
 }
 
+/// Writes one reply line in full. The stream is non-blocking for reads, so a
+/// large reply (an instruction trace) would stop at `WouldBlock` once the
+/// send buffer fills; block for the write instead.
+fn write_line(stream: &mut TcpStream, line: &str) -> std::io::Result<()> {
+    stream.set_nonblocking(false)?;
+    let result = stream
+        .write_all(line.as_bytes())
+        .and_then(|()| stream.write_all(b"\n"));
+    stream.set_nonblocking(true)?;
+    result
+}
+
 fn start_debugger_on_listener(listener: TcpListener) -> std::io::Result<DebuggerInterface> {
     let port = listener.local_addr()?.port();
     listener.set_nonblocking(true)?;
@@ -271,8 +289,9 @@ fn start_debugger_on_listener(listener: TcpListener) -> std::io::Result<Debugger
                                         }
                                         // Wait for response from main thread
                                         if let Ok(response) = reply_rx.recv() {
-                                            let _ =
-                                                s.write_all(format!("{}\n", response).as_bytes());
+                                            if write_line(s, &response).is_err() {
+                                                disconnect = true;
+                                            }
                                         }
                                     }
                                 }
@@ -294,7 +313,9 @@ fn start_debugger_on_listener(listener: TcpListener) -> std::io::Result<Debugger
                                     "event": "breakpoint",
                                     "pc": pc
                                 });
-                                let _ = s.write_all(format!("{}\n", msg.to_string()).as_bytes());
+                                if write_line(s, &msg.to_string()).is_err() {
+                                    disconnect = true;
+                                }
                             }
                         }
                     }
@@ -319,10 +340,18 @@ fn start_debugger_on_listener(listener: TcpListener) -> std::io::Result<Debugger
 
 /// Host time spent running frames between command checks while warping.
 const HEADLESS_WARP_BUDGET: Duration = Duration::from_millis(15);
+/// One emulated 50 Hz frame of real time.
+const FRAME_PERIOD: Duration = Duration::from_millis(20);
+/// Frames headless mode may run back to back to catch up after a late wake.
+const HEADLESS_MAX_CATCH_UP: u32 = 5;
+/// Upper bound for one `run_frames` command (ten emulated minutes).
+const MAX_RUN_FRAMES: u32 = 30_000;
 
 pub fn run_headless(mut emu: Emu, port: u16) -> std::io::Result<()> {
     let (debugger, _port) = start_debugger_server_from(port)?;
-    let mut last_frame_time = Instant::now();
+    // Frames are due on a fixed 20 ms grid, so a late wake from sleep is made
+    // up by the next frames instead of slowing the emulation down.
+    let mut next_frame = Instant::now();
 
     loop {
         // 1. Process debugger commands
@@ -350,15 +379,20 @@ pub fn run_headless(mut emu: Emu, port: u16) -> std::io::Result<()> {
                     let _ = debugger.event_tx.send(DebuggerEvent::BreakpointHit { pc });
                 }
             }
-            last_frame_time = Instant::now();
+            next_frame = Instant::now();
         } else if emu.running {
             let now = Instant::now();
-            let elapsed = now.duration_since(last_frame_time);
-            if elapsed >= Duration::from_millis(20) {
+            if now >= next_frame {
                 let hit_breakpoint = emu.tick();
                 debugger.record_frame();
-                last_frame_time = now;
-
+                let _ = emu.take_audio_samples();
+                next_frame += FRAME_PERIOD;
+                if now.saturating_duration_since(next_frame) > FRAME_PERIOD * HEADLESS_MAX_CATCH_UP
+                {
+                    // Too far behind (a long command, a stalled host): resync
+                    // rather than running a burst of frames.
+                    next_frame = now + FRAME_PERIOD;
+                }
                 if hit_breakpoint {
                     emu.running = false;
                     let pc = emu.z80_state().pc;
@@ -366,13 +400,25 @@ pub fn run_headless(mut emu: Emu, port: u16) -> std::io::Result<()> {
                     let _ = debugger.event_tx.send(DebuggerEvent::BreakpointHit { pc });
                 }
             } else {
-                let sleep_time = Duration::from_millis(20).saturating_sub(elapsed);
-                std::thread::sleep(sleep_time);
+                std::thread::sleep(next_frame - now);
             }
         } else {
+            next_frame = Instant::now();
             std::thread::sleep(Duration::from_millis(5));
         }
     }
+}
+
+fn video_stats_json(stats: &crate::tvc_vid::VideoStats) -> serde_json::Value {
+    serde_json::json!({
+        "synced_frames": stats.synced_frames,
+        "unsynced_host_frames": stats.unsynced_host_frames,
+        "host_frames": stats.host_frames,
+        "h_lock_losses": stats.h_lock_losses,
+        "v_lock_losses": stats.v_lock_losses,
+        "bad_v_periods": stats.bad_v_periods,
+        "early_vsyncs": stats.early_vsyncs,
+    })
 }
 
 fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> String {
@@ -401,6 +447,30 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                     "warp_active": emu.warp_active(),
                 })
             }
+            DebuggerCommand::VideoState => match emu.tvc() {
+                Some(tvc) => {
+                    let v = tvc.bus.vid.debug_state();
+                    serde_json::json!({
+                        "status": "ok",
+                        "crtc": v.registers.to_vec(),
+                        "crtc_selected": v.selected_register,
+                        "row": v.position.0,
+                        "raster": v.position.1,
+                        "h_count": v.position.2,
+                        "h_locked": v.horizontal_locked,
+                        "v_locked": v.vertical_locked,
+                        "h_period": v.measured_h_period,
+                        "v_period": v.measured_v_period,
+                        "last_h_period": v.last_h_period,
+                        "last_v_period": v.last_v_period,
+                        "lines_since_vsync": v.lines_since_vsync,
+                        "video_stats": video_stats_json(&v.stats),
+                    })
+                }
+                None => {
+                    serde_json::json!({"status": "error", "message": "video_state needs a TVC"})
+                }
+            },
             DebuggerCommand::Stats => {
                 serde_json::json!({
                     "status": "ok",
@@ -408,6 +478,7 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                     "average_fps": stats.average_fps,
                     "window_seconds": stats.window_seconds,
                     "frames": stats.frames,
+                    "video": emu.tvc().map(|tvc| video_stats_json(&tvc.bus.vid.stats())),
                 })
             }
             DebuggerCommand::CloseApp => {
@@ -425,6 +496,38 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                     "elapsed_cycles": result.elapsed_cycles,
                     "interrupt_accepted": result.interrupt_accepted
                 })
+            }
+            DebuggerCommand::RunFrames { count } => {
+                if count > MAX_RUN_FRAMES {
+                    serde_json::json!({
+                        "status": "error",
+                        "message": format!("run_frames count is limited to {MAX_RUN_FRAMES}"),
+                    })
+                } else {
+                    let was_running = emu.running;
+                    let start_cycles = emu.clock();
+                    let start = Instant::now();
+                    emu.running = true;
+                    let mut frames = 0;
+                    let mut breakpoint = None;
+                    while frames < count {
+                        let hit_breakpoint = emu.tick();
+                        let _ = emu.take_audio_samples();
+                        frames += 1;
+                        if hit_breakpoint {
+                            breakpoint = Some(emu.z80_state().pc);
+                            break;
+                        }
+                    }
+                    emu.running = was_running && breakpoint.is_none();
+                    serde_json::json!({
+                        "status": "ok",
+                        "frames": frames,
+                        "elapsed_cycles": emu.clock() - start_cycles,
+                        "breakpoint": breakpoint,
+                        "host_ms": start.elapsed().as_secs_f64() * 1000.0,
+                    })
+                }
             }
             DebuggerCommand::Continue => {
                 emu.running = true;

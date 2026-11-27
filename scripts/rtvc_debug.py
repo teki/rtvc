@@ -80,6 +80,34 @@ class RtvcShell(cmd.Cmd):
             f"over {resp.get('window_seconds', 0.0):.2f}s "
             f"({resp.get('frames', 0)} frames, running: {resp.get('running')})"
         )
+        video = resp.get("video")
+        if video:
+            print(
+                f"Video: {video.get('synced_frames')} synced, "
+                f"{video.get('unsynced_host_frames')}/{video.get('host_frames')} host frames unsynced, "
+                f"lock losses H {video.get('h_lock_losses')} V {video.get('v_lock_losses')}"
+            )
+
+    def do_video(self, arg):
+        """Show TVC CRTC registers, TV sync lock, and video counters."""
+        resp = self._send_cmd({"cmd": "video_state"})
+        if not resp:
+            return
+        if resp.get("status") != "ok":
+            print(f"Error: {resp.get('message')}")
+            return
+        crtc = resp.get("crtc", [])
+        print("CRTC: " + " ".join(f"R{i}={v}" for i, v in enumerate(crtc)))
+        print(
+            f"Beam: row {resp.get('row')} raster {resp.get('raster')} "
+            f"h {resp.get('h_count')}, {resp.get('lines_since_vsync')} lines since VSYNC"
+        )
+        print(
+            f"Lock: H {resp.get('h_locked')} ({resp.get('h_period')}, last {resp.get('last_h_period')})   "
+            f"V {resp.get('v_locked')} ({resp.get('v_period')}, last {resp.get('last_v_period')})"
+        )
+        stats = resp.get("video_stats", {})
+        print("Stats: " + ", ".join(f"{k} {v}" for k, v in stats.items()))
 
     def do_close_app(self, arg):
         """Close the emulator application and exit the debugger shell."""
@@ -331,6 +359,30 @@ class RtvcShell(cmd.Cmd):
                 f"interrupt accepted: {resp.get('interrupt_accepted')}"
             )
             self.do_status("")
+        elif resp:
+            print(f"Error: {resp.get('message')}")
+
+    def do_frames(self, arg):
+        """Run N frames as fast as possible, then stop. Usage: frames <count>"""
+        try:
+            count = self._parse_number(arg)
+        except ValueError:
+            print("Usage: frames <count>")
+            return
+        # Up to 30000 frames take several seconds on a slow host.
+        self.sock.settimeout(120.0)
+        try:
+            resp = self._send_cmd({"cmd": "run_frames", "count": count})
+        finally:
+            self.sock.settimeout(5.0)
+        if resp and resp.get("status") == "ok":
+            line = (
+                f"Ran {resp.get('frames')} frames "
+                f"({resp.get('elapsed_cycles')} cycles) in {resp.get('host_ms', 0):.0f} ms"
+            )
+            if resp.get("breakpoint") is not None:
+                line += f"; breakpoint at 0x{resp['breakpoint']:04X}"
+            print(line)
         elif resp:
             print(f"Error: {resp.get('message')}")
 
