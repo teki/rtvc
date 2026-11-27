@@ -1031,6 +1031,7 @@ impl Tvc {
                 opcode,
                 main_map: Some(self.bus.mmu.get_map_val()),
                 video_map: Some(self.bus.mmu.get_vid_map_val()),
+                beam: None,
                 elapsed_cycles: 0,
                 interrupt_accepted: false,
                 effects: InstructionEffects::default(),
@@ -1052,6 +1053,9 @@ impl Tvc {
         if let Some(mut entry) = trace_entry {
             entry.elapsed_cycles = cpu_time + irq_time;
             entry.interrupt_accepted = irq_time > 0;
+            if self.instruction_trace.records_beam() {
+                entry.beam = Some(self.bus.vid.beam());
+            }
             entry.effects = self.bus.take_instruction_effects();
             self.instruction_trace.record(entry);
         }

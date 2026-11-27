@@ -6,6 +6,21 @@ pub const DEFAULT_TRACE_CAPACITY: usize = 100_000;
 pub const MIN_TRACE_CAPACITY: usize = 1_000;
 pub const MAX_TRACE_CAPACITY: usize = 1_000_000;
 
+/// TVC CRTC state after a traced instruction, recorded only on request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    any(feature = "native", feature = "wasm-full"),
+    derive(serde::Serialize)
+)]
+pub struct TraceBeam {
+    pub row: u16,
+    pub raster: u16,
+    pub h: u16,
+    pub in_adjust: bool,
+    /// The selected CRTC register, which an OUT to the data port writes.
+    pub crtc_register: u8,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(
     any(feature = "native", feature = "wasm-full"),
@@ -109,6 +124,8 @@ pub struct InstructionTraceEntry {
     pub opcode: [u8; 4],
     pub main_map: Option<u8>,
     pub video_map: Option<u8>,
+    /// TVC CRTC beam after the instruction, when the trace records it.
+    pub beam: Option<TraceBeam>,
     pub elapsed_cycles: u32,
     pub interrupt_accepted: bool,
     pub effects: InstructionEffects,
@@ -124,6 +141,7 @@ pub struct InstructionTrace {
     entries: VecDeque<InstructionTraceEntry>,
     capacity: usize,
     recording: bool,
+    record_beam: bool,
     next_sequence: u64,
 }
 
@@ -133,6 +151,7 @@ impl Default for InstructionTrace {
             entries: VecDeque::new(),
             capacity: DEFAULT_TRACE_CAPACITY,
             recording: false,
+            record_beam: false,
             next_sequence: 1,
         }
     }
@@ -143,6 +162,16 @@ impl InstructionTrace {
         self.capacity = capacity.clamp(MIN_TRACE_CAPACITY, MAX_TRACE_CAPACITY);
         self.clear();
         self.recording = true;
+        self.record_beam = false;
+    }
+
+    /// Also record the TVC CRTC beam per instruction (off after `start`).
+    pub fn set_record_beam(&mut self, enabled: bool) {
+        self.record_beam = enabled;
+    }
+
+    pub fn records_beam(&self) -> bool {
+        self.recording && self.record_beam
     }
 
     pub fn stop(&mut self) {
@@ -218,6 +247,7 @@ mod tests {
             opcode: [0; 4],
             main_map: None,
             video_map: None,
+            beam: None,
             elapsed_cycles: 0,
             interrupt_accepted: false,
             effects: InstructionEffects::default(),

@@ -161,6 +161,33 @@ fn stream_data_overflow_does_not_panic() {
 }
 
 #[test]
+fn cursor_interrupts_on_every_raster_from_r10_to_r11() {
+    // Dust Off sets R10=2, R11=3 and expects an interrupt on both lines.
+    let mut video = vid_with_regs(&[
+        (0, 99),
+        (1, 64),
+        (4, 77),
+        (6, 60),
+        (9, 3),
+        (14, 0x00),
+        (15, 0x05),
+        (10, 2),
+        (11, 3),
+    ]);
+    let vram = vec![0u8; 0x4000];
+    let mut framebuffer = vec![0u32; FRAMEBUFFER_WIDTH * FRAMEBUFFER_HEIGHT];
+    let mut hits = Vec::new();
+    for _ in 0..10_000 {
+        if video.stream_some(&vram, 2) {
+            let (row, raster, _, _) = video.stream_position();
+            hits.push((row, raster));
+        }
+        let _ = video.render_stream(&mut framebuffer, FRAMEBUFFER_WIDTH);
+    }
+    assert_eq!(hits, vec![(0, 2), (0, 3)]);
+}
+
+#[test]
 fn cursor_compare_wraps_mid_row() {
     let mut video = Vid::new();
     video.set_reg_idx(12);
@@ -550,6 +577,40 @@ fn missing_hsync_does_not_complete_a_frame() {
             "VS without reachable HS must not fabricate a frame"
         );
     }
+}
+
+#[test]
+fn missing_vsync_free_runs_then_resyncs() {
+    // Dust Off stops VSYNC (R7=127) for about ten frames between screens. A
+    // TV keeps scanning on its own instead of losing the picture.
+    let mut video = firmware_vid();
+    no_cursor(&mut video);
+    let vram = vec![0u8; 0x4000];
+    let mut framebuffer = vec![0u32; FRAMEBUFFER_WIDTH * FRAMEBUFFER_HEIGHT];
+    let mut frames = |video: &mut Vid, count: usize| {
+        let mut complete = 0;
+        for _ in 0..count {
+            video.stream_some(&vram, 62_800);
+            while video.render_stream(&mut framebuffer, FRAMEBUFFER_WIDTH) {
+                complete += 1;
+            }
+        }
+        complete
+    };
+    assert!(frames(&mut video, 4) > 0, "firmware geometry should lock");
+    video.set_reg_idx(7);
+    video.set_reg(127);
+    assert!(
+        frames(&mut video, 10) >= 8,
+        "free-running receiver keeps completing frames"
+    );
+    assert!(video.stats().vsync_timeouts > 0);
+    video.set_reg(66);
+    frames(&mut video, 2);
+    let state = video.debug_state();
+    assert!(state.vertical_locked);
+    assert_eq!(state.measured_v_period, Some(314));
+    assert!(frames(&mut video, 4) >= 3);
 }
 
 #[test]

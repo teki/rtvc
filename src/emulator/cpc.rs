@@ -638,6 +638,7 @@ impl Cpc {
                 opcode,
                 main_map: None,
                 video_map: None,
+                beam: None,
                 elapsed_cycles: 0,
                 interrupt_accepted: false,
                 effects: InstructionEffects::default(),

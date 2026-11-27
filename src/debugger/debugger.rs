@@ -83,7 +83,11 @@ enum DebuggerCommand {
     #[serde(rename = "warp")]
     Warp { enabled: Option<bool> },
     #[serde(rename = "instruction_trace_start")]
-    InstructionTraceStart { capacity: Option<usize> },
+    InstructionTraceStart {
+        capacity: Option<usize>,
+        /// Also record the TVC CRTC beam and selected register (off by default).
+        beam: Option<bool>,
+    },
     #[serde(rename = "instruction_trace_stop")]
     InstructionTraceStop,
     #[serde(rename = "instruction_trace_clear")]
@@ -91,7 +95,13 @@ enum DebuggerCommand {
     #[serde(rename = "instruction_trace_status")]
     InstructionTraceStatus,
     #[serde(rename = "instruction_trace_list")]
-    InstructionTraceList { limit: Option<usize> },
+    InstructionTraceList {
+        limit: Option<usize>,
+        /// Page forward: the entries after this sequence number, oldest first.
+        after_sequence: Option<u64>,
+        /// Only entries that wrote an I/O port, searched over the whole trace.
+        port_writes_only: Option<bool>,
+    },
 }
 
 pub struct DebuggerMessage {
@@ -418,6 +428,7 @@ fn video_stats_json(stats: &crate::tvc_vid::VideoStats) -> serde_json::Value {
         "v_lock_losses": stats.v_lock_losses,
         "bad_v_periods": stats.bad_v_periods,
         "early_vsyncs": stats.early_vsyncs,
+        "vsync_timeouts": stats.vsync_timeouts,
     })
 }
 
@@ -464,6 +475,8 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                         "last_h_period": v.last_h_period,
                         "last_v_period": v.last_v_period,
                         "lines_since_vsync": v.lines_since_vsync,
+                        "vsync_intervals": v.vsync_intervals,
+                        "timeout_raw_lines": v.timeout_raw_lines,
                         "video_stats": video_stats_json(&v.stats),
                     })
                 }
@@ -782,13 +795,15 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                     }),
                 }
             }
-            DebuggerCommand::InstructionTraceStart { capacity } => {
+            DebuggerCommand::InstructionTraceStart { capacity, beam } => {
                 let capacity = capacity.unwrap_or(crate::instruction_trace::DEFAULT_TRACE_CAPACITY);
                 emu.start_instruction_trace(capacity);
+                emu.set_instruction_trace_beam(beam.unwrap_or(false));
                 let trace = emu.instruction_trace();
                 serde_json::json!({
                     "status": "ok",
                     "recording": trace.is_recording(),
+                    "beam": trace.records_beam(),
                     "capacity": trace.capacity(),
                     "entries": trace.len()
                 })
@@ -799,6 +814,7 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                 serde_json::json!({
                     "status": "ok",
                     "recording": trace.is_recording(),
+                    "beam": trace.records_beam(),
                     "capacity": trace.capacity(),
                     "entries": trace.len()
                 })
@@ -809,6 +825,7 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                 serde_json::json!({
                     "status": "ok",
                     "recording": trace.is_recording(),
+                    "beam": trace.records_beam(),
                     "capacity": trace.capacity(),
                     "entries": trace.len()
                 })
@@ -818,14 +835,25 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                 serde_json::json!({
                     "status": "ok",
                     "recording": trace.is_recording(),
+                    "beam": trace.records_beam(),
                     "capacity": trace.capacity(),
                     "entries": trace.len()
                 })
             }
-            DebuggerCommand::InstructionTraceList { limit } => {
-                let limit = limit.unwrap_or(100).clamp(1, 10_000);
+            DebuggerCommand::InstructionTraceList {
+                limit,
+                after_sequence,
+                port_writes_only,
+            } => {
+                let limit = limit
+                    .unwrap_or(100)
+                    .clamp(1, crate::instruction_trace::MAX_TRACE_CAPACITY);
                 let entries: Vec<_> = emu
-                    .recent_instruction_trace(limit)
+                    .query_instruction_trace(
+                        limit,
+                        after_sequence,
+                        port_writes_only.unwrap_or(false),
+                    )
                     .into_iter()
                     .map(|entry| {
                         let instruction =
@@ -839,6 +867,7 @@ fn handle_command(emu: &mut Emu, line: &str, stats: FrameStatsSnapshot) -> Strin
                             "registers": entry.registers,
                             "main_map": entry.main_map,
                             "video_map": entry.video_map,
+                            "beam": entry.beam,
                             "elapsed_cycles": entry.elapsed_cycles,
                             "interrupt_accepted": entry.interrupt_accepted,
                             "memory_writes": entry.effects.memory_writes,

@@ -1026,11 +1026,13 @@ class RtvcShell(cmd.Cmd):
     def do_trace(self, arg):
         """Control the bounded instruction trace.
         Usage:
-          trace start [capacity]
+          trace start [capacity] [beam]
           trace stop
           trace clear
           trace status
-          trace list [count]
+          trace list [count] [ports]
+        "beam" also records the TVC CRTC beam and selected register per
+        instruction; "ports" lists only instructions that wrote a port.
         """
         parts = arg.split()
         if not parts:
@@ -1038,12 +1040,16 @@ class RtvcShell(cmd.Cmd):
         action = parts[0].lower()
         if action == "start":
             cmd_dict = {"cmd": "instruction_trace_start"}
-            if len(parts) > 2:
-                print("Usage: trace start [capacity]")
+            options = parts[1:]
+            if "beam" in options:
+                options.remove("beam")
+                cmd_dict["beam"] = True
+            if len(options) > 1:
+                print("Usage: trace start [capacity] [beam]")
                 return
-            if len(parts) == 2:
+            if options:
                 try:
-                    cmd_dict["capacity"] = self._parse_number(parts[1])
+                    cmd_dict["capacity"] = self._parse_number(options[0])
                 except ValueError:
                     print("Error: capacity must be a number.")
                     return
@@ -1053,18 +1059,24 @@ class RtvcShell(cmd.Cmd):
                 return
             cmd_dict = {"cmd": f"instruction_trace_{action}"}
         elif action == "list":
-            if len(parts) > 2:
-                print("Usage: trace list [count]")
-                return
             cmd_dict = {"cmd": "instruction_trace_list"}
-            if len(parts) == 2:
+            options = parts[1:]
+            if "ports" in options:
+                options.remove("ports")
+                cmd_dict["port_writes_only"] = True
+            if len(options) > 1:
+                print("Usage: trace list [count] [ports]")
+                return
+            if options:
                 try:
-                    cmd_dict["limit"] = self._parse_number(parts[1])
+                    cmd_dict["limit"] = self._parse_number(options[0])
                 except ValueError:
                     print("Error: count must be a number.")
                     return
         else:
-            print("Usage: trace [start [capacity] | stop | clear | status | list [count]]")
+            print(
+                "Usage: trace [start [capacity] [beam] | stop | clear | status | list [count] [ports]]"
+            )
             return
 
         resp = self._send_cmd(cmd_dict)
@@ -1090,6 +1102,13 @@ class RtvcShell(cmd.Cmd):
                     maps.append(f"map={entry['main_map']:02X}")
                 if entry.get("video_map") is not None:
                     maps.append(f"vid={entry['video_map']:02X}")
+                beam = entry.get("beam")
+                if beam:
+                    adjust = " adj" if beam.get("in_adjust") else ""
+                    maps.append(
+                        f"beam={beam['row']}/{beam['raster']}/{beam['h']}{adjust} "
+                        f"R{beam['crtc_register']}"
+                    )
                 writes = [
                     f"[{write.get('addr', 0):04X}]={write.get('value', 0):02X}"
                     for write in entry.get("memory_writes", [])
@@ -1103,6 +1122,7 @@ class RtvcShell(cmd.Cmd):
         else:
             print(
                 f"Instruction trace: recording={resp.get('recording')} "
+                f"beam={resp.get('beam', False)} "
                 f"entries={resp.get('entries', 0)}/{resp.get('capacity', 0)}"
             )
 

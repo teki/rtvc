@@ -255,8 +255,8 @@ blanking state; it never carries a VRAM byte that can be recolored later.
 
 This mode preserves mid-frame palette, border, mode, start-address, and CRTC
 changes. The shared interrupt latches on the falling edge of the cursor pulse,
-one character clock after a cursor match; IRQ service time is also applied to
-video advancement.
+one character clock after a cursor match, on every raster from R10 to R11; IRQ
+service time is also applied to video advancement.
 
 The television stage can see only final IGRB video, blanking, HSYNC, and VSYNC.
 It measures repeated sync edges and accepts PAL-like horizontal periods of
@@ -267,10 +267,13 @@ the last accepted one is ignored, as a TV's vertical hold ignores a pulse
 before its oscillator is near the end of its period, and the count runs on to
 a later edge. Dust Off leaves the CRTC in a 66-line split-screen segment while
 it sets up a level; the receiver then locks on every fifth VSYNC (330 lines)
-instead of losing sync. Capture starts 22 lines after VSYNC and fills 288
-lines, so periods shorter than 310 cannot complete the public surface. A
-discontinuity, missing sync, or dropped ring samples invalidates lock and
-discards the partial raster. It cannot complete a frame without both
+instead of losing sync. Once locked, a receiver that sees no VSYNC for 340
+lines free-runs: it retraces by itself and keeps showing frames (the picture
+rolls), and the next VSYNC edge sets the vertical phase again. Dust Off stops
+VSYNC for about ten frames between screens. Capture starts 22 lines after VSYNC
+and fills 288 lines, so periods shorter than 310 cannot complete the public
+surface. A discontinuity, missing HSYNC, or dropped ring samples invalidates
+lock and discards the partial raster. It cannot complete a frame without both
 horizontal and vertical lock.
 
 The public surface remains 608 x 288. Its 76-character-clock horizontal aperture
@@ -880,21 +883,25 @@ an emulator instance running without its debugger socket.
 | `key` | key down/up or frame-paced typed text |
 | `key_press` | hold a host key code for a number of 50 Hz frames, then release it |
 | `warp` | with `"enabled": true`/`false`, set warp while loading; always report `warp`, `tape_loading`, `warp_active`, and `tape_progress` |
-| `instruction_trace_start`, `instruction_trace_stop` | start a new bounded trace or stop recording |
+| `instruction_trace_start`, `instruction_trace_stop` | start a new bounded trace (`capacity`; `beam: true` also records the TVC CRTC beam) or stop recording |
 | `instruction_trace_clear`, `instruction_trace_status` | discard entries or report trace state |
-| `instruction_trace_list` | return the newest captured instructions, including registers and writes |
+| `instruction_trace_list` | captured instructions with registers and writes: the newest `limit`, or with `after_sequence` the next `limit` after that sequence; `port_writes_only` skips instructions without a port write |
 | `close_app` | normal application shutdown |
 
 The TVC video counters run from reset: `synced_frames` (frames the
 television receiver completed), `host_frames` and `unsynced_host_frames`
 (host frames in which none completed; Interleaved only), `h_lock_losses`,
 `v_lock_losses`, `bad_v_periods` (more than 340 lines between VSYNCs) and
-`early_vsyncs` (VSYNC edges ignored by the vertical hold). A host frame is
+`early_vsyncs` (VSYNC edges ignored by the vertical hold) and
+`vsync_timeouts` (free-running retraces, no VSYNC within 340 lines). A host
+frame is
 62,500 T-states and a 314-line TV frame 62,800, so a locked picture still
 shows about one unsynced host frame in 200. `video_state` also gives
 `h_period`/`v_period` (accepted) and `last_h_period`/`last_v_period` (last
-observed, accepted or not). The interactive client's `video` command prints
-it.
+observed, accepted or not), `vsync_intervals` (lines between the last 16 raw
+VSYNC edges, ignored ones included) and `timeout_raw_lines` (lines since the
+last raw VSYNC edge when the last timeout fired). The interactive client's
+`video` command prints it.
 
 `run_frames` measures time in emulated frames, so a script gets the same
 result on any host and does not wait in real time. It runs whether or not the
@@ -928,10 +935,19 @@ operation as `key_press 49 3`, with `kp` as a short alias.
 
 Instruction tracing can be driven with JSON such as
 `{"cmd":"instruction_trace_start","capacity":100000}` followed by
-`{"cmd":"instruction_trace_list","limit":100}`. List responses are capped
-at 10,000 entries per request. The interactive client provides the equivalent
-`trace start [capacity]`, `trace stop`, `trace clear`, `trace status`, and
-`trace list [count]` commands; `itrace` is an alias.
+`{"cmd":"instruction_trace_list","limit":100}`. A trace holds up to 1,000,000
+instructions; one list reply may return all of them, but paging with
+`after_sequence` (the last `sequence` received) keeps replies small. Pause the
+machine first, or the trace keeps growing while it is read. By default an
+entry has registers, maps, and memory and port writes. With
+`"beam": true` on start, TVC entries also carry `beam`: the CRTC row, raster,
+character, vertical-adjust state, and selected register after the
+instruction, so an `OUT` to port `0x71` shows which register it wrote and
+where the beam was. `"port_writes_only": true` on list searches the whole trace
+for instructions that wrote a port. The interactive client provides the
+equivalent `trace start [capacity] [beam]`, `trace stop`, `trace clear`,
+`trace status`, and `trace list [count] [ports]` commands; `itrace` is an
+alias.
 
 `{"cmd":"warp","enabled":true}` turns on warp while loading. The interactive
 client provides `warp`, `warp on`, `warp off`, and `warp wait [seconds]`,

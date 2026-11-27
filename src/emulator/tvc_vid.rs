@@ -30,6 +30,7 @@ const V_APERTURE_AFTER_SYNC: usize = 22;
 // period must leave room for the full aperture before the next VS.
 const MIN_V_PERIOD: usize = V_APERTURE_AFTER_SYNC + FRAMEBUFFER_HEIGHT;
 const MAX_V_PERIOD: usize = 340;
+const VSYNC_HISTORY: usize = 16;
 
 // The TVC's SN74LS123 circuits reshape raw CRTC sync. Their edge behavior is
 // important here; exact board-variant RC widths remain an explicit
@@ -267,11 +268,19 @@ struct TelevisionReceiver {
     // Raw periods last observed, plausible or not (debugger only).
     last_h_period: usize,
     last_v_period: usize,
+    // Lines between raw VSYNC edges, ignored ones included (debugger only).
+    lines_since_raw_vsync: usize,
+    vsync_intervals: [u16; VSYNC_HISTORY],
+    vsync_interval_count: usize,
+    // Lines since the last raw VSYNC edge when the last timeout fired.
+    timeout_raw_lines: usize,
     stats: VideoStats,
     stable_h_periods: u8,
     horizontal_locked: bool,
     vertical_origin_seen: bool,
     vertical_locked: bool,
+    // The vertical oscillator retraced on its own after VSYNC went missing.
+    free_running: bool,
     line: [VideoSignal; MAX_LINE_CHARACTER_CLOCKS],
     line_len: usize,
     output_y: usize,
@@ -288,11 +297,16 @@ impl TelevisionReceiver {
             measured_v_period: None,
             last_h_period: 0,
             last_v_period: 0,
+            lines_since_raw_vsync: 0,
+            vsync_intervals: [0; VSYNC_HISTORY],
+            vsync_interval_count: 0,
+            timeout_raw_lines: 0,
             stats: VideoStats::default(),
             stable_h_periods: 0,
             horizontal_locked: false,
             vertical_origin_seen: false,
             vertical_locked: false,
+            free_running: false,
             line: [VideoSignal::default(); MAX_LINE_CHARACTER_CLOCKS],
             line_len: 0,
             output_y: 0,
@@ -306,6 +320,7 @@ impl TelevisionReceiver {
         self.measured_v_period = None;
         self.vertical_origin_seen = false;
         self.vertical_locked = false;
+        self.free_running = false;
         self.output_y = 0;
     }
 
@@ -339,13 +354,26 @@ impl TelevisionReceiver {
             self.clocks_since_hsync = 0;
             if self.horizontal_locked {
                 self.lines_since_vsync += 1;
+                self.lines_since_raw_vsync += 1;
                 if self.lines_since_vsync > MAX_V_PERIOD {
-                    self.lose_vertical_lock();
+                    if self.vertical_locked {
+                        // No VSYNC in time: a TV's vertical oscillator
+                        // free-runs and retraces by itself, so the picture
+                        // rolls instead of disappearing.
+                        self.stats.vsync_timeouts += 1;
+                        self.timeout_raw_lines = self.lines_since_raw_vsync;
+                        self.free_running = true;
+                        self.lines_since_vsync = 0;
+                        self.output_y = 0;
+                    } else {
+                        self.lose_vertical_lock();
+                    }
                 }
             }
         }
 
         if vsync_edge {
+            self.record_vsync_interval();
             self.observe_vertical_period();
         }
 
@@ -390,6 +418,21 @@ impl TelevisionReceiver {
         self.horizontal_locked = self.stable_h_periods >= H_LOCK_PERIODS;
     }
 
+    fn record_vsync_interval(&mut self) {
+        let slot = self.vsync_interval_count % VSYNC_HISTORY;
+        self.vsync_intervals[slot] = self.lines_since_raw_vsync.min(u16::MAX as usize) as u16;
+        self.vsync_interval_count += 1;
+        self.lines_since_raw_vsync = 0;
+    }
+
+    /// Recent raw VSYNC intervals in lines, oldest first.
+    fn vsync_history(&self) -> Vec<u16> {
+        let len = self.vsync_interval_count.min(VSYNC_HISTORY);
+        (self.vsync_interval_count - len..self.vsync_interval_count)
+            .map(|i| self.vsync_intervals[i % VSYNC_HISTORY])
+            .collect()
+    }
+
     fn observe_vertical_period(&mut self) {
         if !self.horizontal_locked {
             self.lose_vertical_lock();
@@ -406,6 +449,13 @@ impl TelevisionReceiver {
         }
         let period = self.lines_since_vsync;
         self.last_v_period = period;
+        if self.free_running {
+            // The first VSYNC after free-running sets the vertical phase.
+            self.free_running = false;
+            self.lines_since_vsync = 0;
+            self.output_y = 0;
+            return;
+        }
         // Vertical hold: the deflection oscillator can only be triggered near
         // the end of its free-running period, so an earlier pulse is ignored
         // and the count runs on to a later one.
@@ -478,6 +528,9 @@ pub struct VideoStats {
     /// VSYNC edges ignored because they came under 310 lines after the
     /// previous accepted one.
     pub early_vsyncs: u64,
+    /// Retraces the receiver made by itself because no VSYNC came within
+    /// 340 lines; it keeps showing the (rolling) picture meanwhile.
+    pub vsync_timeouts: u64,
 }
 
 /// CRTC and television-receiver state for the debugger.
@@ -496,6 +549,10 @@ pub struct VideoDebugState {
     pub last_h_period: usize,
     pub last_v_period: usize,
     pub lines_since_vsync: usize,
+    /// Lines between recent raw VSYNC edges (ignored ones too), oldest first.
+    pub vsync_intervals: Vec<u16>,
+    /// Lines since the last raw VSYNC edge when the last timeout fired.
+    pub timeout_raw_lines: usize,
     pub stats: VideoStats,
 }
 
@@ -645,7 +702,9 @@ impl Vid {
         self.run_for = self.run_for.saturating_add(run_for);
         while self.run_for >= CPU_CLOCKS_PER_CHARACTER {
             let tick = self.crtc.tick();
-            let cursor_pulse = tick.cursor && tick.ra == (self.crtc.reg(10) & 0x1f);
+            // CURSOR is high for the cursor character on every raster from
+            // R10 to R11, so each of those lines requests an interrupt.
+            let cursor_pulse = tick.cursor;
             let cursor_interrupt = self.cursor_pulse && !cursor_pulse;
             self.cursor_pulse = cursor_pulse;
             let signal = self.generator.emit(tick, vram);
@@ -656,6 +715,18 @@ impl Vid {
             }
         }
         false
+    }
+
+    /// CRTC beam position and selected register, for the instruction trace.
+    pub fn beam(&self) -> crate::instruction_trace::TraceBeam {
+        let (row, raster, h) = self.crtc.position();
+        crate::instruction_trace::TraceBeam {
+            row,
+            raster,
+            h,
+            in_adjust: self.crtc.in_adjust(),
+            crtc_register: self.crtc.selected(),
+        }
     }
 
     pub fn debug_state(&self) -> VideoDebugState {
@@ -671,6 +742,8 @@ impl Vid {
             last_h_period: tv.last_h_period,
             last_v_period: tv.last_v_period,
             lines_since_vsync: tv.lines_since_vsync,
+            vsync_intervals: tv.vsync_history(),
+            timeout_raw_lines: tv.timeout_raw_lines,
             stats: tv.stats,
         }
     }

@@ -374,6 +374,12 @@ impl Emu {
         self.machine.instruction_trace_mut().start(capacity);
     }
 
+    pub fn set_instruction_trace_beam(&mut self, enabled: bool) {
+        self.machine
+            .instruction_trace_mut()
+            .set_record_beam(enabled);
+    }
+
     pub fn stop_instruction_trace(&mut self) {
         self.machine.instruction_trace_mut().stop();
     }
@@ -382,10 +388,42 @@ impl Emu {
         self.machine.instruction_trace_mut().clear();
     }
 
-    pub fn recent_instruction_trace(&self, limit: usize) -> Vec<InstructionTraceEntry> {
+    /// Traced instructions for the debugger: the oldest `limit` entries after
+    /// sequence `after` when given, otherwise the newest `limit`. With
+    /// `port_writes_only`, entries without a port write are skipped.
+    pub fn query_instruction_trace(
+        &self,
+        limit: usize,
+        after: Option<u64>,
+        port_writes_only: bool,
+    ) -> Vec<InstructionTraceEntry> {
         let entries = self.machine.instruction_trace().entries();
-        let start = entries.len().saturating_sub(limit);
-        entries.iter().skip(start).cloned().collect()
+        let wanted = |entry: &&InstructionTraceEntry| {
+            !port_writes_only || !entry.effects.port_writes.is_empty()
+        };
+        match after {
+            Some(after) => {
+                // Sequences increase along the queue.
+                let start = entries.partition_point(|entry| entry.sequence <= after);
+                entries
+                    .range(start..)
+                    .filter(wanted)
+                    .take(limit)
+                    .cloned()
+                    .collect()
+            }
+            None => {
+                let mut found: Vec<_> = entries
+                    .iter()
+                    .rev()
+                    .filter(wanted)
+                    .take(limit)
+                    .cloned()
+                    .collect();
+                found.reverse();
+                found
+            }
+        }
     }
 
     pub fn read_mapped_memory(&mut self, addr: u16, len: usize) -> Vec<u8> {

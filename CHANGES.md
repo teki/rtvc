@@ -4,6 +4,17 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+- Dust Off no longer jumps up and down or loses the picture while flying.
+  The TVC cursor interrupt now fires on every cursor raster from R10 to R11,
+  not only on R10; the game's raster interrupts expected both. Between
+  screens, when the game stops VSYNC, the TV model free-runs and keeps showing
+  the picture instead of the lost-sync stripes.
+- TCP debugger: `instruction_trace_start` takes `"beam": true` to record the
+  CRTC beam and selected register per instruction; `instruction_trace_list`
+  pages with `after_sequence`, returns up to the whole trace, and filters to
+  port writes with `port_writes_only` (`trace start beam`, `trace list ports`
+  in `rtvc_debug.py`). `video_state` adds recent VSYNC intervals.
+
 - Games that reprogram the CRTC into short split-screen segments no longer
   lose sync: the TV model ignores VSYNC pulses that come too early, as a
   real TV's vertical hold does. Dust Off showed rolling stripes for about

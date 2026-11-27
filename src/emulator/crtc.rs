@@ -180,6 +180,10 @@ impl Crtc {
         (self.row, self.raster, self.h_count)
     }
 
+    pub fn in_adjust(&self) -> bool {
+        self.in_adjust
+    }
+
     pub fn vsync(&self) -> bool {
         self.vsync_lines_remaining != 0
     }

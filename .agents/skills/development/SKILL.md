@@ -75,11 +75,16 @@ This skill provides step-by-step instructions and references for compiling, exec
     `kp`) holds a key for the requested number of 50 Hz emulator frames. The
     equivalent TCP request is
     `{"cmd":"key_press","key":49,"duration":3}`.
-  - Use `trace start [capacity]`, `trace stop`, `trace status`,
-    `trace clear`, and `trace list [count]` in `scripts/rtvc_debug.py` to
-    capture a bounded instruction trace. Entries include pre-instruction Z80
-    state, opcode bytes, TVC mapper values, and memory/port writes. The JSON
-    protocol uses the corresponding `instruction_trace_*` command names.
+  - Use `trace start [capacity] [beam]`, `trace stop`, `trace status`,
+    `trace clear`, and `trace list [count] [ports]` in `scripts/rtvc_debug.py`
+    to capture a bounded instruction trace. Entries include pre-instruction Z80
+    state, opcode bytes, TVC mapper values, and memory/port writes; `beam`
+    adds the CRTC beam and selected register, and `ports` lists only port
+    writes. The JSON protocol uses the corresponding `instruction_trace_*`
+    command names; page long traces with `after_sequence` while paused.
+    For raster bugs: pause, `run_frames` up to the glitch with a `beam` trace
+    running, then list `port_writes_only` entries plus `interrupt_accepted`
+    ones to see each CRTC write and cursor interrupt against the beam.
   - Use the File menu to write/read `.rtvcsnap.zip` snapshots, load tape/disk files via open file dialog, and save the current framebuffer as a 4:3 PNG (`768x576`).
   - Snapshots work on the TVC, Zx82, and CPC 464; loading one (menu, drop,
     positional argument, or TCP `load_snapshot`) switches to the machine it
