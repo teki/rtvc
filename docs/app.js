@@ -1,5 +1,5 @@
-import init, { WebHandle } from "./rtvc.js?v=6b090e7a";
-import { installSoftKeyboard, isSoftKeyEvent } from "./soft-keyboard.js?v=6b090e7a";
+import init, { WebHandle } from "./rtvc.js?v=6b091189";
+import { installSoftKeyboard, isSoftKeyEvent } from "./soft-keyboard.js?v=6b091189";
 
 const DB_NAME = "rtvc";
 const DB_VERSION = 1;
@@ -148,7 +148,7 @@ async function createAudioSink(sampleRate) {
     context = new AudioContext();
   }
   try {
-    await context.audioWorklet.addModule("./audio-worklet.js?v=6b090e7a");
+    await context.audioWorklet.addModule("./audio-worklet.js?v=6b091189");
   } catch (error) {
     void context.close();
     throw error;
@@ -412,7 +412,7 @@ async function run() {
     return [];
   });
   const startupLaunch = loadStartupLaunch(bundledMedia);
-  await init({ module_or_path: "./rtvc_bg.wasm?v=6b090e7a" });
+  await init({ module_or_path: "./rtvc_bg.wasm?v=6b091189" });
   const canvas = document.getElementById("tvc_canvas");
   globalThis.rtvcStartupAudioError = await globalThis.rtvcAudioInit(44100);
   try {
