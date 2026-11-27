@@ -90,9 +90,14 @@ pub struct ProgEntry {
     pub is_disk: bool,
 }
 
+/// Pacing estimate before the first tick has run.
+pub const NOMINAL_TICK_SECONDS: f64 = 1.0 / 50.0;
+
 pub struct Emu {
     machine: Machine,
     pub running: bool,
+    // Emulated time the last `tick` covered; hosts pace by it.
+    last_tick_seconds: f64,
     pub roms_loaded: bool,
     pub machine_type: MachineType,
     pub progs: Vec<ProgEntry>,
@@ -141,6 +146,7 @@ impl Emu {
         let mut emu = Emu {
             machine: Machine::Tvc(Tvc::new(machine_type.is_plus)),
             running: true,
+            last_tick_seconds: NOMINAL_TICK_SECONDS,
             roms_loaded: false,
             machine_type,
             progs: Vec::new(),
@@ -549,11 +555,24 @@ impl Emu {
             return false;
         }
         self.advance_typed_text();
+        let start = self.machine.clock();
         let hit_breakpoint = self.machine.run_frame();
+        let elapsed = self.machine.clock().wrapping_sub(start);
+        if elapsed > 0 {
+            self.last_tick_seconds = elapsed as f64 / self.machine.cpu_clock_hz() as f64;
+        }
         if !hit_breakpoint {
             self.advance_timed_keys();
         }
         hit_breakpoint
+    }
+
+    /// Emulated seconds the last `tick` ran: one TV picture on the TVC
+    /// (about 20.1 ms), 19.968 ms on the Spectrum and CPC. Hosts subtract
+    /// this from elapsed real time so the emulation runs at the machine's
+    /// own frame rate instead of exactly 50 Hz.
+    pub fn last_tick_seconds(&self) -> f64 {
+        self.last_tick_seconds
     }
 
     pub fn reset(&mut self) {

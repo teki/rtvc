@@ -350,7 +350,7 @@ fn start_debugger_on_listener(listener: TcpListener) -> std::io::Result<Debugger
 
 /// Host time spent running frames between command checks while warping.
 const HEADLESS_WARP_BUDGET: Duration = Duration::from_millis(15);
-/// One emulated 50 Hz frame of real time.
+/// Nominal tick length, used to bound headless catch-up.
 const FRAME_PERIOD: Duration = Duration::from_millis(20);
 /// Frames headless mode may run back to back to catch up after a late wake.
 const HEADLESS_MAX_CATCH_UP: u32 = 5;
@@ -359,8 +359,9 @@ const MAX_RUN_FRAMES: u32 = 30_000;
 
 pub fn run_headless(mut emu: Emu, port: u16) -> std::io::Result<()> {
     let (debugger, _port) = start_debugger_server_from(port)?;
-    // Frames are due on a fixed 20 ms grid, so a late wake from sleep is made
-    // up by the next frames instead of slowing the emulation down.
+    // Each tick is due when the previous one's emulated time has passed in
+    // real time (one TV picture on the TVC), so a late wake from sleep is made
+    // up by the next ticks instead of slowing the emulation down.
     let mut next_frame = Instant::now();
 
     loop {
@@ -396,7 +397,7 @@ pub fn run_headless(mut emu: Emu, port: u16) -> std::io::Result<()> {
                 let hit_breakpoint = emu.tick();
                 debugger.record_frame();
                 let _ = emu.take_audio_samples();
-                next_frame += FRAME_PERIOD;
+                next_frame += Duration::from_secs_f64(emu.last_tick_seconds());
                 if now.saturating_duration_since(next_frame) > FRAME_PERIOD * HEADLESS_MAX_CATCH_UP
                 {
                     // Too far behind (a long command, a stalled host): resync

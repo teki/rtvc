@@ -201,6 +201,14 @@ impl Machine {
         }
     }
 
+    pub fn cpu_clock_hz(&self) -> u64 {
+        match self {
+            Self::Tvc(_) => crate::tvc::CPU_CLOCK_HZ,
+            Self::Zx82(_) => crate::zx82::CPU_CLOCK_HZ,
+            Self::Cpc(_) => crate::cpc::CPU_CLOCK_HZ,
+        }
+    }
+
     pub fn clock(&self) -> u64 {
         match self {
             Self::Tvc(tvc) => tvc.clock,

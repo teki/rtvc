@@ -108,7 +108,11 @@ Rust edition 2024 is used, requiring Rust 1.85 or newer.
 `Zx82`, and `Cpc`; common scheduling, framebuffer, input, breakpoint, mapped-memory,
 disassembly, and stepping operations dispatch through this boundary.
 
-The normal scheduler uses a 62,500-cycle host frame budget:
+One host step (`run_for_a_frame`) runs until the television completes a
+picture in Interleaved mode, so a step is one TV frame (62,800 T-states for a
+314-line field). Without a picture it stops at 68,000 T-states, the 340-line
+limit after which the receiver free-runs. FastFrame keeps a fixed
+62,500-cycle budget. Each step:
 
 1. execute one Z80 instruction;
 2. add its T-states, including video RAM wait states, to the machine clock;
@@ -116,7 +120,7 @@ The normal scheduler uses a 62,500-cycle host frame budget:
 4. advance interleaved video when selected;
 5. latch device interrupts and invoke the Z80 interrupt path when accepted;
 6. check execution breakpoints and optional ROM tracepoints;
-7. stop at the budget or a debugger condition.
+7. stop at the completed picture, the budget, or a debugger condition.
 
 Steps 3 and 4 are split around port accesses. The Z80 core calls
 `CpuBus::io_cycle_start()` with the T-state at which the instruction's I/O
@@ -142,8 +146,14 @@ is not emulated.
 stepping therefore changes video, tape, sound, interrupts, and machine time,
 not just CPU registers.
 
-The native UI requests repaints continuously while running but generates TVC
-frames on a 50 Hz real-time gate. Faster host refreshes reuse the current
+`Emu::last_tick_seconds()` gives the emulated time the last step covered
+(clocks over the CPU clock rate: about 20.1 ms on the TVC, 19.968 ms on Zx82
+and CPC). The native UI, headless mode, and both web bundles subtract it from
+elapsed real time instead of a fixed 1/50 s, so each machine runs at its own
+frame rate (49.76 Hz for a standard TVC field).
+
+The native UI requests repaints continuously while running but generates
+machine steps against that real-time budget. Faster host refreshes reuse the current
 texture. A late or uneven repaint runs every frame that is due, up to five
 (0.1 s), within the 15 ms frame budget, and shows only the last one. Older
 backlog is dropped. Without catch-up, phone browsers with uneven repaint timing
@@ -274,7 +284,11 @@ VSYNC for about ten frames between screens. Capture starts 22 lines after VSYNC
 and fills 288 lines, so periods shorter than 310 cannot complete the public
 surface. A discontinuity, missing HSYNC, or dropped ring samples invalidates
 lock and discards the partial raster. It cannot complete a frame without both
-horizontal and vertical lock.
+horizontal and vertical lock. The receiver draws into a separate scan buffer
+and swaps it into the displayed framebuffer only when a picture completes, so
+hosts never show a frame that is half old and half new. Without this, the
+TV frame beating against the host refresh put a slowly drifting tear line in
+scrolling games.
 
 The public surface remains 608 x 288. Its 76-character-clock horizontal aperture
 starts 19 character clocks after observed HSYNC; its vertical aperture starts
@@ -397,7 +411,7 @@ keyboards still use the key handlers, which are attached to both the canvas
 and the textarea. In full web, moving focus between the two releases held
 keys but keeps Developer-mode screen capture.
 
-The lightweight player emulates whole 50 Hz frames against elapsed
+The lightweight player emulates whole TV pictures (`lastFrameSeconds()`) against elapsed
 `requestAnimationFrame` time, with at most 0.1 s of catch-up. It no longer
 runs one frame per display refresh, which ran games too fast on 60, 90, and
 120 Hz screens. Its letter and punctuation keys go through
@@ -893,10 +907,9 @@ television receiver completed), `host_frames` and `unsynced_host_frames`
 (host frames in which none completed; Interleaved only), `h_lock_losses`,
 `v_lock_losses`, `bad_v_periods` (more than 340 lines between VSYNCs) and
 `early_vsyncs` (VSYNC edges ignored by the vertical hold) and
-`vsync_timeouts` (free-running retraces, no VSYNC within 340 lines). A host
-frame is
-62,500 T-states and a 314-line TV frame 62,800, so a locked picture still
-shows about one unsynced host frame in 200. `video_state` also gives
+`vsync_timeouts` (free-running retraces, no VSYNC within 340 lines). Interleaved
+steps end on a completed picture, so a locked picture shows no unsynced host
+frames. `video_state` also gives
 `h_period`/`v_period` (accepted) and `last_h_period`/`last_v_period` (last
 observed, accepted or not), `vsync_intervals` (lines between the last 16 raw
 VSYNC edges, ignored ones included) and `timeout_raw_lines` (lines since the

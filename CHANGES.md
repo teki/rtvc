@@ -4,6 +4,15 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+- The emulation keeps each machine's real frame rate: a TVC step is now one
+  TV picture (49.76 Hz for a standard field) instead of a fixed 1/50 s, and
+  the desktop, headless and web hosts pace by the time each step covered. No
+  host frame goes without a new picture any more, and the Spectrum and CPC run
+  at their exact 50.08 Hz.
+- No more tearing in scrolling games: the TVC picture is shown only once the
+  TV has finished drawing it. Before, a host frame could show the top of a new
+  picture over the bottom of the previous one, with the split line slowly
+  drifting.
 - Dust Off no longer jumps up and down or loses the picture while flying.
   The TVC cursor interrupt now fires on every cursor raster from R10 to R11,
   not only on R10; the game's raster interrupts expected both. Between

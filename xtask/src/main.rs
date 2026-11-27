@@ -724,9 +724,10 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-// The TVC runs at 50 frames per second whatever the display refresh rate
-// (60, 90, 120 Hz phones), so emulate whole frames against elapsed time.
-const FRAME_SECONDS = 1 / 50;
+// The TVC runs at its own frame rate (one TV picture, about 49.8 Hz) whatever
+// the display refresh rate (60, 90, 120 Hz phones), so emulate whole pictures
+// against elapsed time; each runFrame reports the emulated time it covered.
+let frameSeconds = 1 / 50;
 const MAX_CATCH_UP_SECONDS = 0.1;
 let lastFrameTime;
 let pendingSeconds = 0;
@@ -771,10 +772,11 @@ function frame(now) {
   }
   lastFrameTime = now;
   let completed = false;
-  while (pendingSeconds >= FRAME_SECONDS) {
-    pendingSeconds -= FRAME_SECONDS;
+  while (pendingSeconds >= frameSeconds) {
     const started = performance.now();
     emu.runFrame();
+    frameSeconds = emu.lastFrameSeconds();
+    pendingSeconds -= frameSeconds;
     stats?.frame(performance.now() - started);
     audio.push(emu.takeAudioSamples());
     completed = emu.takeFrameComplete() || completed;
@@ -1556,7 +1558,7 @@ mod tests {
             assert!(app_js.contains("isSoftKeyEvent(event)"));
         }
         assert!(SOFT_KEYBOARD_JS.contains("export function installSoftKeyboard"));
-        assert!(APP_JS.contains("const FRAME_SECONDS = 1 / 50;"));
+        assert!(APP_JS.contains("frameSeconds = emu.lastFrameSeconds();"));
         assert!(APP_JS.contains("emu.typeText(text)"));
     }
 

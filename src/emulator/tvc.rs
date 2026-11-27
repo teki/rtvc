@@ -22,10 +22,13 @@ use crate::tvc_vid::Vid;
 use crate::z80::Z80;
 use crate::z80_bus_cycles::BusCycles;
 
-const CPU_CLOCK_HZ: u64 = 3_125_000;
+pub const CPU_CLOCK_HZ: u64 = 3_125_000;
 const FRAME_RATE_HZ: u64 = 50;
 const FRAME_CLOCKS: u64 = CPU_CLOCK_HZ / FRAME_RATE_HZ;
 const SYNC_TIMEOUT_HOST_FRAMES: u32 = 8;
+// An interleaved step ends with the TV picture; without one it stops here,
+// the longest field the television waits for before it free-runs (340 lines).
+const MAX_PICTURE_CLOCKS: u32 = 340 * 200;
 const SHARED_CURSOR_SOUND_IT: u8 = 0x10;
 // Devices latch or drive the data bus this many T-states into an I/O cycle.
 const IO_ACCESS_TSTATE: u32 = 3;
@@ -705,7 +708,12 @@ impl CpuBus for TvcBus {
 pub struct Tvc {
     pub bus: TvcBus,
     pub z80: Z80,
+    /// The last complete picture; this is what hosts display.
     pub framebuffer: Vec<u32>,
+    // The television draws the next picture here line by line and swaps it
+    // into `framebuffer` when it completes, so a host never shows a picture
+    // that is half old and half new (tearing).
+    scan_buffer: Vec<u32>,
     pub frame_complete: bool,
     pub(crate) vid_model: VidModel,
     pub(crate) clock: u64,
@@ -743,6 +751,7 @@ impl Tvc {
             bus: TvcBus::new(is_plus),
             z80: Z80::new(),
             framebuffer: vec![0xFF000000; 608 * 288],
+            scan_buffer: vec![0xFF000000; 608 * 288],
             frame_complete: false,
             vid_model,
             clock: 0,
@@ -1046,7 +1055,7 @@ impl Tvc {
 
         let mut frame_complete = false;
         if sync_video {
-            frame_complete = self.bus.vid.render_stream(&mut self.framebuffer, 608);
+            frame_complete = self.render_video();
         }
 
         let (irq_time, irq_frame_complete) = self.service_pending_shared_irq();
@@ -1102,12 +1111,17 @@ impl Tvc {
         }
     }
 
-    fn run_cpu_budget(&mut self, budget: u32, sync_video: bool) -> (bool, bool, u32) {
+    fn run_cpu_budget(
+        &mut self,
+        budget: u32,
+        sync_video: bool,
+        stop_on_picture: bool,
+    ) -> (bool, bool, u32) {
         let mut do_break = false;
         let mut frame_complete = false;
         let mut elapsed = 0u32;
 
-        while !do_break && elapsed < budget {
+        while !do_break && elapsed < budget && !(stop_on_picture && frame_complete) {
             let (instruction_time, instruction_frame_complete, _) =
                 self.step_instruction(sync_video);
 
@@ -1125,7 +1139,7 @@ impl Tvc {
     pub fn run_for_a_frame(&mut self) -> bool {
         let (do_break, frame_complete) = match self.vid_model {
             VidModel::FastFrame => {
-                let (do_break, _, _) = self.run_cpu_budget(FRAME_CLOCKS as u32, false);
+                let (do_break, _, _) = self.run_cpu_budget(FRAME_CLOCKS as u32, false, false);
                 if self.bus.vid.is_initialized() && self.bus.vid.cursor_enabled() {
                     // sync_video=false skips video generation during CPU execution, so request the video IRQ here.
                     self.request_cursor_irq();
@@ -1136,7 +1150,10 @@ impl Tvc {
                 (do_break, true)
             }
             VidModel::Interleaved => {
-                let (do_break, frame_complete, _) = self.run_cpu_budget(FRAME_CLOCKS as u32, true);
+                // One step is one TV picture (62,800 T-states for a standard
+                // 314-line frame), so every host frame shows a new picture.
+                let (do_break, frame_complete, _) =
+                    self.run_cpu_budget(MAX_PICTURE_CLOCKS, true, true);
                 (do_break, frame_complete)
             }
         };
@@ -1158,6 +1175,15 @@ impl Tvc {
         do_break
     }
 
+    /// Feeds pending video to the television; on a completed picture, shows it.
+    fn render_video(&mut self) -> bool {
+        let complete = self.bus.vid.render_stream(&mut self.scan_buffer, 608);
+        if complete {
+            std::mem::swap(&mut self.framebuffer, &mut self.scan_buffer);
+        }
+        complete
+    }
+
     fn request_cursor_irq(&mut self) {
         self.bus.request_shared_irq();
     }
@@ -1169,7 +1195,7 @@ impl Tvc {
             self.clock += irq_duration as u64;
             self.bus.begin_instruction_timing(true);
             self.bus.finish_instruction_timing(irq_duration);
-            frame_complete = self.bus.vid.render_stream(&mut self.framebuffer, 608);
+            frame_complete = self.render_video();
         }
         (irq_duration, frame_complete)
     }

@@ -18,6 +18,7 @@ pub struct WasmTvc {
     tvc: Tvc,
     host_files: Arc<MemoryStore>,
     typer: KeyTyper,
+    last_frame_seconds: f64,
 }
 
 impl WasmTvc {
@@ -37,6 +38,7 @@ impl WasmTvc {
             tvc: Tvc::new_with_vid_model(is_plus, default_web_vid_model()),
             host_files: Arc::new(MemoryStore::new()),
             typer: KeyTyper::default(),
+            last_frame_seconds: 1.0 / 50.0,
         }
     }
 
@@ -97,7 +99,20 @@ impl WasmTvc {
                 self.typer.pressed(code);
             }
         }
-        self.tvc.run_for_a_frame()
+        let start = self.tvc.clock;
+        let hit_breakpoint = self.tvc.run_for_a_frame();
+        let elapsed = self.tvc.clock.wrapping_sub(start);
+        if elapsed > 0 {
+            self.last_frame_seconds = elapsed as f64 / crate::tvc::CPU_CLOCK_HZ as f64;
+        }
+        hit_breakpoint
+    }
+
+    /// Emulated seconds the last `runFrame` covered (one TV picture, about
+    /// 20.1 ms); the player paces by it instead of a fixed 1/50 s.
+    #[wasm_bindgen(js_name = lastFrameSeconds)]
+    pub fn last_frame_seconds(&self) -> f64 {
+        self.last_frame_seconds
     }
 
     #[wasm_bindgen(js_name = audioSampleRate)]

@@ -237,8 +237,6 @@ extern "C" {
     fn web_fetch_bytes(url: &str) -> js_sys::Promise;
 }
 
-const TVC_REFRESH_HZ: u32 = 50;
-const TVC_FRAME_DT: f64 = 1.0 / TVC_REFRESH_HZ as f64;
 /// Frames run in one repaint to catch up; matches the 0.1 s cap on the
 /// repaint interval.
 const MAX_CATCH_UP_FRAMES: u32 = 5;
@@ -2981,12 +2979,13 @@ impl eframe::App for EmuApp {
             self.emu_frame_accumulator += dt.min(0.1);
         }
 
-        if self.emu.running && self.emu_frame_accumulator >= TVC_FRAME_DT {
-            // Run every frame that is due, so a late or uneven repaint (phone
+        // Each tick covers the machine's own frame time (one TV picture on the
+        // TVC, about 20.1 ms), which is subtracted from the real time that
+        // passed, so the emulation keeps the machine's rate, not exactly 50 Hz.
+        if self.emu.running && self.emu_frame_accumulator >= self.emu.last_tick_seconds() {
+            // Run every tick that is due, so a late or uneven repaint (phone
             // browsers, 30 Hz power saving) does not slow the TVC down. Only
-            // the last frame is shown.
-            let due =
-                ((self.emu_frame_accumulator / TVC_FRAME_DT) as u32).clamp(1, MAX_CATCH_UP_FRAMES);
+            // the last picture is shown.
             let mut ran = 0;
             // Warp runs extra frames within a host-time budget while a tape
             // loads; their audio is dropped instead of queued.
@@ -2994,6 +2993,7 @@ impl eframe::App for EmuApp {
                 let warping = self.emu.warp_active();
                 let hit_breakpoint = self.run_emulator_frame();
                 ran += 1;
+                self.emu_frame_accumulator -= self.emu.last_tick_seconds();
                 if warping {
                     let _ = self.emu.take_audio_samples();
                 } else {
@@ -3002,11 +3002,19 @@ impl eframe::App for EmuApp {
                 if hit_breakpoint || now.elapsed() >= WARP_FRAME_BUDGET {
                     break;
                 }
-                if !self.emu.warp_active() && ran >= due {
+                if !self.emu.warp_active()
+                    && (ran >= MAX_CATCH_UP_FRAMES
+                        || self.emu_frame_accumulator < self.emu.last_tick_seconds())
+                {
                     break;
                 }
             }
-            self.emu_frame_accumulator %= TVC_FRAME_DT;
+            // Drop time that could not be caught up (warp, a stalled host).
+            let tick = self.emu.last_tick_seconds();
+            if self.emu_frame_accumulator >= tick {
+                self.emu_frame_accumulator %= tick;
+            }
+            self.emu_frame_accumulator = self.emu_frame_accumulator.max(-tick);
         }
         self.update_screen_texture(ctx);
         #[cfg(not(target_arch = "wasm32"))]
