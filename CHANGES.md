@@ -4,78 +4,43 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
-- Files without an extension (download links such as
-  `?run=https://example.com/game-cas`) are recognised by content as CAS,
-  DSK or ZIP.
-- The emulation keeps each machine's real frame rate: a TVC step is now one
-  TV picture (49.76 Hz for a standard field) instead of a fixed 1/50 s, and
-  the desktop, headless and web hosts pace by the time each step covered. No
-  host frame goes without a new picture any more, and the Spectrum and CPC run
-  at their exact 50.08 Hz.
+## v0.8.12 - 2026-11-27
+
+- Dust Off and other games that split the screen with raster interrupts keep
+  a steady picture. The TVC cursor interrupt now fires on every cursor raster
+  from R10 to R11, not only on R10. The TV model ignores VSYNC pulses that
+  come too early, as a real TV's vertical hold does, and free-runs when a game
+  stops VSYNC between screens, instead of rolling or showing lost-sync
+  stripes.
 - No more tearing in scrolling games: the TVC picture is shown only once the
   TV has finished drawing it. Before, a host frame could show the top of a new
   picture over the bottom of the previous one, with the split line slowly
   drifting.
-- Dust Off no longer jumps up and down or loses the picture while flying.
-  The TVC cursor interrupt now fires on every cursor raster from R10 to R11,
-  not only on R10; the game's raster interrupts expected both. Between
-  screens, when the game stops VSYNC, the TV model free-runs and keeps showing
-  the picture instead of the lost-sync stripes.
-- TCP debugger: `instruction_trace_start` takes `"beam": true` to record the
-  CRTC beam and selected register per instruction; `instruction_trace_list`
-  pages with `after_sequence`, returns up to the whole trace, and filters to
-  port writes with `port_writes_only` (`trace start beam`, `trace list ports`
-  in `rtvc_debug.py`). `video_state` adds recent VSYNC intervals.
-
-- Games that reprogram the CRTC into short split-screen segments no longer
-  lose sync: the TV model ignores VSYNC pulses that come too early, as a
-  real TV's vertical hold does. Dust Off showed rolling stripes for about
-  three seconds when a level started; it now shows the black setup screen.
-- TCP debugger: `video_state` reports the TVC CRTC registers and the TV
-  model's sync lock, and `stats` adds synced and unsynced frame counts. Large
-  replies such as `instruction_trace_list` no longer hang the client.
+- Each machine runs at its real frame rate: a TVC step is one TV picture
+  (49.76 Hz for a standard field) instead of a fixed 1/50 s, and the desktop,
+  headless and web hosts pace by the time each step covered, so every host
+  frame has a new picture.
+- Files without an extension (download links such as
+  `?run=https://example.com/game-cas`) are recognised by content as CAS,
+  DSK or ZIP.
 - TCP debugger: `run_frames` runs a given number of frames at full speed and
-  replies when they are done (`frames` in `rtvc_debug.py`). Headless mode now
-  holds 50 FPS; on macOS it ran at about 39.
-- rtvc-asm and rtvc-c80 TOML quote symbol names that contain a dot
-  (`"F1.LOOP" = 0x8002`). Local labels and struct fields wrote bare dotted
-  keys before, which made the TOML invalid for `IMPORT` and other readers.
-- rtvc-asm macros: `MACRO name param[=default], ...` … `ENDM`, with strict
-  argument checks, local labels per expansion, and errors that name the
-  call and the macro line. `coding/lib/z80macros.inc` adds 16-bit moves,
-  `CP16_HL`, `NEG_HL`, `ADD_A_TO_HL` and loop helpers, each documented with
-  its T-states, bytes, and the registers it changes.
-- rtvc-asm `STRUCT name[, base]` … `ENDS` defines a size and field offsets
-  (`LD A,(IX+SPRITE.FLAGS)`), with `BYTE`, `WORD`, `BLOCK n`, and nested
-  structs.
-- rtvc-asm local labels: `.loop` belongs to the last global label and is
-  stored as `GLOBAL.LOOP`, so each routine can reuse short names. Inside
-  `REPT`, each copy gets its own local labels.
-- rtvc-asm `SIN()`, `COS()`, `MIN()`, `MAX()` and `ABS()` compute values in
-  expressions; with `REPT` they build lookup tables such as a sine wave.
-- rtvc-asm `--format cas` runs a program assembled at any `ORG` from
-  `1A3EH` to `BFFFH`: a BASIC line and a copy stub move it into place and
-  jump to `START`, or to the label `--entry` names.
-- rtvc-asm expressions have C operator precedence, parentheses, `*`, `/`,
-  `%`, `<<`, `>>`, `&`, `|`, `^`, `~`, `!`, and `LOW()`/`HIGH()`, so sizes
-  like `GLYPHS*64` no longer have to be written out by hand.
-- rtvc-asm `BREAK` marks a debugger breakpoint in the source; the debugger
-  client's `asmfile` and `loadasm` set it. `--no-breakpoints` leaves the
-  marks out.
-- rtvc-asm `INCLUDE`, `INCBIN` and `IMPORT` assemble other source files, emit
-  file bytes, and use another module's symbols from its TOML output. `-I`
-  adds search directories.
-- rtvc-asm `PHASE address` … `DEPHASE` assembles code for the address it
-  runs at after being copied, while its bytes stay at the load address.
-- rtvc-asm reports source errors as `file:line: message`, which editors can
-  jump to, instead of `rtvc-asm: line N: message`.
+  replies when they are done (`frames` in `rtvc_debug.py`); headless mode no
+  longer runs slow on macOS (it ran at about 39 FPS). `video_state` reports
+  the CRTC registers, the TV model's sync lock and recent VSYNC intervals,
+  and `stats` adds synced and unsynced frame counts. `instruction_trace_start`
+  takes `"beam": true` to record the CRTC beam and selected register per
+  instruction; `instruction_trace_list` pages with `after_sequence` and
+  filters to port writes with `port_writes_only` (`trace start beam`,
+  `trace list ports`). Large replies no longer hang the client.
+- rtvc-asm: macros, structs, local labels, full expressions, INCLUDE/INCBIN/
+  IMPORT, PHASE, BREAK, and runnable CAS output at any ORG.
 - The Gamebase details pane shows a Web link that opens and starts the
   selected game in the web emulator at teki.one/rtvc.
 - Web on phones: a keyboard button on touch screens opens the phone's
   on-screen keyboard and types into the TVC, including Backspace, Return, and
   Android word suggestions. The TVC screen moves above the keyboard while it
   is open.
-- The lightweight web player runs at the TVC's 50 frames per second on any
+- The lightweight web player runs at the TVC's own frame rate on any
   display. Before, 60–120 Hz screens ran games too fast. It also types letters
   and punctuation from a physical keyboard, which it previously ignored.
 - The full web build no longer slows the TVC down when the browser repaints
@@ -85,29 +50,7 @@ Release notes start here. Older release history is intentionally not backfilled.
   name, and progress are merged into one entry.
 - The full web build starts in Fast frame on phones and tablets, unless a
   video model was chosen before; Interleaved is too slow for many phones.
-- Updated egui and eframe to 0.33, egui_dock to 0.18, and the other
-  dependencies (cpal, rfd, png, zip, toml, sha2, ureq). Building the web
-  version now needs `wasm-bindgen-cli` 0.2.130. egui stays on 0.33, the last
-  release before its new text renderer, which would add about 0.6 MB to the
-  compressed web download.
-- Web bundles add a build id to script URLs, so browsers load a new build
-  instead of a cached one.
-- C80 (experimental) no longer miscompiles expressions that reuse a value,
-  and functions that do not fit in registers now compile: values are saved
-  with `PUSH`/`POP` or kept in static bytes after the function, marked
-  `; spill` in the listing. Recursion is still rejected.
-- C80 shifts: `<<`, `>>`, `<<=`, `>>=` with a `u8` count; counts at or above
-  the width give 0 (or the sign).
-- C80 register control: pins (`u8 n @ b`), `static` locals and local arrays,
-  strict `@fastcall` (the build fails if the body needs a spill),
-  `@preserves(...)`, and `@inline` / `@noinline`. Globals and statics can be
-  initialized with addresses (`&g`, `&a[2]`, `&s.field`).
-- C80 code is smaller and faster: conditions are branches, loops counting in
-  `B` use `DJNZ`, `CALL`+`RET` is a `JP`, and constant expressions are folded.
-  `--no-optimize` keeps the plain baseline.
-- C80 messages show `file:line:col`, the source line, and an underline; a
-  local used before assignment or an unknown name is reported once per
-  function. Function labels in listings are now `FN<id>_NAME`.
+
 
 ## v0.8.11 - 2026-11-05
 

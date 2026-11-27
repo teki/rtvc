@@ -2651,7 +2651,7 @@ dependencies = [
 
 [[package]]
 name = "rtvc"
-version = "0.8.11"
+version = "0.8.12"
 dependencies = [
  "cpal",
  "eframe",

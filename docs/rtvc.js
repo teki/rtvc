@@ -1493,49 +1493,49 @@ function __wbg_get_imports() {
             const ret = arg0.right;
             return ret;
         },
-        __wbg_rtvcAudioPush_ea848477b4a97533: function(arg0) {
+        __wbg_rtvcAudioPush_71248f1d9ab8f841: function(arg0) {
             globalThis.rtvcAudioPush(arg0);
         },
-        __wbg_rtvcAudioResume_080dc58d64e901db: function() { return handleError(function () {
+        __wbg_rtvcAudioResume_0d0616aab74f3061: function() { return handleError(function () {
             globalThis.rtvcAudioResume();
         }, arguments); },
-        __wbg_rtvcClearRecentMedia_44a809b51467f0e1: function(arg0, arg1) {
+        __wbg_rtvcClearRecentMedia_ba60f41eac68de52: function(arg0, arg1) {
             const ret = globalThis.rtvcClearRecentMedia(getStringFromWasm0(arg0, arg1));
             return ret;
         },
-        __wbg_rtvcFetchBytes_3461cd0c1a699e4e: function(arg0, arg1) {
+        __wbg_rtvcFetchBytes_d223ca8f07ab437f: function(arg0, arg1) {
             const ret = globalThis.rtvcFetchBytes(getStringFromWasm0(arg0, arg1));
             return ret;
         },
-        __wbg_rtvcFetchText_391289f32a26debc: function(arg0, arg1) {
+        __wbg_rtvcFetchText_4bc66b3291928acc: function(arg0, arg1) {
             const ret = globalThis.rtvcFetchText(getStringFromWasm0(arg0, arg1));
             return ret;
         },
-        __wbg_rtvcGetStartupAudioError_dbcd1a5fd78ad34e: function() {
+        __wbg_rtvcGetStartupAudioError_fecdb31aa02c5304: function() {
             const ret = globalThis.rtvcGetStartupAudioError();
             return ret;
         },
-        __wbg_rtvcGetStartupBundledMedia_b2e0b9202d7cbef7: function() {
+        __wbg_rtvcGetStartupBundledMedia_adeca1b18a7edcd5: function() {
             const ret = globalThis.rtvcGetStartupBundledMedia();
             return ret;
         },
-        __wbg_rtvcGetStartupLaunch_1431067e18609ff3: function() {
+        __wbg_rtvcGetStartupLaunch_d46c32afb3369f7d: function() {
             const ret = globalThis.rtvcGetStartupLaunch();
             return ret;
         },
-        __wbg_rtvcGetStartupRecentMedia_a6e049c02cb662eb: function() {
+        __wbg_rtvcGetStartupRecentMedia_aa649ec6529d81bb: function() {
             const ret = globalThis.rtvcGetStartupRecentMedia();
             return ret;
         },
-        __wbg_rtvcGetStartupStorageError_5025e95f6b4ec93f: function() {
+        __wbg_rtvcGetStartupStorageError_3ca0fba5b2e90878: function() {
             const ret = globalThis.rtvcGetStartupStorageError();
             return ret;
         },
-        __wbg_rtvcStoreRecentMedia_21634c69fd0d7bbf: function(arg0, arg1, arg2, arg3, arg4) {
+        __wbg_rtvcStoreRecentMedia_58d2de76a5a82fd0: function(arg0, arg1, arg2, arg3, arg4) {
             const ret = globalThis.rtvcStoreRecentMedia(getStringFromWasm0(arg0, arg1), getStringFromWasm0(arg2, arg3), arg4);
             return ret;
         },
-        __wbg_rtvcTakeKeyboardEvents_0cf367ae04d54be0: function() {
+        __wbg_rtvcTakeKeyboardEvents_c38d34b6ce1584e5: function() {
             const ret = globalThis.rtvcTakeKeyboardEvents();
             return ret;
         },
