@@ -70,11 +70,18 @@ Release archives are available for:
 - Windows x64
 - macOS x64
 - macOS Apple Silicon
+- Linux x64
+- Linux arm64
 
 Extract the archive and run:
 
 - `rtvc.exe` on Windows
 - `RTVC.app` on macOS
+- `./rtvc` on Linux
+
+The Linux builds need glibc 2.35 or newer (Ubuntu 22.04, Debian 12, or a
+similarly recent distribution), ALSA or PipeWire audio, and
+`xdg-desktop-portal` for the file dialogs.
 
 The release packages include the emulator, ROM files, bundled programs, the
 complete English and Hungarian documentation trees under `info/` and
@@ -82,8 +89,8 @@ complete English and Hungarian documentation trees under `info/` and
 
 ### Command-line tools
 
-The Windows and macOS packages also include these small utilities. They are in
-the package root with an `.exe` suffix on Windows and under `bin/` on macOS;
+The Windows, macOS, and Linux packages also include these small utilities. They are in
+the package root with an `.exe` suffix on Windows, under `bin/` on macOS, and in the package root on Linux;
 run any tool with `--help` for its complete options:
 
 | Tool | Purpose | Example |

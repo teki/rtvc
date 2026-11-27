@@ -116,11 +116,69 @@ jobs:
           name: rtvc-macos-${{ matrix.arch }}
           path: ${{ matrix.package }}
 
+  linux:
+    name: Linux ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            os: ubuntu-22.04
+          - arch: arm64
+            os: ubuntu-22.04-arm
+
+    env:
+      FOLDER: rtvc-linux-${{ matrix.arch }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+
+      - name: Install wasm-bindgen
+        run: cargo install wasm-bindgen-cli --version 0.2.130
+
+      - name: Build emulator
+        run: cargo build --release --bin rtvc
+
+      - name: Build command-line tools
+        run: cargo build --release --no-default-features --features cli-tools --bin rtvc-dsk --bin rtvc-asm --bin rtvc-basic --bin rtvc-tocas --bin rtvc-disasm --bin rtvc-cas2wav --bin rtvc-tap2toml
+
+      - name: Build web app
+        run: cargo xtask bundle-web-full package/$FOLDER/web
+
+      - name: Package
+        run: |
+          dir="package/$FOLDER"
+          mkdir -p "$dir"
+          for bin in rtvc rtvc-dsk rtvc-asm rtvc-basic rtvc-tocas rtvc-disasm rtvc-cas2wav rtvc-tap2toml; do
+            install -m 755 "target/release/$bin" "$dir/"
+          done
+          cp README.md README.hu.md LICENSE "$dir/"
+          cp -R info info.hu roms progs "$dir/"
+          tar -C package -czf "$FOLDER.tar.gz" "$FOLDER"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: rtvc-linux-${{ matrix.arch }}
+          path: rtvc-linux-${{ matrix.arch }}.tar.gz
+
   release:
     name: GitHub release
     needs:
       - windows
       - macos
+      - linux
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
 
     steps:
@@ -152,4 +210,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body_path: release-notes.md
-          files: packages/*.zip
+          files: |
+            packages/*.zip
+            packages/*.tar.gz

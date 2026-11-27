@@ -249,12 +249,13 @@ This skill provides step-by-step instructions and references for compiling, exec
   git tag v0.1.0
   git push origin v0.1.0
   ```
-  - The release workflow builds `rtvc.exe` on `windows-latest`, a macOS x64 binary on `macos-15-intel`, and a macOS Apple Silicon binary on `macos-15`.
-  - Release builds use LTO, one codegen unit, stripped symbols, and `panic = "abort"` to keep binaries smaller. Windows and macOS command-line tools are built separately with `--no-default-features --features cli-tools` so they do not include the native UI/audio dependency set.
-  - It uploads `rtvc-windows-x64.zip`, `rtvc-macos-x64.zip`, and `rtvc-macos-arm64.zip`.
+  - The release workflow builds `rtvc.exe` on `windows-latest`, a macOS x64 binary on `macos-15-intel`, a macOS Apple Silicon binary on `macos-15`, and Linux x64/arm64 binaries on `ubuntu-22.04` and `ubuntu-22.04-arm` (the older Ubuntu keeps the glibc requirement at 2.35).
+  - Release builds use LTO, one codegen unit, stripped symbols, and `panic = "abort"` to keep binaries smaller. Windows, macOS, and Linux command-line tools are built separately with `--no-default-features --features cli-tools` so they do not include the native UI/audio dependency set.
+  - It uploads `rtvc-windows-x64.zip`, `rtvc-macos-x64.zip`, `rtvc-macos-arm64.zip`, `rtvc-linux-x64.tar.gz`, and `rtvc-linux-arm64.tar.gz`.
   - The GitHub release body is extracted from the matching `## v<version>` section in `CHANGES.md`.
   - The Windows archive expands to an `rtvc-windows-x64/` directory containing `rtvc.exe`, `rtvc-dsk.exe`, `rtvc-asm.exe`, `rtvc-basic.exe`, `rtvc-tocas.exe`, `rtvc-disasm.exe`, `rtvc-cas2wav.exe`, `rtvc-tap2toml.exe`, English and Hungarian READMEs and complete `info/` documentation trees, `LICENSE`, `roms/`, `progs/`, and `web/`.
   - Each macOS archive expands to an architecture-named directory containing the ad hoc signed `RTVC.app`, individually ad hoc signed command-line tools under `bin/`, English and Hungarian READMEs and complete `info/` documentation trees, and `LICENSE`. The release workflow does not use paid Developer ID signing or notarization, so users may need to remove the browser quarantine flag from the extracted directory with `xattr -dr com.apple.quarantine rtvc-macos-<arch>` before first use.
+  - Each Linux archive is a `.tar.gz` (to keep executable bits) that expands to `rtvc-linux-<arch>/` with `rtvc`, the command-line tools, READMEs, `LICENSE`, `info/`, `info.hu/`, `roms/`, `progs/`, and `web/`. The Linux job installs ALSA, xkbcommon, Wayland, X11, and GL development packages; at runtime the app needs ALSA/PipeWire and `xdg-desktop-portal` for `rfd` file dialogs.
   - Native windows use `assets/rtvc-app-icon.png`; Windows release executables embed `assets/rtvc-app-icon.ico`, and macOS app bundles include `assets/rtvc-app-icon.icns`.
   - The app bundle includes `roms/`, `progs/`, and `web/` beside `Contents/MacOS/rtvc` so Finder launches can find runtime assets.
   - The native app searches `roms/` and `progs/` in the current working directory first, then beside the executable for extracted release archives and app bundles.

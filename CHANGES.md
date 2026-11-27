@@ -4,6 +4,9 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+- Linux x64 and arm64 release archives (`rtvc-linux-<arch>.tar.gz`) with the
+  emulator, command-line tools, ROMs, programs, documentation and web app.
+
 ## v0.8.12 - 2026-11-27
 
 - Dust Off and other games that split the screen with raster interrupts keep

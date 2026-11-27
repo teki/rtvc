@@ -47,11 +47,18 @@ Release archívumok ezekhez érhetők el:
 - Windows x64
 - macOS x64
 - macOS Apple Silicon
+- Linux x64
+- Linux arm64
 
 Csomagold ki az archívumot, majd indítsd el:
 
 - Windows alatt az `rtvc.exe` fájlt
 - macOS alatt az `RTVC.app` alkalmazást
+- Linux alatt a `./rtvc` programot
+
+A Linux buildekhez glibc 2.35 vagy újabb kell (Ubuntu 22.04, Debian 12 vagy
+hasonlóan friss disztribúció), ALSA vagy PipeWire hangrendszer, a
+fájlválasztó ablakokhoz pedig `xdg-desktop-portal`.
 
 A release csomagok tartalmazzák az emulátort, a ROM-fájlokat, mellékelt
 programokat, a teljes angol és magyar dokumentációt az `info/` és `info.hu/`
@@ -59,9 +66,9 @@ könyvtárban, valamint a teljes böngészős verziót a `web/` könyvtárban.
 
 ### Parancssori segédprogramok
 
-A Windows- és macOS-csomag az alábbi kis segédprogramokat is tartalmazza. Windows
-alatt `.exe` utótaggal a csomag gyökerében, macOS alatt a `bin/` könyvtárban
-találhatók. A teljes opciólistát az adott program `--help` kapcsolójával lehet
+A Windows-, macOS- és Linux-csomag az alábbi kis segédprogramokat is tartalmazza. Windows
+alatt `.exe` utótaggal a csomag gyökerében, macOS alatt a `bin/` könyvtárban,
+Linux alatt a csomag gyökerében találhatók. A teljes opciólistát az adott program `--help` kapcsolójával lehet
 megjeleníteni:
 
 | Program | Feladat | Példa |
