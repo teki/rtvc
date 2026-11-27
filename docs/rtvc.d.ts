@@ -22,6 +22,11 @@ export class WasmTvc {
     keyDown(code: number): boolean;
     keyPressText(text: string): void;
     keyUp(code: number): void;
+    /**
+     * Emulated seconds the last `runFrame` covered (one TV picture, about
+     * 20.1 ms); the player paces by it instead of a fixed 1/50 s.
+     */
+    lastFrameSeconds(): number;
     listHostFiles(): string[];
     loadCartRom(data: Uint8Array | number[]): void;
     /**
@@ -72,6 +77,7 @@ export interface InitOutput {
     readonly wasmtvc_keyDown: (a: number, b: number) => number;
     readonly wasmtvc_keyPressText: (a: number, b: number, c: number) => void;
     readonly wasmtvc_keyUp: (a: number, b: number) => void;
+    readonly wasmtvc_lastFrameSeconds: (a: number) => number;
     readonly wasmtvc_listHostFiles: (a: number, b: number) => void;
     readonly wasmtvc_loadCartRom: (a: number, b: number, c: number) => void;
     readonly wasmtvc_loadDisk: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
@@ -91,12 +97,12 @@ export interface InitOutput {
     readonly wasmtvc_vidModel: (a: number, b: number) => void;
     readonly webhandle_new: () => number;
     readonly webhandle_start: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_5125: (a: number, b: number, c: number, d: any) => void;
-    readonly __wasm_bindgen_func_elem_5147: (a: number, b: number, c: any, d: any) => void;
-    readonly __wasm_bindgen_func_elem_1785: (a: number, b: number, c: any) => void;
-    readonly __wasm_bindgen_func_elem_1785_32: (a: number, b: number, c: any) => void;
-    readonly __wasm_bindgen_func_elem_1787: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_1558: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_5127: (a: number, b: number, c: number, d: any) => void;
+    readonly __wasm_bindgen_func_elem_5149: (a: number, b: number, c: any, d: any) => void;
+    readonly __wasm_bindgen_func_elem_1787: (a: number, b: number, c: any) => void;
+    readonly __wasm_bindgen_func_elem_1787_33: (a: number, b: number, c: any) => void;
+    readonly __wasm_bindgen_func_elem_1789: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_1560: (a: number, b: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number, b: number, c: number) => void;
