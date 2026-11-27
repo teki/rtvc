@@ -79,9 +79,7 @@ Extract the archive and run:
 - `RTVC.app` on macOS
 - `./rtvc` on Linux
 
-The Linux builds need glibc 2.35 or newer (Ubuntu 22.04, Debian 12, or a
-similarly recent distribution), ALSA or PipeWire audio, and
-`xdg-desktop-portal` for the file dialogs.
+See [Linux First Launch](#linux-first-launch) for requirements.
 
 The release packages include the emulator, ROM files, bundled programs, the
 complete English and Hungarian documentation trees under `info/` and
@@ -128,6 +126,34 @@ browser quarantine flag:
 ```bash
 curl -L https://github.com/teki/rtvc/releases/latest/download/rtvc-macos-arm64.zip | ditto -x -k - $HOME/Downloads/rtvc
 ```
+
+### Linux First Launch
+
+The Linux builds run on distributions with glibc 2.35 or newer: Ubuntu 22.04,
+Debian 12, Fedora 36, or later. Pick `rtvc-linux-x64` for Intel and AMD PCs and
+`rtvc-linux-arm64` for 64-bit ARM machines (`uname -m` prints `x86_64` or
+`aarch64`). Download, extract, and start it from a terminal:
+
+```bash
+curl -L https://github.com/teki/rtvc/releases/latest/download/rtvc-linux-x64.tar.gz | tar xz -C $HOME
+```
+
+```bash
+cd $HOME/rtvc-linux-x64 && ./rtvc
+```
+
+The emulator uses X11 or Wayland with OpenGL, ALSA for sound (PipeWire and
+PulseAudio provide it), and `xdg-desktop-portal` for the open and save
+dialogs. Desktop installs normally have all of these. On a minimal install,
+add them with your package manager, for example on Ubuntu or Debian:
+
+```bash
+sudo apt install libasound2t64 libgl1 libxkbcommon0 xdg-desktop-portal-gtk
+```
+
+On Debian 12 and Ubuntu 22.04 the sound package is `libasound2`. In a virtual
+machine without 3D acceleration, `libEGL` and `MESA` warnings in the terminal
+are harmless: the emulator falls back to software rendering.
 
 ## Using the Emulator
 

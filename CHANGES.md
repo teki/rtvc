@@ -4,8 +4,14 @@ Release notes start here. Older release history is intentionally not backfilled.
 
 ## Unreleased
 
+## v0.8.13 - 2026-11-27
+
 - Linux x64 and arm64 release archives (`rtvc-linux-<arch>.tar.gz`) with the
   emulator, command-line tools, ROMs, programs, documentation and web app.
+  They need glibc 2.35 or newer (Ubuntu 22.04, Debian 12 or later).
+- The repository has proofread text versions of two TVC books under
+  `books/`: Kaszanyiczki's commented ROM listing and Benedek–Monok's
+  hardware book, with its figures, tables and an errata list.
 
 ## v0.8.12 - 2026-11-27
 

@@ -56,9 +56,7 @@ Csomagold ki az archívumot, majd indítsd el:
 - macOS alatt az `RTVC.app` alkalmazást
 - Linux alatt a `./rtvc` programot
 
-A Linux buildekhez glibc 2.35 vagy újabb kell (Ubuntu 22.04, Debian 12 vagy
-hasonlóan friss disztribúció), ALSA vagy PipeWire hangrendszer, a
-fájlválasztó ablakokhoz pedig `xdg-desktop-portal`.
+A Linux követelményeit az [Első indítás Linuxon](#első-indítás-linuxon) rész írja le.
 
 A release csomagok tartalmazzák az emulátort, a ROM-fájlokat, mellékelt
 programokat, a teljes angol és magyar dokumentációt az `info/` és `info.hu/`
@@ -106,6 +104,36 @@ böngészős karantén jelölést:
 ```bash
 curl -L https://github.com/teki/rtvc/releases/latest/download/rtvc-macos-arm64.zip | ditto -x -k - $HOME/Downloads/rtvc
 ```
+
+### Első indítás Linuxon
+
+A Linux buildek glibc 2.35 vagy újabb rendszeren futnak: Ubuntu 22.04,
+Debian 12, Fedora 36 vagy újabb. Intel és AMD gépekre az `rtvc-linux-x64`,
+64 bites ARM gépekre az `rtvc-linux-arm64` csomagot válaszd (az `uname -m`
+parancs `x86_64` vagy `aarch64` értéket ír ki). Letöltés, kicsomagolás és
+indítás terminálból:
+
+```bash
+curl -L https://github.com/teki/rtvc/releases/latest/download/rtvc-linux-x64.tar.gz | tar xz -C $HOME
+```
+
+```bash
+cd $HOME/rtvc-linux-x64 && ./rtvc
+```
+
+Az emulátor X11-et vagy Waylandet és OpenGL-t használ, a hanghoz ALSA-t
+(ezt a PipeWire és a PulseAudio is biztosítja), a megnyitás és mentés
+ablakokhoz pedig `xdg-desktop-portal`-t. Asztali telepítésen ezek általában
+mind megvannak. Minimális telepítésen a csomagkezelővel pótolhatók, például
+Ubuntun vagy Debianon:
+
+```bash
+sudo apt install libasound2t64 libgl1 libxkbcommon0 xdg-desktop-portal-gtk
+```
+
+Debian 12 és Ubuntu 22.04 alatt a hangcsomag neve `libasound2`. 3D-gyorsítás
+nélküli virtuális gépen a terminálban megjelenő `libEGL` és `MESA`
+figyelmeztetések ártalmatlanok: az emulátor szoftveres megjelenítésre vált.
 
 ## Az emulátor használata
 
